@@ -1,4 +1,4 @@
-#### 0.3.0
+#### 0.3.0 - 2022.10.11
 - Update DocumentFormat.OpenXml from 2.16.0 to 2.18.0
 - Update SixLabors.ImageSharp to 2.1.3
 
@@ -73,6 +73,8 @@ document.Breaks[0].Remove(includingParagraph: true);
 
 - Add new `IsBreak` property for WordParagraph
 - Add `Breaks` property for WordDocument
+
+- Implement Save and Load to/from Stream [#43](https://github.com/EvotecIT/OfficeIMO/pull/43) tnx hisuwh
 
 #### - 0.2.1 - 2022.07.31
 - Added basic support for Charts [#14](https://github.com/EvotecIT/OfficeIMO/pull/14)
