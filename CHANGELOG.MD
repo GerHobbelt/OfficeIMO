@@ -23,7 +23,9 @@ public static void Example_BasicWordWithDefaultStyleChange(string folderPath, bo
         document.Save(openWord);
     }
 }
+
 ```
+- Add `IsLastRun` and `IsFirstRun` properties to WordParagraph
 
 #### 0.3.0 - 2022.10.11
 - Update DocumentFormat.OpenXml from 2.16.0 to 2.18.0
