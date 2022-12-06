@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using DocumentFormat.OpenXml.Wordprocessing;
 using System.Linq;
 using DocumentFormat.OpenXml.Packaging;
@@ -18,14 +19,47 @@ namespace OfficeIMO.Word {
             return wordParagraph;
         }
 
-        public WordParagraph AddImage(string filePathImage, double? width = null, double? height = null, string description = "") {
-            // WordParagraph paragraph = new WordParagraph(this._document);
+        /// <summary>
+        /// Add image from file with ability to provide width and height of the image
+        /// The image will be resized given new dimensions
+        /// </summary>
+        /// <param name="filePathImage"></param>
+        /// <param name="width"></param>
+        /// <param name="height"></param>
+        /// <returns></returns>
+        public WordParagraph AddImage(string filePathImage, double? width, double? height) {
+            var wordImage = new WordImage(_document, filePathImage, width, height);
+            var paragraph = new WordParagraph(_document);
             VerifyRun();
-            WordImage wordImage = new WordImage(this._document, this, filePathImage, width, height, description);
             _run.Append(wordImage._Image);
-            return this;
+            return paragraph;
         }
 
+        /// <summary>
+        /// Add image from a file. Width and height will be used from the size of the image
+        /// </summary>
+        /// <param name="filePathImage"></param>
+        /// <returns></returns>
+        public WordParagraph AddImage(string filePathImage) {
+            return AddImage(filePathImage, null, null);
+        }
+
+        /// <summary>
+        /// Add image from Stream with ability to provide width and height of the image
+        /// The image will be resized given new dimensions
+        /// </summary>
+        /// <param name="imageStream"></param>
+        /// <param name="fileName"></param>
+        /// <param name="width"></param>
+        /// <param name="height"></param>
+        /// <returns></returns>
+        public WordParagraph AddImage(Stream imageStream, string fileName, double? width, double? height) {
+            var wordImage = new WordImage(_document, imageStream, fileName, width, height);
+            var paragraph = new WordParagraph(_document);
+            VerifyRun();
+            _run.Append(wordImage._Image);
+            return paragraph;
+        }
 
         /// <summary>
         /// Add Break to the paragraph. By default it adds soft break (SHIFT+ENTER)
@@ -193,21 +227,51 @@ namespace OfficeIMO.Word {
             return this;
         }
 
+        /// <summary>
+        /// Add bookmark to a word document
+        /// </summary>
+        /// <param name="bookmarkName"></param>
+        /// <returns></returns>
         public WordParagraph AddBookmark(string bookmarkName) {
             var bookmark = WordBookmark.AddBookmark(this, bookmarkName);
             return this;
         }
 
+        /// <summary>
+        /// Add fields to a word document
+        /// </summary>
+        /// <param name="wordFieldType"></param>
+        /// <param name="wordFieldFormat"></param>
+        /// <param name="advanced"></param>
+        /// <returns></returns>
         public WordParagraph AddField(WordFieldType wordFieldType, WordFieldFormat? wordFieldFormat = null, bool advanced = false) {
             var field = WordField.AddField(this, wordFieldType, wordFieldFormat, advanced);
             return this;
         }
 
+        /// <summary>
+        /// Add hyperlink with URL to a word document
+        /// </summary>
+        /// <param name="text"></param>
+        /// <param name="uri"></param>
+        /// <param name="addStyle"></param>
+        /// <param name="tooltip"></param>
+        /// <param name="history"></param>
+        /// <returns></returns>
         public WordParagraph AddHyperLink(string text, Uri uri, bool addStyle = false, string tooltip = "", bool history = true) {
             var hyperlink = WordHyperLink.AddHyperLink(this, text, uri, addStyle, tooltip, history);
             return this;
         }
 
+        /// <summary>
+        /// Add hyperlink with an anchor to a word document
+        /// </summary>
+        /// <param name="text"></param>
+        /// <param name="anchor"></param>
+        /// <param name="addStyle"></param>
+        /// <param name="tooltip"></param>
+        /// <param name="history"></param>
+        /// <returns></returns>
         public WordParagraph AddHyperLink(string text, string anchor, bool addStyle = false, string tooltip = "", bool history = true) {
             var hyperlink = WordHyperLink.AddHyperLink(this, text, anchor, addStyle, tooltip, history);
             return this;
