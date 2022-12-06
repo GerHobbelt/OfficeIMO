@@ -17,7 +17,6 @@ namespace OfficeIMO.Examples {
         }
 
         static void Main(string[] args) {
-            //string folderPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "documents");
             string templatesPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Templates");
             string folderPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Documents");
             Setup(folderPath);
@@ -73,9 +72,9 @@ namespace OfficeIMO.Examples {
             CoverPages.Example_AddingCoverPage(folderPath, false);
             CoverPages.Example_AddingCoverPage2(folderPath, false);
 
-            //LoadDocuments.LoadWordDocument_Sample1(false);
-            //LoadDocuments.LoadWordDocument_Sample2(false);
-            //LoadDocuments.LoadWordDocument_Sample3(false);
+            LoadDocuments.LoadWordDocument_Sample1(false);
+            LoadDocuments.LoadWordDocument_Sample2(false);
+            LoadDocuments.LoadWordDocument_Sample3(false);
 
             CustomAndBuiltinProperties.Example_BasicDocumentProperties(folderPath, false);
             CustomAndBuiltinProperties.Example_ReadWord(false);
@@ -89,16 +88,17 @@ namespace OfficeIMO.Examples {
             HyperLinks.Example_BasicWordWithHyperLinks(folderPath, false);
             HyperLinks.Example_AddingFields(folderPath, false);
 
-            //HeadersAndFooters.Sections1(folderPath, false);
-            //HeadersAndFooters.Example_BasicWordWithHeaderAndFooter0(folderPath, false);
+            HeadersAndFooters.Sections1(folderPath, false);
+            HeadersAndFooters.Example_BasicWordWithHeaderAndFooter0(folderPath, false);
             HeadersAndFooters.Example_BasicWordWithHeaderAndFooter(folderPath, false);
-            //HeadersAndFooters.Example_BasicWordWithHeaderAndFooter1(folderPath, false);
+            HeadersAndFooters.Example_BasicWordWithHeaderAndFooter1(folderPath, false);
 
             Charts.Example_AddingMultipleCharts(folderPath, false);
 
             Images.Example_AddingImages(folderPath, false);
             Images.Example_ReadWordWithImages();
             Images.Example_AddingImagesMultipleTypes(folderPath, false);
+            Images.Example_ReadWordWithImagesAndDiffWraps();
 
             PageBreaks.Example_PageBreaks(folderPath, false);
             PageBreaks.Example_PageBreaks1(folderPath, false);
