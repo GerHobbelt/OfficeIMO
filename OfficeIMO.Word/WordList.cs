@@ -20,13 +20,52 @@ public class WordList {
     private readonly bool _isToc;
 
     /// <summary>
-    /// This provides a way to set it teams to be treated with heading style during load
+    /// This provides a way to set items to be treated with heading style during load
     /// </summary>
     public bool IsToc {
         get {
             return ListItems
                 .Select(paragraph => paragraph.Style.ToString())
                 .Any(style => style.StartsWith("Heading", StringComparison.Ordinal));
+        }
+    }
+
+    private string NsidId {
+        get {
+            if (AbstractNum == null) {
+                return null;
+            }
+
+            return AbstractNum.Nsid.Val;
+
+        }
+        set {
+            if (AbstractNum != null) {
+                AbstractNum.Nsid.Val = value;
+            }
+        }
+    }
+
+    private string GenerateNsidId() {
+        // https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.nsid?view=openxml-2.8.1
+        // Specifies a number value specified as a four digit hexadecimal number),
+        // whose contents of this decimal number are interpreted based on the context of the parent XML element.
+        // for example FFFFFF89 or D9842532
+        return Guid.NewGuid().ToString().ToUpper().Substring(0, 8);
+
+    }
+
+    private AbstractNum AbstractNum {
+        get {
+            var numbering = _document._wordprocessingDocument.MainDocumentPart!.NumberingDefinitionsPart!.Numbering;
+            var abstractNumList = numbering.ChildElements.OfType<AbstractNum>();
+            foreach (AbstractNum abstractNum in abstractNumList) {
+                if (abstractNum.AbstractNumberId == _abstractId) {
+                    return abstractNum;
+                }
+            }
+
+            return null;
         }
     }
 
@@ -37,6 +76,8 @@ public class WordList {
                 .ToList();
         }
     }
+
+    public bool RestartNumbering { get; set; }
 
     public WordList(WordDocument wordDocument, WordSection section, bool isToc = false) {
         _document = wordDocument;
@@ -83,15 +124,15 @@ public class WordList {
         return wordParagraph;
     }
 
-    internal static int GetNextAbstractNum(Numbering numbering) {
+    private static int GetNextAbstractNum(Numbering numbering) {
         var ids = numbering.ChildElements
             .OfType<AbstractNum>()
             .Select(element => (int)element.AbstractNumberId)
             .ToList();
-        return ids.Count > 0 ? ids.Max() + 1 : 1;
+        return ids.Count > 0 ? ids.Max() + 1 : 0;
     }
 
-    internal static int GetNextNumberingInstance(Numbering numbering) {
+    private static int GetNextNumberingInstance(Numbering numbering) {
         var ids = numbering.ChildElements
             .OfType<NumberingInstance>()
             .Select(element => (int)element.NumberID)
@@ -99,7 +140,7 @@ public class WordList {
         return ids.Count > 0 ? ids.Max() + 1 : 1;
     }
 
-    internal void AddList(WordListStyle style) {
+    internal void AddList(WordListStyle style, bool continueNumbering) {
         CreateNumberingDefinition(_document);
         var numbering = _document._wordprocessingDocument.MainDocumentPart!.NumberingDefinitionsPart!.Numbering;
 
@@ -111,55 +152,59 @@ public class WordList {
         var abstractNumId = new AbstractNumId {
             Val = _abstractId
         };
-        var numberingInstance = new NumberingInstance(abstractNumId) {
-            NumberID = _numberId
-        };
+        NumberingInstance numberingInstance = new NumberingInstance();
+        if (continueNumbering) {
+            numberingInstance = DefaultNumberingInstance(abstractNumId, _numberId);
+        } else {
+            numberingInstance = RestartNumberingInstance(abstractNumId, _numberId);
+        }
+
         numbering.Append(numberingInstance, abstractNum);
     }
 
     // TODO this isn't working yet, needs implementation
-    internal void AddList(CustomListStyles style = CustomListStyles.Bullet, string levelText = "·", int levelIndex = 0) {
-        CreateNumberingDefinition(_document);
+    //internal void AddList(CustomListStyles style = CustomListStyles.Bullet, string levelText = "·", int levelIndex = 0) {
+    //    CreateNumberingDefinition(_document);
 
-        // we take current list number from the document
-        //_numberId = _document._listNumbers;
+    //    // we take current list number from the document
+    //    //_numberId = _document._listNumbers;
 
-        var numberingFormatValues = CustomListStyle.GetStyle(style);
+    //    var numberingFormatValues = CustomListStyle.GetStyle(style);
 
-        var level = new Level(
-            new NumberingFormat { Val = numberingFormatValues },
-            new LevelText { Val = levelText }
-        ) {
-            LevelIndex = 1
-        };
-        var level1 = new Level(
-            new NumberingFormat { Val = numberingFormatValues },
-            new LevelText { Val = levelText }
-        ) {
-            LevelIndex = 2
-        };
-        var abstractNum = new AbstractNum(level, level1) {
-            AbstractNumberId = 0
-        };
-        //abstractNum.Nsid = new Nsid();
+    //    var level = new Level(
+    //        new NumberingFormat { Val = numberingFormatValues },
+    //        new LevelText { Val = levelText }
+    //    ) {
+    //        LevelIndex = 1
+    //    };
+    //    var level1 = new Level(
+    //        new NumberingFormat { Val = numberingFormatValues },
+    //        new LevelText { Val = levelText }
+    //    ) {
+    //        LevelIndex = 2
+    //    };
+    //    var abstractNum = new AbstractNum(level, level1) {
+    //        AbstractNumberId = 0
+    //    };
+    //    //abstractNum.Nsid = new Nsid();
 
-        var numbering = _document._wordprocessingDocument.MainDocumentPart!.NumberingDefinitionsPart!.Numbering;
-        numbering.Append(abstractNum);
+    //    var numbering = _document._wordprocessingDocument.MainDocumentPart!.NumberingDefinitionsPart!.Numbering;
+    //    numbering.Append(abstractNum);
 
-        var abstractNumId = new AbstractNumId {
-            Val = 0
-        };
-        var numberingInstance = new NumberingInstance(abstractNumId) {
-            NumberID = _numberId
-        };
+    //    var abstractNumId = new AbstractNumId {
+    //        Val = 0
+    //    };
+    //    var numberingInstance = new NumberingInstance(abstractNumId) {
+    //        NumberID = _numberId
+    //    };
 
-        //LevelOverride levelOverride = new LevelOverride();
-        //levelOverride.StartOverrideNumberingValue = new StartOverrideNumberingValue();
-        //levelOverride.StartOverrideNumberingValue.Val = 1;
-        //numberingInstance.Append(levelOverride);
+    //    //LevelOverride levelOverride = new LevelOverride();
+    //    //levelOverride.StartOverrideNumberingValue = new StartOverrideNumberingValue();
+    //    //levelOverride.StartOverrideNumberingValue.Val = 1;
+    //    //numberingInstance.Append(levelOverride);
 
-        numbering.Append(numberingInstance);
-    }
+    //    numbering.Append(numberingInstance);
+    //}
 
     private void CreateNumberingDefinition(WordDocument document) {
         var numberingDefinitionsPart =
@@ -171,4 +216,70 @@ public class WordList {
             numberingDefinitionsPart.Numbering.Save(_document._wordprocessingDocument.MainDocumentPart.NumberingDefinitionsPart);
         }
     }
+
+    private NumberingInstance DefaultNumberingInstance(AbstractNumId abstractNumId, int numberId) {
+        var numberingInstance = new NumberingInstance(abstractNumId) { NumberID = numberId };
+        return numberingInstance;
+    }
+
+    private NumberingInstance RestartNumberingInstance(AbstractNumId abstractNumId, int numberId) {
+        NumberingInstance numberingInstance1 = new NumberingInstance(abstractNumId) { NumberID = numberId };
+
+        LevelOverride levelOverride1 = new LevelOverride() { LevelIndex = 0 };
+        StartOverrideNumberingValue startOverrideNumberingValue1 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride1.Append(startOverrideNumberingValue1);
+
+        LevelOverride levelOverride2 = new LevelOverride() { LevelIndex = 1 };
+        StartOverrideNumberingValue startOverrideNumberingValue2 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride2.Append(startOverrideNumberingValue2);
+
+        LevelOverride levelOverride3 = new LevelOverride() { LevelIndex = 2 };
+        StartOverrideNumberingValue startOverrideNumberingValue3 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride3.Append(startOverrideNumberingValue3);
+
+        LevelOverride levelOverride4 = new LevelOverride() { LevelIndex = 3 };
+        StartOverrideNumberingValue startOverrideNumberingValue4 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride4.Append(startOverrideNumberingValue4);
+
+        LevelOverride levelOverride5 = new LevelOverride() { LevelIndex = 4 };
+        StartOverrideNumberingValue startOverrideNumberingValue5 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride5.Append(startOverrideNumberingValue5);
+
+        LevelOverride levelOverride6 = new LevelOverride() { LevelIndex = 5 };
+        StartOverrideNumberingValue startOverrideNumberingValue6 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride6.Append(startOverrideNumberingValue6);
+
+        LevelOverride levelOverride7 = new LevelOverride() { LevelIndex = 6 };
+        StartOverrideNumberingValue startOverrideNumberingValue7 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride7.Append(startOverrideNumberingValue7);
+
+        LevelOverride levelOverride8 = new LevelOverride() { LevelIndex = 7 };
+        StartOverrideNumberingValue startOverrideNumberingValue8 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride8.Append(startOverrideNumberingValue8);
+
+        LevelOverride levelOverride9 = new LevelOverride() { LevelIndex = 8 };
+        StartOverrideNumberingValue startOverrideNumberingValue9 = new StartOverrideNumberingValue() { Val = 1 };
+
+        levelOverride9.Append(startOverrideNumberingValue9);
+
+        numberingInstance1.Append(levelOverride1);
+        numberingInstance1.Append(levelOverride2);
+        numberingInstance1.Append(levelOverride3);
+        numberingInstance1.Append(levelOverride4);
+        numberingInstance1.Append(levelOverride5);
+        numberingInstance1.Append(levelOverride6);
+        numberingInstance1.Append(levelOverride7);
+        numberingInstance1.Append(levelOverride8);
+        numberingInstance1.Append(levelOverride9);
+        return numberingInstance1;
+    }
+
 }
