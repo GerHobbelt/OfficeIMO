@@ -70,6 +70,19 @@ internal static void Example_DifferentTableSizes(string folderPath, bool openWor
 }
 ```
 
+## 0.4.6 - 2023.01.11
+
+### What's Changed
+* Added tests for fragmented instruction parsing by @byteSamurai in https://github.com/EvotecIT/OfficeIMO/pull/97
+* Add paragraphs property to start on a new page by @byteSamurai in https://github.com/EvotecIT/OfficeIMO/pull/98
+
+## 0.4.5 - 2023.01.09
+
+### What's Changed
+* Merge instructions distributed over runs to field string by @byteSamurai in https://github.com/EvotecIT/OfficeIMO/pull/95
+
+**Full Changelog**: https://github.com/EvotecIT/OfficeIMO/compare/v0.4.4...v0.4.5
+
 ## 0.4.4 - 2023.01.09
 
 ### What's Changed
