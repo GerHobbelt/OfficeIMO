@@ -683,14 +683,7 @@ namespace OfficeIMO.Word {
             word._fileStream.CopyTo(memoryStream);
             memoryStream.Seek(0, SeekOrigin.Begin);
 
-            // Save the memoryStream to a file for inspection
-            using (var fileStream = new FileStream("debug_output.docx", FileMode.Create, FileAccess.Write)) {
-                memoryStream.CopyTo(fileStream);
-                memoryStream.Seek(0, SeekOrigin.Begin);
-            }
-
             var wordDocument = WordprocessingDocument.Open(memoryStream, !readOnly, openSettings);
-
 
             InitialiseStyleDefinitions(wordDocument, readOnly);
 
@@ -750,7 +743,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="src"></param>
         /// <param name="dest"></param>
-        private static void CopyPackageProperties(PackageProperties src, PackageProperties dest) {
+        private static void CopyPackageProperties(IPackageProperties src, IPackageProperties dest) {
             dest.Category = src.Category;
             dest.ContentStatus = src.ContentStatus;
             dest.ContentType = src.ContentType;
@@ -899,7 +892,6 @@ namespace OfficeIMO.Word {
                 } catch {
                     // ignored
                 }
-                this._wordprocessingDocument.Dispose();
             }
 
             if (_fileStream != null) {
