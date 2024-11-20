@@ -30,6 +30,7 @@ namespace OfficeIMO.Examples {
             BasicDocument.Example_BasicWordWithMarginsInCentimeters(folderPath, false);
             BasicDocument.Example_BasicWordWithMarginsAndImage(folderPath, false);
             BasicDocument.Example_BasicWordWithLineSpacing(folderPath, false);
+            BasicDocument.Example_BasicWordWithSomeParagraphs(folderPath, false);
 
             AdvancedDocument.Example_AdvancedWord(folderPath, false);
             AdvancedDocument.Example_AdvancedWord2(folderPath, false);
@@ -64,6 +65,8 @@ namespace OfficeIMO.Examples {
             Tables.Example_TableBorders(folderPath, false);
             Tables.Example_NestedTables(folderPath, false);
             Tables.Example_TablesAddedAfterParagraph(folderPath, false);
+            Tables.Example_BasicTables8(folderPath, false);
+            Tables.Example_Tables1CopyRow(folderPath, false);
 
             PageSettings.Example_BasicSettings(folderPath, false);
             PageSettings.Example_PageOrientation(folderPath, false);
