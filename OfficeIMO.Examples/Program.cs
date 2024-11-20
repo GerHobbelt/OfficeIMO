@@ -106,6 +106,7 @@ namespace OfficeIMO.Examples {
             Images.Example_AddingImagesMultipleTypes(folderPath, false);
             Images.Example_ReadWordWithImagesAndDiffWraps();
             Images.Example_AddingFixedImages(folderPath, false);
+            Images.Example_AddingImagesSampleToTable(folderPath, false);
 
             PageBreaks.Example_PageBreaks(folderPath, false);
             PageBreaks.Example_PageBreaks1(folderPath, false);
@@ -131,6 +132,7 @@ namespace OfficeIMO.Examples {
 
             Watermark.Watermark_Sample2(folderPath, false);
             Watermark.Watermark_Sample1(folderPath, false);
+            Watermark.Watermark_Sample3(folderPath, false);
 
             Embed.Example_EmbedFileHTML(folderPath, templatesPath, false);
             Embed.Example_EmbedFileRTF(folderPath, templatesPath, false);
@@ -148,6 +150,15 @@ namespace OfficeIMO.Examples {
             FootNotes.Example_DocumentWithFootNotesEmpty(folderPath, false);
 
             SaveToStream.Example_StreamDocumentProperties(folderPath, false);
+
+            Protect.Example_ProtectFinalDocument(folderPath, false);
+            Protect.Example_ProtectAlwaysReadOnly(folderPath, false);
+
+            WordTextBox.Example_AddingTextbox(folderPath, false);
+            WordTextBox.Example_AddingTextbox2(folderPath, false);
+            WordTextBox.Example_AddingTextbox4(folderPath, false);
+            WordTextBox.Example_AddingTextbox5(folderPath, false);
+            WordTextBox.Example_AddingTextbox3(folderPath, false);
         }
     }
 }
