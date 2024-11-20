@@ -25,6 +25,9 @@ namespace OfficeIMO.Examples {
             BasicDocument.Example_BasicWordWithPolishChars(folderPath, false);
             BasicDocument.Example_BasicWordWithNewLines(folderPath, false);
             BasicDocument.Example_BasicWordWithTabs(folderPath, false);
+            BasicDocument.Example_BasicWordWithMargins(folderPath, false);
+            BasicDocument.Example_BasicWordWithMarginsAndImage(folderPath, false);
+            BasicDocument.Example_BasicWordWithLineSpacing(folderPath, false);
 
             AdvancedDocument.Example_AdvancedWord(folderPath, false);
             AdvancedDocument.Example_AdvancedWord2(folderPath, false);
