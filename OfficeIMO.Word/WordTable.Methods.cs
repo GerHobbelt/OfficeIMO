@@ -36,45 +36,77 @@ namespace OfficeIMO.Word {
 
         /// <summary>
         /// Distribute columns evenly by setting their size to the same value
+        /// based on the current table width settings (or 100% Pct if not set).
         /// </summary>
         public void DistributeColumnsEvenly() {
-            this.Width = 0;
-            this.WidthType = TableWidthUnitValues.Auto;
+            if (Rows.Count == 0 || Rows[0].Cells.Count == 0) return;
+            int columnCount = Rows[0].Cells.Count;
+            if (columnCount == 0) return;
 
-            var columnWidth = this.ColumnWidth;
-            if (columnWidth.Count == 0) {
-                return;
-            }
-            // check if column width entries are the same
-            var firstWidth = columnWidth[0];
-            var allSame = columnWidth.All(w => w == firstWidth);
-            if (allSame) {
-                return;
-            }
+            CheckTableProperties();
 
-            // set all column widths to the same value
-            var sum = columnWidth.Sum(); // sum of all columns
-            var count = columnWidth.Count(); // count of all columns
+            // Determine the target total width and type to distribute
+            TableWidthUnitValues targetType = this.WidthType ?? TableWidthUnitValues.Pct; // Default to Pct if not set
+            int targetTotalWidth;
 
-            if (ColumnWidthType == TableWidthUnitValues.Pct) {
-                // 100% = 5000
-                var currentPercent = (int)(sum / 5000.0 * 100);
-                var newPercent = (int)(100.0 / count);
-                var diff = currentPercent - newPercent;
-                var newWidth = (int)(newPercent * 5000.0 / 100);
-                for (int i = 0; i < columnWidth.Count; i++) {
-                    columnWidth[i] = newWidth;
+            if (targetType == TableWidthUnitValues.Pct) {
+                targetTotalWidth = this.Width ?? 5000; // Default to 100% (5000) if width not set
+            } else if (targetType == TableWidthUnitValues.Dxa) {
+                targetTotalWidth = this.Width ?? 0;
+                // If Dxa width is 0 or not set, it's ambiguous. Default to distributing 100% Pct.
+                if (targetTotalWidth <= 0) {
+                    targetType = TableWidthUnitValues.Pct;
+                    targetTotalWidth = 5000;
                 }
-                // add the difference to the last column
-                columnWidth[columnWidth.Count - 1] += (int)(diff * 5000.0 / 100);
-                this.ColumnWidth = columnWidth;
+            } else { // Auto or unspecified - default to distributing 100% Pct
+                targetType = TableWidthUnitValues.Pct;
+                targetTotalWidth = 5000;
+            }
 
+            // Ensure Table Width properties reflect the distribution target
+            // Setting these ensures the table container matches the distributed columns
+            this.WidthType = targetType;
+            this.Width = targetTotalWidth;
 
-            } else if (ColumnWidthType == TableWidthUnitValues.Dxa) {
-                var totalWidth = columnWidth.Sum();
-                var newWidth = totalWidth / columnWidth.Count;
-                for (int i = 0; i < columnWidth.Count; i++) {
-                    columnWidth[i] = newWidth;
+            // Calculate width per column, handling potential rounding for the last column
+            int baseColumnWidth = targetTotalWidth / columnCount;
+            int remainder = targetTotalWidth % columnCount;
+
+            List<int> newColumnWidths = new List<int>();
+            for (int i = 0; i < columnCount; i++) {
+                int currentWidth = baseColumnWidth;
+                if (i == columnCount - 1) { // Add remainder to the last column
+                    currentWidth += remainder;
+                }
+                newColumnWidths.Add(currentWidth);
+            }
+
+            // Apply the new widths to all cells in all rows
+            foreach (var row in this.Rows) {
+                // Ensure row has the expected number of cells for safety
+                if (row.Cells.Count == columnCount) {
+                    for (int j = 0; j < columnCount; j++) {
+                        var cell = row.Cells[j];
+                        // Ensure TableCellProperties and TableCellWidth exist
+                        var tcPr = cell._tableCellProperties ?? new TableCellProperties();
+                        if (cell._tableCellProperties == null) cell._tableCell.InsertAt(tcPr, 0);
+
+                        var tcW = tcPr.Elements<TableCellWidth>().FirstOrDefault() ?? new TableCellWidth();
+                        if (!tcPr.Elements<TableCellWidth>().Any()) tcPr.Append(tcW);
+
+                        // Set the calculated type and width for the cell
+                        tcW.Type = targetType;
+                        tcW.Width = newColumnWidths[j].ToString();
+                    }
+                }
+            }
+
+            // Update the TableGrid for consistency
+            TableGrid tableGrid = _table.GetFirstChild<TableGrid>();
+            if (tableGrid != null) {
+                tableGrid.RemoveAllChildren<GridColumn>();
+                foreach (int width in newColumnWidths) {
+                    tableGrid.Append(new GridColumn() { Width = width.ToString() });
                 }
             }
         }
@@ -175,39 +207,43 @@ namespace OfficeIMO.Word {
         /// Sets the table to AutoFit to Contents
         /// </summary>
         public void AutoFitToContents() {
-            // Set table layout type to AutoFit
             CheckTableProperties();
+
+            // 1. Set Table Layout to Autofit
             if (_tableProperties.TableLayout == null) {
                 _tableProperties.TableLayout = new TableLayout();
             }
             _tableProperties.TableLayout.Type = TableLayoutValues.Autofit;
 
-            // Set table width to auto
+            // 2. Set Table Width to Auto / 0
             if (_tableProperties.TableWidth == null) {
                 _tableProperties.TableWidth = new TableWidth();
             }
             _tableProperties.TableWidth.Type = TableWidthUnitValues.Auto;
             _tableProperties.TableWidth.Width = "0";
 
-            // Set all column widths to auto
+            // 3. Clear Cell Widths (Set to Auto)
+            // This is crucial for contents to determine width
             foreach (var row in Rows) {
                 foreach (var cell in row.Cells) {
                     var tcPr = cell._tableCellProperties;
+                    // Ensure TableCellProperties exists
                     if (tcPr == null) {
                         tcPr = new TableCellProperties();
-                        cell._tableCellProperties = tcPr;
+                        cell._tableCell.InsertAt(tcPr, 0); // Insert if doesn't exist
+                    } else {
+                        // Clear existing width if present
+                        var existingWidth = tcPr.Elements<TableCellWidth>().FirstOrDefault();
+                        if (existingWidth != null) {
+                            existingWidth.Remove();
+                        }
                     }
-
-                    if (tcPr.TableCellWidth == null) {
-                        tcPr.TableCellWidth = new TableCellWidth();
-                    }
-                    tcPr.TableCellWidth.Type = TableWidthUnitValues.Auto;
-                    tcPr.TableCellWidth.Width = "0";
+                    // Setting tcW with type=auto and w=0 might be equivalent to removing it
+                    // Depending on Word's interpretation. Removing is often cleaner.
                 }
             }
-
-            // Calculate and apply content-based widths
-            AdjustColumnWidthsBasedOnContent();
+            // Remove the complex/inaccurate content estimation for now
+            // AdjustColumnWidthsBasedOnContent();
         }
 
         /// <summary>
@@ -269,10 +305,8 @@ namespace OfficeIMO.Word {
             width += text.Length * 100;
 
             // Add extra for formatting
-            if (paragraph.Bold != null || paragraph.Italic != null) {
-                if (paragraph.Bold == true) width += (int)(width * 0.1); // Bold text is wider
-                if (paragraph.Italic == true) width += (int)(width * 0.05); // Italic text is slightly wider
-            }
+            if (paragraph.Bold == true) width += (int)(width * 0.1); // Bold text is wider
+            if (paragraph.Italic == true) width += (int)(width * 0.05); // Italic text is slightly wider
 
             return width;
         }
@@ -297,42 +331,55 @@ namespace OfficeIMO.Word {
         /// Sets the table to AutoFit to Window (100% width)
         /// </summary>
         public void AutoFitToWindow() {
-            // Set table layout type
             CheckTableProperties();
-            if (_tableProperties.TableLayout != null) {
-                _tableProperties.TableLayout.Remove();
-            }
 
-            // Set table width to 100%
+            // 1. Set Table Layout to Fixed (or ensure it exists)
+            if (_tableProperties.TableLayout == null) {
+                _tableProperties.TableLayout = new TableLayout();
+            }
+            _tableProperties.TableLayout.Type = TableLayoutValues.Fixed;
+
+            // 2. Set Table Width to 100% Pct
             if (_tableProperties.TableWidth == null) {
                 _tableProperties.TableWidth = new TableWidth();
             }
             _tableProperties.TableWidth.Type = TableWidthUnitValues.Pct;
             _tableProperties.TableWidth.Width = "5000"; // 5000 = 100%
 
-            // Remove table indentation if present
-            if (_tableProperties.TableIndentation != null) {
-                _tableProperties.TableIndentation.Remove();
-            }
+            // 3. Remove Table Indentation (if exists)
+            _tableProperties.TableIndentation?.Remove();
 
-            // Distribute columns evenly
-            if (Rows.Count > 0) {
+            // 4. Distribute columns evenly (as percentage)
+            if (Rows.Count > 0 && Rows[0].Cells.Count > 0) {
                 int columnCount = Rows[0].Cells.Count;
-                int columnWidth = 5000 / columnCount; // Distribute percentage evenly
+                // Calculate width per column, handling potential rounding for the last column
+                int baseColumnWidthPct = 5000 / columnCount;
+                int remainder = 5000 % columnCount;
 
-                foreach (var row in Rows) {
-                    foreach (var cell in row.Cells) {
-                        var tcPr = cell._tableCellProperties;
-                        if (tcPr == null) {
-                            tcPr = new TableCellProperties();
-                            cell._tableCellProperties = tcPr;
-                        }
+                for (int i = 0; i < Rows.Count; i++) {
+                    var row = Rows[i];
+                    // Ensure row has the expected number of cells for safety
+                    if (row.Cells.Count == columnCount) {
+                        for (int j = 0; j < columnCount; j++) {
+                            var cell = row.Cells[j];
+                            var tcPr = cell._tableCellProperties;
+                            if (tcPr == null) {
+                                tcPr = new TableCellProperties();
+                                cell._tableCell.InsertAt(tcPr, 0);
+                            }
 
-                        if (tcPr.TableCellWidth == null) {
-                            tcPr.TableCellWidth = new TableCellWidth();
+                            // Ensure TableCellWidth exists
+                            var tcW = tcPr.Elements<TableCellWidth>().FirstOrDefault();
+                            if (tcW == null) {
+                                tcW = new TableCellWidth();
+                                tcPr.Append(tcW);
+                            }
+
+                            // Set type and width
+                            tcW.Type = TableWidthUnitValues.Pct;
+                            // Add remainder to the last column to ensure total is 5000
+                            tcW.Width = (j == columnCount - 1) ? (baseColumnWidthPct + remainder).ToString() : baseColumnWidthPct.ToString();
                         }
-                        tcPr.TableCellWidth.Type = TableWidthUnitValues.Pct;
-                        tcPr.TableCellWidth.Width = columnWidth.ToString();
                     }
                 }
             }
@@ -388,22 +435,55 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <returns>The current WordTableLayoutType</returns>
         public WordTableLayoutType GetCurrentLayoutType() {
-            if (_tableProperties?.TableWidth == null) {
+            // Get properties defensively
+            TableLayoutValues? layoutType = null;
+            TableWidthUnitValues? widthType = null;
+            string widthValue = null;
+
+            if (_tableProperties != null) {
+                if (_tableProperties.TableLayout != null && _tableProperties.TableLayout.Type != null) {
+                    layoutType = _tableProperties.TableLayout.Type.Value;
+                }
+                if (_tableProperties.TableWidth != null) {
+                    if (_tableProperties.TableWidth.Type != null) {
+                        widthType = _tableProperties.TableWidth.Type.Value;
+                    }
+                    widthValue = _tableProperties.TableWidth.Width;
+                }
+            }
+
+            // Debugging line (optional, remove in production)
+            // Console.WriteLine($"DEBUG: Layout={layoutType}, WidthType={widthType}, WidthValue={widthValue}");
+
+            // --- Decision Logic ---
+
+            // 1. Explicit Autofit Layout = AutoFitToContents (Highest priority)
+            if (layoutType.HasValue && layoutType.Value == TableLayoutValues.Autofit) {
                 return WordTableLayoutType.AutoFitToContents;
             }
 
-            if (_tableProperties.TableWidth.Type == TableWidthUnitValues.Auto) {
-                return WordTableLayoutType.AutoFitToContents;
-            }
-
-            if (_tableProperties.TableWidth.Type == TableWidthUnitValues.Pct) {
-                if (_tableProperties.TableLayout?.Type == TableLayoutValues.Fixed) {
+            // 2. Width Type Percentage = AutoFitToWindow or FixedWidth
+            if (widthType.HasValue && widthType.Value == TableWidthUnitValues.Pct) {
+                if (widthValue == "5000") {
+                    return WordTableLayoutType.AutoFitToWindow;
+                } else {
                     return WordTableLayoutType.FixedWidth;
                 }
+            }
+
+            // 3. Width Type DXA = FixedWidth
+            if (widthType.HasValue && widthType.Value == TableWidthUnitValues.Dxa) {
+                return WordTableLayoutType.FixedWidth;
+            }
+
+            // 4. Width Type Auto or No Width Spec -> Defaults to AutoFitToWindow visually in Word
+            // (Unless LayoutType was explicitly Autofit, which is handled in #1)
+            if ((widthType.HasValue && widthType.Value == TableWidthUnitValues.Auto) || !widthType.HasValue) {
                 return WordTableLayoutType.AutoFitToWindow;
             }
 
-            return WordTableLayoutType.AutoFitToContents;
+            // Final fallback - should technically not be reached if logic covers all OpenXML states
+            return WordTableLayoutType.AutoFitToWindow;
         }
 
         /// <summary>
