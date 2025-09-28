@@ -195,20 +195,21 @@ namespace OfficeIMO.Excel {
             Cell? insertAfterCell = null;
             int targetColumnIndex = column;
             foreach (Cell c in rowElement.Elements<Cell>()) {
-                string? existingRef = c.CellReference?.Value;
-                if (!string.IsNullOrEmpty(existingRef)) {
-                    int existingColumnIndex = GetColumnIndex(existingRef);
-                    if (existingColumnIndex == targetColumnIndex) {
-                        cell = c;
-                        break;
-                    }
-                    if (existingColumnIndex < targetColumnIndex) {
-                        insertAfterCell = c;
-                        continue;
-                    }
-                    // existingColumnIndex > targetColumnIndex => insert before this cell
+                if (c.CellReference?.Value is not string existingRefValue || existingRefValue.Length == 0) {
+                    continue;
+                }
+
+                int existingColumnIndex = GetColumnIndex(existingRefValue);
+                if (existingColumnIndex == targetColumnIndex) {
+                    cell = c;
                     break;
                 }
+                if (existingColumnIndex < targetColumnIndex) {
+                    insertAfterCell = c;
+                    continue;
+                }
+                // existingColumnIndex > targetColumnIndex => insert before this cell
+                break;
             }
 
             if (cell == null) {
@@ -219,9 +220,12 @@ namespace OfficeIMO.Excel {
                     // Insert at beginning or append when row is empty or existing first cell has larger column index
                     var firstCell = rowElement.Elements<Cell>().FirstOrDefault();
                     if (firstCell != null) {
-                        var firstRef = firstCell.CellReference?.Value;
-                        if (!string.IsNullOrEmpty(firstRef) && GetColumnIndex(firstRef) > targetColumnIndex) {
-                            rowElement.InsertBefore(cell, firstCell);
+                        if (firstCell.CellReference?.Value is string firstRefValue && firstRefValue.Length > 0) {
+                            if (GetColumnIndex(firstRefValue) > targetColumnIndex) {
+                                rowElement.InsertBefore(cell, firstCell);
+                            } else {
+                                rowElement.Append(cell);
+                            }
                         } else {
                             rowElement.Append(cell);
                         }
