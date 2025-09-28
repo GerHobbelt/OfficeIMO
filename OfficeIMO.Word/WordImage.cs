@@ -1107,7 +1107,7 @@ namespace OfficeIMO.Word {
         public SixLabors.ImageSharp.Color? AlphaInversionColor {
             get {
                 if (AlphaInversionColorHex == null) return (SixLabors.ImageSharp.Color?)null;
-                return SixLabors.ImageSharp.Color.Parse("#" + AlphaInversionColorHex);
+                return Helpers.ParseColor(AlphaInversionColorHex);
             }
             set { AlphaInversionColorHex = value?.ToHexColor(); }
         }
@@ -1216,14 +1216,14 @@ namespace OfficeIMO.Word {
 
         public SixLabors.ImageSharp.Color? ColorChangeFrom {
             get {
-                return ColorChangeFromHex == null ? (SixLabors.ImageSharp.Color?)null : SixLabors.ImageSharp.Color.Parse("#" + ColorChangeFromHex);
+                return ColorChangeFromHex == null ? (SixLabors.ImageSharp.Color?)null : Helpers.ParseColor(ColorChangeFromHex);
             }
             set { ColorChangeFromHex = value?.ToHexColor(); }
         }
 
         public SixLabors.ImageSharp.Color? ColorChangeTo {
             get {
-                return ColorChangeToHex == null ? (SixLabors.ImageSharp.Color?)null : SixLabors.ImageSharp.Color.Parse("#" + ColorChangeToHex);
+                return ColorChangeToHex == null ? (SixLabors.ImageSharp.Color?)null : Helpers.ParseColor(ColorChangeToHex);
             }
             set { ColorChangeToHex = value?.ToHexColor(); }
         }
@@ -1288,7 +1288,7 @@ namespace OfficeIMO.Word {
 
         public SixLabors.ImageSharp.Color? ColorReplacement {
             get {
-                return ColorReplacementHex == null ? (SixLabors.ImageSharp.Color?)null : SixLabors.ImageSharp.Color.Parse("#" + ColorReplacementHex);
+                return ColorReplacementHex == null ? (SixLabors.ImageSharp.Color?)null : Helpers.ParseColor(ColorReplacementHex);
             }
             set { ColorReplacementHex = value?.ToHexColor(); }
         }
@@ -1321,14 +1321,14 @@ namespace OfficeIMO.Word {
 
         public SixLabors.ImageSharp.Color? DuotoneColor1 {
             get {
-                return DuotoneColor1Hex == null ? (SixLabors.ImageSharp.Color?)null : SixLabors.ImageSharp.Color.Parse("#" + DuotoneColor1Hex);
+                return DuotoneColor1Hex == null ? (SixLabors.ImageSharp.Color?)null : Helpers.ParseColor(DuotoneColor1Hex);
             }
             set { DuotoneColor1Hex = value?.ToHexColor(); }
         }
 
         public SixLabors.ImageSharp.Color? DuotoneColor2 {
             get {
-                return DuotoneColor2Hex == null ? (SixLabors.ImageSharp.Color?)null : SixLabors.ImageSharp.Color.Parse("#" + DuotoneColor2Hex);
+                return DuotoneColor2Hex == null ? (SixLabors.ImageSharp.Color?)null : Helpers.ParseColor(DuotoneColor2Hex);
             }
             set { DuotoneColor2Hex = value?.ToHexColor(); }
         }
@@ -1821,10 +1821,27 @@ namespace OfficeIMO.Word {
             if (_imagePart == null) {
                 throw new InvalidOperationException("Image is linked externally and cannot be saved.");
             }
-            using (FileStream outputFileStream = new FileStream(fileToSave, FileMode.Create)) {
-                var stream = _imagePart.GetStream();
-                stream.CopyTo(outputFileStream);
-                stream.Close();
+
+            if (File.Exists(fileToSave) && new FileInfo(fileToSave).IsReadOnly) {
+                throw new IOException($"Failed to save to '{fileToSave}'. The file is read-only.");
+            }
+
+            var directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(fileToSave));
+            if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory)) {
+                var dirInfo = new DirectoryInfo(directory);
+                if (dirInfo.Attributes.HasFlag(FileAttributes.ReadOnly)) {
+                    throw new IOException($"Failed to save to '{fileToSave}'. The directory is read-only.");
+                }
+            }
+
+            try {
+                using (FileStream outputFileStream = new FileStream(fileToSave, FileMode.Create)) {
+                    var stream = _imagePart.GetStream();
+                    stream.CopyTo(outputFileStream);
+                    stream.Close();
+                }
+            } catch (UnauthorizedAccessException ex) {
+                throw new IOException($"Failed to save to '{fileToSave}'. Access denied or path is read-only.", ex);
             }
         }
 
@@ -1833,7 +1850,19 @@ namespace OfficeIMO.Word {
         /// </summary>
         public void Remove() {
             if (_imagePart != null) {
-                _document._wordprocessingDocument.MainDocumentPart.DeletePart(_imagePart);
+                OpenXmlElement parent = _Image.Parent;
+                while (parent != null && parent is not Body && parent is not Header && parent is not Footer) {
+                    parent = parent.Parent;
+                }
+
+                OpenXmlPart part = _document._wordprocessingDocument.MainDocumentPart;
+                if (parent is Header header) {
+                    part = header.HeaderPart;
+                } else if (parent is Footer footer) {
+                    part = footer.FooterPart;
+                }
+
+                part.DeletePart(_imagePart);
                 _imagePart = null;
             } else if (!string.IsNullOrEmpty(_externalRelationshipId)) {
                 OpenXmlElement parent = _Image.Parent;

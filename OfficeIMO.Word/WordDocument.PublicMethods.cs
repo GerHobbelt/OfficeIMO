@@ -239,6 +239,18 @@ namespace OfficeIMO.Word {
             return this.AddParagraph().AddField(wordFieldType, wordFieldFormat, customFormat, advanced, parameters);
         }
 
+        /// <summary>
+        /// Adds a field represented by a <see cref="WordFieldCode"/> to the document in a new paragraph.
+        /// </summary>
+        /// <param name="fieldCode">Field code instance describing instructions and switches.</param>
+        /// <param name="wordFieldFormat">Optional field format.</param>
+        /// <param name="customFormat">Custom format string for date or time fields.</param>
+        /// <param name="advanced">Whether to use advanced formatting.</param>
+        /// <returns>The created <see cref="WordParagraph"/>.</returns>
+        public WordParagraph AddField(WordFieldCode fieldCode, WordFieldFormat? wordFieldFormat = null, string customFormat = null, bool advanced = false) {
+            return this.AddParagraph().AddField(fieldCode, wordFieldFormat, customFormat, advanced);
+        }
+
         public WordParagraph AddEquation(string omml) {
             return this.AddParagraph().AddEquation(omml);
         }
@@ -430,7 +442,7 @@ namespace OfficeIMO.Word {
             }
             List<WordParagraph> foundParagraphs = new List<WordParagraph>();
             var removeParas = new List<int>();
-            var foundList = SearchText(paragraphs, oldText, new WordPositionInParagraph() { Paragraph = 0 });
+            var foundList = SearchText(paragraphs, oldText, new WordPositionInParagraph() { Paragraph = 0 }, stringComparison);
 
             if (foundList?.Count > 0) {
                 count += foundList.Count;
@@ -441,9 +453,10 @@ namespace OfficeIMO.Word {
                         var p = paragraphs[ts.BeginIndex];
                         if (p != null) {
                             if (replace) {
-                                p.Text = p.Text.Replace(oldText, newText);
+                                int replaceCount = 0;
+                                p.Text = p.Text.FindAndReplace(oldText, newText, stringComparison, ref replaceCount);
                             }
-                            if (foundParagraphs.IndexOf(p) == -1) {
+                            if (!foundParagraphs.Any(fp => ReferenceEquals(fp._paragraph, p._paragraph))) {
                                 foundParagraphs.Add(p);
                             }
                         }
@@ -454,7 +467,7 @@ namespace OfficeIMO.Word {
                             if (beginPara != null && endPara != null) {
                                 beginPara.Text = beginPara.Text.Replace(beginPara.Text.Substring(ts.BeginChar), newText);
                                 endPara.Text = endPara.Text.Replace(endPara.Text.Substring(0, ts.EndChar + 1), "");
-                                if (foundParagraphs.IndexOf(beginPara) == -1) {
+                                if (!foundParagraphs.Any(fp => ReferenceEquals(fp._paragraph, beginPara._paragraph))) {
                                     foundParagraphs.Add(beginPara);
                                 }
                             }
