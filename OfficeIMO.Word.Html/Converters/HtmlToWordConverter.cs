@@ -10,6 +10,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace OfficeIMO.Word.Html.Converters {
     /// <summary>
@@ -23,6 +25,18 @@ namespace OfficeIMO.Word.Html.Converters {
     /// 4. Follow existing patterns in OfficeIMO.Word for consistency
     /// </summary>
     internal partial class HtmlToWordConverter {
+        private readonly Dictionary<string, string> _footnoteMap = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<CssRule> _cssRules = new();
+
+        private sealed class CssRule {
+            public CssRule(string selector, Dictionary<string, string> declarations) {
+                Selector = selector;
+                Declarations = declarations;
+            }
+
+            public string Selector { get; }
+            public Dictionary<string, string> Declarations { get; }
+        }
         public async Task<WordDocument> ConvertAsync(string html, HtmlToWordOptions options) {
             if (html == null) throw new ArgumentNullException(nameof(html));
             options ??= new HtmlToWordOptions();
@@ -33,6 +47,46 @@ namespace OfficeIMO.Word.Html.Converters {
             var document = await parser.ParseDocumentAsync(html);
 
             var wordDoc = WordDocument.Create();
+
+            _footnoteMap.Clear();
+            _cssRules.Clear();
+
+            foreach (var path in options.StylesheetPaths) {
+                if (!string.IsNullOrEmpty(path) && File.Exists(path)) {
+                    ParseCss(File.ReadAllText(path));
+                }
+            }
+            foreach (var content in options.StylesheetContents) {
+                if (!string.IsNullOrEmpty(content)) {
+                    ParseCss(content);
+                }
+            }
+
+            if (document.Head != null) {
+                foreach (var style in document.Head.QuerySelectorAll("style")) {
+                    ParseCss(style.TextContent);
+                }
+                foreach (var link in document.Head.QuerySelectorAll("link")) {
+                    var rel = link.GetAttribute("rel");
+                    if (string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
+                        var href = link.GetAttribute("href");
+                        if (!string.IsNullOrEmpty(href) && File.Exists(href)) {
+                            ParseCss(File.ReadAllText(href));
+                        }
+                    }
+                }
+            }
+
+            var footnoteSection = document.QuerySelector("section.footnotes");
+            if (footnoteSection != null) {
+                foreach (var li in footnoteSection.QuerySelectorAll("li")) {
+                    var id = li.GetAttribute("id");
+                    if (!string.IsNullOrEmpty(id)) {
+                        _footnoteMap[id] = li.TextContent?.Trim() ?? string.Empty;
+                    }
+                }
+                footnoteSection.Remove();
+            }
 
             if (options.DefaultPageSize.HasValue) {
                 wordDoc.PageSettings.PageSize = options.DefaultPageSize.Value;
@@ -53,6 +107,7 @@ namespace OfficeIMO.Word.Html.Converters {
         private void ProcessNode(INode node, WordDocument doc, WordSection section, HtmlToWordOptions options,
             WordParagraph? currentParagraph, Stack<WordList> listStack, TextFormatting formatting, WordTableCell? cell) {
             if (node is IElement element) {
+                ApplyCssToElement(element);
                 switch (element.TagName.ToLowerInvariant()) {
                     case "section": {
                             var newSection = doc.AddSection();
@@ -72,6 +127,7 @@ namespace OfficeIMO.Word.Html.Converters {
                             paragraph.Style = HeadingStyleMapper.GetHeadingStyleForLevel(level);
                             ApplyParagraphStyleFromCss(paragraph, element);
                             ApplyClassStyle(element, paragraph, options);
+                            AddBookmarkIfPresent(element, paragraph);
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
                             }
@@ -81,6 +137,7 @@ namespace OfficeIMO.Word.Html.Converters {
                             var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
                             ApplyParagraphStyleFromCss(paragraph, element);
                             ApplyClassStyle(element, paragraph, options);
+                            AddBookmarkIfPresent(element, paragraph);
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
                             }
@@ -92,6 +149,7 @@ namespace OfficeIMO.Word.Html.Converters {
                             paragraph.IndentationBefore = 720;
                             ApplyParagraphStyleFromCss(paragraph, element);
                             ApplyClassStyle(element, paragraph, options);
+                            AddBookmarkIfPresent(element, paragraph);
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
                             }
@@ -106,12 +164,17 @@ namespace OfficeIMO.Word.Html.Converters {
                             while (start < end && string.IsNullOrEmpty(lines[start])) start++;
                             while (end > start && string.IsNullOrEmpty(lines[end - 1])) end--;
                             var mono = FontResolver.Resolve("monospace");
+                            bool bookmarkAdded = false;
                             for (int i = start; i < end; i++) {
                                 var line = lines[i];
                                 var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
                                 paragraph.SetStyleId("HTMLPreformatted");
                                 if (!string.IsNullOrEmpty(mono)) {
                                     paragraph.SetFontFamily(mono);
+                                }
+                                if (!bookmarkAdded) {
+                                    AddBookmarkIfPresent(element, paragraph);
+                                    bookmarkAdded = true;
                                 }
                                 var fmt = new TextFormatting(false, false, false, null, mono);
                                 AddTextRun(paragraph, line, fmt, options);
@@ -150,7 +213,8 @@ namespace OfficeIMO.Word.Html.Converters {
                         }
                     case "strong":
                     case "b": {
-                            var fmt = new TextFormatting(true, formatting.Italic, formatting.Underline);
+                            var fmt = formatting;
+                            fmt.Bold = true;
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
                             }
@@ -158,14 +222,57 @@ namespace OfficeIMO.Word.Html.Converters {
                         }
                     case "em":
                     case "i": {
-                            var fmt = new TextFormatting(formatting.Bold, true, formatting.Underline);
+                            var fmt = formatting;
+                            fmt.Italic = true;
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
                             }
                             break;
                         }
                     case "u": {
-                            var fmt = new TextFormatting(formatting.Bold, formatting.Italic, true);
+                            var fmt = formatting;
+                            fmt.Underline = true;
+                            foreach (var child in element.ChildNodes) {
+                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
+                            }
+                            break;
+                        }
+                    case "s":
+                    case "del": {
+                            var fmt = formatting;
+                            fmt.Strike = true;
+                            foreach (var child in element.ChildNodes) {
+                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
+                            }
+                            break;
+                        }
+                    case "ins": {
+                            var fmt = formatting;
+                            fmt.Underline = true;
+                            foreach (var child in element.ChildNodes) {
+                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
+                            }
+                            break;
+                        }
+                    case "mark": {
+                            var fmt = formatting;
+                            fmt.Highlight = HighlightColorValues.Yellow;
+                            foreach (var child in element.ChildNodes) {
+                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
+                            }
+                            break;
+                        }
+                    case "sup": {
+                            var fmt = formatting;
+                            fmt.Superscript = true;
+                            foreach (var child in element.ChildNodes) {
+                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
+                            }
+                            break;
+                        }
+                    case "sub": {
+                            var fmt = formatting;
+                            fmt.Subscript = true;
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
                             }
@@ -181,12 +288,44 @@ namespace OfficeIMO.Word.Html.Converters {
                         }
                     case "a": {
                             var href = element.GetAttribute("href");
-                            if (!string.IsNullOrEmpty(href)) {
+                            var title = element.GetAttribute("title");
+                            var target = element.GetAttribute("target");
+                            var idAttr = element.GetAttribute("id");
+                            if (!string.IsNullOrEmpty(idAttr)) {
                                 currentParagraph ??= cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
-                                var uri = new Uri(href, UriKind.RelativeOrAbsolute);
-                                var linkPara = currentParagraph.AddHyperLink(element.TextContent, uri);
-                                if (!string.IsNullOrEmpty(options.FontFamily)) {
-                                    linkPara.SetFontFamily(options.FontFamily);
+                                AddBookmarkIfPresent(element, currentParagraph);
+                            }
+                            if (!string.IsNullOrEmpty(href) && href.StartsWith("#") && _footnoteMap.TryGetValue(href.TrimStart('#'), out var fnText)) {
+                                currentParagraph ??= cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
+                                currentParagraph.AddFootNote(fnText);
+                            } else if (!string.IsNullOrEmpty(href)) {
+                                currentParagraph ??= cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
+                                if (href.StartsWith("#")) {
+                                    var anchor = href.TrimStart('#');
+                                    var linkPara = currentParagraph.AddHyperLink(element.TextContent, anchor);
+                                    if (!string.IsNullOrEmpty(options.FontFamily)) {
+                                        linkPara.SetFontFamily(options.FontFamily);
+                                    }
+                                    var link = linkPara.Hyperlink;
+                                    if (!string.IsNullOrEmpty(title)) {
+                                        link.Tooltip = title;
+                                    }
+                                    if (!string.IsNullOrEmpty(target) && Enum.TryParse<TargetFrame>(target, true, out var frame)) {
+                                        link.TargetFrame = frame;
+                                    }
+                                } else {
+                                    var uri = new Uri(href, UriKind.RelativeOrAbsolute);
+                                    var linkPara = currentParagraph.AddHyperLink(element.TextContent, uri);
+                                    if (!string.IsNullOrEmpty(options.FontFamily)) {
+                                        linkPara.SetFontFamily(options.FontFamily);
+                                    }
+                                    var link = linkPara.Hyperlink;
+                                    if (!string.IsNullOrEmpty(title)) {
+                                        link.Tooltip = title;
+                                    }
+                                    if (!string.IsNullOrEmpty(target) && Enum.TryParse<TargetFrame>(target, true, out var frame)) {
+                                        link.TargetFrame = frame;
+                                    }
                                 }
                             }
                             break;
@@ -204,8 +343,41 @@ namespace OfficeIMO.Word.Html.Converters {
                             ProcessTable((IHtmlTableElement)element, doc, section, options, listStack, cell, currentParagraph);
                             break;
                         }
+                    case "figure": {
+                            var img = element.QuerySelector("img") as IHtmlImageElement;
+                            if (img != null) {
+                                ProcessImage(img, doc);
+                            }
+                            var caption = element.QuerySelector("figcaption");
+                            if (caption != null) {
+                                ApplyCssToElement(caption);
+                                var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
+                                paragraph.SetStyleId("Caption");
+                                ApplyParagraphStyleFromCss(paragraph, caption);
+                                ApplyClassStyle(caption, paragraph, options);
+                                AddBookmarkIfPresent(caption, paragraph);
+                                foreach (var child in caption.ChildNodes) {
+                                    ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
+                                }
+                            }
+                            break;
+                        }
                     case "img": {
                             ProcessImage((IHtmlImageElement)element, doc);
+                            break;
+                        }
+                    case "style": {
+                            ParseCss(element.TextContent);
+                            break;
+                        }
+                    case "link": {
+                            var rel = element.GetAttribute("rel");
+                            if (string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
+                                var href = element.GetAttribute("href");
+                                if (!string.IsNullOrEmpty(href) && File.Exists(href)) {
+                                    ParseCss(File.ReadAllText(href));
+                                }
+                            }
                             break;
                         }
                     default: {
@@ -225,6 +397,13 @@ namespace OfficeIMO.Word.Html.Converters {
             }
         }
 
+        private static void AddBookmarkIfPresent(IElement element, WordParagraph paragraph) {
+            var id = element.GetAttribute("id");
+            if (!string.IsNullOrEmpty(id)) {
+                WordBookmark.AddBookmark(paragraph, id);
+            }
+        }
+
         private static void ApplyClassStyle(IElement element, WordParagraph paragraph, HtmlToWordOptions options) {
             string? classAttr = element.GetAttribute("class");
             if (string.IsNullOrWhiteSpace(classAttr)) {
@@ -237,6 +416,83 @@ namespace OfficeIMO.Word.Html.Converters {
                     break;
                 }
             }
+        }
+
+        private void ParseCss(string css) {
+            foreach (Match match in Regex.Matches(css, @"(?<sel>[^{}]+)\{(?<body>[^{}]+)\}")) {
+                var selectors = match.Groups["sel"].Value.Split(',');
+                var declarations = ParseDeclarations(match.Groups["body"].Value);
+                foreach (var selector in selectors) {
+                    var trimmed = selector.Trim();
+                    if (trimmed.Length > 0) {
+                        _cssRules.Add(new CssRule(trimmed, new Dictionary<string, string>(declarations)));
+                    }
+                }
+            }
+        }
+
+        private static Dictionary<string, string> ParseDeclarations(string body) {
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in body.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)) {
+                var pieces = part.Split(new[] { ':' }, 2);
+                if (pieces.Length == 2) {
+                    dict[pieces[0].Trim().ToLowerInvariant()] = pieces[1].Trim();
+                }
+            }
+            return dict;
+        }
+
+        private void ApplyCssToElement(IElement element) {
+            if (_cssRules.Count == 0) {
+                return;
+            }
+
+            var accumulated = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rule in _cssRules) {
+                if (SelectorMatches(rule.Selector, element)) {
+                    foreach (var kvp in rule.Declarations) {
+                        accumulated[kvp.Key] = kvp.Value;
+                    }
+                }
+            }
+
+            var inline = element.GetAttribute("style");
+            if (!string.IsNullOrEmpty(inline)) {
+                foreach (var kvp in ParseDeclarations(inline)) {
+                    accumulated[kvp.Key] = kvp.Value;
+                }
+            }
+
+            if (accumulated.Count > 0) {
+                var sb = new StringBuilder();
+                foreach (var kvp in accumulated) {
+                    sb.Append(kvp.Key).Append(':').Append(kvp.Value).Append(';');
+                }
+                element.SetAttribute("style", sb.ToString());
+            }
+        }
+
+        private static bool SelectorMatches(string selector, IElement element) {
+            selector = selector.Trim();
+            if (selector.StartsWith(".", StringComparison.Ordinal)) {
+                var cls = selector.Substring(1);
+                var classAttr = element.GetAttribute("class");
+                if (classAttr == null) {
+                    return false;
+                }
+                foreach (var c in classAttr.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)) {
+                    if (string.Equals(c, cls, StringComparison.OrdinalIgnoreCase)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (selector.StartsWith("#", StringComparison.Ordinal)) {
+                var id = selector.Substring(1);
+                var elemId = element.GetAttribute("id");
+                return string.Equals(elemId, id, StringComparison.OrdinalIgnoreCase);
+            }
+            return string.Equals(element.TagName, selector.ToUpperInvariant(), StringComparison.Ordinal);
         }
     }
 }

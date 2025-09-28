@@ -72,7 +72,7 @@ namespace OfficeIMO.Tests {
 
             string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
             var paragraph = doc.AddParagraph();
-            paragraph.AddImage(assetPath, description: "Company logo");
+            paragraph.AddImage(assetPath, 40, 40, description: "Company logo");
 
             Assert.Equal("Company logo", paragraph.Image.Description);
 
@@ -81,6 +81,22 @@ namespace OfficeIMO.Tests {
             Assert.Contains("data:image/png", html, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("content=\"Tester\"", html, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("alt=\"Company logo\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("width=\"40\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("height=\"40\"", html, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_ImageFilePathOption() {
+            using var doc = WordDocument.Create();
+
+            string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+            var paragraph = doc.AddParagraph();
+            paragraph.AddImage(assetPath, 20, 20);
+
+            string html = doc.ToHtml(new WordToHtmlOptions { EmbedImagesAsBase64 = false });
+
+            Assert.DoesNotContain("data:image", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(Path.GetFileName(assetPath), html, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
@@ -105,7 +121,7 @@ namespace OfficeIMO.Tests {
 
             string html = doc.ToHtml(new WordToHtmlOptions { IncludeListStyles = true });
 
-            Assert.Contains("<ol type=\"I\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("<ol start=\"1\" type=\"I\"", html, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("list-style-type:upper-roman", html, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -120,6 +136,36 @@ namespace OfficeIMO.Tests {
             string html = doc.ToHtml();
 
             Assert.Contains("<ul type=\"circle\"", html, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_LowerLetter() {
+            using var doc = WordDocument.Create();
+            var list = doc.AddList(WordListStyle.ArticleSections);
+            list.Numbering.Levels[0]._level.NumberingFormat.Val = NumberFormatValues.LowerLetter;
+            list.AddItem("alpha");
+            list.AddItem("beta");
+
+            string html = doc.ToHtml(new WordToHtmlOptions { IncludeListStyles = true });
+
+            Assert.Contains("<ol start=\"1\" type=\"a\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("list-style-type:lower-alpha", html, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_DecimalLeadingZero() {
+            using var doc = WordDocument.Create();
+            var list = doc.AddList(WordListStyle.ArticleSections);
+            list.Numbering.Levels[0]._level.NumberingFormat.Val = NumberFormatValues.DecimalZero;
+            list.Numbering.Levels[0].SetStartNumberingValue(3);
+            list.AddItem("three");
+            list.AddItem("four");
+
+            string html = doc.ToHtml(new WordToHtmlOptions { IncludeListStyles = true });
+
+            Assert.Contains("<ol", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("start=\"3\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("list-style-type:decimal-leading-zero", html, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
@@ -145,6 +191,33 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Test_WordToHtml_TableCellCss() {
+            using var doc = WordDocument.Create();
+            var table = doc.AddTable(1, 1);
+            var cell = table.Rows[0].Cells[0];
+            cell.Paragraphs[0].ParagraphAlignment = JustificationValues.Right;
+            cell.ShadingFillColorHex = "ff0000";
+            cell.Borders.LeftStyle = BorderValues.Single;
+            cell.Borders.RightStyle = BorderValues.Single;
+            cell.Borders.TopStyle = BorderValues.Single;
+            cell.Borders.BottomStyle = BorderValues.Single;
+            cell.Borders.LeftColorHex = "00ff00";
+            cell.Borders.RightColorHex = "00ff00";
+            cell.Borders.TopColorHex = "00ff00";
+            cell.Borders.BottomColorHex = "00ff00";
+            cell.Borders.LeftSize = 8;
+            cell.Borders.RightSize = 8;
+            cell.Borders.TopSize = 8;
+            cell.Borders.BottomSize = 8;
+
+            string html = doc.ToHtml();
+
+            Assert.Contains("background-color:#ff0000", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("text-align:right", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("border:1px solid #00ff00", html, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
         public void Test_WordToHtml_Blockquote() {
             using var doc = WordDocument.Create();
             var p = doc.AddParagraph("Quoted text");
@@ -164,6 +237,45 @@ namespace OfficeIMO.Tests {
             string html = doc.ToHtml();
 
             Assert.Contains("<hr", html, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_AdditionalHeadElements() {
+            using var doc = WordDocument.Create();
+            doc.BuiltinDocumentProperties.Creator = "Tester";
+            doc.AddParagraph("Content");
+
+            var options = new WordToHtmlOptions();
+            options.AdditionalMetaTags.Add(("viewport", "width=device-width"));
+            options.AdditionalLinkTags.Add(("stylesheet", "styles.css"));
+
+            string html = doc.ToHtml(options);
+
+            Assert.Contains("<meta name=\"viewport\" content=\"width=device-width\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("<link rel=\"stylesheet\" href=\"styles.css\"", html, StringComparison.OrdinalIgnoreCase);
+            int authorIndex = html.IndexOf("name=\"author\"", StringComparison.OrdinalIgnoreCase);
+            int viewportIndex = html.IndexOf("name=\"viewport\"", StringComparison.OrdinalIgnoreCase);
+            Assert.True(viewportIndex > authorIndex);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_StyleClasses() {
+            using var doc = WordDocument.Create();
+            var p = doc.AddParagraph("Heading with style");
+            p.Style = WordParagraphStyles.Heading1;
+            p.AddText(" run").CharacterStyleId = "Heading1Char";
+
+            var options = new WordToHtmlOptions { IncludeParagraphClasses = true, IncludeRunClasses = true };
+            string html = doc.ToHtml(options);
+
+            Assert.Contains("<h1 class=\"Heading1\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("<span class=\"Heading1Char\"", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(".Heading1 {", html, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(".Heading1Char {", html, StringComparison.OrdinalIgnoreCase);
+
+            string htmlNoClasses = doc.ToHtml(new WordToHtmlOptions());
+            Assert.DoesNotContain("class=\"Heading1\"", htmlNoClasses, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Heading1Char", htmlNoClasses, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

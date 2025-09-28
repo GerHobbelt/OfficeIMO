@@ -1,13 +1,13 @@
 using System;
 using System.IO;
-using OfficeIMO.Word.Html;
 using OfficeIMO.Word;
+using OfficeIMO.Word.Html;
 
 namespace OfficeIMO.Examples.Html {
     internal static partial class Html {
-        public static void Example_HtmlHyperlinks(string folderPath, bool openWord) {
-            string filePath = Path.Combine(folderPath, "HtmlHyperlinks.docx");
-            string html = "<p id=\"top\">Top</p><p>Visit <a href=\"https://evotec.xyz\" title=\"Evotec site\" target=\"_blank\">Evotec</a> or <a href=\"#top\" title=\"Back to top\">back to top</a></p>";
+        public static void Example_HtmlSupSub(string folderPath, bool openWord) {
+            string filePath = Path.Combine(folderPath, "HtmlSupSub.docx");
+            string html = "<p>H<sub>2</sub>O is water and E=mc<sup>2</sup>.</p>";
 
             var doc = html.LoadFromHtml(new HtmlToWordOptions());
             doc.Save(filePath);
@@ -18,3 +18,4 @@ namespace OfficeIMO.Examples.Html {
         }
     }
 }
+
