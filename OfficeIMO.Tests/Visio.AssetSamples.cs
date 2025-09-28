@@ -13,15 +13,13 @@ namespace OfficeIMO.Tests {
         public void EmptyDocumentMatchesAsset() {
             string target = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".vsdx");
 
-            VisioDocument document = new();
-            VisioPage page = document.AddPage("Page-1");
-            page.PageWidth = 8.26771653543307;
-            page.PageHeight = 11.69291338582677;
+            VisioDocument document = VisioDocument.Create(target);
+            VisioPage page = document.AddPage("Page-1", 21, 29.7, VisioMeasurementUnit.Centimeters);
             page.ViewCenterX = 4.1233127451916;
             page.ViewCenterY = 5.8492688900245;
-            document.Save(target);
+            document.Save();
 
-            using FileStream expectedStream = File.OpenRead(Path.Combine(AssetsPath, "DrawingEmpty.vsdx"));
+            using FileStream expectedStream = File.OpenRead(Path.Combine(AssetsPath, "VisioTemplates", "DrawingEmpty.vsdx"));
             using ZipArchive expected = new(expectedStream, ZipArchiveMode.Read);
             using FileStream actualStream = File.OpenRead(target);
             using ZipArchive actual = new(actualStream, ZipArchiveMode.Read);
@@ -33,10 +31,8 @@ namespace OfficeIMO.Tests {
         public void RectangleDocumentMatchesAsset() {
             string target = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".vsdx");
 
-            VisioDocument document = new();
-            VisioPage page = document.AddPage("Page-1");
-            page.PageWidth = 11.69291338582677;
-            page.PageHeight = 8.26771653543307;
+            VisioDocument document = VisioDocument.Create(target);
+            VisioPage page = document.AddPage("Page-1", 29.7, 21, VisioMeasurementUnit.Centimeters);
             page.ViewCenterX = 5.8424184863857;
             page.ViewCenterY = 4.133858091015;
             page.Shapes.Add(new VisioShape("1") {
@@ -44,9 +40,9 @@ namespace OfficeIMO.Tests {
                 PinX = 2.047244040636296,
                 PinY = 6.73228320203895
             });
-            document.Save(target);
+            document.Save();
 
-            using FileStream expectedStream = File.OpenRead(Path.Combine(AssetsPath, "DrawingWithRectangle.vsdx"));
+            using FileStream expectedStream = File.OpenRead(Path.Combine(AssetsPath, "VisioTemplates", "DrawingWithRectangle.vsdx"));
             using ZipArchive expected = new(expectedStream, ZipArchiveMode.Read);
             using FileStream actualStream = File.OpenRead(target);
             using ZipArchive actual = new(actualStream, ZipArchiveMode.Read);

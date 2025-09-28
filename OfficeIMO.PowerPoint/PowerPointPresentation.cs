@@ -1,5 +1,6 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Presentation;
+using DocumentFormat.OpenXml;
 using OfficeIMO.PowerPoint.Fluent;
 using A = DocumentFormat.OpenXml.Drawing;
 using Ap = DocumentFormat.OpenXml.ExtendedProperties;
@@ -117,7 +118,7 @@ namespace OfficeIMO.PowerPoint {
             }
 
             SlideLayoutPart layoutPart = layouts[layoutIndex];
-            slidePart.AddPart(layoutPart);
+            _ = slidePart.AddPart(layoutPart);
 
             if (_presentationPart.Presentation.SlideIdList == null) {
                 _presentationPart.Presentation.SlideIdList = new SlideIdList();
@@ -265,31 +266,35 @@ namespace OfficeIMO.PowerPoint {
             );
             slideMasterPart.SlideMaster = slideMaster;
 
-            SlideLayoutPart slideLayoutPart1 = slideMasterPart.AddNewPart<SlideLayoutPart>();
-            slideLayoutPart1.SlideLayout = new SlideLayout(
+            SlideLayoutPart layoutPart0 = slideMasterPart.AddNewPart<SlideLayoutPart>();
+            layoutPart0.SlideLayout = new SlideLayout(
                 new CommonSlideData(CreateShapeTree()),
                 new ColorMapOverride(new A.MasterColorMapping())
             );
+            layoutPart0.SlideLayout.Save();
 
-            SlideLayoutPart slideLayoutPart2 = slideMasterPart.AddNewPart<SlideLayoutPart>();
-            slideLayoutPart2.SlideLayout = new SlideLayout(
+            SlideLayoutPart layoutPart1 = slideMasterPart.AddNewPart<SlideLayoutPart>();
+            layoutPart1.SlideLayout = new SlideLayout(
                 new CommonSlideData(CreateShapeTree()),
                 new ColorMapOverride(new A.MasterColorMapping())
             );
+            layoutPart1.SlideLayout.Save();
 
             slideMaster.SlideLayoutIdList = new SlideLayoutIdList(
-                new SlideLayoutId { Id = 2147483649U, RelationshipId = slideMasterPart.GetIdOfPart(slideLayoutPart1) },
-                new SlideLayoutId { Id = 2147483650U, RelationshipId = slideMasterPart.GetIdOfPart(slideLayoutPart2) }
+                new SlideLayoutId { Id = 1U, RelationshipId = slideMasterPart.GetIdOfPart(layoutPart0) },
+                new SlideLayoutId { Id = 2U, RelationshipId = slideMasterPart.GetIdOfPart(layoutPart1) }
             );
+            slideMaster.Save();
 
             // theme part is stored under ppt/theme and referenced from both presentation and slide master
             ThemePart themePart = _presentationPart.AddNewPart<ThemePart>();
             themePart.Theme = new A.Theme { Name = "Office Theme", ThemeElements = new A.ThemeElements() };
+            themePart.Theme.Save();
             slideMasterPart.AddPart(themePart);
 
-            _presentationPart.Presentation.SlideMasterIdList = new SlideMasterIdList(new SlideMasterId {
-                Id = 2147483648U, RelationshipId = _presentationPart.GetIdOfPart(slideMasterPart)
-            });
+            _presentationPart.Presentation.SlideMasterIdList = new SlideMasterIdList(
+                new SlideMasterId { Id = 1U, RelationshipId = _presentationPart.GetIdOfPart(slideMasterPart) }
+            );
 
             NotesMasterPart notesMasterPart = _presentationPart.AddNewPart<NotesMasterPart>();
             notesMasterPart.NotesMaster = new NotesMaster(
@@ -297,10 +302,16 @@ namespace OfficeIMO.PowerPoint {
                 new ColorMapOverride(new A.MasterColorMapping()),
                 new NotesStyle()
             );
+            notesMasterPart.NotesMaster.Save();
 
-            _presentationPart.Presentation.NotesMasterIdList = new NotesMasterIdList(new NotesMasterId {
-                Id = _presentationPart.GetIdOfPart(notesMasterPart)
-            });
+            NotesMasterId notesMasterId = new NotesMasterId();
+            notesMasterId.SetAttribute(new OpenXmlAttribute(
+                "r",
+                "id",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                _presentationPart.GetIdOfPart(notesMasterPart)
+            ));
+            _presentationPart.Presentation.NotesMasterIdList = new NotesMasterIdList(notesMasterId);
 
             _presentationPart.Presentation.SlideSize = new SlideSize {
                 Cx = 9144000,

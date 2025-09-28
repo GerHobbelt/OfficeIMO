@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
+using SixLabors.ImageSharp;
 
 namespace OfficeIMO.Visio {
     /// <summary>
@@ -16,6 +17,7 @@ namespace OfficeIMO.Visio {
     public class VisioDocument {
         private readonly List<VisioPage> _pages = new();
         private bool _requestRecalcOnOpen;
+        private string? _filePath;
 
         private const string DocumentRelationshipType = "http://schemas.microsoft.com/visio/2010/relationships/document";
         private const string DocumentContentType = "application/vnd.ms-visio.drawing.main+xml";
@@ -36,15 +38,31 @@ namespace OfficeIMO.Visio {
         public VisioTheme? Theme { get; set; }
 
         /// <summary>
+        /// Title of the document.
+        /// </summary>
+        public string? Title { get; set; }
+
+        /// <summary>
+        /// Author of the document.
+        /// </summary>
+        public string? Author { get; set; }
+
+        /// <summary>
         /// Adds a new page to the document.
         /// </summary>
         /// <param name="name">Name of the page.</param>
+        /// <param name="width">Page width.</param>
+        /// <param name="height">Page height.</param>
+        /// <param name="unit">Measurement unit for width and height.</param>
         /// <param name="id">Optional page identifier. If not specified, uses zero-based index.</param>
-        public VisioPage AddPage(string name, int? id = null) {
-            VisioPage page = new(name) { Id = id ?? _pages.Count };
+        public VisioPage AddPage(string name, double width = 8.26771653543307, double height = 11.69291338582677, VisioMeasurementUnit unit = VisioMeasurementUnit.Inches, int? id = null) {
+            double widthInches = width.ToInches(unit);
+            double heightInches = height.ToInches(unit);
+            VisioPage page = new(name, widthInches, heightInches) { Id = id ?? _pages.Count };
             _pages.Add(page);
             return page;
         }
+
 
         /// <summary>
         /// Requests Visio to relayout and reroute connectors when the document is opened.
@@ -54,13 +72,24 @@ namespace OfficeIMO.Visio {
         }
 
         /// <summary>
+        /// Creates a new <see cref="VisioDocument"/> with the given save path.
+        /// </summary>
+        /// <param name="path">Path where the document will be saved.</param>
+        public static VisioDocument Create(string path) {
+            return new VisioDocument { _filePath = path };
+        }
+
+        /// <summary>
         /// Loads an existing <c>.vsdx</c> file into a <see cref="VisioDocument"/>.
         /// </summary>
         /// <param name="filePath">Path to the <c>.vsdx</c> file.</param>
         public static VisioDocument Load(string filePath) {
-            VisioDocument document = new();
+            VisioDocument document = new() { _filePath = filePath };
 
             using Package package = Package.Open(filePath, FileMode.Open, FileAccess.Read);
+
+            document.Title = package.PackageProperties.Title;
+            document.Author = package.PackageProperties.Creator;
 
             PackageRelationship documentRel = package.GetRelationshipsByType(DocumentRelationshipType).Single();
             Uri documentUri = PackUriHelper.ResolvePartUri(new Uri("/", UriKind.Relative), documentRel.TargetUri);
@@ -115,7 +144,7 @@ namespace OfficeIMO.Visio {
             foreach (XElement pageRef in pagesDoc.Root?.Elements(ns + "Page") ?? Enumerable.Empty<XElement>()) {
                 string name = pageRef.Attribute("Name")?.Value ?? "Page";
                 int pageId = int.TryParse(pageRef.Attribute("ID")?.Value, out int tmp) ? tmp : document.Pages.Count;
-                VisioPage page = document.AddPage(name, pageId);
+                VisioPage page = document.AddPage(name, id: pageId);
                 page.NameU = pageRef.Attribute("NameU")?.Value ?? name;
                 page.ViewScale = ParseDouble(pageRef.Attribute("ViewScale")?.Value);
                 page.ViewCenterX = ParseDouble(pageRef.Attribute("ViewCenterX")?.Value);
@@ -334,9 +363,9 @@ namespace OfficeIMO.Visio {
             XNamespace ns = VisioNamespace;
             XElement settings = new(ns + "DocumentSettings",
                 new XAttribute("TopPage", 0),
-                new XAttribute("DefaultTextStyle", 3),
-                new XAttribute("DefaultLineStyle", 3),
-                new XAttribute("DefaultFillStyle", 3),
+                new XAttribute("DefaultTextStyle", 0),
+                new XAttribute("DefaultLineStyle", 0),
+                new XAttribute("DefaultFillStyle", 0),
                 new XAttribute("DefaultGuideStyle", 4),
                 new XElement(ns + "GlueSettings", 9),
                 new XElement(ns + "SnapSettings", 295),
@@ -350,19 +379,69 @@ namespace OfficeIMO.Visio {
             if (requestRecalcOnOpen) {
                 settings.Add(new XElement(ns + "RelayoutAndRerouteUponOpen", 1));
             }
+            XElement styleSheets = new(ns + "StyleSheets",
+                new XElement(ns + "StyleSheet",
+                    new XAttribute("ID", 0),
+                    new XAttribute("Name", "No Style"),
+                    new XAttribute("NameU", "No Style"),
+                    new XElement(ns + "Cell", new XAttribute("N", "EnableLineProps"), new XAttribute("V", 1)),
+                    new XElement(ns + "Cell", new XAttribute("N", "EnableFillProps"), new XAttribute("V", 1)),
+                    new XElement(ns + "Cell", new XAttribute("N", "EnableTextProps"), new XAttribute("V", 1)),
+                    new XElement(ns + "Cell", new XAttribute("N", "LineWeight"), new XAttribute("V", "0.01041666666666667")),
+                    new XElement(ns + "Cell", new XAttribute("N", "LineColor"), new XAttribute("V", "0")),
+                    new XElement(ns + "Cell", new XAttribute("N", "LinePattern"), new XAttribute("V", "1")),
+                    new XElement(ns + "Cell", new XAttribute("N", "FillForegnd"), new XAttribute("V", "1")),
+                    new XElement(ns + "Cell", new XAttribute("N", "FillPattern"), new XAttribute("V", "1"))),
+                new XElement(ns + "StyleSheet",
+                    new XAttribute("ID", 1),
+                    new XAttribute("Name", "Normal"),
+                    new XAttribute("NameU", "Normal"),
+                    new XAttribute("BasedOn", 0),
+                    new XAttribute("LineStyle", 0),
+                    new XAttribute("FillStyle", 0),
+                    new XAttribute("TextStyle", 0),
+                    new XElement(ns + "Cell", new XAttribute("N", "LinePattern"), new XAttribute("V", 1)),
+                    new XElement(ns + "Cell", new XAttribute("N", "LineColor"), new XAttribute("V", "#000000")),
+                    new XElement(ns + "Cell", new XAttribute("N", "FillPattern"), new XAttribute("V", 1)),
+                    new XElement(ns + "Cell", new XAttribute("N", "FillForegnd"), new XAttribute("V", "#FFFFFF"))),
+                new XElement(ns + "StyleSheet",
+                    new XAttribute("ID", 2),
+                    new XAttribute("Name", "Connector"),
+                    new XAttribute("NameU", "Connector"),
+                    new XAttribute("BasedOn", 1),
+                    new XAttribute("LineStyle", 0),
+                    new XAttribute("FillStyle", 0),
+                    new XAttribute("TextStyle", 0),
+                    new XElement(ns + "Cell", new XAttribute("N", "EndArrow"), new XAttribute("V", 0))));
 
             return new XDocument(
                 new XElement(ns + "VisioDocument",
                     settings,
                     new XElement(ns + "Colors"),
                     new XElement(ns + "FaceNames"),
-                    new XElement(ns + "StyleSheets")));
+                    styleSheets));
         }
 
         /// <summary>
         /// Saves the document to a <c>.vsdx</c> package.
         /// </summary>
+        /// <summary>
+        /// Saves the document to a file.
+        /// </summary>
+        /// <param name="filePath">Path to save the file.</param>
+        public void Save() {
+            if (string.IsNullOrEmpty(_filePath)) {
+                throw new InvalidOperationException("File path is not set.");
+            }
+            SaveInternal(_filePath);
+        }
+
         public void Save(string filePath) {
+            _filePath = filePath;
+            SaveInternal(filePath);
+        }
+
+        private void SaveInternal(string filePath) {
             bool includeTheme = Theme != null;
             int masterCount;
             using (Package package = Package.Open(filePath, FileMode.Create)) {
@@ -410,6 +489,24 @@ namespace OfficeIMO.Visio {
                     CloseOutput = true,
                     Indent = false,
                 };
+                using (XmlWriter writer = XmlWriter.Create(corePart.GetStream(FileMode.Create, FileAccess.Write), settings)) {
+                    writer.WriteStartDocument();
+                    writer.WriteStartElement("cp", "coreProperties", "http://schemas.openxmlformats.org/package/2006/metadata/core-properties");
+                    writer.WriteAttributeString("xmlns", "dc", null, "http://purl.org/dc/elements/1.1/");
+                    writer.WriteAttributeString("xmlns", "dcterms", null, "http://purl.org/dc/terms/");
+                    writer.WriteAttributeString("xmlns", "dcmitype", null, "http://purl.org/dc/dcmitype/");
+                    writer.WriteAttributeString("xmlns", "xsi", null, "http://www.w3.org/2001/XMLSchema-instance");
+                    writer.WriteEndElement();
+                    writer.WriteEndDocument();
+                }
+
+                if (!string.IsNullOrEmpty(Title)) {
+                    package.PackageProperties.Title = Title;
+                }
+                if (!string.IsNullOrEmpty(Author)) {
+                    package.PackageProperties.Creator = Author;
+                }
+
                 const string ns = VisioNamespace;
 
                 string ToVisioString(double value) {
@@ -432,17 +529,7 @@ namespace OfficeIMO.Visio {
                 }
 
                 void WriteXForm(XmlWriter writer, VisioShape shape, double width, double height) {
-                    writer.WriteStartElement("XForm", ns);
-                    writer.WriteElementString("PinX", ns, ToVisioString(shape.PinX));
-                    writer.WriteElementString("PinY", ns, ToVisioString(shape.PinY));
-                    writer.WriteElementString("Width", ns, ToVisioString(width));
-                    writer.WriteElementString("Height", ns, ToVisioString(height));
-                    writer.WriteElementString("LocPinX", ns, ToVisioString(shape.LocPinX));
-                    writer.WriteElementString("LocPinY", ns, ToVisioString(shape.LocPinY));
-                    writer.WriteElementString("Angle", ns, ToVisioString(shape.Angle));
-                    writer.WriteEndElement();
-
-                    // Visio expects these values as cell entries as well
+                    // Write as cells only, not as XForm element
                     WriteCell(writer, "PinX", shape.PinX);
                     WriteCell(writer, "PinY", shape.PinY);
                     WriteCell(writer, "Width", width);
@@ -452,48 +539,67 @@ namespace OfficeIMO.Visio {
                     WriteCell(writer, "Angle", shape.Angle);
                 }
 
+                void WriteXForm1D(XmlWriter writer, double beginX, double beginY, double endX, double endY) {
+                    writer.WriteStartElement("XForm1D", ns);
+                    writer.WriteElementString("BeginX", ns, ToVisioString(beginX));
+                    writer.WriteElementString("BeginY", ns, ToVisioString(beginY));
+                    writer.WriteElementString("EndX", ns, ToVisioString(endX));
+                    writer.WriteElementString("EndY", ns, ToVisioString(endY));
+                    writer.WriteEndElement();
+
+                    WriteCell(writer, "BeginX", beginX);
+                    WriteCell(writer, "BeginY", beginY);
+                    WriteCell(writer, "EndX", endX);
+                    WriteCell(writer, "EndY", endY);
+                }
+
                 void WriteRectangleGeometry(XmlWriter writer, double width, double height) {
-                    writer.WriteStartElement("Geom", ns);
-                    writer.WriteStartElement("Cell", ns);
-                    writer.WriteAttributeString("N", "NoFill");
-                    writer.WriteAttributeString("V", "0");
+                    writer.WriteStartElement("Section", ns);
+                    writer.WriteAttributeString("N", "Geometry");
+                    writer.WriteAttributeString("IX", "0");
+                    
+                    // Add geometry properties as Row elements
+                    writer.WriteStartElement("Row", ns);
+                    writer.WriteAttributeString("T", "Geometry");
+                    WriteCellValue(writer, "NoFill", "0");
+                    WriteCellValue(writer, "NoLine", "0");
+                    WriteCellValue(writer, "NoShow", "0");
+                    WriteCellValue(writer, "NoSnap", "0");
+                    WriteCellValue(writer, "NoQuickDrag", "0");
                     writer.WriteEndElement();
-                    writer.WriteStartElement("Cell", ns);
-                    writer.WriteAttributeString("N", "NoLine");
-                    writer.WriteAttributeString("V", "0");
+                    
+                    // MoveTo
+                    writer.WriteStartElement("Row", ns);
+                    writer.WriteAttributeString("T", "MoveTo");
+                    WriteCell(writer, "X", 0);
+                    WriteCell(writer, "Y", 0);
                     writer.WriteEndElement();
-                    writer.WriteStartElement("Cell", ns);
-                    writer.WriteAttributeString("N", "NoShow");
-                    writer.WriteAttributeString("V", "0");
+                    
+                    // LineTo points
+                    writer.WriteStartElement("Row", ns);
+                    writer.WriteAttributeString("T", "LineTo");
+                    WriteCell(writer, "X", width);
+                    WriteCell(writer, "Y", 0);
                     writer.WriteEndElement();
-                    writer.WriteStartElement("Cell", ns);
-                    writer.WriteAttributeString("N", "NoSnap");
-                    writer.WriteAttributeString("V", "0");
+                    
+                    writer.WriteStartElement("Row", ns);
+                    writer.WriteAttributeString("T", "LineTo");
+                    WriteCell(writer, "X", width);
+                    WriteCell(writer, "Y", height);
                     writer.WriteEndElement();
-                    writer.WriteStartElement("Cell", ns);
-                    writer.WriteAttributeString("N", "NoQuickDrag");
-                    writer.WriteAttributeString("V", "0");
+                    
+                    writer.WriteStartElement("Row", ns);
+                    writer.WriteAttributeString("T", "LineTo");
+                    WriteCell(writer, "X", 0);
+                    WriteCell(writer, "Y", height);
                     writer.WriteEndElement();
-                    writer.WriteStartElement("MoveTo", ns);
-                    writer.WriteAttributeString("X", ToVisioString(0));
-                    writer.WriteAttributeString("Y", ToVisioString(0));
+                    
+                    writer.WriteStartElement("Row", ns);
+                    writer.WriteAttributeString("T", "LineTo");
+                    WriteCell(writer, "X", 0);
+                    WriteCell(writer, "Y", 0);
                     writer.WriteEndElement();
-                    writer.WriteStartElement("LineTo", ns);
-                    writer.WriteAttributeString("X", ToVisioString(width));
-                    writer.WriteAttributeString("Y", ToVisioString(0));
-                    writer.WriteEndElement();
-                    writer.WriteStartElement("LineTo", ns);
-                    writer.WriteAttributeString("X", ToVisioString(width));
-                    writer.WriteAttributeString("Y", ToVisioString(height));
-                    writer.WriteEndElement();
-                    writer.WriteStartElement("LineTo", ns);
-                    writer.WriteAttributeString("X", ToVisioString(0));
-                    writer.WriteAttributeString("Y", ToVisioString(height));
-                    writer.WriteEndElement();
-                    writer.WriteStartElement("LineTo", ns);
-                    writer.WriteAttributeString("X", ToVisioString(0));
-                    writer.WriteAttributeString("Y", ToVisioString(0));
-                    writer.WriteEndElement();
+                    
                     writer.WriteEndElement();
                 }
 
@@ -601,16 +707,16 @@ namespace OfficeIMO.Visio {
                             writer.WriteAttributeString("Name", masterShapeName);
                             writer.WriteAttributeString("NameU", master.NameU);
                             writer.WriteAttributeString("Type", "Shape");
-                            writer.WriteAttributeString("LineStyle", "3");
-                            writer.WriteAttributeString("FillStyle", "3");
-                            writer.WriteAttributeString("TextStyle", "3");
+                            writer.WriteAttributeString("LineStyle", "0");
+                            writer.WriteAttributeString("FillStyle", "0");
+                            writer.WriteAttributeString("TextStyle", "0");
                             WriteXForm(writer, s, masterWidth, masterHeight);
                             // Always specify line weight so that shapes are visible
                             WriteCell(writer, "LineWeight", s.LineWeight);
-                            WriteCell(writer, "LinePattern", 1);
-                            WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
-                            WriteCell(writer, "FillPattern", 1);
-                            WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
+                            WriteCell(writer, "LinePattern", s.LinePattern);
+                            WriteCellValue(writer, "LineColor", s.LineColor.ToVisioHex());
+                            WriteCell(writer, "FillPattern", s.FillPattern);
+                            WriteCellValue(writer, "FillForegnd", s.FillColor.ToVisioHex());
                             WriteRectangleGeometry(writer, masterWidth, masterHeight);
                             WriteConnectionSection(writer, s.ConnectionPoints);
                             WriteDataSection(writer, s.Data);
@@ -642,17 +748,6 @@ namespace OfficeIMO.Visio {
 
                 using (Stream stream = documentPart.GetStream(FileMode.Create, FileAccess.Write)) {
                     CreateVisioDocumentXml(_requestRecalcOnOpen).Save(stream);
-                }
-
-                using (XmlWriter writer = XmlWriter.Create(corePart.GetStream(FileMode.Create, FileAccess.Write), settings)) {
-                    writer.WriteStartDocument();
-                    writer.WriteStartElement("cp", "coreProperties", "http://schemas.openxmlformats.org/package/2006/metadata/core-properties");
-                    writer.WriteAttributeString("xmlns", "dc", null, "http://purl.org/dc/elements/1.1/");
-                    writer.WriteAttributeString("xmlns", "dcterms", null, "http://purl.org/dc/terms/");
-                    writer.WriteAttributeString("xmlns", "dcmitype", null, "http://purl.org/dc/dcmitype/");
-                    writer.WriteAttributeString("xmlns", "xsi", null, "http://www.w3.org/2001/XMLSchema-instance");
-                    writer.WriteEndElement();
-                    writer.WriteEndDocument();
                 }
 
                 using (XmlWriter writer = XmlWriter.Create(appPart.GetStream(FileMode.Create, FileAccess.Write), settings)) {
@@ -716,9 +811,9 @@ namespace OfficeIMO.Visio {
                         if (formula != null) writer.WriteAttributeString("F", formula);
                         writer.WriteEndElement();
                     }
-                    bool useUnits = page.PageWidth != 8.26771653543307 || page.PageHeight != 11.69291338582677;
-                    WritePageCell("PageWidth", page.PageWidth, useUnits ? "MM" : null);
-                    WritePageCell("PageHeight", page.PageHeight, useUnits ? "MM" : null);
+                    bool useUnits = page.Width != 8.26771653543307 || page.Height != 11.69291338582677;
+                    WritePageCell("PageWidth", page.Width, useUnits ? "MM" : null);
+                    WritePageCell("PageHeight", page.Height, useUnits ? "MM" : null);
                     WritePageCell("ShdwOffsetX", 0.1181102362204724, useUnits ? "MM" : null);
                     WritePageCell("ShdwOffsetY", -0.1181102362204724, useUnits ? "MM" : null);
                     WritePageCell("PageScale", 0.03937007874015748, "MM");
@@ -785,6 +880,9 @@ namespace OfficeIMO.Visio {
                             writer.WriteAttributeString("Name", shapeName);
                             writer.WriteAttributeString("NameU", shape.NameU ?? shape.Master?.NameU ?? shapeName);
                             writer.WriteAttributeString("Type", "Shape");
+                            writer.WriteAttributeString("LineStyle", "0");
+                            writer.WriteAttributeString("FillStyle", "0");
+                            writer.WriteAttributeString("TextStyle", "0");
                             if (shape.Master != null) {
                                 writer.WriteAttributeString("Master", shape.Master.Id);
                                 double width = shape.Width;
@@ -812,17 +910,14 @@ namespace OfficeIMO.Visio {
                                 WriteXForm(writer, shape, width, height);
                                 // Always include line weight to avoid invisible shapes
                                 WriteCell(writer, "LineWeight", shape.LineWeight);
-                                WriteCell(writer, "LinePattern", 1);
-                                WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
-                                WriteCell(writer, "FillPattern", 1);
-                                WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
+                                WriteCell(writer, "LinePattern", shape.LinePattern);
+                                WriteCellValue(writer, "LineColor", shape.LineColor.ToVisioHex());
+                                WriteCell(writer, "FillPattern", shape.FillPattern);
+                                WriteCellValue(writer, "FillForegnd", shape.FillColor.ToVisioHex());
                                 WriteConnectionSection(writer, shape.ConnectionPoints);
                                 WriteDataSection(writer, shape.Data);
                                 WriteTextElement(writer, shape.Text);
                             } else {
-                                writer.WriteAttributeString("LineStyle", "3");
-                                writer.WriteAttributeString("FillStyle", "3");
-                                writer.WriteAttributeString("TextStyle", "3");
                                 double width = shape.Width > 0 ? shape.Width : 1;
                                 double height = shape.Height > 0 ? shape.Height : 1;
                                 shape.Width = width;
@@ -836,10 +931,10 @@ namespace OfficeIMO.Visio {
                                 WriteXForm(writer, shape, width, height);
                                 // Always include line weight to avoid invisible shapes
                                 WriteCell(writer, "LineWeight", shape.LineWeight);
-                                WriteCell(writer, "LinePattern", 1);
-                                WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
-                                WriteCell(writer, "FillPattern", 1);
-                                WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
+                                WriteCell(writer, "LinePattern", shape.LinePattern);
+                                WriteCellValue(writer, "LineColor", shape.LineColor.ToVisioHex());
+                                WriteCell(writer, "FillPattern", shape.FillPattern);
+                                WriteCellValue(writer, "FillForegnd", shape.FillColor.ToVisioHex());
                                 WriteRectangleGeometry(writer, width, height);
                                 WriteConnectionSection(writer, shape.ConnectionPoints);
                                 WriteDataSection(writer, shape.Data);
@@ -877,32 +972,45 @@ namespace OfficeIMO.Visio {
                               writer.WriteAttributeString("Name", "Connector");
                               writer.WriteAttributeString("NameU", "Connector");
                               writer.WriteAttributeString("Type", "Shape");
-                              writer.WriteAttributeString("LineStyle", "3");
-                              writer.WriteAttributeString("FillStyle", "3");
-                              writer.WriteAttributeString("TextStyle", "3");
-                              WriteCell(writer, "LineWeight", 0.0138889);
-                              WriteCell(writer, "LinePattern", 1);
-                              WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
-                              WriteCell(writer, "FillPattern", 1);
-                              WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
+                              writer.WriteAttributeString("LineStyle", "0");
+                              writer.WriteAttributeString("FillStyle", "0");
+                              writer.WriteAttributeString("TextStyle", "0");
+                              WriteXForm1D(writer, startX, startY, endX, endY);
+                              WriteCell(writer, "LineWeight", connector.LineWeight);
+                              WriteCell(writer, "LinePattern", connector.LinePattern);
+                              WriteCellValue(writer, "LineColor", connector.LineColor.ToVisioHex());
+                              WriteCell(writer, "FillPattern", 0); // Connectors typically have no fill
+                              WriteCellValue(writer, "FillForegnd", Color.Transparent.ToVisioHex());
                               WriteCell(writer, "OneD", 1);
                               if (connector.EndArrow.HasValue) {
                                   WriteCell(writer, "EndArrow", connector.EndArrow.Value);
                               }
-                              writer.WriteStartElement("Geom", ns);
-                            writer.WriteStartElement("MoveTo", ns);
-                            writer.WriteAttributeString("X", ToVisioString(startX));
-                            writer.WriteAttributeString("Y", ToVisioString(startY));
-                            writer.WriteEndElement();
-                            writer.WriteStartElement("LineTo", ns);
-                            writer.WriteAttributeString("X", ToVisioString(startX));
-                            writer.WriteAttributeString("Y", ToVisioString(endY));
-                            writer.WriteEndElement();
-                            writer.WriteStartElement("LineTo", ns);
-                            writer.WriteAttributeString("X", ToVisioString(endX));
-                            writer.WriteAttributeString("Y", ToVisioString(endY));
-                            writer.WriteEndElement();
-                            writer.WriteEndElement();
+                              writer.WriteStartElement("Section", ns);
+                              writer.WriteAttributeString("N", "Geometry");
+                              writer.WriteAttributeString("IX", "0");
+                              
+                              // MoveTo
+                              writer.WriteStartElement("Row", ns);
+                              writer.WriteAttributeString("T", "MoveTo");
+                              WriteCell(writer, "X", startX);
+                              WriteCell(writer, "Y", startY);
+                              writer.WriteEndElement();
+                              
+                              // LineTo to intermediate point
+                              writer.WriteStartElement("Row", ns);
+                              writer.WriteAttributeString("T", "LineTo");
+                              WriteCell(writer, "X", startX);
+                              WriteCell(writer, "Y", endY);
+                              writer.WriteEndElement();
+                              
+                              // LineTo to end point
+                              writer.WriteStartElement("Row", ns);
+                              writer.WriteAttributeString("T", "LineTo");
+                              WriteCell(writer, "X", endX);
+                              WriteCell(writer, "Y", endY);
+                              writer.WriteEndElement();
+                              
+                              writer.WriteEndElement();
                             writer.WriteEndElement();
                         }
 

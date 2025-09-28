@@ -96,18 +96,18 @@ namespace OfficeIMO.Excel.Fluent {
 
         public SheetBuilder Cell(int row, int column, object? value = null, string? formula = null, string? numberFormat = null) {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
-            if (row <= 0) throw new ArgumentOutOfRangeException(nameof(row));
-            if (column <= 0) throw new ArgumentOutOfRangeException(nameof(column));
+            if (row < 1) throw new ArgumentOutOfRangeException(nameof(row));
+            if (column < 1) throw new ArgumentOutOfRangeException(nameof(column));
             Sheet.Cell(row, column, value, formula, numberFormat);
             return this;
         }
 
         public SheetBuilder Range(int fromRow, int fromCol, int toRow, int toCol, object[,]? values = null) {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
-            if (fromRow <= 0) throw new ArgumentOutOfRangeException(nameof(fromRow));
-            if (fromCol <= 0) throw new ArgumentOutOfRangeException(nameof(fromCol));
-            if (toRow <= 0) throw new ArgumentOutOfRangeException(nameof(toRow));
-            if (toCol <= 0) throw new ArgumentOutOfRangeException(nameof(toCol));
+            if (fromRow < 1) throw new ArgumentOutOfRangeException(nameof(fromRow));
+            if (fromCol < 1) throw new ArgumentOutOfRangeException(nameof(fromCol));
+            if (toRow < 1) throw new ArgumentOutOfRangeException(nameof(toRow));
+            if (toCol < 1) throw new ArgumentOutOfRangeException(nameof(toCol));
             if (toRow < fromRow) throw new ArgumentOutOfRangeException(nameof(toRow));
             if (toCol < fromCol) throw new ArgumentOutOfRangeException(nameof(toCol));
 
@@ -130,9 +130,25 @@ namespace OfficeIMO.Excel.Fluent {
             return this;
         }
 
-        public SheetBuilder Column(Action<ColumnBuilder> action) {
+        public SheetBuilder Range(string reference, Action<RangeBuilder> action) {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
-            var builder = new ColumnBuilder(Sheet);
+            if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentNullException(nameof(reference));
+
+            var parts = reference.Split(':');
+            var start = parts[0];
+            var end = parts.Length > 1 ? parts[1] : parts[0];
+
+            var (fromRow, fromCol) = ParseCellReference(start);
+            var (toRow, toCol) = ParseCellReference(end);
+
+            var builder = new RangeBuilder(Sheet, fromRow, fromCol, toRow, toCol);
+            action(builder);
+            return this;
+        }
+
+        public SheetBuilder Columns(Action<ColumnCollectionBuilder> action) {
+            if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
+            var builder = new ColumnCollectionBuilder(Sheet);
             action(builder);
             return this;
         }
@@ -169,6 +185,17 @@ namespace OfficeIMO.Excel.Fluent {
             return this;
         }
 
+        /// <summary>
+        /// Freezes the specified number of rows and columns on the current sheet.
+        /// </summary>
+        /// <param name="topRows">Number of rows at the top to freeze.</param>
+        /// <param name="leftCols">Number of columns on the left to freeze.</param>
+        public SheetBuilder Freeze(int topRows = 0, int leftCols = 0) {
+            if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
+            Sheet.Freeze(topRows, leftCols);
+            return this;
+        }
+
         public SheetBuilder AutoFit(bool columns, bool rows) {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
             if (columns) {
@@ -202,6 +229,21 @@ namespace OfficeIMO.Excel.Fluent {
                 dividend = (dividend - modulo) / 26;
             }
             return columnName;
+        }
+
+        private static (int Row, int Column) ParseCellReference(string reference) {
+            int i = 0;
+            int col = 0;
+            while (i < reference.Length && char.IsLetter(reference[i])) {
+                col = col * 26 + (char.ToUpperInvariant(reference[i]) - 'A' + 1);
+                i++;
+            }
+            if (col == 0 || i >= reference.Length) throw new ArgumentException("Invalid cell reference", nameof(reference));
+            var rowPart = reference.Substring(i);
+            if (!int.TryParse(rowPart, out int row) || row <= 0) {
+                throw new ArgumentException("Invalid cell reference", nameof(reference));
+            }
+            return (row, col);
         }
     }
 }

@@ -333,6 +333,43 @@ namespace OfficeIMO.Excel {
             worksheet.Save();
         }
 
+        public void SetColumnWidth(int columnIndex, double width) {
+            WriteLock(() => {
+                var worksheet = _worksheetPart.Worksheet;
+                var columns = worksheet.GetFirstChild<Columns>();
+                if (columns == null) {
+                    columns = worksheet.InsertAt(new Columns(), 0);
+                }
+                var column = columns.Elements<Column>()
+                    .FirstOrDefault(c => c.Min != null && c.Max != null && c.Min.Value <= (uint)columnIndex && c.Max.Value >= (uint)columnIndex);
+                if (column == null) {
+                    column = new Column { Min = (uint)columnIndex, Max = (uint)columnIndex };
+                    columns.Append(column);
+                }
+                column.Width = width;
+                column.CustomWidth = true;
+                worksheet.Save();
+            });
+        }
+
+        public void SetColumnHidden(int columnIndex, bool hidden) {
+            WriteLock(() => {
+                var worksheet = _worksheetPart.Worksheet;
+                var columns = worksheet.GetFirstChild<Columns>();
+                if (columns == null) {
+                    columns = worksheet.InsertAt(new Columns(), 0);
+                }
+                var column = columns.Elements<Column>()
+                    .FirstOrDefault(c => c.Min != null && c.Max != null && c.Min.Value <= (uint)columnIndex && c.Max.Value >= (uint)columnIndex);
+                if (column == null) {
+                    column = new Column { Min = (uint)columnIndex, Max = (uint)columnIndex };
+                    columns.Append(column);
+                }
+                column.Hidden = hidden ? true : (bool?)null;
+                worksheet.Save();
+            });
+        }
+
         public void AutoFitRow(int rowIndex) {
             var worksheet = _worksheetPart.Worksheet;
             SheetData sheetData = worksheet.GetFirstChild<SheetData>();
@@ -374,6 +411,60 @@ namespace OfficeIMO.Excel {
             }
 
             worksheet.Save();
+        }
+
+        /// <summary>
+        /// Freezes panes on the worksheet.
+        /// </summary>
+        /// <param name="topRows">Number of rows at the top to freeze.</param>
+        /// <param name="leftCols">Number of columns on the left to freeze.</param>
+        public void Freeze(int topRows = 0, int leftCols = 0) {
+            WriteLock(() => {
+                Worksheet worksheet = _worksheetPart.Worksheet;
+                SheetViews sheetViews = worksheet.GetFirstChild<SheetViews>();
+                if (sheetViews == null) {
+                    sheetViews = worksheet.AppendChild(new SheetViews());
+                }
+
+                SheetView sheetView = sheetViews.GetFirstChild<SheetView>();
+                if (sheetView == null) {
+                    sheetView = new SheetView { WorkbookViewId = 0U };
+                    sheetViews.Append(sheetView);
+                }
+
+                sheetView.RemoveAllChildren<Pane>();
+                sheetView.RemoveAllChildren<Selection>();
+
+                if (topRows > 0 || leftCols > 0) {
+                    Pane pane = new Pane { State = PaneStateValues.Frozen };
+                    if (topRows > 0) {
+                        pane.HorizontalSplit = topRows;
+                    }
+                    if (leftCols > 0) {
+                        pane.VerticalSplit = leftCols;
+                    }
+
+                    pane.TopLeftCell = GetColumnName(leftCols + 1) + (topRows + 1).ToString(CultureInfo.InvariantCulture);
+
+                    if (topRows > 0 && leftCols > 0) {
+                        pane.ActivePane = PaneValues.BottomRight;
+                        sheetView.Append(pane);
+                        sheetView.Append(new Selection { Pane = PaneValues.TopRight });
+                        sheetView.Append(new Selection { Pane = PaneValues.BottomLeft });
+                        sheetView.Append(new Selection { Pane = PaneValues.BottomRight });
+                    } else if (topRows > 0) {
+                        pane.ActivePane = PaneValues.BottomLeft;
+                        sheetView.Append(pane);
+                        sheetView.Append(new Selection { Pane = PaneValues.BottomLeft });
+                    } else {
+                        pane.ActivePane = PaneValues.TopRight;
+                        sheetView.Append(pane);
+                        sheetView.Append(new Selection { Pane = PaneValues.TopRight });
+                    }
+                }
+
+                worksheet.Save();
+            });
         }
 
         public void AddAutoFilter(string range, Dictionary<uint, IEnumerable<string>> filterCriteria = null) {

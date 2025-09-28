@@ -14,23 +14,13 @@ namespace OfficeIMO.Examples {
             string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "Documents");
             Setup(folderPath);
 
-            // Visio
+            // Visio - Core Examples
             OfficeIMO.Examples.Visio.BasicVisioDocument.Example_BasicVisio(folderPath, false);
-            OfficeIMO.Examples.Visio.EmptyVisioDocument.Example_EmptyVisio(folderPath, false);
             OfficeIMO.Examples.Visio.ConnectRectangles.Example_ConnectRectangles(folderPath, false);
             OfficeIMO.Examples.Visio.ConnectionPoints.Example_ConnectionPoints(folderPath, false);
-            OfficeIMO.Examples.Visio.DocumentProperties.Example_DocumentProperties(folderPath, false);
-            OfficeIMO.Examples.Visio.DocumentStructure.Example_DocumentStructure(folderPath, false);
-            OfficeIMO.Examples.Visio.PageViewSettings.Example_PageViewSettings(folderPath, false);
-            OfficeIMO.Examples.Visio.ShapeProperties.Example_ShapeProperties(folderPath, false);
-            OfficeIMO.Examples.Visio.ShapeDataWithText.Example_ShapeDataWithText(folderPath, false);
-            OfficeIMO.Examples.Visio.RotatedShapeBounds.Example_RotatedShapeBounds(folderPath, false);
+            OfficeIMO.Examples.Visio.ComprehensiveColoredShapes.Example_ComprehensiveColoredShapes(folderPath, false);
             OfficeIMO.Examples.Visio.ReadVisioDocument.Example_ReadVisio(folderPath, false);
-            OfficeIMO.Examples.Visio.ThemeAndWindows.Example_ThemeAndWindows(folderPath, false);
-            OfficeIMO.Examples.Visio.AllNamedShapesHaveMasters.Run();
-            OfficeIMO.Examples.Visio.MasterShapes.Run();
-            OfficeIMO.Examples.Visio.RectangleStyles.Example_RectangleStyles(folderPath, false);
-            OfficeIMO.Examples.Visio.ConnectorStyles.Example_ConnectorStyles(folderPath, false);
+
 
             // Excel/BasicExcelFunctionality
             OfficeIMO.Examples.Excel.BasicExcelFunctionality.BasicExcel_Example1(folderPath, false);
@@ -44,6 +34,8 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Excel.AddTable.Example(folderPath, false);
             // Excel/AutoFilter
             OfficeIMO.Examples.Excel.AutoFilter.Example(folderPath, false);
+            // Excel/Freeze
+            OfficeIMO.Examples.Excel.Freeze.Example(folderPath, false);
             // Excel/ConditionalFormatting
             OfficeIMO.Examples.Excel.ConditionalFormatting.Example(folderPath, false);
             // Excel/ConcurrentWrites
@@ -56,6 +48,7 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Excel.CellValuesParallel.Example(folderPath, false);
             // Excel/Fluent
             OfficeIMO.Examples.Excel.FluentWorkbook.Example_FluentWorkbook(folderPath, false);
+            OfficeIMO.Examples.Excel.FluentWorkbook.Example_RangeBuilder(folderPath, false);
             // PowerPoint
             OfficeIMO.Examples.PowerPoint.BasicPowerPointDocument.Example_BasicPowerPoint(folderPath, false);
             OfficeIMO.Examples.PowerPoint.AdvancedPowerPoint.Example_AdvancedPowerPoint(folderPath, false);
