@@ -82,7 +82,7 @@ namespace OfficeIMO.Word {
 
             _drawing = new Drawing(inline);
             _paragraph.VerifyRun();
-            _paragraph._run.Append(_drawing);
+            _paragraph._run?.Append(_drawing);
         }
 
         // All SmartArt parts are created in SmartArtBuiltIn.
@@ -99,8 +99,10 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Returns the text of the node at the given index (0-based).
+        /// Returns the text of the node at the specified 0-based index.
         /// </summary>
+        /// <param name="index">The 0-based position of the SmartArt node whose text should be retrieved.</param>
+        /// <returns>The concatenated text content of the targeted node, or an empty string when the node has no text.</returns>
         public string GetNodeText(int index) {
             var (xdoc, ns, paras) = LoadNodeParagraphs();
             if (index < 0 || index >= paras.Count) throw new ArgumentOutOfRangeException(nameof(index));
@@ -111,8 +113,10 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Sets the text of the node at the given index (0-based). Preserves end paragraph run properties.
+        /// Sets the text of the node at the specified 0-based index while preserving the paragraph end run properties.
         /// </summary>
+        /// <param name="index">The 0-based position of the SmartArt node whose content should be replaced.</param>
+        /// <param name="text">The replacement text to apply to the node.</param>
         public void SetNodeText(int index, string text) {
             var (xdoc, ns, paras, dataPart) = LoadNodeParagraphsWithPart();
             if (index < 0 || index >= paras.Count) throw new ArgumentOutOfRangeException(nameof(index));
@@ -121,9 +125,10 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Replaces texts of all nodes in order. If more texts provided than nodes, extras are ignored.
-        /// If fewer texts provided, remaining nodes are left unchanged.
+        /// Replaces node texts sequentially starting at index 0.
+        /// If more texts are provided than nodes, extras are ignored. If fewer texts are provided, remaining nodes are left unchanged.
         /// </summary>
+        /// <param name="texts">The ordered replacement strings to apply to each node in turn.</param>
         public void ReplaceTexts(IEnumerable<string> texts) {
             var (xdoc, ns, paras, dataPart) = LoadNodeParagraphsWithPart();
             int i = 0;
@@ -136,13 +141,51 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Convenience overload for replacing texts.
+        /// Convenience overload for replacing node texts sequentially using a parameter array.
         /// </summary>
+        /// <param name="texts">The ordered replacement strings to apply to each node in turn.</param>
         public void ReplaceTexts(params string[] texts) => ReplaceTexts((IEnumerable<string>)texts);
 
         /// <summary>
-        /// Sets node text with optional basic formatting and newline support.
+        /// Replaces node texts sequentially while applying the same formatting to every replacement value.
+        /// If more texts are provided than nodes, extras are ignored. If fewer are provided, remaining nodes are unchanged.
         /// </summary>
+        /// <param name="texts">The ordered replacement strings to apply to each node in turn.</param>
+        /// <param name="bold">True to render each replacement in bold; otherwise false.</param>
+        /// <param name="italic">True to render each replacement in italics; otherwise false.</param>
+        /// <param name="underline">True to underline each replacement; otherwise false.</param>
+        /// <param name="colorHex">An optional RGB color value (for example, "FF0000") applied to each replacement, or <c>null</c> to keep the existing color.</param>
+        /// <param name="sizePt">An optional font size in points applied to each replacement, or <c>null</c> to keep the existing size.</param>
+        public void ReplaceTexts(IEnumerable<string> texts, bool bold, bool italic, bool underline, string? colorHex = null, double? sizePt = null) {
+            var (xdoc, ns, paras, dataPart) = LoadNodeParagraphsWithPart();
+            int i = 0;
+            foreach (var t in texts) {
+                if (i >= paras.Count) break;
+                ReplaceParagraphText(paras[i], ns.a, t, bold, italic, underline, colorHex, sizePt);
+                i++;
+            }
+            SaveDiagramData(dataPart, xdoc);
+        }
+
+        /// <summary>
+        /// Convenience overload that applies the specified formatting to each provided replacement string.
+        /// </summary>
+        /// <param name="bold">True to render each replacement in bold; otherwise false.</param>
+        /// <param name="italic">True to render each replacement in italics; otherwise false.</param>
+        /// <param name="underline">True to underline each replacement; otherwise false.</param>
+        /// <param name="colorHex">An optional RGB color value (for example, "FF0000") applied to each replacement, or <c>null</c> to keep the existing color.</param>
+        /// <param name="sizePt">An optional font size in points applied to each replacement, or <c>null</c> to keep the existing size.</param>
+        /// <param name="texts">The ordered replacement strings to apply to each node in turn.</param>
+        public void ReplaceTexts(bool bold, bool italic, bool underline, string? colorHex = null, double? sizePt = null, params string[] texts)
+            => ReplaceTexts((IEnumerable<string>)texts, bold, italic, underline, colorHex, sizePt);
+
+        /// <summary>
+        /// Sets the text of the node at the specified 0-based index while applying basic formatting options.
+        /// </summary>
+        /// <param name="index">The 0-based position of the SmartArt node whose content should be replaced.</param>
+        /// <param name="text">The replacement text to apply to the node.</param>
+        /// <param name="bold">True to render the new text in bold; otherwise false.</param>
+        /// <param name="italic">True to render the new text in italics; otherwise false.</param>
         public void SetNodeText(int index, string text, bool bold, bool italic) {
             var (xdoc, ns, paras, dataPart) = LoadNodeParagraphsWithPart();
             if (index < 0 || index >= paras.Count) throw new ArgumentOutOfRangeException(nameof(index));
@@ -151,8 +194,15 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Sets the text of the node with extended formatting.
+        /// Sets the text of the node at the specified 0-based index while applying extended formatting options.
         /// </summary>
+        /// <param name="index">The 0-based position of the SmartArt node whose content should be replaced.</param>
+        /// <param name="text">The replacement text to apply to the node.</param>
+        /// <param name="bold">True to render the new text in bold; otherwise false.</param>
+        /// <param name="italic">True to render the new text in italics; otherwise false.</param>
+        /// <param name="underline">True to underline the new text; otherwise false.</param>
+        /// <param name="colorHex">An optional RGB color value (for example, "FF0000") applied to the new text, or <c>null</c> to keep the existing color.</param>
+        /// <param name="sizePt">An optional font size in points applied to the new text, or <c>null</c> to keep the existing size.</param>
         public void SetNodeText(int index, string text, bool bold, bool italic, bool underline, string? colorHex, double? sizePt) {
             var (xdoc, ns, paras, dataPart) = LoadNodeParagraphsWithPart();
             if (index < 0 || index >= paras.Count) throw new ArgumentOutOfRangeException(nameof(index));
@@ -174,9 +224,9 @@ namespace OfficeIMO.Word {
             if (cxnLst == null) { cxnLst = new XElement(dgm + "cxnLst"); xdoc.Root?.Add(cxnLst); }
 
             // Find document node id
-            var docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string)p.Attribute("type") == "doc");
+            var docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string?)p.Attribute("type") == "doc");
             if (docPt == null) throw new InvalidOperationException("Cannot locate document point in SmartArt data model.");
-            var docId = (string)docPt.Attribute("modelId")!;
+            var docId = (string?)docPt.Attribute("modelId") ?? throw new InvalidOperationException("Document point missing modelId.");
 
             // Create node point
             string newId = "{" + Guid.NewGuid().ToString().ToUpper() + "}";
@@ -198,7 +248,7 @@ namespace OfficeIMO.Word {
             ptLst.Add(pt);
 
             // Determine next position
-            var existing = cxnLst.Elements(dgm + "cxn").Where(x => (string)x.Attribute("srcId") == docId).ToList();
+            var existing = cxnLst.Elements(dgm + "cxn").Where(x => (string?)x.Attribute("srcId") == docId).ToList();
             uint nextPos = existing.Any() ? (uint)(existing.Select(x => (int?)x.Attribute("srcOrd") ?? 0).DefaultIfEmpty(0).Max() + 1) : 0U;
 
             // Create connection
@@ -226,12 +276,12 @@ namespace OfficeIMO.Word {
             var cxnLst = xdoc.Descendants(dgm + "cxnLst").FirstOrDefault();
             if (ptLst == null) throw new InvalidOperationException("SmartArt data model missing ptLst.");
             if (cxnLst == null) { cxnLst = new XElement(dgm + "cxnLst"); xdoc.Root?.Add(cxnLst); }
-            var docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string)p.Attribute("type") == "doc");
+            var docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string?)p.Attribute("type") == "doc");
             if (docPt == null) throw new InvalidOperationException("Cannot locate document point in SmartArt data model.");
-            var docId = (string)docPt.Attribute("modelId")!;
+            var docId = (string?)docPt.Attribute("modelId") ?? throw new InvalidOperationException("Document point missing modelId.");
 
             // Resequence existing srcOrd >= index
-            var conns = cxnLst.Elements(dgm + "cxn").Where(c => (string)c.Attribute("srcId") == docId).OrderBy(c => (int?)c.Attribute("srcOrd") ?? 0).ToList();
+            var conns = cxnLst.Elements(dgm + "cxn").Where(c => (string?)c.Attribute("srcId") == docId).OrderBy(c => (int?)c.Attribute("srcOrd") ?? 0).ToList();
             if (index < 0 || index > conns.Count) throw new ArgumentOutOfRangeException(nameof(index));
             foreach (var c in conns.Where((c, i) => i >= index)) {
                 var cur = (int?)c.Attribute("srcOrd") ?? 0;
@@ -283,11 +333,12 @@ namespace OfficeIMO.Word {
                 return (typ == null || typ == "node") && (p.Element(dgm + "t") != null || p.Element(dgm + "txBody") != null);
             }).ToList();
             foreach (var pt in nodePts) pt.Remove();
-            var docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string)p.Attribute("type") == "doc");
+            XElement? docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string?)p.Attribute("type") == "doc");
             var docId = (string?)docPt?.Attribute("modelId");
-            var cxnLst = xdoc.Descendants(dgm + "cxnLst").FirstOrDefault();
+            XElement? cxnLst = xdoc.Descendants(dgm + "cxnLst").FirstOrDefault();
             if (docId != null && cxnLst != null) {
-                var toRemove = cxnLst.Elements(dgm + "cxn").Where(x => (string)x.Attribute("srcId") == docId).ToList();
+                var cxn = cxnLst!;
+                var toRemove = cxn.Elements(dgm + "cxn").Where(x => (string?)x.Attribute("srcId") == docId).ToList();
                 foreach (var c in toRemove) c.Remove();
             }
             SaveDiagramData(dataPart, xdoc);
@@ -309,15 +360,16 @@ namespace OfficeIMO.Word {
             var targetId = (string)targetPt.Attribute("modelId")!;
 
             // Remove cxn entries
-            var cxnLst = xdoc.Descendants(dgm + "cxnLst").FirstOrDefault();
+            XElement? cxnLst = xdoc.Descendants(dgm + "cxnLst").FirstOrDefault();
             if (cxnLst != null) {
-                var toRemove = cxnLst.Elements(dgm + "cxn").Where(x => (string)x.Attribute("destId") == targetId).ToList();
+                var cxn = cxnLst!;
+                var toRemove = cxn.Elements(dgm + "cxn").Where(x => (string?)x.Attribute("destId") == targetId).ToList();
                 foreach (var c in toRemove) c.Remove();
                 // Resequence srcOrd for remaining doc->child connections
-                var docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string)p.Attribute("type") == "doc");
+                XElement? docPt = xdoc.Descendants(dgm + "pt").FirstOrDefault(p => (string?)p.Attribute("type") == "doc");
                 var docId = (string?)docPt?.Attribute("modelId");
                 if (docId != null) {
-                    var conns = cxnLst.Elements(dgm + "cxn").Where(x => (string)x.Attribute("srcId") == docId).ToList();
+                    var conns = cxn.Elements(dgm + "cxn").Where(x => (string?)x.Attribute("srcId") == docId).ToList();
                     uint ord = 0;
                     foreach (var c in conns.OrderBy(c => (int?)c.Attribute("srcOrd") ?? 0)) {
                         c.SetAttributeValue("srcOrd", ord++);
@@ -330,6 +382,9 @@ namespace OfficeIMO.Word {
             SaveDiagramData(dataPart, xdoc);
         }
 
+        /// <summary>
+        /// Indicates whether this SmartArt type supports adding/removing/reordering nodes.
+        /// </summary>
         public bool CanModifyNodes => _type == SmartArtType.BasicProcess || _type == SmartArtType.Cycle;
 
         private (XDocument xdoc, (XNamespace dgm, XNamespace a) ns, List<XElement> paras) LoadNodeParagraphs() {
@@ -341,13 +396,13 @@ namespace OfficeIMO.Word {
             // Points with no @type and with a dgm:t (or dgm:txBody) are treated as editable nodes.
             var pts = xdoc.Descendants(dgm + "pt");
             var nodePts = pts.Where(p => {
-                var typ = (string)p.Attribute("type");
+                var typ = (string?)p.Attribute("type");
                 return (typ == null || typ == "node") && (p.Element(dgm + "t") != null || p.Element(dgm + "txBody") != null);
             });
             var paras = nodePts
                 .Select(p => (p.Element(dgm + "t") ?? p.Element(dgm + "txBody"))?.Element(a + "p"))
                 .Where(p => p != null)
-                .Cast<XElement>()
+                .Select(p => p!)
                 .ToList();
             return (xdoc, (dgm, a), paras);
         }
@@ -360,13 +415,13 @@ namespace OfficeIMO.Word {
 
             var pts = xdoc.Descendants(dgm + "pt");
             var nodePts = pts.Where(p => {
-                var typ = (string)p.Attribute("type");
+                var typ = (string?)p.Attribute("type");
                 return (typ == null || typ == "node") && (p.Element(dgm + "t") != null || p.Element(dgm + "txBody") != null);
             });
             var paras = nodePts
                 .Select(p => (p.Element(dgm + "t") ?? p.Element(dgm + "txBody"))?.Element(a + "p"))
                 .Where(p => p != null)
-                .Cast<XElement>()
+                .Select(p => p!)
                 .ToList();
             return (xdoc, (dgm, a), paras, dataPart);
         }
@@ -442,8 +497,9 @@ namespace OfficeIMO.Word {
             try {
                 var rel = _drawing.Descendants<RelationshipIds>().FirstOrDefault();
                 var main = _document._wordprocessingDocument.MainDocumentPart!;
-                if (rel?.LayoutPart == null) return null;
-                var part = main.GetPartById(rel.LayoutPart.Value) as DiagramLayoutDefinitionPart;
+                var layoutIdOpt = rel?.LayoutPart?.Value;
+                if (layoutIdOpt is not { Length: > 0 } layoutId) return null;
+                var part = main.GetPartById(layoutId) as DiagramLayoutDefinitionPart;
                 if (part?.LayoutDefinition == null) return null;
                 var uid = part.LayoutDefinition.UniqueId?.Value ?? string.Empty;
                 if (uid.EndsWith("/layout/cycle2")) return SmartArtType.Cycle;
@@ -475,9 +531,10 @@ namespace OfficeIMO.Word {
 
         private DiagramDataPart GetDiagramDataPart() {
             var rel = _drawing.Descendants<RelationshipIds>().FirstOrDefault();
-            if (rel == null || rel.DataPart == null) throw new InvalidOperationException("SmartArt data relationship not found.");
+            var dataIdOpt = rel?.DataPart?.Value;
+            if (dataIdOpt is not { Length: > 0 } dataId) throw new InvalidOperationException("SmartArt data relationship not found.");
             var mainPart = _document._wordprocessingDocument.MainDocumentPart!;
-            var part = mainPart.GetPartById(rel.DataPart.Value);
+            var part = mainPart.GetPartById(dataId);
             if (part is DiagramDataPart ddp) return ddp;
             throw new InvalidOperationException("DiagramDataPart not found for SmartArt.");
         }
