@@ -4,12 +4,17 @@ using System.IO;
 using System.IO.Packaging;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Word {
+    /// <summary>
+    /// Provides functionality for creating, loading and manipulating Word documents.
+    /// </summary>
     public partial class WordDocument : IDisposable {
         internal List<int> _listNumbersUsed = new List<int>();
         internal int? _tableOfContentIndex;
@@ -573,26 +578,55 @@ namespace OfficeIMO.Word {
             }
         }
 
+        /// <summary>
+        /// Collection of sections contained in the document.
+        /// </summary>
         public List<WordSection> Sections = new List<WordSection>();
 
+        /// <summary>
+        /// Path to the file backing this document.
+        /// </summary>
         public string FilePath { get; set; }
 
+        /// <summary>
+        /// Provides access to document settings.
+        /// </summary>
         public WordSettings Settings;
 
+        /// <summary>
+        /// Manages application related properties.
+        /// </summary>
         public ApplicationProperties ApplicationProperties;
+
+        /// <summary>
+        /// Provides access to built-in document properties.
+        /// </summary>
         public BuiltinDocumentProperties BuiltinDocumentProperties;
 
+        /// <summary>
+        /// Collection of custom document properties.
+        /// </summary>
         public readonly Dictionary<string, WordCustomProperty> CustomDocumentProperties = new Dictionary<string, WordCustomProperty>();
         /// <summary>
-        /// Collection of document variables accessible via <see cref="DocVariable"/> fields.
+        /// Collection of document variables accessible via <see cref="WordField.DocVariable"/> fields.
         /// </summary>
         public Dictionary<string, string> DocumentVariables { get; } = new Dictionary<string, string>();
 
+        /// <summary>
+        /// Indicates whether the document is saved automatically.
+        /// </summary>
         public bool AutoSave => _wordprocessingDocument.AutoSave;
 
 
         // we expose them to help with integration
+        /// <summary>
+        /// Underlying Open XML word processing document.
+        /// </summary>
         public WordprocessingDocument _wordprocessingDocument;
+
+        /// <summary>
+        /// Root document element.
+        /// </summary>
         public Document _document;
         //public WordCustomProperties _customDocumentProperties;
 
@@ -846,6 +880,46 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Asynchronously loads a <see cref="WordDocument"/> from the given file.
+        /// </summary>
+        /// <param name="filePath">Path to the file.</param>
+        /// <param name="readOnly">Open the document in read-only mode.</param>
+        /// <param name="autoSave">Enable auto-save on dispose.</param>
+        /// <returns>Loaded <see cref="WordDocument"/> instance.</returns>
+        /// <exception cref="FileNotFoundException">Thrown when the file does not exist.</exception>
+        public static async Task<WordDocument> LoadAsync(string filePath, bool readOnly = false, bool autoSave = false) {
+            if (filePath != null) {
+                if (!File.Exists(filePath)) {
+                    throw new FileNotFoundException("File doesn't exists", filePath);
+                }
+            }
+
+            using var fileStream = new FileStream(filePath, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous);
+            var memoryStream = new MemoryStream();
+            await fileStream.CopyToAsync(memoryStream);
+            memoryStream.Seek(0, SeekOrigin.Begin);
+
+            var openSettings = new OpenSettings {
+                AutoSave = autoSave
+            };
+
+            var wordDocument = WordprocessingDocument.Open(memoryStream, !readOnly, openSettings);
+
+            var word = new WordDocument {
+                FilePath = filePath,
+                _wordprocessingDocument = wordDocument,
+                _document = wordDocument.MainDocumentPart.Document
+            };
+
+            InitialiseStyleDefinitions(wordDocument, readOnly);
+            word.LoadDocument();
+            WordChart.InitializeAxisIdSeed(wordDocument);
+            WordChart.InitializeDocPrIdSeed(wordDocument);
+            WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
+            return word;
+        }
+
+        /// <summary>
         /// Load WordDocument from stream
         /// </summary>
         /// <param name="stream"></param>
@@ -1007,6 +1081,66 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Asynchronously saves the document.
+        /// </summary>
+        /// <param name="filePath">Optional path to save to.</param>
+        /// <param name="openWord">Whether to open Word after saving.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        public async Task SaveAsync(string filePath, bool openWord, CancellationToken cancellationToken = default) {
+            if (FileOpenAccess == FileAccess.Read) {
+                throw new InvalidOperationException("Document is read only, and cannot be saved.");
+            }
+            PreSaving();
+
+            if (this._wordprocessingDocument != null) {
+                try {
+                    this._wordprocessingDocument.Save();
+
+                    if (filePath != "") {
+                        using var fs = new FileStream(filePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.Asynchronous);
+                        using (var clone = this._wordprocessingDocument.Clone(fs)) {
+                            CopyPackageProperties(_wordprocessingDocument.PackageProperties, clone.PackageProperties);
+                        }
+                        Helpers.MakeOpenOfficeCompatible(fs);
+                        await fs.FlushAsync(cancellationToken);
+                        FilePath = filePath;
+                    } else if (_fileStream != null) {
+                        _fileStream.Seek(0, SeekOrigin.Begin);
+                        _fileStream.SetLength(0);
+                        using (var clone = this._wordprocessingDocument.Clone(_fileStream)) {
+                            CopyPackageProperties(_wordprocessingDocument.PackageProperties, clone.PackageProperties);
+                        }
+                        Helpers.MakeOpenOfficeCompatible(_fileStream);
+                        await _fileStream.FlushAsync(cancellationToken);
+                    }
+                } finally {
+                    if (_fileStream != null) {
+                        _fileStream.Dispose();
+                        _fileStream = null;
+                    }
+                }
+            } else {
+                throw new InvalidOperationException("Document couldn't be saved as WordDocument wasn't provided.");
+            }
+
+            if (openWord) {
+                this.Open(filePath, true);
+            }
+        }
+
+        public Task SaveAsync(CancellationToken cancellationToken = default) {
+            return SaveAsync("", false, cancellationToken);
+        }
+
+        public Task SaveAsync(string filePath, CancellationToken cancellationToken = default) {
+            return SaveAsync(filePath, false, cancellationToken);
+        }
+
+        public Task SaveAsync(bool openWord, CancellationToken cancellationToken = default) {
+            return SaveAsync("", openWord, cancellationToken);
+        }
+
+        /// <summary>
         /// Save the WordDocument to Stream
         /// </summary>
         /// <param name="outputStream"></param>
@@ -1075,8 +1209,14 @@ namespace OfficeIMO.Word {
         internal WordSection _currentSection => this.Sections.Last();
 
 
+        /// <summary>
+        /// Provides access to the document background settings.
+        /// </summary>
         public WordBackground Background { get; set; }
 
+        /// <summary>
+        /// Indicates whether the document passes Open XML validation.
+        /// </summary>
         public bool DocumentIsValid {
             get {
                 if (DocumentValidationErrors.Count > 0) {
@@ -1087,12 +1227,20 @@ namespace OfficeIMO.Word {
             }
         }
 
+        /// <summary>
+        /// Gets the list of validation errors for the document.
+        /// </summary>
         public List<ValidationErrorInfo> DocumentValidationErrors {
             get {
                 return ValidateDocument();
             }
         }
 
+        /// <summary>
+        /// Validates the document using the specified file format version.
+        /// </summary>
+        /// <param name="fileFormatVersions">File format version to validate against.</param>
+        /// <returns>List of validation errors.</returns>
         public List<ValidationErrorInfo> ValidateDocument(FileFormatVersions fileFormatVersions = FileFormatVersions.Microsoft365) {
             List<ValidationErrorInfo> listErrors = new List<ValidationErrorInfo>();
             OpenXmlValidator validator = new OpenXmlValidator(fileFormatVersions);
@@ -1102,6 +1250,9 @@ namespace OfficeIMO.Word {
             return listErrors;
         }
 
+        /// <summary>
+        /// Gets or sets compatibility settings for the document.
+        /// </summary>
         public WordCompatibilitySettings CompatibilitySettings { get; set; }
 
         internal void HeadingModified() {

@@ -7,6 +7,9 @@ using DocumentFormat.OpenXml.Packaging;
 using System.Linq;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Xml.Linq;
+using MathParagraph = DocumentFormat.OpenXml.Math.Paragraph;
+using OfficeMath = DocumentFormat.OpenXml.Math.OfficeMath;
 
 namespace OfficeIMO.Word {
     public partial class WordParagraph {
@@ -307,6 +310,48 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Adds a page number field to the paragraph.
+        /// </summary>
+        /// <param name="includeTotalPages">If true adds a NUMPAGES field preceded by text " of ".</param>
+        /// <param name="format">Optional field format to apply.</param>
+        /// <param name="separator">Text inserted between the current page and total pages fields.</param>
+        /// <returns>The paragraph that this was called on.</returns>
+        public WordParagraph AddPageNumber(bool includeTotalPages = false, WordFieldFormat? format = null, string separator = " of ") {
+            this.AddField(WordFieldType.Page, format);
+            if (includeTotalPages) {
+                this.AddText(separator);
+                this.AddField(WordFieldType.NumPages, format);
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a mathematical equation represented as OMML XML.
+        /// </summary>
+        /// <param name="omml">Office Math Markup Language (OMML) fragment.</param>
+        /// <returns>The paragraph that this was called on.</returns>
+        public WordParagraph AddEquation(string omml) {
+            if (string.IsNullOrWhiteSpace(omml)) {
+                throw new ArgumentNullException(nameof(omml));
+            }
+
+            XElement x = XElement.Parse(omml);
+            WordParagraph paragraphWithEquation;
+
+            if (x.Name.LocalName == "oMath") {
+                var officeMath = new OfficeMath(omml);
+                _paragraph.Append(officeMath);
+                paragraphWithEquation = new WordParagraph(this._document, this._paragraph, officeMath);
+            } else {
+                var mathPara = new MathParagraph(omml);
+                _paragraph.Append(mathPara);
+                paragraphWithEquation = new WordParagraph(this._document, this._paragraph, mathPara);
+            }
+
+            return paragraphWithEquation;
+        }
+
+        /// <summary>
         /// Add hyperlink with URL to a word document proceding from the paragraph that this was called on.
         /// </summary>
         /// <param name="text">The text to insert as the URL.</param>
@@ -548,13 +593,17 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="alias">Optional alias for the content control.</param>
         /// <param name="text">Initial text of the control.</param>
+        /// <param name="tag">Optional tag for the content control.</param>
         /// <returns>The created <see cref="WordStructuredDocumentTag"/> instance.</returns>
-        public WordStructuredDocumentTag AddStructuredDocumentTag(string alias = null, string text = "") {
+        public WordStructuredDocumentTag AddStructuredDocumentTag(string alias = null, string text = "", string tag = null) {
             var sdtRun = new SdtRun();
 
             var sdtProperties = new SdtProperties();
             if (!string.IsNullOrEmpty(alias)) {
                 sdtProperties.Append(new SdtAlias() { Val = alias });
+            }
+            if (!string.IsNullOrEmpty(tag)) {
+                sdtProperties.Append(new Tag() { Val = tag });
             }
             sdtProperties.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new Random().Next(1, int.MaxValue)) });
 

@@ -182,6 +182,176 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Horizontal offset (margin-left) of the watermark in points.
+        /// </summary>
+        public double? HorizontalOffset {
+            get {
+                var shape = _shape;
+                if (shape != null) {
+                    var style = shape.Style.Value;
+                    if (style != null) {
+                        var left = style.Split(';').FirstOrDefault(c => c.StartsWith("margin-left:"));
+                        if (left != null) {
+                            var value = left.Split(':').LastOrDefault();
+                            if (value != null) {
+                                string stringValue = value.Replace("pt", "");
+                                return double.Parse(stringValue, CultureInfo.InvariantCulture);
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+            set {
+                var shape = _shape;
+                if (shape != null) {
+                    var style = shape.Style.Value;
+                    if (style != null) {
+                        var left = style.Split(';').FirstOrDefault(c => c.StartsWith("margin-left:"));
+                        if (left != null) {
+                            shape.Style.Value = style.Replace(left, "margin-left:" + value + "pt");
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Vertical offset (margin-top) of the watermark in points.
+        /// </summary>
+        public double? VerticalOffset {
+            get {
+                var shape = _shape;
+                if (shape != null) {
+                    var style = shape.Style.Value;
+                    if (style != null) {
+                        var top = style.Split(';').FirstOrDefault(c => c.StartsWith("margin-top:"));
+                        if (top != null) {
+                            var value = top.Split(':').LastOrDefault();
+                            if (value != null) {
+                                string stringValue = value.Replace("pt", "");
+                                return double.Parse(stringValue, CultureInfo.InvariantCulture);
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+            set {
+                var shape = _shape;
+                if (shape != null) {
+                    var style = shape.Style.Value;
+                    if (style != null) {
+                        var top = style.Split(';').FirstOrDefault(c => c.StartsWith("margin-top:"));
+                        if (top != null) {
+                            shape.Style.Value = style.Replace(top, "margin-top:" + value + "pt");
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Font family used for text watermark.
+        /// </summary>
+        public string FontFamily {
+            get {
+                var shape = _shape;
+                if (shape != null) {
+                    var textPath = shape.GetFirstChild<V.TextPath>();
+                    if (textPath != null && textPath.Style != null) {
+                        var style = textPath.Style.Value;
+                        var family = style.Split(';').FirstOrDefault(c => c.StartsWith("font-family:"));
+                        if (family != null) {
+                            var value = family.Split(':').LastOrDefault();
+                            if (value != null) {
+                                return value.Trim('"');
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+            set {
+                var shape = _shape;
+                if (shape != null) {
+                    var textPath = shape.GetFirstChild<V.TextPath>();
+                    if (textPath != null) {
+                        var style = textPath.Style?.Value ?? string.Empty;
+                        var dict = style.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(p => p.Split(':'))
+                            .ToDictionary(p => p[0], p => p.Length > 1 ? p[1] : string.Empty);
+                        dict["font-family"] = "\"" + value + "\"";
+                        textPath.Style.Value = string.Join(";", dict.Select(kvp => $"{kvp.Key}:{kvp.Value}"));
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Font size of text watermark in points.
+        /// </summary>
+        public double? FontSize {
+            get {
+                var shape = _shape;
+                if (shape != null) {
+                    var textPath = shape.GetFirstChild<V.TextPath>();
+                    if (textPath != null && textPath.Style != null) {
+                        var style = textPath.Style.Value;
+                        var size = style.Split(';').FirstOrDefault(c => c.StartsWith("font-size:"));
+                        if (size != null) {
+                            var value = size.Split(':').LastOrDefault();
+                            if (value != null) {
+                                string stringValue = value.Replace("pt", "");
+                                return double.Parse(stringValue, CultureInfo.InvariantCulture);
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+            set {
+                var shape = _shape;
+                if (shape != null) {
+                    var textPath = shape.GetFirstChild<V.TextPath>();
+                    if (textPath != null) {
+                        var style = textPath.Style?.Value ?? string.Empty;
+                        var dict = style.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(p => p.Split(':'))
+                            .ToDictionary(p => p[0], p => p.Length > 1 ? p[1] : string.Empty);
+                        dict["font-size"] = value + "pt";
+                        textPath.Style.Value = string.Join(";", dict.Select(kvp => $"{kvp.Key}:{kvp.Value}"));
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Opacity of the watermark fill. Value should be between 0 and 1.
+        /// </summary>
+        public double? Opacity {
+            get {
+                var shape = _shape;
+                if (shape != null) {
+                    var fill = shape.GetFirstChild<V.Fill>();
+                    if (fill != null && fill.Opacity != null) {
+                        return double.Parse(fill.Opacity.Value, CultureInfo.InvariantCulture);
+                    }
+                }
+                return null;
+            }
+            set {
+                var shape = _shape;
+                if (shape != null) {
+                    var fill = shape.GetFirstChild<V.Fill>();
+                    if (fill != null && value != null) {
+                        fill.Opacity = value.Value.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// Get or Set if watermark is stroked.
         /// </summary>
         public bool Stroked {
@@ -234,14 +404,14 @@ namespace OfficeIMO.Word {
             }
             set {
                 if (value != null) {
-                    this.ColorHex = ColorNameResolver.GetColorName(value.Value); //value.Value.ToHex();
+                    this.ColorHex = value.Value.ToHexColor();
                 }
             }
         }
 
         /// <summary>
-        /// Gets or sets color of the watermark using hex value.
-        /// Setting colors using this property is not recommended because it doesn't actually accept hex values, but rather color names.
+        /// Gets or sets the fill color of the watermark.
+        /// The value can be a known color name or a hex value without the leading '#'.
         /// </summary>
         public string ColorHex {
             get {
@@ -321,7 +491,6 @@ namespace OfficeIMO.Word {
 
                 this.Text = textOrFilePath;
 
-                //this._document._document.Body.Append(_sdtBlock);
                 if (this._section.Paragraphs.Count == 0) {
                     this._document._document.Body.Append(_sdtBlock);
                 } else {
@@ -329,9 +498,22 @@ namespace OfficeIMO.Word {
                     lastParagraph._paragraph.Parent.Append(_sdtBlock);
                 }
             } else {
-                // TODO: Add handling for watermark image
+                this._sdtBlock = GetStyle(style);
 
+                var fileName = System.IO.Path.GetFileName(textOrFilePath);
+                using var imageStream = new System.IO.FileStream(textOrFilePath, System.IO.FileMode.Open);
 
+                if (this._section.Paragraphs.Count == 0) {
+                    this._document._document.Body.Append(_sdtBlock);
+                } else {
+                    var lastParagraph = this._section.Paragraphs.Last();
+                    lastParagraph._paragraph.Parent.Append(_sdtBlock);
+                }
+
+                var paragraph = this._sdtBlock.SdtContentBlock.GetFirstChild<Paragraph>();
+                var wordParagraph = new WordParagraph(wordDocument, paragraph);
+                var imageLocation = WordImage.AddImageToLocation(wordDocument, wordParagraph, imageStream, fileName);
+                SetWatermarkImageData(imageLocation);
             }
         }
 
@@ -349,18 +531,21 @@ namespace OfficeIMO.Word {
             if (style == WordWatermarkStyle.Text) {
                 this._sdtBlock = GetStyle(style);
 
-
                 this.Text = textOrFilePath;
 
                 wordHeader._header.Append(_sdtBlock);
             } else {
+                this._sdtBlock = GetStyle(style);
+
                 var fileName = System.IO.Path.GetFileName(textOrFilePath);
                 using var imageStream = new System.IO.FileStream(textOrFilePath, System.IO.FileMode.Open);
 
-                var wordParagraph = this._wordHeader.AddParagraph();
+                wordHeader._header.Append(_sdtBlock);
 
+                var paragraph = this._sdtBlock.SdtContentBlock.GetFirstChild<Paragraph>();
+                var wordParagraph = new WordParagraph(wordDocument, paragraph);
                 var imageLocation = WordImage.AddImageToLocation(wordDocument, wordParagraph, imageStream, fileName);
-                AddWatermarkImage(wordParagraph, imageLocation);
+                SetWatermarkImageData(imageLocation);
             }
         }
 
@@ -659,8 +844,10 @@ namespace OfficeIMO.Word {
             };
 
             var style = ImageShapeStyleHelper.GetStyle(shape1);
-            style["width"] = imageLocation.Width + "pt";
-            style["height"] = imageLocation.Height + "pt";
+            double widthPt = Helpers.ConvertPixelsToPoints(imageLocation.Width);
+            double heightPt = Helpers.ConvertPixelsToPoints(imageLocation.Height);
+            style["width"] = widthPt + "pt";
+            style["height"] = heightPt + "pt";
             ImageShapeStyleHelper.SetStyle(shape1, style);
 
             shape1.Append(imageData1);
@@ -674,6 +861,29 @@ namespace OfficeIMO.Word {
             wordParagraph._paragraphProperties.Remove();
             wordParagraph._paragraph.Append(paragraphProperties1);
             wordParagraph._paragraph.Append(run1);
+        }
+
+        private void SetWatermarkImageData(WordImageLocation imageLocation) {
+            var shape = _sdtBlock.Descendants<V.Shape>().FirstOrDefault();
+            if (shape == null) return;
+
+            shape.RemoveAllChildren<V.TextPath>();
+
+            V.ImageData imageData1 = new V.ImageData() {
+                Gain = "19661f",
+                BlackLevel = "22938f",
+                Title = imageLocation.ImageName,
+                RelationshipId = imageLocation.RelationshipId
+            };
+
+            var style = ImageShapeStyleHelper.GetStyle(shape);
+            double widthPt = Helpers.ConvertPixelsToPoints(imageLocation.Width);
+            double heightPt = Helpers.ConvertPixelsToPoints(imageLocation.Height);
+            style["width"] = widthPt + "pt";
+            style["height"] = heightPt + "pt";
+            ImageShapeStyleHelper.SetStyle(shape, style);
+
+            shape.Append(imageData1);
         }
 
         public void Remove() {

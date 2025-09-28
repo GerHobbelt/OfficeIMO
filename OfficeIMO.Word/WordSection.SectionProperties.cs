@@ -6,11 +6,20 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Word {
+    /// <summary>
+    /// Provides access to section property settings.
+    /// </summary>
     public partial class WordSection {
+        /// <summary>
+        /// Gets or sets the page orientation of the section.
+        /// </summary>
         public PageOrientationValues PageOrientation {
             get => WordPageSizes.GetOrientation(_sectionProperties);
             set => WordPageSizes.SetOrientation(_sectionProperties, value);
         }
+        /// <summary>
+        /// Gets or sets spacing between section columns.
+        /// </summary>
         public int? ColumnsSpace {
             get {
                 Columns columns = _sectionProperties.GetFirstChild<Columns>();
@@ -65,7 +74,7 @@ namespace OfficeIMO.Word {
                 var existing = _sectionProperties.GetFirstChild<FootnoteProperties>();
                 existing?.Remove();
                 if (value != null) {
-                    _sectionProperties.Append(value);
+                    _sectionProperties.InsertAt(value, 0);
                 }
             }
         }
@@ -78,7 +87,32 @@ namespace OfficeIMO.Word {
                 var existing = _sectionProperties.GetFirstChild<EndnoteProperties>();
                 existing?.Remove();
                 if (value != null) {
-                    _sectionProperties.Append(value);
+                    var refNode = _sectionProperties.Elements<FooterReference>().Cast<OpenXmlElement>()
+                        .Concat(_sectionProperties.Elements<HeaderReference>()).LastOrDefault();
+                    if (refNode != null) {
+                        _sectionProperties.InsertAfter(value, refNode);
+                    } else {
+                        _sectionProperties.InsertAt(value, 0);
+                    }
+                }
+            }
+        }
+
+        public PageNumberType PageNumberType {
+            get {
+                return _sectionProperties.GetFirstChild<PageNumberType>();
+            }
+            set {
+                var existing = _sectionProperties.GetFirstChild<PageNumberType>();
+                existing?.Remove();
+                if (value != null) {
+                    var refNode = _sectionProperties.Elements<FooterReference>().Cast<OpenXmlElement>()
+                        .Concat(_sectionProperties.Elements<HeaderReference>()).LastOrDefault();
+                    if (refNode != null) {
+                        _sectionProperties.InsertAfter(value, refNode);
+                    } else {
+                        _sectionProperties.InsertAt(value, 0);
+                    }
                 }
             }
         }

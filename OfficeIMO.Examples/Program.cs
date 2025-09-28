@@ -31,11 +31,14 @@ namespace OfficeIMO.Examples {
             BasicDocument.Example_BasicWordWithMarginsAndImage(folderPath, false);
             BasicDocument.Example_BasicWordWithLineSpacing(folderPath, false);
             BasicDocument.Example_BasicWordWithSomeParagraphs(folderPath, false);
+            BasicDocument.Example_BasicWordAsync(folderPath).GetAwaiter().GetResult();
 
             AdvancedDocument.Example_AdvancedWord(folderPath, false);
             AdvancedDocument.Example_AdvancedWord2(folderPath, false);
 
             ContentControls.Example_AddContentControl(folderPath, false);
+            ContentControls.Example_MultipleContentControls(folderPath, false);
+            ContentControls.Example_AdvancedContentControls(folderPath, false);
             CheckBoxes.Example_BasicCheckBox(folderPath, false);
 
             Paragraphs.Example_BasicParagraphs(folderPath, false);
@@ -88,6 +91,11 @@ namespace OfficeIMO.Examples {
             PageSettings.Example_PageOrientation(folderPath, false);
 
             PageNumbers.Example_PageNumbers1(folderPath, false);
+            PageNumbers.Example_PageNumbers2(folderPath, false);
+            PageNumbers.Example_PageNumbers3(folderPath, false);
+            PageNumbers.Example_PageNumbers4(folderPath, false);
+            PageNumbers.Example_PageNumbers5(folderPath, false);
+            PageNumbers.Example_PageNumbers6(folderPath, false);
 
             Sections.Example_BasicSections(folderPath, false);
             Sections.Example_BasicSections2(folderPath, false);
@@ -158,6 +166,7 @@ namespace OfficeIMO.Examples {
             BasicExcelFunctionality.BasicExcel_Example1(folderPath, false);
             BasicExcelFunctionality.BasicExcel_Example2(folderPath, false);
             BasicExcelFunctionality.BasicExcel_Example3(false);
+            BasicExcelFunctionalityAsync.Example_ExcelAsync(folderPath).GetAwaiter().GetResult();
 
             BordersAndMargins.Example_BasicWordMarginsSizes(folderPath, false);
             BordersAndMargins.Example_BasicPageBorders1(folderPath, false);
