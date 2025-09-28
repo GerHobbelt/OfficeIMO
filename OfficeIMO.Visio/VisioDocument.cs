@@ -332,7 +332,21 @@ namespace OfficeIMO.Visio {
 
         private static XDocument CreateVisioDocumentXml(bool requestRecalcOnOpen) {
             XNamespace ns = VisioNamespace;
-            XElement settings = new(ns + "DocumentSettings");
+            XElement settings = new(ns + "DocumentSettings",
+                new XAttribute("TopPage", 0),
+                new XAttribute("DefaultTextStyle", 3),
+                new XAttribute("DefaultLineStyle", 3),
+                new XAttribute("DefaultFillStyle", 3),
+                new XAttribute("DefaultGuideStyle", 4),
+                new XElement(ns + "GlueSettings", 9),
+                new XElement(ns + "SnapSettings", 295),
+                new XElement(ns + "SnapExtensions", 34),
+                new XElement(ns + "SnapAngles"),
+                new XElement(ns + "DynamicGridEnabled", 1),
+                new XElement(ns + "ProtectStyles", 0),
+                new XElement(ns + "ProtectShapes", 0),
+                new XElement(ns + "ProtectMasters", 0),
+                new XElement(ns + "ProtectBkgnds", 0));
             if (requestRecalcOnOpen) {
                 settings.Add(new XElement(ns + "RelayoutAndRerouteUponOpen", 1));
             }
@@ -410,8 +424,56 @@ namespace OfficeIMO.Visio {
                     writer.WriteEndElement();
                 }
 
+                void WriteCellValue(XmlWriter writer, string name, string value) {
+                    writer.WriteStartElement("Cell", ns);
+                    writer.WriteAttributeString("N", name);
+                    writer.WriteAttributeString("V", value);
+                    writer.WriteEndElement();
+                }
+
+                void WriteXForm(XmlWriter writer, VisioShape shape, double width, double height) {
+                    writer.WriteStartElement("XForm", ns);
+                    writer.WriteElementString("PinX", ns, ToVisioString(shape.PinX));
+                    writer.WriteElementString("PinY", ns, ToVisioString(shape.PinY));
+                    writer.WriteElementString("Width", ns, ToVisioString(width));
+                    writer.WriteElementString("Height", ns, ToVisioString(height));
+                    writer.WriteElementString("LocPinX", ns, ToVisioString(shape.LocPinX));
+                    writer.WriteElementString("LocPinY", ns, ToVisioString(shape.LocPinY));
+                    writer.WriteElementString("Angle", ns, ToVisioString(shape.Angle));
+                    writer.WriteEndElement();
+
+                    // Visio expects these values as cell entries as well
+                    WriteCell(writer, "PinX", shape.PinX);
+                    WriteCell(writer, "PinY", shape.PinY);
+                    WriteCell(writer, "Width", width);
+                    WriteCell(writer, "Height", height);
+                    WriteCell(writer, "LocPinX", shape.LocPinX);
+                    WriteCell(writer, "LocPinY", shape.LocPinY);
+                    WriteCell(writer, "Angle", shape.Angle);
+                }
+
                 void WriteRectangleGeometry(XmlWriter writer, double width, double height) {
                     writer.WriteStartElement("Geom", ns);
+                    writer.WriteStartElement("Cell", ns);
+                    writer.WriteAttributeString("N", "NoFill");
+                    writer.WriteAttributeString("V", "0");
+                    writer.WriteEndElement();
+                    writer.WriteStartElement("Cell", ns);
+                    writer.WriteAttributeString("N", "NoLine");
+                    writer.WriteAttributeString("V", "0");
+                    writer.WriteEndElement();
+                    writer.WriteStartElement("Cell", ns);
+                    writer.WriteAttributeString("N", "NoShow");
+                    writer.WriteAttributeString("V", "0");
+                    writer.WriteEndElement();
+                    writer.WriteStartElement("Cell", ns);
+                    writer.WriteAttributeString("N", "NoSnap");
+                    writer.WriteAttributeString("V", "0");
+                    writer.WriteEndElement();
+                    writer.WriteStartElement("Cell", ns);
+                    writer.WriteAttributeString("N", "NoQuickDrag");
+                    writer.WriteAttributeString("V", "0");
+                    writer.WriteEndElement();
                     writer.WriteStartElement("MoveTo", ns);
                     writer.WriteAttributeString("X", ToVisioString(0));
                     writer.WriteAttributeString("Y", ToVisioString(0));
@@ -452,6 +514,30 @@ namespace OfficeIMO.Visio {
                         writer.WriteEndElement();
                     }
                     writer.WriteEndElement();
+                }
+
+                void WriteDataSection(XmlWriter writer, IDictionary<string, string> data) {
+                    if (data.Count == 0) {
+                        return;
+                    }
+                    writer.WriteStartElement("Section", ns);
+                    writer.WriteAttributeString("N", "Prop");
+                    foreach (KeyValuePair<string, string> kv in data) {
+                        writer.WriteStartElement("Row", ns);
+                        writer.WriteAttributeString("N", kv.Key);
+                        writer.WriteStartElement("Cell", ns);
+                        writer.WriteAttributeString("N", "Value");
+                        writer.WriteAttributeString("V", kv.Value);
+                        writer.WriteEndElement();
+                        writer.WriteEndElement();
+                    }
+                    writer.WriteEndElement();
+                }
+
+                void WriteTextElement(XmlWriter writer, string? text) {
+                    if (!string.IsNullOrEmpty(text)) {
+                        writer.WriteElementString("Text", ns, text);
+                    }
                 }
 
                 string GetConnectionCell(VisioShape shape, VisioConnectionPoint? point) {
@@ -503,47 +589,32 @@ namespace OfficeIMO.Visio {
                             double masterHeight = s.Height > 0 ? s.Height : 1;
                             s.Width = masterWidth;
                             s.Height = masterHeight;
+                            if (Math.Abs(s.LocPinX) < double.Epsilon) {
+                                s.LocPinX = masterWidth / 2;
+                            }
+                            if (Math.Abs(s.LocPinY) < double.Epsilon) {
+                                s.LocPinY = masterHeight / 2;
+                            }
                             writer.WriteStartElement("Shape", ns);
                             writer.WriteAttributeString("ID", "1");
                             string masterShapeName = s.Name ?? s.NameU ?? "MasterShape";
                             writer.WriteAttributeString("Name", masterShapeName);
                             writer.WriteAttributeString("NameU", master.NameU);
                             writer.WriteAttributeString("Type", "Shape");
-                            WriteCell(writer, "PinX", s.PinX);
-                            WriteCell(writer, "PinY", s.PinY);
-                            WriteCell(writer, "Width", masterWidth);
-                            WriteCell(writer, "Height", masterHeight);
-                            if (Math.Abs(s.LocPinX - masterWidth / 2) > 0) {
-                                WriteCell(writer, "LocPinX", s.LocPinX);
-                            }
-                            if (Math.Abs(s.LocPinY - masterHeight / 2) > 0) {
-                                WriteCell(writer, "LocPinY", s.LocPinY);
-                            }
-                            if (Math.Abs(s.Angle) > 0) {
-                                WriteCell(writer, "Angle", s.Angle);
-                            }
-                            if (Math.Abs(s.LineWeight - 0.0138889) > 0) {
-                                WriteCell(writer, "LineWeight", s.LineWeight);
-                            }
+                            writer.WriteAttributeString("LineStyle", "3");
+                            writer.WriteAttributeString("FillStyle", "3");
+                            writer.WriteAttributeString("TextStyle", "3");
+                            WriteXForm(writer, s, masterWidth, masterHeight);
+                            // Always specify line weight so that shapes are visible
+                            WriteCell(writer, "LineWeight", s.LineWeight);
+                            WriteCell(writer, "LinePattern", 1);
+                            WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
+                            WriteCell(writer, "FillPattern", 1);
+                            WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
                             WriteRectangleGeometry(writer, masterWidth, masterHeight);
                             WriteConnectionSection(writer, s.ConnectionPoints);
-                            if (s.Data.Count > 0) {
-                                writer.WriteStartElement("Section", ns);
-                                writer.WriteAttributeString("N", "Prop");
-                                foreach (KeyValuePair<string, string> kv in s.Data) {
-                                    writer.WriteStartElement("Row", ns);
-                                    writer.WriteAttributeString("N", kv.Key);
-                                    writer.WriteStartElement("Cell", ns);
-                                    writer.WriteAttributeString("N", "Value");
-                                    writer.WriteAttributeString("V", kv.Value);
-                                    writer.WriteEndElement();
-                                    writer.WriteEndElement();
-                                }
-                                writer.WriteEndElement();
-                            }
-                            if (!string.IsNullOrEmpty(s.Text)) {
-                                writer.WriteElementString("Text", ns, s.Text);
-                            }
+                            WriteDataSection(writer, s.Data);
+                            WriteTextElement(writer, s.Text);
                             writer.WriteEndElement();
                             writer.WriteEndElement();
                             writer.WriteEndElement();
@@ -716,8 +787,6 @@ namespace OfficeIMO.Visio {
                             writer.WriteAttributeString("Type", "Shape");
                             if (shape.Master != null) {
                                 writer.WriteAttributeString("Master", shape.Master.Id);
-                                WriteCell(writer, "PinX", shape.PinX);
-                                WriteCell(writer, "PinY", shape.PinY);
                                 double width = shape.Width;
                                 if (width <= 0 && shape.Master.Shape.Width > 0) {
                                     width = shape.Master.Shape.Width;
@@ -734,78 +803,47 @@ namespace OfficeIMO.Visio {
                                 }
                                 shape.Width = width;
                                 shape.Height = height;
-                                WriteCell(writer, "Width", width);
-                                WriteCell(writer, "Height", height);
-                                if (Math.Abs(shape.LocPinX - width / 2) > 0) {
-                                    WriteCell(writer, "LocPinX", shape.LocPinX);
+                                if (Math.Abs(shape.LocPinX) < double.Epsilon) {
+                                    shape.LocPinX = width / 2;
                                 }
-                                if (Math.Abs(shape.LocPinY - height / 2) > 0) {
-                                    WriteCell(writer, "LocPinY", shape.LocPinY);
+                                if (Math.Abs(shape.LocPinY) < double.Epsilon) {
+                                    shape.LocPinY = height / 2;
                                 }
-                                if (Math.Abs(shape.Angle) > 0) {
-                                    WriteCell(writer, "Angle", shape.Angle);
-                                }
-                                if (Math.Abs(shape.LineWeight - 0.0138889) > 0) {
-                                    WriteCell(writer, "LineWeight", shape.LineWeight);
-                                }
+                                WriteXForm(writer, shape, width, height);
+                                // Always include line weight to avoid invisible shapes
+                                WriteCell(writer, "LineWeight", shape.LineWeight);
+                                WriteCell(writer, "LinePattern", 1);
+                                WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
+                                WriteCell(writer, "FillPattern", 1);
+                                WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
                                 WriteConnectionSection(writer, shape.ConnectionPoints);
-                                if (shape.Data.Count > 0) {
-                                    writer.WriteStartElement("Section", ns);
-                                    writer.WriteAttributeString("N", "Prop");
-                                    foreach (KeyValuePair<string, string> kv in shape.Data) {
-                                        writer.WriteStartElement("Row", ns);
-                                        writer.WriteAttributeString("N", kv.Key);
-                                        writer.WriteStartElement("Cell", ns);
-                                        writer.WriteAttributeString("N", "Value");
-                                        writer.WriteAttributeString("V", kv.Value);
-                                        writer.WriteEndElement();
-                                        writer.WriteEndElement();
-                                    }
-                                    writer.WriteEndElement();
-                                }
-                                if (!string.IsNullOrEmpty(shape.Text)) {
-                                    writer.WriteElementString("Text", ns, shape.Text);
-                                }
+                                WriteDataSection(writer, shape.Data);
+                                WriteTextElement(writer, shape.Text);
                             } else {
-                                WriteCell(writer, "PinX", shape.PinX);
-                                WriteCell(writer, "PinY", shape.PinY);
+                                writer.WriteAttributeString("LineStyle", "3");
+                                writer.WriteAttributeString("FillStyle", "3");
+                                writer.WriteAttributeString("TextStyle", "3");
                                 double width = shape.Width > 0 ? shape.Width : 1;
                                 double height = shape.Height > 0 ? shape.Height : 1;
                                 shape.Width = width;
                                 shape.Height = height;
-                                WriteCell(writer, "Width", width);
-                                WriteCell(writer, "Height", height);
-                                if (Math.Abs(shape.LocPinX - width / 2) > 0) {
-                                    WriteCell(writer, "LocPinX", shape.LocPinX);
+                                if (Math.Abs(shape.LocPinX) < double.Epsilon) {
+                                    shape.LocPinX = width / 2;
                                 }
-                                if (Math.Abs(shape.LocPinY - height / 2) > 0) {
-                                    WriteCell(writer, "LocPinY", shape.LocPinY);
+                                if (Math.Abs(shape.LocPinY) < double.Epsilon) {
+                                    shape.LocPinY = height / 2;
                                 }
-                                if (Math.Abs(shape.Angle) > 0) {
-                                    WriteCell(writer, "Angle", shape.Angle);
-                                }
-                                if (Math.Abs(shape.LineWeight - 0.0138889) > 0) {
-                                    WriteCell(writer, "LineWeight", shape.LineWeight);
-                                }
+                                WriteXForm(writer, shape, width, height);
+                                // Always include line weight to avoid invisible shapes
+                                WriteCell(writer, "LineWeight", shape.LineWeight);
+                                WriteCell(writer, "LinePattern", 1);
+                                WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
+                                WriteCell(writer, "FillPattern", 1);
+                                WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
                                 WriteRectangleGeometry(writer, width, height);
                                 WriteConnectionSection(writer, shape.ConnectionPoints);
-                                if (shape.Data.Count > 0) {
-                                    writer.WriteStartElement("Section", ns);
-                                    writer.WriteAttributeString("N", "Prop");
-                                    foreach (KeyValuePair<string, string> kv in shape.Data) {
-                                        writer.WriteStartElement("Row", ns);
-                                        writer.WriteAttributeString("N", kv.Key);
-                                        writer.WriteStartElement("Cell", ns);
-                                        writer.WriteAttributeString("N", "Value");
-                                        writer.WriteAttributeString("V", kv.Value);
-                                        writer.WriteEndElement();
-                                        writer.WriteEndElement();
-                                    }
-                                    writer.WriteEndElement();
-                                }
-                                if (!string.IsNullOrEmpty(shape.Text)) {
-                                    writer.WriteElementString("Text", ns, shape.Text);
-                                }
+                                WriteDataSection(writer, shape.Data);
+                                WriteTextElement(writer, shape.Text);
                             }
                             writer.WriteEndElement();
                         }
@@ -834,12 +872,24 @@ namespace OfficeIMO.Visio {
                                 endY = (top + bottom) / 2;
                             }
 
-                            writer.WriteStartElement("Shape", ns);
-                            writer.WriteAttributeString("ID", connector.Id);
-                            writer.WriteAttributeString("Name", "Connector");
-                            writer.WriteAttributeString("NameU", "Connector");
-                            writer.WriteAttributeString("Type", "Shape");
-                            writer.WriteStartElement("Geom", ns);
+                              writer.WriteStartElement("Shape", ns);
+                              writer.WriteAttributeString("ID", connector.Id);
+                              writer.WriteAttributeString("Name", "Connector");
+                              writer.WriteAttributeString("NameU", "Connector");
+                              writer.WriteAttributeString("Type", "Shape");
+                              writer.WriteAttributeString("LineStyle", "3");
+                              writer.WriteAttributeString("FillStyle", "3");
+                              writer.WriteAttributeString("TextStyle", "3");
+                              WriteCell(writer, "LineWeight", 0.0138889);
+                              WriteCell(writer, "LinePattern", 1);
+                              WriteCellValue(writer, "LineColor", "RGB(0,0,0)");
+                              WriteCell(writer, "FillPattern", 1);
+                              WriteCellValue(writer, "FillForegnd", "RGB(255,255,255)");
+                              WriteCell(writer, "OneD", 1);
+                              if (connector.EndArrow.HasValue) {
+                                  WriteCell(writer, "EndArrow", connector.EndArrow.Value);
+                              }
+                              writer.WriteStartElement("Geom", ns);
                             writer.WriteStartElement("MoveTo", ns);
                             writer.WriteAttributeString("X", ToVisioString(startX));
                             writer.WriteAttributeString("Y", ToVisioString(startY));

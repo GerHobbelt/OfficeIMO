@@ -14,8 +14,8 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "ConditionalRule.xlsx");
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorkSheet("Data");
-                sheet.SetCellValue(1, 1, 5d);
-                sheet.SetCellValue(2, 1, 15d);
+                sheet.CellValue(1, 1, 5d);
+                sheet.CellValue(2, 1, 15d);
                 sheet.AddConditionalRule("A1:A2", ConditionalFormattingOperatorValues.GreaterThan, "10");
                 document.Save();
             }
@@ -37,9 +37,9 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "ConditionalColorScale.xlsx");
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorkSheet("Data");
-                sheet.SetCellValue(1, 1, 1d);
-                sheet.SetCellValue(2, 1, 2d);
-                sheet.SetCellValue(3, 1, 3d);
+                sheet.CellValue(1, 1, 1d);
+                sheet.CellValue(2, 1, 2d);
+                sheet.CellValue(3, 1, 3d);
                 sheet.AddConditionalColorScale("A1:A3", SixLaborsColor.Red, SixLaborsColor.Lime);
                 document.Save();
             }
@@ -63,9 +63,9 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "ConditionalDataBar.xlsx");
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorkSheet("Data");
-                sheet.SetCellValue(1, 1, 1d);
-                sheet.SetCellValue(2, 1, 2d);
-                sheet.SetCellValue(3, 1, 3d);
+                sheet.CellValue(1, 1, 1d);
+                sheet.CellValue(2, 1, 2d);
+                sheet.CellValue(3, 1, 3d);
                 sheet.AddConditionalDataBar("A1:A3", SixLaborsColor.Blue);
                 document.Save();
             }
@@ -84,20 +84,20 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void Test_ConditionalFormattingConcurrent() {
+        public async Task Test_ConditionalFormattingConcurrent() {
             string filePath = Path.Combine(_directoryWithFiles, "ConditionalConcurrent.xlsx");
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorkSheet("Data");
-                sheet.SetCellValue(1, 1, 1d);
-                sheet.SetCellValue(2, 1, 2d);
-                sheet.SetCellValue(3, 1, 3d);
+                sheet.CellValue(1, 1, 1d);
+                sheet.CellValue(2, 1, 2d);
+                sheet.CellValue(3, 1, 3d);
 
                 var tasks = new Task[] {
                     Task.Run(() => sheet.AddConditionalRule("A1:A3", ConditionalFormattingOperatorValues.GreaterThan, "2")),
                     Task.Run(() => sheet.AddConditionalColorScale("A1:A3", SixLaborsColor.Red, SixLaborsColor.Blue)),
                     Task.Run(() => sheet.AddConditionalDataBar("A1:A3", SixLaborsColor.Green))
                 };
-                Task.WaitAll(tasks);
+                await Task.WhenAll(tasks);
                 document.Save();
             }
 

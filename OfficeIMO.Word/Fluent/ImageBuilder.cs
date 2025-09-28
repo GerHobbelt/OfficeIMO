@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 using DocumentFormat.OpenXml.Wordprocessing;
+using OfficeIMO;
 using OfficeIMO.Word;
 
 namespace OfficeIMO.Word.Fluent {
@@ -81,8 +82,18 @@ namespace OfficeIMO.Word.Fluent {
             return this;
         }
 
-        public ImageBuilder Align(JustificationValues alignment) {
-            _paragraph?.SetAlignment(alignment);
+        /// <summary>
+        /// Sets horizontal alignment for the image's paragraph.
+        /// </summary>
+        /// <param name="alignment">Desired horizontal alignment.</param>
+        public ImageBuilder Align(HorizontalAlignment alignment) {
+            var justification = alignment switch {
+                HorizontalAlignment.Center => JustificationValues.Center,
+                HorizontalAlignment.Right => JustificationValues.Right,
+                HorizontalAlignment.Justified => JustificationValues.Both,
+                _ => JustificationValues.Left,
+            };
+            _paragraph?.SetAlignment(justification);
             return this;
         }
 

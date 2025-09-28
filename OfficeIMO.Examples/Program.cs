@@ -23,12 +23,14 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Visio.DocumentStructure.Example_DocumentStructure(folderPath, false);
             OfficeIMO.Examples.Visio.PageViewSettings.Example_PageViewSettings(folderPath, false);
             OfficeIMO.Examples.Visio.ShapeProperties.Example_ShapeProperties(folderPath, false);
+            OfficeIMO.Examples.Visio.ShapeDataWithText.Example_ShapeDataWithText(folderPath, false);
             OfficeIMO.Examples.Visio.RotatedShapeBounds.Example_RotatedShapeBounds(folderPath, false);
             OfficeIMO.Examples.Visio.ReadVisioDocument.Example_ReadVisio(folderPath, false);
             OfficeIMO.Examples.Visio.ThemeAndWindows.Example_ThemeAndWindows(folderPath, false);
-            OfficeIMO.Examples.Visio.ValidateVisio.Example_ValidateVisio(folderPath, false);
             OfficeIMO.Examples.Visio.AllNamedShapesHaveMasters.Run();
             OfficeIMO.Examples.Visio.MasterShapes.Run();
+            OfficeIMO.Examples.Visio.RectangleStyles.Example_RectangleStyles(folderPath, false);
+            OfficeIMO.Examples.Visio.ConnectorStyles.Example_ConnectorStyles(folderPath, false);
 
             // Excel/BasicExcelFunctionality
             OfficeIMO.Examples.Excel.BasicExcelFunctionality.BasicExcel_Example1(folderPath, false);
@@ -48,10 +50,10 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Excel.ConcurrentWrites.Example(folderPath, false);
             // Excel/ExcelConcurrentAccessAsync
             OfficeIMO.Examples.Excel.ExcelConcurrentAccessAsync.Example_ExcelAsyncConcurrent(folderPath).GetAwaiter().GetResult();
-            // Excel/SetCellValues
-            OfficeIMO.Examples.Excel.SetCellValues.Example(folderPath, false);
-            // Excel/SetCellValuesParallel
-            OfficeIMO.Examples.Excel.SetCellValuesParallel.Example(folderPath, false);
+            // Excel/CellValues
+            OfficeIMO.Examples.Excel.CellValues.Example(folderPath, false);
+            // Excel/CellValuesParallel
+            OfficeIMO.Examples.Excel.CellValuesParallel.Example(folderPath, false);
             // Excel/Fluent
             OfficeIMO.Examples.Excel.FluentWorkbook.Example_FluentWorkbook(folderPath, false);
             // PowerPoint
