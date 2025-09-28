@@ -27,8 +27,8 @@ namespace OfficeIMO.Tests {
                         .Even(ev => ev.Paragraph("Even footer")))
                     .Section(s => s.New())
                     .Paragraph(p => p.Text("Body"))
-                    .End();
-                document.Save(false);
+                    .End()
+                    .Save(false);
             }
 
             using var loaded = WordDocument.Load(filePath);
@@ -36,8 +36,8 @@ namespace OfficeIMO.Tests {
 
             var defaultHeader = loaded.Sections[0].Header.Default;
             Assert.Equal(3, defaultHeader.Paragraphs.Count);
-            Assert.Equal(1, defaultHeader.Tables.Count);
-            Assert.Equal(1, defaultHeader.ParagraphsImages.Count);
+            Assert.Single(defaultHeader.Tables);
+            Assert.Single(defaultHeader.ParagraphsImages);
 
             Assert.Equal("First header", loaded.Sections[0].Header.First.Paragraphs[0].Text);
             Assert.Equal("Even header", loaded.Sections[0].Header.Even.Paragraphs[0].Text);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace OfficeIMO.Word.Fluent {
     /// <summary>
@@ -81,6 +82,15 @@ namespace OfficeIMO.Word.Fluent {
         }
 
         /// <summary>
+        /// Adds or modifies an image asynchronously.
+        /// </summary>
+        /// <param name="action">Async action that receives an <see cref="ImageBuilder"/>.</param>
+        public async Task<WordFluentDocument> ImageAsync(Func<ImageBuilder, Task> action) {
+            await action(new ImageBuilder(this));
+            return this;
+        }
+
+        /// <summary>
         /// Configures document headers.
         /// </summary>
         /// <param name="action">Action that receives a <see cref="HeadersBuilder"/>.</param>
@@ -101,6 +111,7 @@ namespace OfficeIMO.Word.Fluent {
         /// <summary>
         /// Ends fluent configuration and returns the underlying <see cref="WordDocument"/>.
         /// </summary>
+        /// <returns>The wrapped <see cref="WordDocument"/> for further processing.</returns>
         public WordDocument End() {
             return Document;
         }
@@ -115,6 +126,15 @@ namespace OfficeIMO.Word.Fluent {
         }
 
         /// <summary>
+        /// Executes an action for each run in the document.
+        /// </summary>
+        /// <param name="action">Action to execute for every run.</param>
+        public WordFluentDocument ForEachRun(Action<RunBuilder> action) {
+            Document.ForEachRun(r => action(new RunBuilder(r)));
+            return this;
+        }
+
+        /// <summary>
         /// Finds paragraphs containing the specified text.
         /// </summary>
         /// <param name="text">Text to search for.</param>
@@ -123,6 +143,18 @@ namespace OfficeIMO.Word.Fluent {
         public WordFluentDocument Find(string text, Action<ParagraphBuilder> action, StringComparison stringComparison = StringComparison.OrdinalIgnoreCase) {
             foreach (var paragraph in Document.FindParagraphs(text, stringComparison)) {
                 action(new ParagraphBuilder(this, paragraph));
+            }
+            return this;
+        }
+
+        /// <summary>
+        /// Finds runs matching the specified regular expression pattern.
+        /// </summary>
+        /// <param name="pattern">Regular expression pattern.</param>
+        /// <param name="action">Action executed for each matching run.</param>
+        public WordFluentDocument FindRegex(string pattern, Action<ParagraphBuilder> action) {
+            foreach (var run in Document.FindRunsRegex(pattern)) {
+                action(new ParagraphBuilder(this, run));
             }
             return this;
         }
