@@ -269,5 +269,94 @@ namespace OfficeIMO.Word {
                 return null;
             }
         }
-    }
+
+        /// <summary>
+        /// Gets all structured document tags contained in the table.
+        /// </summary>
+        public List<WordStructuredDocumentTag> StructuredDocumentTags {
+            get {
+                List<WordStructuredDocumentTag> list = new();
+                foreach (var row in this.Rows) {
+                    foreach (var cell in row.Cells) {
+                        var paragraphs = cell.Paragraphs.Where(p => p.IsStructuredDocumentTag).ToList();
+                        foreach (var paragraph in paragraphs) {
+                            list.Add(paragraph.StructuredDocumentTag);
+                        }
+                    }
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Gets all checkbox content controls contained in the table.
+        /// </summary>
+        public List<WordCheckBox> CheckBoxes {
+            get {
+                List<WordCheckBox> list = new();
+                foreach (var row in this.Rows) {
+                    foreach (var cell in row.Cells) {
+                        var paragraphs = cell.Paragraphs.Where(p => p.IsCheckBox).ToList();
+                        foreach (var paragraph in paragraphs) {
+                            list.Add(paragraph.CheckBox);
+                        }
+                    }
+                }
+                return list;
+            }
+        }
+        /// <summary>
+        /// Gets all date picker content controls contained in the table.
+        /// </summary>
+        public List<WordDatePicker> DatePickers {
+            get {
+                List<WordDatePicker> list = new();
+                foreach (var row in this.Rows) {
+                    foreach (var cell in row.Cells) {
+                        var paragraphs = cell.Paragraphs.Where(p => p.IsDatePicker).ToList();
+                        foreach (var paragraph in paragraphs) {
+                            list.Add(paragraph.DatePicker);
+                        }
+                    }
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Gets all dropdown list content controls contained in the table.
+        /// </summary>
+        public List<WordDropDownList> DropDownLists {
+            get {
+                List<WordDropDownList> list = new();
+                foreach (var row in this.Rows) {
+                    foreach (var cell in row.Cells) {
+                        var paragraphs = cell.Paragraphs.Where(p => p.IsDropDownList).ToList();
+                        foreach (var paragraph in paragraphs) {
+                            list.Add(paragraph.DropDownList);
+                        }
+                    }
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Gets all repeating section content controls contained in the table.
+        /// </summary>
+        public List<WordRepeatingSection> RepeatingSections {
+            get {
+                List<WordRepeatingSection> list = new();
+                foreach (var row in this.Rows) {
+                    foreach (var cell in row.Cells) {
+                        var paragraphs = cell.Paragraphs.Where(p => p.IsRepeatingSection).ToList();
+                        foreach (var paragraph in paragraphs) {
+                            list.Add(paragraph.RepeatingSection);
+                        }
+                    }
+                }
+                return list;
+            }
+        }
+}
 }

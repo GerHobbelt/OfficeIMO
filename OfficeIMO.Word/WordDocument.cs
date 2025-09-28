@@ -207,6 +207,75 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Returns paragraphs that contain date picker controls.
+        /// </summary>
+        public List<WordParagraph> ParagraphsDatePickers {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsDatePickers);
+                }
+
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Returns paragraphs that contain dropdown list controls.
+        /// </summary>
+        public List<WordParagraph> ParagraphsDropDownLists {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsDropDownLists);
+                }
+
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Returns paragraphs that contain combo box controls.
+        /// </summary>
+        public List<WordParagraph> ParagraphsComboBoxes {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsComboBoxes);
+                }
+
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Returns paragraphs that contain picture controls.
+        /// </summary>
+        public List<WordParagraph> ParagraphsPictureControls {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsPictureControls);
+                }
+
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Returns paragraphs that contain repeating section controls.
+        /// </summary>
+        public List<WordParagraph> ParagraphsRepeatingSections {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsRepeatingSections);
+                }
+
+                return list;
+            }
+        }
+        /// <summary>
         /// Returns paragraphs with embedded charts.
         /// </summary>
         public List<WordParagraph> ParagraphsCharts {
@@ -692,6 +761,70 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Collection of all date picker controls in the document.
+        /// </summary>
+        public List<WordDatePicker> DatePickers {
+            get {
+                List<WordDatePicker> list = new List<WordDatePicker>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.DatePickers);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Collection of all dropdown list controls in the document.
+        /// </summary>
+        public List<WordDropDownList> DropDownLists {
+            get {
+                List<WordDropDownList> list = new List<WordDropDownList>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.DropDownLists);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Collection of all combo box controls in the document.
+        /// </summary>
+        public List<WordComboBox> ComboBoxes {
+            get {
+                List<WordComboBox> list = new List<WordComboBox>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ComboBoxes);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Collection of all picture controls in the document.
+        /// </summary>
+        public List<WordPictureControl> PictureControls {
+            get {
+                List<WordPictureControl> list = new List<WordPictureControl>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.PictureControls);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Collection of all repeating section controls in the document.
+        /// </summary>
+        public List<WordRepeatingSection> RepeatingSections {
+            get {
+                List<WordRepeatingSection> list = new List<WordRepeatingSection>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.RepeatingSections);
+                }
+                return list;
+            }
+        }
+        /// <summary>
         /// Collection of all equations in the document.
         /// </summary>
         public List<WordEquation> Equations {
@@ -735,7 +868,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         public readonly Dictionary<string, WordCustomProperty> CustomDocumentProperties = new Dictionary<string, WordCustomProperty>();
         /// <summary>
-        /// Collection of document variables accessible via <see cref="WordField.DocVariable"/> fields.
+        /// Collection of document variables accessible via <see cref="WordFieldType.DocVariable"/> fields.
         /// </summary>
         public Dictionary<string, string> DocumentVariables { get; } = new Dictionary<string, string>();
 
@@ -1067,6 +1200,7 @@ namespace OfficeIMO.Word {
         /// <param name="filePath"></param>
         /// <param name="readOnly"></param>
         /// <param name="autoSave"></param>
+        /// <param name="overrideStyles">When <c>true</c>, existing styles are replaced with library versions.</param>
         /// <returns></returns>
         /// <exception cref="FileNotFoundException"></exception>
         public static WordDocument Load(string filePath, bool readOnly = false, bool autoSave = false, bool overrideStyles = false) {
@@ -1110,6 +1244,7 @@ namespace OfficeIMO.Word {
         /// <param name="filePath">Path to the file.</param>
         /// <param name="readOnly">Open the document in read-only mode.</param>
         /// <param name="autoSave">Enable auto-save on dispose.</param>
+        /// <param name="overrideStyles">When <c>true</c>, existing styles are replaced with library versions.</param>
         /// <returns>Loaded <see cref="WordDocument"/> instance.</returns>
         /// <exception cref="FileNotFoundException">Thrown when the file does not exist.</exception>
         public static async Task<WordDocument> LoadAsync(string filePath, bool readOnly = false, bool autoSave = false, bool overrideStyles = false) {
@@ -1150,6 +1285,7 @@ namespace OfficeIMO.Word {
         /// <param name="stream"></param>
         /// <param name="readOnly"></param>
         /// <param name="autoSave"></param>
+        /// <param name="overrideStyles">When <c>true</c>, existing styles are replaced with library versions.</param>
         /// <returns></returns>
         public static WordDocument Load(Stream stream, bool readOnly = false, bool autoSave = false, bool overrideStyles = false) {
             var document = new WordDocument();

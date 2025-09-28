@@ -3,6 +3,7 @@ using System.IO;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentFormat.OpenXml;
 using W14 = DocumentFormat.OpenXml.Office2010.Word;
+using W15 = DocumentFormat.OpenXml.Office2013.Word;
 using DocumentFormat.OpenXml.Packaging;
 using System.Linq;
 using System.Collections.Generic;
@@ -689,11 +690,11 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Adds a simple content control (structured document tag) to the paragraph.
         /// </summary>
-        /// <param name="alias">Optional alias for the content control.</param>
         /// <param name="text">Initial text of the control.</param>
+        /// <param name="alias">Optional alias for the content control.</param>
         /// <param name="tag">Optional tag for the content control.</param>
         /// <returns>The created <see cref="WordStructuredDocumentTag"/> instance.</returns>
-        public WordStructuredDocumentTag AddStructuredDocumentTag(string alias = null, string text = "", string tag = null) {
+        public WordStructuredDocumentTag AddStructuredDocumentTag(string text = "", string alias = null, string tag = null) {
             var sdtRun = new SdtRun();
 
             var sdtProperties = new SdtProperties();
@@ -723,13 +724,17 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="isChecked">Initial checked state.</param>
         /// <param name="alias">Optional alias for the control.</param>
+        /// <param name="tag">Optional tag for the control.</param>
         /// <returns>The created <see cref="WordCheckBox"/> instance.</returns>
-        public WordCheckBox AddCheckBox(bool isChecked = false, string alias = null) {
+        public WordCheckBox AddCheckBox(bool isChecked = false, string alias = null, string tag = null) {
             var sdtRun = new SdtRun();
 
             var props = new SdtProperties();
             if (!string.IsNullOrEmpty(alias)) {
                 props.Append(new SdtAlias() { Val = alias });
+            }
+            if (!string.IsNullOrEmpty(tag)) {
+                props.Append(new Tag() { Val = tag });
             }
             props.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new Random().Next(1, int.MaxValue)) });
 
@@ -764,5 +769,186 @@ namespace OfficeIMO.Word {
                 this.CheckBox.IsChecked = value;
             }
         }
-    }
+        /// <summary>
+        /// Adds a date picker content control to the paragraph.
+        /// </summary>
+        /// <param name="date">Initial date value.</param>
+        /// <param name="alias">Optional alias for the control.</param>
+        /// <param name="tag">Optional tag for the control.</param>
+        /// <returns>The created <see cref="WordDatePicker"/> instance.</returns>
+        public WordDatePicker AddDatePicker(System.DateTime? date = null, string alias = null, string tag = null) {
+            var sdtRun = new SdtRun();
+
+            var props = new SdtProperties();
+            if (!string.IsNullOrEmpty(alias)) {
+                props.Append(new SdtAlias() { Val = alias });
+            }
+            if (!string.IsNullOrEmpty(tag)) {
+                props.Append(new Tag() { Val = tag });
+            }
+            props.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new System.Random().Next(1, int.MaxValue)) });
+
+            var dateProp = new SdtContentDate();
+            if (date.HasValue) {
+                dateProp.FullDate = new DateTimeValue(date.Value);
+            }
+            props.Append(dateProp);
+
+            var content = new SdtContentRun(new Run());
+
+            sdtRun.Append(props);
+            sdtRun.Append(content);
+
+            this._paragraph.Append(sdtRun);
+
+            return new WordDatePicker(this._document, this._paragraph, sdtRun);
+        }
+
+        /// <summary>
+        /// Adds a dropdown list content control to the paragraph.
+        /// </summary>
+        /// <param name="items">Items to include in the list.</param>
+        /// <param name="alias">Optional alias for the control.</param>
+        /// <param name="tag">Optional tag for the control.</param>
+        /// <returns>The created <see cref="WordDropDownList"/> instance.</returns>
+        public WordDropDownList AddDropDownList(System.Collections.Generic.IEnumerable<string> items, string alias = null, string tag = null) {
+            var sdtRun = new SdtRun();
+
+            var props = new SdtProperties();
+            if (!string.IsNullOrEmpty(alias)) {
+                props.Append(new SdtAlias() { Val = alias });
+            }
+            if (!string.IsNullOrEmpty(tag)) {
+                props.Append(new Tag() { Val = tag });
+            }
+            props.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new System.Random().Next(1, int.MaxValue)) });
+
+            var ddl = new SdtContentDropDownList();
+            if (items != null) {
+                foreach (var item in items) {
+                    ddl.Append(new ListItem() { DisplayText = item, Value = item });
+                }
+            }
+            props.Append(ddl);
+
+            var content = new SdtContentRun(new Run());
+
+            sdtRun.Append(props);
+            sdtRun.Append(content);
+
+            this._paragraph.Append(sdtRun);
+
+            return new WordDropDownList(this._document, this._paragraph, sdtRun);
+        }
+
+        /// <summary>
+        /// Adds a combo box content control to the paragraph.
+        /// </summary>
+        /// <param name="items">Items to include in the combo box.</param>
+        /// <param name="alias">Optional alias for the control.</param>
+        /// <param name="tag">Optional tag for the control.</param>
+        /// <returns>The created <see cref="WordComboBox"/> instance.</returns>
+        public WordComboBox AddComboBox(System.Collections.Generic.IEnumerable<string> items, string alias = null, string tag = null) {
+            var sdtRun = new SdtRun();
+
+            var props = new SdtProperties();
+            if (!string.IsNullOrEmpty(alias)) {
+                props.Append(new SdtAlias() { Val = alias });
+            }
+            if (!string.IsNullOrEmpty(tag)) {
+                props.Append(new Tag() { Val = tag });
+            }
+            props.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new System.Random().Next(1, int.MaxValue)) });
+
+            var combo = new SdtContentComboBox();
+            if (items != null) {
+                foreach (var item in items) {
+                    combo.Append(new ListItem() { DisplayText = item, Value = item });
+                }
+            }
+            props.Append(combo);
+
+            var content = new SdtContentRun(new Run());
+
+            sdtRun.Append(props);
+            sdtRun.Append(content);
+
+            this._paragraph.Append(sdtRun);
+
+            return new WordComboBox(this._document, this._paragraph, sdtRun);
+        }
+
+        /// <summary>
+        /// Adds a picture content control containing an image to the paragraph.
+        /// </summary>
+        /// <param name="filePath">Image file path.</param>
+        /// <param name="width">Optional width of the image.</param>
+        /// <param name="height">Optional height of the image.</param>
+        /// <param name="alias">Optional alias for the control.</param>
+        /// <param name="tag">Optional tag for the control.</param>
+        /// <returns>The created <see cref="WordPictureControl"/> instance.</returns>
+        public WordPictureControl AddPictureControl(string filePath, double? width = null, double? height = null, string alias = null, string tag = null) {
+            var sdtRun = new SdtRun();
+
+            var props = new SdtProperties();
+            if (!string.IsNullOrEmpty(alias)) {
+                props.Append(new SdtAlias() { Val = alias });
+            }
+            if (!string.IsNullOrEmpty(tag)) {
+                props.Append(new Tag() { Val = tag });
+            }
+            props.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new System.Random().Next(1, int.MaxValue)) });
+            props.Append(new SdtContentPicture());
+
+            var content = new SdtContentRun();
+            var beforeCount = this._paragraph.ChildElements.Count;
+            this.AddImage(filePath, width, height);
+            var newRun = this._paragraph.ChildElements[beforeCount] as Run;
+            newRun?.Remove();
+            if (newRun != null) {
+                content.Append(newRun);
+            }
+
+            sdtRun.Append(props);
+            sdtRun.Append(content);
+
+            this._paragraph.Append(sdtRun);
+
+            return new WordPictureControl(this._document, this._paragraph, sdtRun);
+        }
+
+        /// <summary>
+        /// Adds a repeating section content control to the paragraph.
+        /// </summary>
+        /// <param name="sectionTitle">Optional title of the repeating section.</param>
+        /// <param name="alias">Optional alias for the control.</param>
+        /// <param name="tag">Optional tag for the control.</param>
+        /// <returns>The created <see cref="WordRepeatingSection"/> instance.</returns>
+        public WordRepeatingSection AddRepeatingSection(string sectionTitle = null, string alias = null, string tag = null) {
+            var sdtRun = new SdtRun();
+
+            var props = new SdtProperties();
+            if (!string.IsNullOrEmpty(alias)) {
+                props.Append(new SdtAlias() { Val = alias });
+            }
+            if (!string.IsNullOrEmpty(tag)) {
+                props.Append(new Tag() { Val = tag });
+            }
+            props.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new System.Random().Next(1, int.MaxValue)) });
+
+            string xml = "<w:sdt xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:w15='http://schemas.microsoft.com/office/word/2012/wordml'>";
+            xml += "<w:sdtPr>";
+            if (!string.IsNullOrEmpty(alias)) xml += $"<w:alias w:val='{alias}'/>";
+            if (!string.IsNullOrEmpty(tag)) xml += $"<w:tag w:val='{tag}'/>";
+            xml += "<w15:repeatingSection" + (string.IsNullOrEmpty(sectionTitle) ? string.Empty : $" w15:sectionTitle='{sectionTitle}'") + "/>";
+            xml += "</w:sdtPr>";
+            xml += "<w:sdtContent><w15:repeatingSectionItem><w:sdt><w:sdtContent><w:r/></w:sdtContent></w:sdt></w15:repeatingSectionItem></w:sdtContent>";
+            xml += "</w:sdt>";
+
+            var newSdt = new SdtRun(xml);
+            this._paragraph.Append(newSdt);
+
+            return new WordRepeatingSection(this._document, this._paragraph, newSdt);
+        }
+}
 }

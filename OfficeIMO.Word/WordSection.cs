@@ -112,6 +112,40 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Provides a list of paragraphs that contain date picker controls
+        /// </summary>
+        public List<WordParagraph> ParagraphsDatePickers {
+            get { return Paragraphs.Where(p => p.IsDatePicker).ToList(); }
+        }
+
+        /// <summary>
+        /// Provides a list of paragraphs that contain dropdown list controls
+        /// </summary>
+        public List<WordParagraph> ParagraphsDropDownLists {
+            get { return Paragraphs.Where(p => p.IsDropDownList).ToList(); }
+        }
+
+        /// <summary>
+        /// Provides a list of paragraphs that contain combo box controls
+        /// </summary>
+        public List<WordParagraph> ParagraphsComboBoxes {
+            get { return Paragraphs.Where(p => p.IsComboBox).ToList(); }
+        }
+
+        /// <summary>
+        /// Provides a list of paragraphs that contain picture controls
+        /// </summary>
+        public List<WordParagraph> ParagraphsPictureControls {
+            get { return Paragraphs.Where(p => p.IsPictureControl).ToList(); }
+        }
+
+        /// <summary>
+        /// Provides a list of paragraphs that contain repeating section controls
+        /// </summary>
+        public List<WordParagraph> ParagraphsRepeatingSections {
+            get { return Paragraphs.Where(p => p.IsRepeatingSection).ToList(); }
+        }
+        /// <summary>
         /// Provides a list of paragraphs that contain Image
         /// </summary>
         public List<WordParagraph> ParagraphsImages {
@@ -394,6 +428,75 @@ namespace OfficeIMO.Word {
             }
         }
 
+        /// <summary>
+        /// Gets all date picker content controls within the section.
+        /// </summary>
+        public List<WordDatePicker> DatePickers {
+            get {
+                List<WordDatePicker> list = new List<WordDatePicker>();
+                var paragraphs = Paragraphs.Where(p => p.IsDatePicker).ToList();
+                foreach (var paragraph in paragraphs) {
+                    list.Add(paragraph.DatePicker);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Gets all dropdown list content controls within the section.
+        /// </summary>
+        public List<WordDropDownList> DropDownLists {
+            get {
+                List<WordDropDownList> list = new List<WordDropDownList>();
+                var paragraphs = Paragraphs.Where(p => p.IsDropDownList).ToList();
+                foreach (var paragraph in paragraphs) {
+                    list.Add(paragraph.DropDownList);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Gets all combo box content controls within the section.
+        /// </summary>
+        public List<WordComboBox> ComboBoxes {
+            get {
+                List<WordComboBox> list = new List<WordComboBox>();
+                var paragraphs = Paragraphs.Where(p => p.IsComboBox).ToList();
+                foreach (var paragraph in paragraphs) {
+                    list.Add(paragraph.ComboBox);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Gets all picture content controls within the section.
+        /// </summary>
+        public List<WordPictureControl> PictureControls {
+            get {
+                List<WordPictureControl> list = new List<WordPictureControl>();
+                var paragraphs = Paragraphs.Where(p => p.IsPictureControl).ToList();
+                foreach (var paragraph in paragraphs) {
+                    list.Add(paragraph.PictureControl);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Gets all repeating section content controls within the section.
+        /// </summary>
+        public List<WordRepeatingSection> RepeatingSections {
+            get {
+                List<WordRepeatingSection> list = new List<WordRepeatingSection>();
+                var paragraphs = Paragraphs.Where(p => p.IsRepeatingSection).ToList();
+                foreach (var paragraph in paragraphs) {
+                    list.Add(paragraph.RepeatingSection);
+                }
+                return list;
+            }
+        }
         /// <summary>
         /// Exposes the footers available for this section.
         /// </summary>

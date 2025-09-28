@@ -51,3 +51,47 @@ using (WordDocument document = WordDocument.Load(filePath)) {
     Console.WriteLine(tag.Text);
 }
 ```
+
+### Working with checkboxes
+
+```csharp
+using (WordDocument document = WordDocument.Create(filePath)) {
+    var para = document.AddParagraph("Accept:");
+    para.AddCheckBox(false, "Consent", "ConsentTag");
+    document.Save();
+}
+
+using (WordDocument document = WordDocument.Load(filePath)) {
+    var cb = document.GetCheckBoxByTag("ConsentTag");
+    cb.IsChecked = true;
+    Console.WriteLine(cb.Alias);
+}
+```
+
+### Combo boxes
+
+```csharp
+using (WordDocument document = WordDocument.Create(filePath)) {
+    var items = new[] { "One", "Two" };
+    document.AddParagraph().AddComboBox(items, "Combo", "ComboTag");
+    document.Save();
+}
+```
+
+### Picture controls
+
+```csharp
+using (WordDocument document = WordDocument.Create(filePath)) {
+    document.AddParagraph().AddPictureControl(imagePath, 100, 100, "Pic", "PicTag");
+    document.Save();
+}
+```
+
+### Repeating sections
+
+```csharp
+using (WordDocument document = WordDocument.Create(filePath)) {
+    document.AddParagraph().AddRepeatingSection("Section", "RS", "RSTag");
+    document.Save();
+}
+```

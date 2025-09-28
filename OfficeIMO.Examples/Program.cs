@@ -39,8 +39,13 @@ namespace OfficeIMO.Examples {
             ContentControls.Example_AddContentControl(folderPath, false);
             ContentControls.Example_MultipleContentControls(folderPath, false);
             ContentControls.Example_AdvancedContentControls(folderPath, false);
+            ContentControls.Example_ContentControlsInTable(folderPath, false);
             CheckBoxes.Example_BasicCheckBox(folderPath, false);
 
+            DatePickers.Example_BasicDatePicker(folderPath, false);
+            DatePickers.Example_AdvancedDatePicker(folderPath, false);
+            DropDownLists.Example_BasicDropDownList(folderPath, false);
+            DropDownLists.Example_AdvancedDropDownList(folderPath, false);
             Paragraphs.Example_BasicParagraphs(folderPath, false);
             Paragraphs.Example_BasicParagraphStyles(folderPath, false);
             Paragraphs.Example_RegisterCustomParagraphStyle(folderPath, false);

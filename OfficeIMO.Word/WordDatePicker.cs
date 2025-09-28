@@ -1,47 +1,47 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
-using W14 = DocumentFormat.OpenXml.Office2010.Word;
+using System;
 using System.Linq;
+using System.Xml;
 
 namespace OfficeIMO.Word {
     /// <summary>
-    /// Represents a checkbox content control within a paragraph.
+    /// Represents a date picker content control within a paragraph.
     /// </summary>
-    public class WordCheckBox : WordElement {
+    public class WordDatePicker : WordElement {
         private readonly WordDocument _document;
         private readonly Paragraph _paragraph;
         internal readonly SdtRun _sdtRun;
 
-        internal WordCheckBox(WordDocument document, Paragraph paragraph, SdtRun sdtRun) {
+        internal WordDatePicker(WordDocument document, Paragraph paragraph, SdtRun sdtRun) {
             _document = document;
             _paragraph = paragraph;
             _sdtRun = sdtRun;
         }
 
         /// <summary>
-        /// Gets or sets whether the checkbox is checked.
+        /// Gets or sets the selected date.
         /// </summary>
-        public bool IsChecked {
+        public DateTime? Date {
             get {
-                var cb = _sdtRun.SdtProperties?.Elements<W14.SdtContentCheckBox>().FirstOrDefault();
-                var ch = cb?.Elements<W14.Checked>().FirstOrDefault();
-                return ch != null && ch.Val != null && ch.Val.Value == W14.OnOffValues.One;
+                var dp = _sdtRun.SdtProperties?.Elements<SdtContentDate>().FirstOrDefault();
+                if (dp?.FullDate != null) {
+                    return dp.FullDate.Value;
+                }
+                return null;
             }
             set {
-                var cb = _sdtRun.SdtProperties.Elements<W14.SdtContentCheckBox>().FirstOrDefault();
-                if (cb != null) {
-                    var ch = cb.Elements<W14.Checked>().FirstOrDefault();
-                    if (ch == null) {
-                        ch = new W14.Checked();
-                        cb.Append(ch);
-                    }
-                    ch.Val = value ? W14.OnOffValues.One : W14.OnOffValues.Zero;
+                var dp = _sdtRun.SdtProperties.Elements<SdtContentDate>().FirstOrDefault();
+                if (dp == null) {
+                    dp = new SdtContentDate();
+                    _sdtRun.SdtProperties.Append(dp);
                 }
+                dp.FullDate = value.HasValue ? new DateTimeValue(value.Value) : null;
             }
         }
 
         /// <summary>
-        /// Gets the alias associated with this checkbox control.
+        /// Gets the alias associated with this date picker control.
         /// </summary>
         public string Alias {
             get {
@@ -51,7 +51,7 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Gets or sets the tag value for this checkbox control.
+        /// Gets or sets the tag value for this date picker control.
         /// </summary>
         public string Tag {
             get {
@@ -69,7 +69,7 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Removes the checkbox from the paragraph.
+        /// Removes the date picker from the paragraph.
         /// </summary>
         public void Remove() {
             _sdtRun.Remove();
