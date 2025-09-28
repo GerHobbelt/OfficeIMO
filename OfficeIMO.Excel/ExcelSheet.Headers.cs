@@ -23,16 +23,16 @@ namespace OfficeIMO.Excel {
                 var sh = rdr.GetSheet(this.Name);
                 var values = sh.ReadRange(a1Used);
 
-                int rows = values.GetLength(0);
-                int cols = values.GetLength(1);
-                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                if (rows == 0 || cols == 0) {
-                    _headerMapCache = map;
+                if (values.GetLength(0) == 0 || values.GetLength(1) == 0) {
+                    var empty = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    _headerMapCache = empty;
                     _headerMapSourceA1 = a1Used;
                     _headerMapNormalize = opt.NormalizeHeaders;
                     return new Dictionary<string, int>(_headerMapCache, StringComparer.OrdinalIgnoreCase);
                 }
 
+                int cols = values.GetLength(1);
+                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var (_, c1, _, _) = A1.ParseRange(a1Used);
                 var headers = new string?[cols];
                 bool anyHeader = false;
@@ -65,18 +65,8 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
-        /// Returns a 1-based column index for a given header; throws when not found.
-        /// </summary>
-        public int ColumnIndexByHeader(string header, ExcelReadOptions? options = null) {
-            if (string.IsNullOrWhiteSpace(header)) throw new ArgumentNullException(nameof(header));
-            var map = GetHeaderMap(options);
-            if (!map.TryGetValue(header, out var idx))
-                throw new KeyNotFoundException($"Header '{header}' not found.");
-            return idx;
-        }
-
-        /// <summary>
-        /// Tries to resolve a 1-based column index for a given header. Returns false without throwing when the header cannot be found.
+        /// Tries to resolve a 1-based column index for a given header.
+        /// Returns <c>false</c> without throwing when the header cannot be found.
         /// </summary>
         public bool TryGetColumnIndexByHeader(string header, out int columnIndex, ExcelReadOptions? options = null) {
             if (string.IsNullOrWhiteSpace(header)) {

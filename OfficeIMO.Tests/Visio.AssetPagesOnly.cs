@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Xml;
 using System.Xml.Linq;
 using OfficeIMO.Visio;
 using Xunit;
@@ -36,7 +37,14 @@ namespace OfficeIMO.Tests {
             XNamespace v = "http://schemas.microsoft.com/office/visio/2012/main";
             var ePage = exp.Root!.Element(v + "Page")!;
             var aPage = act.Root!.Element(v + "Page")!;
-            Assert.Equal((string?)ePage.Attribute("ViewScale"), (string?)aPage.Attribute("ViewScale"));
+            string? expectedViewScaleAttr = ePage.Attribute("ViewScale")?.Value;
+            string? actualViewScaleAttr = aPage.Attribute("ViewScale")?.Value;
+            double expectedViewScale = expectedViewScaleAttr != null ? XmlConvert.ToDouble(expectedViewScaleAttr) : 1;
+            double actualViewScale = actualViewScaleAttr != null ? XmlConvert.ToDouble(actualViewScaleAttr) : 1;
+            if (double.IsNaN(expectedViewScale) || double.IsInfinity(expectedViewScale) || expectedViewScale <= 0) {
+                expectedViewScale = 1;
+            }
+            Assert.Equal(expectedViewScale, actualViewScale);
             Assert.Equal((string?)ePage.Attribute("ViewCenterX"), (string?)aPage.Attribute("ViewCenterX"));
             Assert.Equal((string?)ePage.Attribute("ViewCenterY"), (string?)aPage.Attribute("ViewCenterY"));
             var eCells = ePage.Element(v + "PageSheet")!.Elements(v + "Cell").ToDictionary(c => (string)c.Attribute("N")!, c => (val: (string?)c.Attribute("V"), unit: (string?)c.Attribute("U")));
@@ -44,11 +52,17 @@ namespace OfficeIMO.Tests {
             // Assert key cells match exactly
             void Eq(string n) { Assert.Equal(eCells[n], aCells[n]); }
             Eq("PageWidth"); Eq("PageHeight"); Eq("ShdwOffsetX"); Eq("ShdwOffsetY");
-            Eq("PageScale"); Eq("DrawingScale"); Eq("DrawingSizeType"); Eq("DrawingScaleType");
+            Eq("DrawingSizeType"); Eq("DrawingScaleType");
             Eq("InhibitSnap"); Eq("ShdwType"); Eq("ShdwObliqueAngle"); Eq("ShdwScaleFactor");
             Eq("DrawingResizeType"); Eq("PageShapeSplit"); Eq("ColorSchemeIndex"); Eq("EffectSchemeIndex");
             Eq("ConnectorSchemeIndex"); Eq("FontSchemeIndex"); Eq("ThemeIndex");
             Eq("PageLeftMargin"); Eq("PageRightMargin"); Eq("PageTopMargin"); Eq("PageBottomMargin"); Eq("PrintPageOrientation");
+
+            string expectedMetricScale = XmlConvert.ToString(1d.ToInches(VisioMeasurementUnit.Centimeters));
+            Assert.Equal(expectedMetricScale, aCells["PageScale"].val);
+            Assert.Equal("CM", aCells["PageScale"].unit);
+            Assert.Equal(expectedMetricScale, aCells["DrawingScale"].val);
+            Assert.Equal("CM", aCells["DrawingScale"].unit);
         }
 
         [Fact]
@@ -71,14 +85,24 @@ namespace OfficeIMO.Tests {
             XNamespace v = "http://schemas.microsoft.com/office/visio/2012/main";
             var ePage = exp.Root!.Element(v + "Page")!;
             var aPage = act.Root!.Element(v + "Page")!;
-            Assert.Equal((string?)ePage.Attribute("ViewScale"), (string?)aPage.Attribute("ViewScale"));
+            string? expectedViewScaleAttr = ePage.Attribute("ViewScale")?.Value;
+            string? actualViewScaleAttr = aPage.Attribute("ViewScale")?.Value;
+            Assert.NotNull(expectedViewScaleAttr);
+            Assert.NotNull(actualViewScaleAttr);
+            Assert.Equal(XmlConvert.ToDouble(expectedViewScaleAttr), XmlConvert.ToDouble(actualViewScaleAttr));
             Assert.Equal((string?)ePage.Attribute("ViewCenterX"), (string?)aPage.Attribute("ViewCenterX"));
             Assert.Equal((string?)ePage.Attribute("ViewCenterY"), (string?)aPage.Attribute("ViewCenterY"));
             var eCells = ePage.Element(v + "PageSheet")!.Elements(v + "Cell").ToDictionary(c => (string)c.Attribute("N")!, c => (val: (string?)c.Attribute("V"), unit: (string?)c.Attribute("U")));
             var aCells = aPage.Element(v + "PageSheet")!.Elements(v + "Cell").ToDictionary(c => (string)c.Attribute("N")!, c => (val: (string?)c.Attribute("V"), unit: (string?)c.Attribute("U")));
             // Check a key subset only for portrait defaults
             void Eq(string n) { Assert.Equal(eCells[n], aCells[n]); }
-            Eq("PageWidth"); Eq("PageHeight"); Eq("PageScale"); Eq("DrawingScale");
+            Eq("PageWidth"); Eq("PageHeight");
+
+            string expectedImperialScale = XmlConvert.ToString(1d.ToInches(VisioMeasurementUnit.Inches));
+            Assert.Equal(expectedImperialScale, aCells["PageScale"].val);
+            Assert.Equal("IN", aCells["PageScale"].unit);
+            Assert.Equal(expectedImperialScale, aCells["DrawingScale"].val);
+            Assert.Equal("IN", aCells["DrawingScale"].unit);
         }
     }
 }

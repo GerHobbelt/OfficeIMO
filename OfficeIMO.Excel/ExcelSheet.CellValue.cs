@@ -7,7 +7,7 @@ namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
 
         // Core implementation: single source of truth (no locks here)
-        private void CellValueCore(int row, int column, object value) {
+        private void CellValueCore(int row, int column, object? value) {
             var (cellValue, dataType) = CoerceForCell(value);
             bool wroteNumber = dataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
 
@@ -33,7 +33,7 @@ namespace OfficeIMO.Excel {
         }
 
         // Core coercion logic shared between sequential and parallel operations
-        private (CellValue cellValue, EnumValue<DocumentFormat.OpenXml.Spreadsheet.CellValues> dataType) CoerceForCell(object value) {
+        private (CellValue cellValue, EnumValue<DocumentFormat.OpenXml.Spreadsheet.CellValues> dataType) CoerceForCell(object? value) {
             var dateTimeOffsetStrategy = _excelDocument.DateTimeOffsetWriteStrategy;
             var (cellValue, cellType) = CoerceValueHelper.Coerce(
                 value,
@@ -82,27 +82,27 @@ namespace OfficeIMO.Excel {
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, uint value) {
-            CellValue(row, column, (double)value);
+            WriteLockConditional(() => CellValueCore(row, column, value));
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, ulong value) {
-            CellValue(row, column, (double)value);
+            WriteLockConditional(() => CellValueCore(row, column, value));
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, ushort value) {
-            CellValue(row, column, (double)value);
+            WriteLockConditional(() => CellValueCore(row, column, value));
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, byte value) {
-            CellValue(row, column, (double)value);
+            WriteLockConditional(() => CellValueCore(row, column, value));
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, sbyte value) {
-            CellValue(row, column, (double)value);
+            WriteLockConditional(() => CellValueCore(row, column, value));
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
@@ -682,7 +682,7 @@ namespace OfficeIMO.Excel {
         /// <param name="row">The 1-based row index.</param>
         /// <param name="column">The 1-based column index.</param>
         /// <param name="value">The value to assign.</param>
-        public void CellValue(int row, int column, object value) {
+        public void CellValue(int row, int column, object? value) {
             WriteLockConditional(() => CellValueCore(row, column, value));
         }
 

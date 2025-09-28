@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Threading.Tasks;
-using System.Xml;
 
 namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
@@ -26,13 +25,14 @@ namespace OfficeIMO.Excel {
 
             var flattenedItems = new List<Dictionary<string, object?>>();
             List<string> headers = new List<string>();
+            HashSet<string> headerSet = new HashSet<string>();
 
             foreach (var item in list) {
                 var dict = new Dictionary<string, object?>();
                 FlattenObject(item, null, dict);
                 flattenedItems.Add(dict);
                 foreach (var key in dict.Keys) {
-                    if (!headers.Contains(key)) {
+                    if (headerSet.Add(key)) {
                         headers.Add(key);
                     }
                 }
@@ -49,7 +49,7 @@ namespace OfficeIMO.Excel {
 
             foreach (var dict in flattenedItems) {
                 for (int c = 0; c < headers.Count; c++) {
-                    object value = dict.ContainsKey(headers[c]) ? dict[headers[c]] ?? string.Empty : string.Empty;
+                    object value = dict.TryGetValue(headers[c], out var entry) ? entry ?? string.Empty : string.Empty;
                     cells.Add((row, c + 1, value));
                 }
                 row++;
@@ -196,15 +196,8 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        private void ValidateWorksheetXml() {
-            try {
-                using StringReader sr = new StringReader(_worksheetPart.Worksheet.OuterXml);
-                using XmlReader reader = XmlReader.Create(sr);
-                while (reader.Read()) { }
-            } catch (XmlException ex) {
-                throw new InvalidOperationException($"Worksheet XML is not well-formed after parallel write operation. {ex.Message}", ex);
-            }
-        }
+        private void ValidateWorksheetXml()
+            => WorksheetIntegrityValidator.Validate(_worksheetPart, EffectiveExecution, Name);
     }
 }
 

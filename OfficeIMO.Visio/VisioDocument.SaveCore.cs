@@ -22,6 +22,7 @@ namespace OfficeIMO.Visio {
             List<VisioPage> pagesToSave = _pages.Count > 0 ? _pages : new List<VisioPage> { new VisioPage("Page-1") { Id = 0 } };
             int pageCount = pagesToSave.Count;
             int masterCount;
+            List<string> pagePartNames = new();
             using (Package package = Package.Open(filePath, FileMode.Create)) {
                 Uri documentUri = new("/visio/document.xml", UriKind.Relative);
                 PackagePart documentPart = package.CreatePart(documentUri, DocumentContentType);
@@ -316,7 +317,11 @@ namespace OfficeIMO.Visio {
                         writer.WriteAttributeString("ID", XmlConvert.ToString(page.Id));
                         writer.WriteAttributeString("Name", page.Name);
                         writer.WriteAttributeString("NameU", page.Name);
-                        writer.WriteAttributeString("ViewScale", XmlConvert.ToString(page.ViewScale));
+                        double viewScale = page.ViewScale;
+                        if (double.IsNaN(viewScale) || double.IsInfinity(viewScale) || viewScale <= 0) {
+                            viewScale = 1;
+                        }
+                        writer.WriteAttributeString("ViewScale", XmlConvert.ToString(viewScale));
                         writer.WriteAttributeString("ViewCenterX", XmlConvert.ToString(page.ViewCenterX));
                         writer.WriteAttributeString("ViewCenterY", XmlConvert.ToString(page.ViewCenterY));
 
@@ -338,8 +343,10 @@ namespace OfficeIMO.Visio {
                             WritePageCell(writer, ns, "ShdwOffsetX", 0.1181102362204724);
                             WritePageCell(writer, ns, "ShdwOffsetY", -0.1181102362204724);
                         }
-                        WritePageCell(writer, ns, "PageScale", 0.03937007874015748, "MM");
-                        WritePageCell(writer, ns, "DrawingScale", 0.03937007874015748, "MM");
+                        VisioScaleSetting pageScale = page.GetEffectivePageScale();
+                        WritePageCell(writer, ns, "PageScale", pageScale.ToInches(), pageScale.Unit.ToVisioUnitCode());
+                        VisioScaleSetting drawingScale = page.GetEffectiveDrawingScale();
+                        WritePageCell(writer, ns, "DrawingScale", drawingScale.ToInches(), drawingScale.Unit.ToVisioUnitCode());
                         WritePageCell(writer, ns, "DrawingSizeType", 0);
                         WritePageCell(writer, ns, "DrawingScaleType", 0);
                         WritePageCell(writer, ns, "InhibitSnap", 0);
@@ -637,9 +644,13 @@ namespace OfficeIMO.Visio {
                     }
                 }
                 masterCount = masters.Count;
+                pagePartNames = pageParts
+                    .Select(part => part.Part.Uri.OriginalString)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
             }
 
-            FixContentTypes(filePath, masterCount, includeTheme, pageCount);
+            FixContentTypes(filePath, masterCount, includeTheme, pagePartNames);
         }
     }
 }

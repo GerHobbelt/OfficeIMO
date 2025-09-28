@@ -12,6 +12,9 @@ namespace OfficeIMO.Excel {
         /// <param name="mode">Optional execution mode override.</param>
         /// <param name="ct">Cancellation token.</param>
         public void SetCellValues(IEnumerable<(int Row, int Column, object Value)> cells, ExecutionMode? mode = null, CancellationToken ct = default) {
+            if (cells is null) {
+                throw new ArgumentNullException(nameof(cells));
+            }
             var list = cells as IList<(int Row, int Column, object Value)> ?? cells.ToList();
             if (list.Count == 0) return;
 
@@ -74,7 +77,7 @@ namespace OfficeIMO.Excel {
         /// Compute-only coercion for parallel scenarios. Does not mutate DOM.
         /// Uses <see cref="SharedStringPlanner"/> for string values.
         /// </summary>
-        private (CellValue cellValue, EnumValue<DocumentFormat.OpenXml.Spreadsheet.CellValues> dataType) CoerceForCellNoDom(object value, SharedStringPlanner planner) {
+        private (CellValue cellValue, EnumValue<DocumentFormat.OpenXml.Spreadsheet.CellValues> dataType) CoerceForCellNoDom(object? value, SharedStringPlanner planner) {
             var dateTimeOffsetStrategy = _excelDocument.DateTimeOffsetWriteStrategy;
             var (cellValue, cellType) = CoerceValueHelper.Coerce(
                 value,
