@@ -2,9 +2,11 @@
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Collections.Generic;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using SixLabors.Fonts;
 
 namespace OfficeIMO.Excel {
     /// <summary>
@@ -147,75 +149,376 @@ namespace OfficeIMO.Excel {
             return columnName.ToString();
         }
 
-        public void SetCellValue(int row, int column, string value) {
+        private static int GetColumnIndex(string cellReference) {
+            int columnIndex = 0;
+            foreach (char ch in cellReference.Where(char.IsLetter)) {
+                columnIndex = (columnIndex * 26) + (ch - 'A' + 1);
+            }
+            return columnIndex;
+        }
+
+        private string GetCellText(Cell cell) {
+            if (cell.CellValue == null) return string.Empty;
+            string value = cell.CellValue.InnerText;
+            if (cell.DataType != null && cell.DataType.Value == CellValues.SharedString) {
+                if (int.TryParse(value, out int id)) {
+                    var item = _excelDocument.SharedStringTablePart.SharedStringTable.Elements<SharedStringItem>().ElementAt(id);
+                    return item.InnerText;
+                }
+            }
+            return value;
+        }
+
+        private static SixLabors.Fonts.Font GetDefaultFont() {
+            string[] preferred = { "Calibri", "Arial", "Liberation Sans", "DejaVu Sans", "Times New Roman" };
+
+            foreach (var name in preferred) {
+                try {
+                    var font = SystemFonts.CreateFont(name, 11);
+                    if (IsFontUsable(font)) return font;
+                } catch (FontFamilyNotFoundException) {
+                    // Try next option
+                }
+            }
+
+            foreach (var family in SystemFonts.Collection.Families) {
+                try {
+                    var font = family.CreateFont(11);
+                    if (IsFontUsable(font)) return font;
+                } catch {
+                    // Skip fonts that cannot be loaded or measured
+                }
+            }
+
+            // Fallback to first available family without validation
+            return SystemFonts.Collection.Families.First().CreateFont(11);
+        }
+
+        private static bool IsFontUsable(SixLabors.Fonts.Font font) {
+            try {
+                TextMeasurer.MeasureSize("0", new TextOptions(font));
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
+        public void AutoFitColumns() {
+            var worksheet = _worksheetPart.Worksheet;
+            SheetData sheetData = worksheet.GetFirstChild<SheetData>();
+            if (sheetData == null) return;
+
+            var columns = worksheet.GetFirstChild<Columns>();
+            if (columns == null) {
+                columns = worksheet.InsertAt(new Columns(), 0);
+            }
+
+            var font = GetDefaultFont();
+            var options = new TextOptions(font);
+            float zeroWidth = TextMeasurer.MeasureSize("0", options).Width;
+            Dictionary<int, double> widths = new Dictionary<int, double>();
+
+            foreach (var row in sheetData.Elements<Row>()) {
+                foreach (var cell in row.Elements<Cell>()) {
+                    if (cell.CellReference == null) continue;
+                    int columnIndex = GetColumnIndex(cell.CellReference.Value);
+                    string text = GetCellText(cell);
+                    var size = TextMeasurer.MeasureSize(text ?? string.Empty, options);
+                    double cellWidth = size.Width / zeroWidth + 1;
+                    if (widths.ContainsKey(columnIndex)) {
+                        if (cellWidth > widths[columnIndex]) widths[columnIndex] = cellWidth;
+                    } else {
+                        widths[columnIndex] = cellWidth;
+                    }
+                }
+            }
+
+            foreach (var kvp in widths) {
+                Column column = columns.Elements<Column>()
+                    .FirstOrDefault(c => c.Min != null && c.Max != null && c.Min.Value <= (uint)kvp.Key && c.Max.Value >= (uint)kvp.Key);
+                if (column == null) {
+                    column = new Column { Min = (uint)kvp.Key, Max = (uint)kvp.Key };
+                    columns.Append(column);
+                }
+                column.Width = kvp.Value;
+                column.CustomWidth = true;
+                column.BestFit = true;
+            }
+
+            worksheet.Save();
+        }
+
+        public void AutoFitRows() {
+            var worksheet = _worksheetPart.Worksheet;
+            SheetData sheetData = worksheet.GetFirstChild<SheetData>();
+            if (sheetData == null) return;
+
+            var font = GetDefaultFont();
+            var options = new TextOptions(font);
+            double defaultHeight = TextMeasurer.MeasureSize("0", options).Height + 2;
+
+            foreach (var row in sheetData.Elements<Row>()) {
+                double maxHeight = 0;
+                foreach (var cell in row.Elements<Cell>()) {
+                    string text = GetCellText(cell);
+                    var size = TextMeasurer.MeasureSize(text ?? string.Empty, options);
+                    if (size.Height > maxHeight) maxHeight = size.Height;
+                }
+                if (maxHeight > 0) {
+                    row.Height = maxHeight + 2;
+                    row.CustomHeight = true;
+                }
+            }
+
+            var sheetFormat = worksheet.GetFirstChild<SheetFormatProperties>();
+            if (sheetFormat == null) {
+                sheetFormat = worksheet.InsertAt(new SheetFormatProperties(), 0);
+            }
+            sheetFormat.DefaultRowHeight = defaultHeight;
+            sheetFormat.CustomHeight = true;
+
+            worksheet.Save();
+        }
+
+        public void AddAutoFilter(string range, Dictionary<uint, IEnumerable<string>> filterCriteria = null) {
+            if (string.IsNullOrEmpty(range)) {
+                throw new ArgumentNullException(nameof(range));
+            }
+
+            Worksheet worksheet = _worksheetPart.Worksheet;
+
+            AutoFilter existing = worksheet.Elements<AutoFilter>().FirstOrDefault();
+            if (existing != null) {
+                worksheet.RemoveChild(existing);
+            }
+
+            AutoFilter autoFilter = new AutoFilter { Reference = range };
+
+            if (filterCriteria != null) {
+                foreach (KeyValuePair<uint, IEnumerable<string>> criteria in filterCriteria) {
+                    FilterColumn filterColumn = new FilterColumn { ColumnId = criteria.Key };
+                    Filters filters = new Filters();
+                    foreach (string value in criteria.Value) {
+                        filters.Append(new Filter { Val = value });
+                    }
+
+                    filterColumn.Append(filters);
+                    autoFilter.Append(filterColumn);
+                }
+            }
+
+            worksheet.Append(autoFilter);
+            worksheet.Save();
+        }
+
+        public void SetCellValue(int row, int column, string value, bool autoFitColumns = false, bool autoFitRows = false) {
             Cell cell = GetCell(row, column);
             int sharedStringIndex = _excelDocument.GetSharedStringIndex(value);
             cell.CellValue = new CellValue(sharedStringIndex.ToString(CultureInfo.InvariantCulture));
             cell.DataType = CellValues.SharedString;
+            if (autoFitColumns) AutoFitColumns();
+            if (autoFitRows) AutoFitRows();
         }
 
-        public void SetCellValue(int row, int column, double value) {
+        public void SetCellValue(int row, int column, double value, bool autoFitColumns = false, bool autoFitRows = false) {
             Cell cell = GetCell(row, column);
             cell.CellValue = new CellValue(value.ToString(CultureInfo.InvariantCulture));
             cell.DataType = CellValues.Number;
+            if (autoFitColumns) AutoFitColumns();
+            if (autoFitRows) AutoFitRows();
         }
 
-        public void SetCellValue(int row, int column, decimal value) {
+        public void SetCellValue(int row, int column, decimal value, bool autoFitColumns = false, bool autoFitRows = false) {
             Cell cell = GetCell(row, column);
             cell.CellValue = new CellValue(value.ToString(CultureInfo.InvariantCulture));
             cell.DataType = CellValues.Number;
+            if (autoFitColumns) AutoFitColumns();
+            if (autoFitRows) AutoFitRows();
         }
 
-        public void SetCellValue(int row, int column, DateTime value) {
+        public void SetCellValue(int row, int column, DateTime value, bool autoFitColumns = false, bool autoFitRows = false) {
             Cell cell = GetCell(row, column);
             cell.CellValue = new CellValue(value.ToOADate().ToString(CultureInfo.InvariantCulture));
             cell.DataType = CellValues.Number;
+            if (autoFitColumns) AutoFitColumns();
+            if (autoFitRows) AutoFitRows();
         }
 
-        public void SetCellValue(int row, int column, bool value) {
+        public void SetCellValue(int row, int column, DateTimeOffset value, bool autoFitColumns = false, bool autoFitRows = false) {
+            SetCellValue(row, column, value.UtcDateTime, autoFitColumns, autoFitRows);
+        }
+
+        public void SetCellValue(int row, int column, TimeSpan value, bool autoFitColumns = false, bool autoFitRows = false) {
+            Cell cell = GetCell(row, column);
+            cell.CellValue = new CellValue(value.TotalDays.ToString(CultureInfo.InvariantCulture));
+            cell.DataType = CellValues.Number;
+            if (autoFitColumns) AutoFitColumns();
+            if (autoFitRows) AutoFitRows();
+        }
+
+        public void SetCellValue(int row, int column, uint value, bool autoFitColumns = false, bool autoFitRows = false) {
+            SetCellValue(row, column, (double)value, autoFitColumns, autoFitRows);
+        }
+
+        public void SetCellValue(int row, int column, ulong value, bool autoFitColumns = false, bool autoFitRows = false) {
+            SetCellValue(row, column, (double)value, autoFitColumns, autoFitRows);
+        }
+
+        public void SetCellValue(int row, int column, ushort value, bool autoFitColumns = false, bool autoFitRows = false) {
+            SetCellValue(row, column, (double)value, autoFitColumns, autoFitRows);
+        }
+
+        public void SetCellValue(int row, int column, byte value, bool autoFitColumns = false, bool autoFitRows = false) {
+            SetCellValue(row, column, (double)value, autoFitColumns, autoFitRows);
+        }
+
+        public void SetCellValue(int row, int column, sbyte value, bool autoFitColumns = false, bool autoFitRows = false) {
+            SetCellValue(row, column, (double)value, autoFitColumns, autoFitRows);
+        }
+
+        public void SetCellValue(int row, int column, bool value, bool autoFitColumns = false, bool autoFitRows = false) {
             Cell cell = GetCell(row, column);
             cell.CellValue = new CellValue(value ? "1" : "0");
             cell.DataType = CellValues.Boolean;
+            if (autoFitColumns) AutoFitColumns();
+            if (autoFitRows) AutoFitRows();
         }
 
-        public void SetCellFormula(int row, int column, string formula) {
+        public void SetCellFormula(int row, int column, string formula, bool autoFitColumns = false, bool autoFitRows = false) {
             Cell cell = GetCell(row, column);
             cell.CellFormula = new CellFormula(formula);
+            if (autoFitColumns) AutoFitColumns();
+            if (autoFitRows) AutoFitRows();
         }
 
-        public void SetCellValue(int row, int column, object value) {
+        public void SetCellFormat(int row, int column, string numberFormat) {
+            Cell cell = GetCell(row, column);
+
+            WorkbookStylesPart stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+            if (stylesPart == null) {
+                stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.AddNewPart<WorkbookStylesPart>();
+            }
+
+            Stylesheet stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
+
+            stylesheet.Fonts ??= new Fonts(new DocumentFormat.OpenXml.Spreadsheet.Font());
+            stylesheet.Fonts.Count = (uint)stylesheet.Fonts.Count();
+
+            stylesheet.Fills ??= new Fills(new Fill());
+            stylesheet.Fills.Count = (uint)stylesheet.Fills.Count();
+
+            stylesheet.Borders ??= new Borders(new Border());
+            stylesheet.Borders.Count = (uint)stylesheet.Borders.Count();
+
+            stylesheet.CellStyleFormats ??= new CellStyleFormats(new CellFormat());
+            stylesheet.CellStyleFormats.Count = (uint)stylesheet.CellStyleFormats.Count();
+
+            stylesheet.CellFormats ??= new CellFormats(new CellFormat());
+            if (stylesheet.CellFormats.Count == null || stylesheet.CellFormats.Count.Value == 0) {
+                stylesheet.CellFormats.Count = 1;
+            }
+
+            stylesheet.NumberingFormats ??= new NumberingFormats();
+
+            NumberingFormat existingFormat = stylesheet.NumberingFormats.Elements<NumberingFormat>()
+                .FirstOrDefault(n => n.FormatCode != null && n.FormatCode.Value == numberFormat);
+
+            uint numberFormatId;
+            if (existingFormat != null) {
+                numberFormatId = existingFormat.NumberFormatId.Value;
+            } else {
+                numberFormatId = stylesheet.NumberingFormats.Elements<NumberingFormat>().Any()
+                    ? stylesheet.NumberingFormats.Elements<NumberingFormat>().Max(n => n.NumberFormatId.Value) + 1
+                    : 164U;
+                NumberingFormat numberingFormat = new NumberingFormat {
+                    NumberFormatId = numberFormatId,
+                    FormatCode = StringValue.FromString(numberFormat)
+                };
+                stylesheet.NumberingFormats.Append(numberingFormat);
+                stylesheet.NumberingFormats.Count = (uint)stylesheet.NumberingFormats.Count();
+            }
+
+            var cellFormats = stylesheet.CellFormats.Elements<CellFormat>().ToList();
+            int formatIndex = cellFormats.FindIndex(cf => cf.NumberFormatId != null && cf.NumberFormatId.Value == numberFormatId && cf.ApplyNumberFormat != null && cf.ApplyNumberFormat.Value);
+            if (formatIndex == -1) {
+                CellFormat cellFormat = new CellFormat {
+                    NumberFormatId = numberFormatId,
+                    ApplyNumberFormat = true
+                };
+                stylesheet.CellFormats.Append(cellFormat);
+                stylesheet.CellFormats.Count = (uint)stylesheet.CellFormats.Count();
+                formatIndex = cellFormats.Count;
+            }
+
+            cell.StyleIndex = (uint)formatIndex;
+            stylesPart.Stylesheet.Save();
+        }
+
+        public void SetCellValue(int row, int column, object value, bool autoFitColumns = false, bool autoFitRows = false) {
             switch (value) {
                 case string s:
-                    SetCellValue(row, column, s);
+                    SetCellValue(row, column, s, autoFitColumns, autoFitRows);
                     break;
                 case double d:
-                    SetCellValue(row, column, d);
+                    SetCellValue(row, column, d, autoFitColumns, autoFitRows);
                     break;
                 case float f:
-                    SetCellValue(row, column, Convert.ToDouble(f));
+                    SetCellValue(row, column, Convert.ToDouble(f), autoFitColumns, autoFitRows);
                     break;
                 case decimal dec:
-                    SetCellValue(row, column, dec);
+                    SetCellValue(row, column, dec, autoFitColumns, autoFitRows);
                     break;
                 case int i:
-                    SetCellValue(row, column, (double)i);
+                    SetCellValue(row, column, (double)i, autoFitColumns, autoFitRows);
                     break;
                 case long l:
-                    SetCellValue(row, column, (double)l);
+                    SetCellValue(row, column, (double)l, autoFitColumns, autoFitRows);
                     break;
                 case DateTime dt:
-                    SetCellValue(row, column, dt);
+                    SetCellValue(row, column, dt, autoFitColumns, autoFitRows);
+                    break;
+                case DateTimeOffset dto:
+                    SetCellValue(row, column, dto, autoFitColumns, autoFitRows);
+                    break;
+                case TimeSpan ts:
+                    SetCellValue(row, column, ts, autoFitColumns, autoFitRows);
                     break;
                 case bool b:
-                    SetCellValue(row, column, b);
+                    SetCellValue(row, column, b, autoFitColumns, autoFitRows);
+                    break;
+                case uint ui:
+                    SetCellValue(row, column, ui, autoFitColumns, autoFitRows);
+                    break;
+                case ulong ul:
+                    SetCellValue(row, column, ul, autoFitColumns, autoFitRows);
+                    break;
+                case ushort us:
+                    SetCellValue(row, column, us, autoFitColumns, autoFitRows);
+                    break;
+                case byte by:
+                    SetCellValue(row, column, by, autoFitColumns, autoFitRows);
+                    break;
+                case sbyte sb:
+                    SetCellValue(row, column, sb, autoFitColumns, autoFitRows);
+                    break;
+                case short sh:
+                    SetCellValue(row, column, (double)sh, autoFitColumns, autoFitRows);
                     break;
                 default:
                     if (value != null) {
-                        SetCellValue(row, column, value.ToString());
+                        SetCellValue(row, column, value.ToString(), autoFitColumns, autoFitRows);
                     } else {
-                        SetCellValue(row, column, string.Empty);
+                        SetCellValue(row, column, string.Empty, autoFitColumns, autoFitRows);
                     }
                     break;
+            }
+        }
+
+        public void SetCellValue<T>(int row, int column, T? value, bool autoFitColumns = false, bool autoFitRows = false) where T : struct {
+            if (value.HasValue) {
+                SetCellValue(row, column, value.Value, autoFitColumns, autoFitRows);
+            } else {
+                SetCellValue(row, column, string.Empty, autoFitColumns, autoFitRows);
             }
         }
     }

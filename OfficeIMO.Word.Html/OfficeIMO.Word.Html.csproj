@@ -29,6 +29,7 @@
         <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
         <GenerateDocumentationFile>True</GenerateDocumentationFile>
         <LangVersion>Latest</LangVersion>
+        <Nullable>enable</Nullable>
     </PropertyGroup>
 
     <ItemGroup>
@@ -67,6 +68,10 @@
         <Using Include="System.Linq" />
         <Using Include="System.IO" />
         <Using Include="DocumentFormat.OpenXml" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="OfficeIMO.Tests" />
     </ItemGroup>
 
 </Project>

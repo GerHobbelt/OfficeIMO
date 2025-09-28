@@ -14,12 +14,18 @@ namespace OfficeIMO.Examples {
             string folderPath = Path.Combine(Directory.GetCurrentDirectory(), "Documents");
             Setup(folderPath);
 
+            // Visio/BasicVisioDocument
+            OfficeIMO.Examples.Visio.BasicVisioDocument.Example_BasicVisio(folderPath, false);
+            OfficeIMO.Examples.Visio.ReadVisioDocument.Example_ReadVisio(folderPath, false);
+
             // Excel/BasicExcelFunctionality
             OfficeIMO.Examples.Excel.BasicExcelFunctionality.BasicExcel_Example1(folderPath, false);
             OfficeIMO.Examples.Excel.BasicExcelFunctionality.BasicExcel_Example2(folderPath, false);
             OfficeIMO.Examples.Excel.BasicExcelFunctionality.BasicExcel_Example3(false);
             // Excel/BasicExcelFunctionalityAsync
             OfficeIMO.Examples.Excel.BasicExcelFunctionalityAsync.Example_ExcelAsync(folderPath).GetAwaiter().GetResult();
+            // Excel/AutoFit
+            OfficeIMO.Examples.Excel.AutoFit.Example(folderPath, false);
             // Html/Html
             OfficeIMO.Examples.Html.Html.Example_HtmlHeadings(folderPath, false);
             OfficeIMO.Examples.Html.Html.Example_HtmlImages(folderPath, false);
