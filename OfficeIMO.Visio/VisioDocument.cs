@@ -15,6 +15,10 @@ namespace OfficeIMO.Visio {
     public class VisioDocument {
         private readonly List<VisioPage> _pages = new();
 
+        private const string DocumentRelationshipType = "http://schemas.microsoft.com/visio/2010/relationships/document";
+        private const string DocumentContentType = "application/vnd.ms-visio.drawing.main+xml";
+        private const string VisioNamespace = "http://schemas.microsoft.com/office/visio/2012/main";
+
         /// <summary>
         /// Collection of pages in the document.
         /// </summary>
@@ -39,22 +43,26 @@ namespace OfficeIMO.Visio {
 
             using Package package = Package.Open(filePath, FileMode.Open, FileAccess.Read);
 
-            PackageRelationship documentRel = package.GetRelationshipsByType("http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument").Single();
+            PackageRelationship documentRel = package.GetRelationshipsByType(DocumentRelationshipType).Single();
             Uri documentUri = PackUriHelper.ResolvePartUri(new Uri("/", UriKind.Relative), documentRel.TargetUri);
             PackagePart documentPart = package.GetPart(documentUri);
+            if (documentPart.ContentType != DocumentContentType) {
+                throw new InvalidDataException($"Unexpected Visio document content type: {documentPart.ContentType}");
+            }
 
             PackageRelationship pagesRel = documentPart.GetRelationshipsByType("http://schemas.microsoft.com/visio/2010/relationships/pages").Single();
             Uri pagesUri = PackUriHelper.ResolvePartUri(documentPart.Uri, pagesRel.TargetUri);
             PackagePart pagesPart = package.GetPart(pagesUri);
 
-            XNamespace ns = "http://schemas.microsoft.com/office/visio/2012/main";
+            XNamespace ns = VisioNamespace;
+            XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
             XDocument pagesDoc = XDocument.Load(pagesPart.GetStream());
 
             foreach (XElement pageRef in pagesDoc.Root?.Elements(ns + "Page") ?? Enumerable.Empty<XElement>()) {
                 string name = pageRef.Attribute("NameU")?.Value ?? pageRef.Attribute("Name")?.Value ?? "Page";
                 VisioPage page = document.AddPage(name);
 
-                string? relId = pageRef.Attribute("RelId")?.Value;
+                string? relId = pageRef.Element(ns + "Rel")?.Attribute(rNs + "id")?.Value;
                 if (string.IsNullOrEmpty(relId)) {
                     continue;
                 }
@@ -88,46 +96,59 @@ namespace OfficeIMO.Visio {
             return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double result) ? result : 0;
         }
 
+        private static void WriteVisioDocumentRoot(XmlWriter writer) {
+            writer.WriteStartDocument();
+            writer.WriteStartElement("VisioDocument", VisioNamespace);
+            writer.WriteElementString("DocumentSettings", VisioNamespace, string.Empty);
+            writer.WriteElementString("Colors", VisioNamespace, string.Empty);
+            writer.WriteElementString("FaceNames", VisioNamespace, string.Empty);
+            writer.WriteElementString("StyleSheets", VisioNamespace, string.Empty);
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+
         /// <summary>
         /// Saves the document to a <c>.vsdx</c> package.
         /// </summary>
         public void Save(string filePath) {
             using Package package = Package.Open(filePath, FileMode.Create);
 
+            int relIdCounter = 1;
+
             Uri documentUri = new("/visio/document.xml", UriKind.Relative);
-            PackagePart documentPart = package.CreatePart(documentUri, "application/vnd.ms-visio.document.main+xml");
-            package.CreateRelationship(documentUri, TargetMode.Internal, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument");
+            PackagePart documentPart = package.CreatePart(documentUri, DocumentContentType);
+            package.CreateRelationship(documentUri, TargetMode.Internal, DocumentRelationshipType, $"rId{relIdCounter++}");
 
             Uri pagesUri = new("/visio/pages/pages.xml", UriKind.Relative);
             PackagePart pagesPart = package.CreatePart(pagesUri, "application/vnd.ms-visio.pages+xml");
-            documentPart.CreateRelationship(new Uri("pages/pages.xml", UriKind.Relative), TargetMode.Internal, "http://schemas.microsoft.com/visio/2010/relationships/pages");
+            documentPart.CreateRelationship(new Uri("pages/pages.xml", UriKind.Relative), TargetMode.Internal, "http://schemas.microsoft.com/visio/2010/relationships/pages", $"rId{relIdCounter++}");
 
             Uri page1Uri = new("/visio/pages/page1.xml", UriKind.Relative);
             PackagePart page1Part = package.CreatePart(page1Uri, "application/vnd.ms-visio.page+xml");
-            PackageRelationship pageRel = pagesPart.CreateRelationship(new Uri("page1.xml", UriKind.Relative), TargetMode.Internal, "http://schemas.microsoft.com/visio/2010/relationships/page");
+            PackageRelationship pageRel = pagesPart.CreateRelationship(new Uri("page1.xml", UriKind.Relative), TargetMode.Internal, "http://schemas.microsoft.com/visio/2010/relationships/page", $"rId{relIdCounter++}");
 
             XmlWriterSettings settings = new() {
                 Encoding = new UTF8Encoding(false),
                 CloseOutput = true,
                 Indent = true,
             };
-            const string ns = "http://schemas.microsoft.com/office/visio/2012/main";
+            const string ns = VisioNamespace;
 
             using (XmlWriter writer = XmlWriter.Create(documentPart.GetStream(FileMode.Create, FileAccess.Write), settings)) {
-                writer.WriteStartDocument();
-                writer.WriteStartElement("VisioDocument", ns);
-                writer.WriteEndElement();
-                writer.WriteEndDocument();
+                WriteVisioDocumentRoot(writer);
             }
 
             string pageName = _pages.Count > 0 ? _pages[0].Name : "Page-1";
             using (XmlWriter writer = XmlWriter.Create(pagesPart.GetStream(FileMode.Create, FileAccess.Write), settings)) {
                 writer.WriteStartDocument();
                 writer.WriteStartElement("Pages", ns);
+                writer.WriteAttributeString("xmlns", "r", null, "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
                 writer.WriteStartElement("Page", ns);
-                writer.WriteAttributeString("ID", "0");
+                writer.WriteAttributeString("ID", "1");
                 writer.WriteAttributeString("Name", pageName);
-                writer.WriteAttributeString("RelId", pageRel.Id);
+                writer.WriteStartElement("Rel", ns);
+                writer.WriteAttributeString("r", "id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships", pageRel.Id);
+                writer.WriteEndElement();
                 writer.WriteEndElement();
                 writer.WriteEndElement();
                 writer.WriteEndDocument();

@@ -21,27 +21,35 @@ namespace OfficeIMO.Tests {
             XDocument pageDoc;
             Uri pageUri;
             XNamespace ns = "http://schemas.microsoft.com/office/visio/2012/main";
+            XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
             using (Package package = Package.Open(filePath, FileMode.Open, FileAccess.Read)) {
                 Assert.True(package.PartExists(new Uri("/visio/document.xml", UriKind.Relative)));
                 Assert.True(package.PartExists(new Uri("/visio/pages/pages.xml", UriKind.Relative)));
                 Assert.True(package.PartExists(new Uri("/visio/pages/page1.xml", UriKind.Relative)));
 
-                PackageRelationship rel = package.GetRelationshipsByType("http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument").Single();
+                PackageRelationship rel = package.GetRelationshipsByType("http://schemas.microsoft.com/visio/2010/relationships/document").Single();
                 Assert.Equal("/visio/document.xml", rel.TargetUri.OriginalString);
+                Assert.Equal("rId1", rel.Id);
 
                 PackagePart documentPart = package.GetPart(new Uri("/visio/document.xml", UriKind.Relative));
                 PackageRelationship pagesRel = documentPart.GetRelationshipsByType("http://schemas.microsoft.com/visio/2010/relationships/pages").Single();
+                Assert.Equal("rId2", pagesRel.Id);
                 Uri pagesUri = PackUriHelper.ResolvePartUri(documentPart.Uri, pagesRel.TargetUri);
                 Assert.Equal("/visio/pages/pages.xml", pagesUri.OriginalString);
 
                 PackagePart pagesPart = package.GetPart(pagesUri);
                 PackageRelationship pageRel = pagesPart.GetRelationshipsByType("http://schemas.microsoft.com/visio/2010/relationships/page").Single();
+                Assert.Equal("rId3", pageRel.Id);
                 pageUri = PackUriHelper.ResolvePartUri(pagesPart.Uri, pageRel.TargetUri);
                 Assert.Equal("/visio/pages/page1.xml", pageUri.OriginalString);
 
                 XDocument pagesDoc = XDocument.Load(pagesPart.GetStream());
-                Assert.Equal(pageRel.Id, pagesDoc.Root?.Element(ns + "Page")?.Attribute("RelId")?.Value);
+                XElement? pageElement = pagesDoc.Root?.Element(ns + "Page");
+                Assert.Equal("1", pageElement?.Attribute("ID")?.Value);
+                Assert.Null(pageElement?.Attribute("RelId"));
+                string? relId = pageElement?.Element(ns + "Rel")?.Attribute(rNs + "id")?.Value;
+                Assert.Equal(pageRel.Id, relId);
 
                 PackagePart pagePart = package.GetPart(pageUri);
                 pageDoc = XDocument.Load(pagePart.GetStream());
@@ -54,8 +62,8 @@ namespace OfficeIMO.Tests {
             using Stream entryStream = entry.Open();
             XDocument contentTypes = XDocument.Load(entryStream);
             XNamespace ct = "http://schemas.openxmlformats.org/package/2006/content-types";
-            bool hasDocOverride = contentTypes.Root?.Elements(ct + "Override").Any(e => e.Attribute("PartName")?.Value == "/visio/document.xml" && e.Attribute("ContentType")?.Value == "application/vnd.ms-visio.document.main+xml") == true;
-            bool hasDocDefault = contentTypes.Root?.Elements(ct + "Default").Any(e => e.Attribute("Extension")?.Value == "xml" && e.Attribute("ContentType")?.Value == "application/vnd.ms-visio.document.main+xml") == true;
+            bool hasDocOverride = contentTypes.Root?.Elements(ct + "Override").Any(e => e.Attribute("PartName")?.Value == "/visio/document.xml" && e.Attribute("ContentType")?.Value == "application/vnd.ms-visio.drawing.main+xml") == true;
+            bool hasDocDefault = contentTypes.Root?.Elements(ct + "Default").Any(e => e.Attribute("Extension")?.Value == "xml" && e.Attribute("ContentType")?.Value == "application/vnd.ms-visio.drawing.main+xml") == true;
             Assert.True(hasDocOverride || hasDocDefault);
             Assert.NotNull(contentTypes.Root?.Elements(ct + "Override").FirstOrDefault(e => e.Attribute("PartName")?.Value == "/visio/pages/pages.xml"));
             Assert.NotNull(contentTypes.Root?.Elements(ct + "Override").FirstOrDefault(e => e.Attribute("PartName")?.Value == "/visio/pages/page1.xml"));
