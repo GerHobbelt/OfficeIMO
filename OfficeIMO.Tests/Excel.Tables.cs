@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -104,6 +105,21 @@ namespace OfficeIMO.Tests {
             }
         }
 
+        [Theory]
+        [InlineData("B1:A2")]
+        [InlineData("A3:A1")]
+        [InlineData("B3:A1")]
+        public void Test_AddTableInvertedRangeThrows(string range) {
+            string safeRange = range.Replace(':', '_');
+            string filePath = Path.Combine(_directoryWithFiles, $"Table.Inverted.{safeRange}.xlsx");
+            using (var document = ExcelDocument.Create(filePath)) {
+                var sheet = document.AddWorkSheet("Data");
+
+                Assert.Throws<ArgumentException>(() =>
+                    sheet.AddTable(range, true, "MyTable", TableStyle.TableStyleMedium9));
+            }
+        }
+
         [Fact]
         public void Test_SetTableTotalsMatchesHeadersCaseInsensitive() {
             string filePath = Path.Combine(_directoryWithFiles, "Table.TotalsCaseInsensitive.xlsx");
@@ -131,6 +147,40 @@ namespace OfficeIMO.Tests {
                 var columns = table.TableColumns!.Elements<TableColumn>().ToList();
                 Assert.Equal(TotalsRowFunctionValues.Count, columns[0].TotalsRowFunction?.Value);
                 Assert.Equal(TotalsRowFunctionValues.Sum, columns[1].TotalsRowFunction?.Value);
+            }
+        }
+
+        [Fact]
+        public void Test_SetTableTotalsMatchesHeadersWithMixedCasing() {
+            string filePath = Path.Combine(_directoryWithFiles, "Table.TotalsMixedCase.xlsx");
+            using (var document = ExcelDocument.Create(filePath)) {
+                var sheet = document.AddWorkSheet("Data");
+                sheet.CellValue(1, 1, "nAmE");
+                sheet.CellValue(1, 2, "AMOUNT");
+                sheet.CellValue(1, 3, "balance");
+                sheet.CellValue(2, 1, "A");
+                sheet.CellValue(2, 2, 2d);
+                sheet.CellValue(2, 3, 3d);
+                sheet.AddTable("A1:C2", true, "MyTable", TableStyle.TableStyleMedium9);
+                sheet.SetTableTotals("A1:C2", new Dictionary<string, TotalsRowFunctionValues> {
+                    ["NAME"] = TotalsRowFunctionValues.Count,
+                    ["amount"] = TotalsRowFunctionValues.Sum,
+                    ["BaLaNcE"] = TotalsRowFunctionValues.Sum,
+                });
+                document.Save();
+            }
+
+            using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
+                WorksheetPart wsPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
+                TableDefinitionPart tablePart = wsPart.TableDefinitionParts.First();
+                var table = tablePart.Table;
+
+                Assert.True(table.TotalsRowShown?.Value);
+
+                var columns = table.TableColumns!.Elements<TableColumn>().ToList();
+                Assert.Equal(TotalsRowFunctionValues.Count, columns[0].TotalsRowFunction?.Value);
+                Assert.Equal(TotalsRowFunctionValues.Sum, columns[1].TotalsRowFunction?.Value);
+                Assert.Equal(TotalsRowFunctionValues.Sum, columns[2].TotalsRowFunction?.Value);
             }
         }
     }

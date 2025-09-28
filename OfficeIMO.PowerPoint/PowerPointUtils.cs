@@ -1,5 +1,6 @@
-using System;
-using DocumentFormat.OpenXml;
+using System.Globalization;
+using System.IO;
+using System.Xml.Linq;
 using DocumentFormat.OpenXml.Drawing;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Presentation;
@@ -18,6 +19,7 @@ namespace OfficeIMO.PowerPoint {
         private const int DefaultRestoredLeftSize = 15989;
         private const int DefaultRestoredTopSize = 94660;
         private const string DefaultTableStyleGuid = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
+        private const string DefaultDocumentAuthor = "OfficeIMO";
 
         public static PresentationDocument CreatePresentation(string filepath) {
             // Create a presentation at a specified file path. The presentation document type is pptx by default.
@@ -58,6 +60,107 @@ namespace OfficeIMO.PowerPoint {
 
             presentationPart.AddPart(slideMasterPart1, "rId1");
             presentationPart.AddPart(themePart1, "rId5");
+        }
+
+        private const string RelationshipNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+        internal static NotesMasterPart EnsureNotesMasterPart(PresentationPart presentationPart) {
+            NotesMasterPart notesMasterPart = presentationPart.NotesMasterPart ?? presentationPart.AddNewPart<NotesMasterPart>();
+
+            if (notesMasterPart.NotesMaster == null) {
+                notesMasterPart.NotesMaster = CreateDefaultNotesMaster();
+            }
+
+            Presentation presentation = presentationPart.Presentation ??= new Presentation();
+            NotesMasterIdList notesMasterIdList = presentation.NotesMasterIdList ??= new NotesMasterIdList();
+
+            string relationshipId = presentationPart.GetIdOfPart(notesMasterPart);
+            bool hasEntry = notesMasterIdList
+                .Elements<NotesMasterId>()
+                .Any(existing => GetRelationshipId(existing) == relationshipId);
+            if (!hasEntry) {
+                NotesMasterId notesMasterId = new NotesMasterId();
+                SetRelationshipId(notesMasterId, relationshipId);
+                notesMasterIdList.AppendChild(notesMasterId);
+            }
+
+            return notesMasterPart;
+        }
+
+        private static NotesMaster CreateDefaultNotesMaster() {
+            ShapeTree shapeTree = new ShapeTree();
+            shapeTree.Append(
+                new P.NonVisualGroupShapeProperties(
+                    new P.NonVisualDrawingProperties { Id = 1U, Name = "Notes Group Shape" },
+                    new P.NonVisualGroupShapeDrawingProperties(),
+                    new ApplicationNonVisualDrawingProperties()),
+                new P.GroupShapeProperties(new D.TransformGroup()));
+
+            shapeTree.Append(
+                CreatePlaceholderShape(2U, "Notes Placeholder", PlaceholderValues.Body, 1U, includeEndParagraph: true),
+                CreatePlaceholderShape(3U, "Slide Image Placeholder", PlaceholderValues.SlideImage, 2U, includeEndParagraph: false),
+                CreatePlaceholderShape(4U, "Date Placeholder", PlaceholderValues.DateAndTime, 3U, includeEndParagraph: true),
+                CreatePlaceholderShape(5U, "Slide Number Placeholder", PlaceholderValues.SlideNumber, 4U, includeEndParagraph: true),
+                CreatePlaceholderShape(6U, "Footer Placeholder", PlaceholderValues.Footer, 5U, includeEndParagraph: true));
+
+            Background background = new Background(new BackgroundProperties(new D.NoFill()));
+
+            return new NotesMaster(
+                new CommonSlideData(background, shapeTree),
+                new P.ColorMap {
+                    Background1 = D.ColorSchemeIndexValues.Light1,
+                    Text1 = D.ColorSchemeIndexValues.Dark1,
+                    Background2 = D.ColorSchemeIndexValues.Light2,
+                    Text2 = D.ColorSchemeIndexValues.Dark2,
+                    Accent1 = D.ColorSchemeIndexValues.Accent1,
+                    Accent2 = D.ColorSchemeIndexValues.Accent2,
+                    Accent3 = D.ColorSchemeIndexValues.Accent3,
+                    Accent4 = D.ColorSchemeIndexValues.Accent4,
+                    Accent5 = D.ColorSchemeIndexValues.Accent5,
+                    Accent6 = D.ColorSchemeIndexValues.Accent6,
+                    Hyperlink = D.ColorSchemeIndexValues.Hyperlink,
+                    FollowedHyperlink = D.ColorSchemeIndexValues.FollowedHyperlink
+                },
+                new NotesStyle(
+                    new D.Level1ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level2ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level3ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level4ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level5ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level6ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level7ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level8ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }),
+                    new D.Level9ParagraphProperties(new D.DefaultRunProperties { Language = "en-US" }))
+            );
+        }
+
+        private static P.Shape CreatePlaceholderShape(uint id, string name, PlaceholderValues type, uint index, bool includeEndParagraph) {
+            P.Shape shape = new P.Shape(
+                new P.NonVisualShapeProperties(
+                    new P.NonVisualDrawingProperties { Id = id, Name = name },
+                    new P.NonVisualShapeDrawingProperties(),
+                    new ApplicationNonVisualDrawingProperties(new PlaceholderShape { Type = type, Index = index })),
+                new P.ShapeProperties(),
+                new P.TextBody(
+                    new D.BodyProperties(),
+                    new D.ListStyle()));
+
+            D.Paragraph paragraph = new D.Paragraph();
+            if (includeEndParagraph) {
+                paragraph.Append(new D.EndParagraphRunProperties { Language = "en-US" });
+            }
+
+            shape.TextBody!.Append(paragraph);
+            return shape;
+        }
+
+        private static string? GetRelationshipId(NotesMasterId notesMasterId) {
+            OpenXmlAttribute attribute = notesMasterId.GetAttribute("id", RelationshipNamespace);
+            return string.IsNullOrEmpty(attribute.Value) ? null : attribute.Value;
+        }
+
+        private static void SetRelationshipId(NotesMasterId notesMasterId, string relationshipId) {
+            notesMasterId.SetAttribute(new OpenXmlAttribute("r", "id", RelationshipNamespace, relationshipId));
         }
 
         private static SlidePart CreateSlidePart(PresentationPart presentationPart) {
@@ -107,12 +210,18 @@ namespace OfficeIMO.PowerPoint {
         }
 
         private static void CreatePresentationPropertiesPart(PresentationPart presentationPart) {
-            PresentationPropertiesPart part = presentationPart.AddNewPart<PresentationPropertiesPart>("rId3");
+            PresentationPropertiesPart part = presentationPart.PresentationPropertiesPart ?? presentationPart.AddNewPart<PresentationPropertiesPart>("rId3");
+
             part.PresentationProperties ??= new PresentationProperties();
+
+            ShowProperties showProperties = part.PresentationProperties.ShowProperties ??= new ShowProperties();
+            showProperties.ShowNarration = false;
+            showProperties.ShowAnimation = true;
+            showProperties.UseTimings = true;
         }
 
         private static void CreateViewPropertiesPart(PresentationPart presentationPart) {
-            ViewPropertiesPart viewPart = presentationPart.AddNewPart<ViewPropertiesPart>("rId4");
+            ViewPropertiesPart viewPart = presentationPart.ViewPropertiesPart ?? presentationPart.AddNewPart<ViewPropertiesPart>("rId4");
 
             NormalViewProperties normalViewProperties = new NormalViewProperties(
                 new RestoredLeft() { Size = DefaultRestoredLeftSize, AutoAdjust = false },
@@ -154,7 +263,7 @@ namespace OfficeIMO.PowerPoint {
         }
 
         private static void CreateTableStylesPart(PresentationPart presentationPart) {
-            TableStylesPart tableStylesPart = presentationPart.AddNewPart<TableStylesPart>("rId6");
+            TableStylesPart tableStylesPart = presentationPart.TableStylesPart ?? presentationPart.AddNewPart<TableStylesPart>("rId6");
 
             D.TableStyleList tableStyleList = new D.TableStyleList() { Default = DefaultTableStyleGuid };
             tableStyleList.AddNamespaceDeclaration("a", "http://schemas.openxmlformats.org/drawingml/2006/main");
@@ -169,28 +278,75 @@ namespace OfficeIMO.PowerPoint {
 
             ExtendedFilePropertiesPart extendedPart = presentationDocument.ExtendedFilePropertiesPart ?? presentationDocument.AddExtendedFilePropertiesPart();
             if (extendedPart.Properties == null) {
-                extendedPart.Properties = new Ap.Properties(
-                    new Ap.TotalTime() { Text = "0" },
-                    new Ap.Application() { Text = "Microsoft Office PowerPoint" },
-                    new Ap.PresentationFormat() { Text = "Widescreen" },
-                    new Ap.Slides() { Text = "1" },
-                    new Ap.Notes() { Text = "0" },
-                    new Ap.HiddenSlides() { Text = "0" }
-                );
+                extendedPart.Properties = new Ap.Properties();
             }
 
-            try {
-                var _ = presentationDocument.PackageProperties;
-            } catch {
+            extendedPart.Properties.TotalTime ??= new Ap.TotalTime() { Text = "0" };
+            extendedPart.Properties.Application ??= new Ap.Application() { Text = "Microsoft Office PowerPoint" };
+            extendedPart.Properties.PresentationFormat ??= new Ap.PresentationFormat() { Text = "Widescreen" };
+            extendedPart.Properties.Slides ??= new Ap.Slides() { Text = "1" };
+            extendedPart.Properties.Notes ??= new Ap.Notes() { Text = "0" };
+            extendedPart.Properties.HiddenSlides ??= new Ap.HiddenSlides() { Text = "0" };
+
+            DateTime timestamp = DateTime.UtcNow;
+            CoreFilePropertiesPart corePart = presentationDocument.CoreFilePropertiesPart ?? presentationDocument.AddCoreFilePropertiesPart();
+            bool coreHasContent;
+
+            using (Stream coreStream = corePart.GetStream(FileMode.OpenOrCreate, FileAccess.Read)) {
+                coreHasContent = coreStream.Length > 0;
             }
 
-            if (presentationDocument.PackageProperties.Created == null) {
-                presentationDocument.PackageProperties.Created = DateTime.UtcNow;
+            if (!coreHasContent) {
+                InitializeCoreFilePropertiesPart(corePart, timestamp);
             }
 
-            if (presentationDocument.PackageProperties.Modified == null) {
-                presentationDocument.PackageProperties.Modified = DateTime.UtcNow;
+            var packageProperties = presentationDocument.PackageProperties;
+
+            if (string.IsNullOrEmpty(packageProperties.Creator)) {
+                packageProperties.Creator = DefaultDocumentAuthor;
             }
+
+            if (string.IsNullOrEmpty(packageProperties.LastModifiedBy)) {
+                packageProperties.LastModifiedBy = DefaultDocumentAuthor;
+            }
+
+            if (packageProperties.Created == null) {
+                packageProperties.Created = timestamp;
+            }
+
+            if (packageProperties.Modified == null) {
+                packageProperties.Modified = timestamp;
+            }
+        }
+
+        private static void InitializeCoreFilePropertiesPart(CoreFilePropertiesPart corePart, DateTime timestamp) {
+            XNamespace cp = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+            XNamespace dc = "http://purl.org/dc/elements/1.1/";
+            XNamespace dcterms = "http://purl.org/dc/terms/";
+            XNamespace dcmitype = "http://purl.org/dc/dcmitype/";
+            XNamespace xsi = "http://www.w3.org/2001/XMLSchema-instance";
+
+            string serializedTimestamp = timestamp.ToString("s", CultureInfo.InvariantCulture) + "Z";
+
+            XDocument coreDocument = new XDocument(
+                new XElement(cp + "coreProperties",
+                    new XAttribute(XNamespace.Xmlns + "cp", cp),
+                    new XAttribute(XNamespace.Xmlns + "dc", dc),
+                    new XAttribute(XNamespace.Xmlns + "dcterms", dcterms),
+                    new XAttribute(XNamespace.Xmlns + "dcmitype", dcmitype),
+                    new XAttribute(XNamespace.Xmlns + "xsi", xsi),
+                    new XElement(dc + "creator", DefaultDocumentAuthor),
+                    new XElement(cp + "lastModifiedBy", DefaultDocumentAuthor),
+                    new XElement(dcterms + "created",
+                        new XAttribute(xsi + "type", "dcterms:W3CDTF"),
+                        serializedTimestamp),
+                    new XElement(dcterms + "modified",
+                        new XAttribute(xsi + "type", "dcterms:W3CDTF"),
+                        serializedTimestamp))
+            );
+
+            using Stream stream = corePart.GetStream(FileMode.Create, FileAccess.Write);
+            coreDocument.Save(stream);
         }
 
         private static ThemePart CreateTheme(SlideMasterPart slideMasterPart1) {
@@ -210,8 +366,7 @@ namespace OfficeIMO.PowerPoint {
               new D.Accent5Color(new D.RgbColorModelHex() { Val = "4BACC6" }),
               new D.Accent6Color(new D.RgbColorModelHex() { Val = "F79646" }),
               new D.Hyperlink(new D.RgbColorModelHex() { Val = "0000FF" }),
-              new D.FollowedHyperlinkColor(new D.RgbColorModelHex() { Val = "800080" }))
-            { Name = "Office" },
+              new D.FollowedHyperlinkColor(new D.RgbColorModelHex() { Val = "800080" })) { Name = "Office" },
               new D.FontScheme(
               new D.MajorFont(
               new D.LatinFont() { Typeface = "Calibri" },
@@ -220,25 +375,18 @@ namespace OfficeIMO.PowerPoint {
               new D.MinorFont(
               new D.LatinFont() { Typeface = "Calibri" },
               new D.EastAsianFont() { Typeface = "" },
-              new D.ComplexScriptFont() { Typeface = "" }))
-              { Name = "Office" },
+              new D.ComplexScriptFont() { Typeface = "" })) { Name = "Office" },
               new D.FormatScheme(
               new D.FillStyleList(
               new D.SolidFill(new D.SchemeColor() { Val = D.SchemeColorValues.PhColor }),
               new D.GradientFill(
                 new D.GradientStopList(
                 new D.GradientStop(new D.SchemeColor(new D.Tint() { Val = 50000 },
-                  new D.SaturationModulation() { Val = 300000 })
-                { Val = D.SchemeColorValues.PhColor })
-                { Position = 0 },
+                  new D.SaturationModulation() { Val = 300000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 0 },
                 new D.GradientStop(new D.SchemeColor(new D.Tint() { Val = 37000 },
-                 new D.SaturationModulation() { Val = 300000 })
-                { Val = D.SchemeColorValues.PhColor })
-                { Position = 35000 },
+                 new D.SaturationModulation() { Val = 300000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 35000 },
                 new D.GradientStop(new D.SchemeColor(new D.Tint() { Val = 15000 },
-                 new D.SaturationModulation() { Val = 350000 })
-                { Val = D.SchemeColorValues.PhColor })
-                { Position = 100000 }
+                 new D.SaturationModulation() { Val = 350000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 100000 }
                 ),
                 new D.LinearGradientFill() { Angle = 16200000, Scaled = true }),
               new D.NoFill(),
@@ -249,10 +397,8 @@ namespace OfficeIMO.PowerPoint {
                 new D.SolidFill(
                 new D.SchemeColor(
                   new D.Shade() { Val = 95000 },
-                  new D.SaturationModulation() { Val = 105000 })
-                { Val = D.SchemeColorValues.PhColor }),
-                new D.PresetDash() { Val = D.PresetLineDashValues.Solid })
-              {
+                  new D.SaturationModulation() { Val = 105000 }) { Val = D.SchemeColorValues.PhColor }),
+                new D.PresetDash() { Val = D.PresetLineDashValues.Solid }) {
                   Width = 9525,
                   CapType = D.LineCapValues.Flat,
                   CompoundLineType = D.CompoundLineValues.Single,
@@ -262,10 +408,8 @@ namespace OfficeIMO.PowerPoint {
                 new D.SolidFill(
                 new D.SchemeColor(
                   new D.Shade() { Val = 95000 },
-                  new D.SaturationModulation() { Val = 105000 })
-                { Val = D.SchemeColorValues.PhColor }),
-                new D.PresetDash() { Val = D.PresetLineDashValues.Solid })
-              {
+                  new D.SaturationModulation() { Val = 105000 }) { Val = D.SchemeColorValues.PhColor }),
+                new D.PresetDash() { Val = D.PresetLineDashValues.Solid }) {
                   Width = 9525,
                   CapType = D.LineCapValues.Flat,
                   CompoundLineType = D.CompoundLineValues.Single,
@@ -275,10 +419,8 @@ namespace OfficeIMO.PowerPoint {
                 new D.SolidFill(
                 new D.SchemeColor(
                   new D.Shade() { Val = 95000 },
-                  new D.SaturationModulation() { Val = 105000 })
-                { Val = D.SchemeColorValues.PhColor }),
-                new D.PresetDash() { Val = D.PresetLineDashValues.Solid })
-              {
+                  new D.SaturationModulation() { Val = 105000 }) { Val = D.SchemeColorValues.PhColor }),
+                new D.PresetDash() { Val = D.PresetLineDashValues.Solid }) {
                   Width = 9525,
                   CapType = D.LineCapValues.Flat,
                   CompoundLineType = D.CompoundLineValues.Single,
@@ -289,57 +431,40 @@ namespace OfficeIMO.PowerPoint {
                 new D.EffectList(
                 new D.OuterShadow(
                   new D.RgbColorModelHex(
-                  new D.Alpha() { Val = 38000 })
-                  { Val = "000000" })
-                { BlurRadius = 40000L, Distance = 20000L, Direction = 5400000, RotateWithShape = false })),
+                  new D.Alpha() { Val = 38000 }) { Val = "000000" }) { BlurRadius = 40000L, Distance = 20000L, Direction = 5400000, RotateWithShape = false })),
               new D.EffectStyle(
                 new D.EffectList(
                 new D.OuterShadow(
                   new D.RgbColorModelHex(
-                  new D.Alpha() { Val = 38000 })
-                  { Val = "000000" })
-                { BlurRadius = 40000L, Distance = 20000L, Direction = 5400000, RotateWithShape = false })),
+                  new D.Alpha() { Val = 38000 }) { Val = "000000" }) { BlurRadius = 40000L, Distance = 20000L, Direction = 5400000, RotateWithShape = false })),
               new D.EffectStyle(
                 new D.EffectList(
                 new D.OuterShadow(
                   new D.RgbColorModelHex(
-                  new D.Alpha() { Val = 38000 })
-                  { Val = "000000" })
-                { BlurRadius = 40000L, Distance = 20000L, Direction = 5400000, RotateWithShape = false }))),
+                  new D.Alpha() { Val = 38000 }) { Val = "000000" }) { BlurRadius = 40000L, Distance = 20000L, Direction = 5400000, RotateWithShape = false }))),
               new D.BackgroundFillStyleList(
               new D.SolidFill(new D.SchemeColor() { Val = D.SchemeColorValues.PhColor }),
               new D.GradientFill(
                 new D.GradientStopList(
                 new D.GradientStop(
                   new D.SchemeColor(new D.Tint() { Val = 50000 },
-                    new D.SaturationModulation() { Val = 300000 })
-                  { Val = D.SchemeColorValues.PhColor })
-                { Position = 0 },
+                    new D.SaturationModulation() { Val = 300000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 0 },
                 new D.GradientStop(
                   new D.SchemeColor(new D.Tint() { Val = 50000 },
-                    new D.SaturationModulation() { Val = 300000 })
-                  { Val = D.SchemeColorValues.PhColor })
-                { Position = 0 },
+                    new D.SaturationModulation() { Val = 300000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 0 },
                 new D.GradientStop(
                   new D.SchemeColor(new D.Tint() { Val = 50000 },
-                    new D.SaturationModulation() { Val = 300000 })
-                  { Val = D.SchemeColorValues.PhColor })
-                { Position = 0 }),
+                    new D.SaturationModulation() { Val = 300000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 0 }),
                 new D.LinearGradientFill() { Angle = 16200000, Scaled = true }),
               new D.GradientFill(
                 new D.GradientStopList(
                 new D.GradientStop(
                   new D.SchemeColor(new D.Tint() { Val = 50000 },
-                    new D.SaturationModulation() { Val = 300000 })
-                  { Val = D.SchemeColorValues.PhColor })
-                { Position = 0 },
+                    new D.SaturationModulation() { Val = 300000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 0 },
                 new D.GradientStop(
                   new D.SchemeColor(new D.Tint() { Val = 50000 },
-                    new D.SaturationModulation() { Val = 300000 })
-                  { Val = D.SchemeColorValues.PhColor })
-                { Position = 0 }),
-                new D.LinearGradientFill() { Angle = 16200000, Scaled = true })))
-              { Name = "Office" });
+                    new D.SaturationModulation() { Val = 300000 }) { Val = D.SchemeColorValues.PhColor }) { Position = 0 }),
+                new D.LinearGradientFill() { Angle = 16200000, Scaled = true }))) { Name = "Office" });
 
             theme1.Append(themeElements1);
             theme1.Append(new D.ObjectDefaults());

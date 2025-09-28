@@ -425,14 +425,14 @@ namespace OfficeIMO.PowerPoint {
                 .Union(_slidePart.HyperlinkRelationships.Select(r => r.Id))
                 .Where(id => !string.IsNullOrEmpty(id))
             );
-            
+
             int chartIdNum = 1;
             string chartRelId;
             do {
                 chartRelId = "rId" + chartIdNum;
                 chartIdNum++;
             } while (slideRelationships.Contains(chartRelId));
-            
+
             ChartPart chartPart = _slidePart.AddNewPart<ChartPart>(chartRelId);
             GenerateDefaultChart(chartPart);
 
@@ -459,6 +459,8 @@ namespace OfficeIMO.PowerPoint {
         }
 
         private static void GenerateDefaultChart(ChartPart chartPart) {
+            uint categoryAxisId = PowerPointChartAxisIdGenerator.GetNextId();
+            uint valueAxisId = PowerPointChartAxisIdGenerator.GetNextId();
             C.ChartSpace chartSpace =
                 new(new C.EditingLanguage { Val = "en-US" }, new C.RoundedCorners { Val = false });
             C.Chart chart = new();
@@ -477,28 +479,27 @@ namespace OfficeIMO.PowerPoint {
                 new C.NumericPoint { Index = 1U, NumericValue = new C.NumericValue("5") }));
 
             series.Append(catData, values);
-            barChart.Append(series, new C.AxisId { Val = 48650112U }, new C.AxisId { Val = 48672768U });
+            barChart.Append(series, new C.AxisId { Val = categoryAxisId }, new C.AxisId { Val = valueAxisId });
 
-            C.CategoryAxis catAxis = new(new C.AxisId { Val = 48650112U },
+            C.CategoryAxis catAxis = new(new C.AxisId { Val = categoryAxisId },
                 new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
                 new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
                 new C.TickLabelPosition { Val = C.TickLabelPositionValues.NextTo },
-                new C.CrossingAxis { Val = 48672768U }, new C.Crosses { Val = C.CrossesValues.AutoZero },
+                new C.CrossingAxis { Val = valueAxisId }, new C.Crosses { Val = C.CrossesValues.AutoZero },
                 new C.AutoLabeled { Val = true }, new C.LabelAlignment { Val = C.LabelAlignmentValues.Center },
                 new C.LabelOffset { Val = (UInt16Value)100U });
 
-            C.ValueAxis valAxis = new(new C.AxisId { Val = 48672768U },
+            C.ValueAxis valAxis = new(new C.AxisId { Val = valueAxisId },
                 new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
                 new C.AxisPosition { Val = C.AxisPositionValues.Left }, new C.MajorGridlines(),
                 new C.NumberingFormat { FormatCode = "General", SourceLinked = true },
                 new C.TickLabelPosition { Val = C.TickLabelPositionValues.NextTo },
-                new C.CrossingAxis { Val = 48650112U }, new C.Crosses { Val = C.CrossesValues.AutoZero },
+                new C.CrossingAxis { Val = categoryAxisId }, new C.Crosses { Val = C.CrossesValues.AutoZero },
                 new C.CrossBetween { Val = C.CrossBetweenValues.Between });
 
             plotArea.Append(barChart, catAxis, valAxis);
             chart.Append(plotArea, new C.PlotVisibleOnly { Val = true });
-            chartSpace.Append(chart, new C.DisplayBlanksAs { Val = C.DisplayBlanksAsValues.Gap },
-                new C.ShowDataLabelsOverMaximum { Val = false });
+            chartSpace.Append(chart);
 
             // Generate a unique relationship ID for the embedded Excel part
             var chartRelationships = new HashSet<string>(
@@ -507,14 +508,14 @@ namespace OfficeIMO.PowerPoint {
                 .Union(chartPart.HyperlinkRelationships.Select(r => r.Id))
                 .Where(id => !string.IsNullOrEmpty(id))
             );
-            
+
             int excelIdNum = 1;
             string excelRelId;
             do {
                 excelRelId = "rId" + excelIdNum;
                 excelIdNum++;
             } while (chartRelationships.Contains(excelRelId));
-            
+
             EmbeddedPackagePart excelPart =
                 chartPart.AddNewPart<EmbeddedPackagePart>(
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -540,7 +541,9 @@ namespace OfficeIMO.PowerPoint {
                     );
                     wsPart.Worksheet = new S.Worksheet(sheetData);
                     wbPart.Workbook.Append(new S.Sheets(new S.Sheet {
-                        Id = wbPart.GetIdOfPart(wsPart), SheetId = 1U, Name = "Sheet1"
+                        Id = wbPart.GetIdOfPart(wsPart),
+                        SheetId = 1U,
+                        Name = "Sheet1"
                     }));
                     wbPart.Workbook.Save();
                 }

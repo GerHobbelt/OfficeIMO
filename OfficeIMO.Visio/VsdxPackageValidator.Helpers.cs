@@ -65,7 +65,7 @@ namespace OfficeIMO.Visio {
                 if (n.StartsWith("visio/pages/", StringComparison.OrdinalIgnoreCase)
                     && n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
                     && !n.EndsWith("pages.xml", StringComparison.OrdinalIgnoreCase)
-                    && !n.Contains("/_rels/", StringComparison.Ordinal)) {
+                    && n.IndexOf("/_rels/", StringComparison.Ordinal) < 0) {
                     yield return n;
                 }
             }
@@ -113,7 +113,7 @@ namespace OfficeIMO.Visio {
                 if (n.StartsWith("visio/masters/", StringComparison.OrdinalIgnoreCase)
                     && n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
                     && n != "visio/masters/masters.xml"
-                    && !n.Contains("/_rels/", StringComparison.Ordinal)) {
+                    && n.IndexOf("/_rels/", StringComparison.Ordinal) < 0) {
                     AddOverride(ct, "/" + n, "application/vnd.ms-visio.master+xml");
                 }
             }
@@ -121,17 +121,31 @@ namespace OfficeIMO.Visio {
             return ct;
         }
         private bool HasDefault(XDocument doc, string ext, string contentType) {
-            return doc.Root?
-                .Elements(nsCT + "Default")
-                .Any(e => (string?)e.Attribute("Extension") == ext && (string?)e.Attribute("ContentType") == contentType)
-                ?? false;
+            var root = doc.Root;
+            if (root == null) return false;
+            foreach (var e in root.Elements(nsCT + "Default")) {
+                var extension = (string?)e.Attribute("Extension");
+                var ct = (string?)e.Attribute("ContentType");
+                if (string.Equals(extension, ext, StringComparison.Ordinal)
+                    && string.Equals(ct, contentType, StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private bool HasOverride(XDocument doc, string partName, string contentType) {
-            return doc.Root?
-                .Elements(nsCT + "Override")
-                .Any(e => (string?)e.Attribute("PartName") == partName && (string?)e.Attribute("ContentType") == contentType)
-                ?? false;
+            var root = doc.Root;
+            if (root == null) return false;
+            foreach (var e in root.Elements(nsCT + "Override")) {
+                var p = (string?)e.Attribute("PartName");
+                var ct = (string?)e.Attribute("ContentType");
+                if (string.Equals(p, partName, StringComparison.Ordinal)
+                    && string.Equals(ct, contentType, StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void AddDefault(XDocument doc, string ext, string contentType) {
