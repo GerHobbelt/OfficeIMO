@@ -20,7 +20,11 @@ namespace OfficeIMO.Visio {
         /// </summary>
         public string Id { get; }
 
+        public string? Name { get; set; }
+
         public string? NameU { get; set; }
+
+        public VisioMaster? Master { get; set; }
 
         public double PinX { get; set; }
 
@@ -33,4 +37,3 @@ namespace OfficeIMO.Visio {
         public string? Text { get; set; }
     }
 }
-
