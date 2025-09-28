@@ -71,6 +71,7 @@ namespace OfficeIMO.Word.Html.Converters {
                             var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
                             paragraph.Style = HeadingStyleMapper.GetHeadingStyleForLevel(level);
                             ApplyParagraphStyleFromCss(paragraph, element);
+                            ApplyClassStyle(element, paragraph, options);
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
                             }
@@ -79,14 +80,72 @@ namespace OfficeIMO.Word.Html.Converters {
                     case "p": {
                             var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
                             ApplyParagraphStyleFromCss(paragraph, element);
+                            ApplyClassStyle(element, paragraph, options);
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
+                            }
+                            break;
+                        }
+                    case "blockquote": {
+                            var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
+                            paragraph.SetStyleId("Quote");
+                            paragraph.IndentationBefore = 720;
+                            ApplyParagraphStyleFromCss(paragraph, element);
+                            ApplyClassStyle(element, paragraph, options);
+                            foreach (var child in element.ChildNodes) {
+                                ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
+                            }
+                            break;
+                        }
+                    case "pre":
+                    case "code": {
+                            var textContent = element.TextContent;
+                            var lines = textContent.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+                            int start = 0;
+                            int end = lines.Length;
+                            while (start < end && string.IsNullOrEmpty(lines[start])) start++;
+                            while (end > start && string.IsNullOrEmpty(lines[end - 1])) end--;
+                            var mono = FontResolver.Resolve("monospace");
+                            for (int i = start; i < end; i++) {
+                                var line = lines[i];
+                                var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
+                                paragraph.SetStyleId("HTMLPreformatted");
+                                if (!string.IsNullOrEmpty(mono)) {
+                                    paragraph.SetFontFamily(mono);
+                                }
+                                var fmt = new TextFormatting(false, false, false, null, mono);
+                                AddTextRun(paragraph, line, fmt, options);
+                            }
+                            break;
+                        }
+                    case "div": {
+                            var fmt = formatting;
+                            var divStyle = element.GetAttribute("style");
+                            if (!string.IsNullOrWhiteSpace(divStyle)) {
+                                ApplySpanStyles(element, ref fmt);
+                            }
+                            foreach (var child in element.ChildNodes) {
+                                if (!string.IsNullOrWhiteSpace(divStyle) && child is IElement childElement) {
+                                    var merged = MergeStyles(divStyle, childElement.GetAttribute("style"));
+                                    if (!string.IsNullOrEmpty(merged)) {
+                                        childElement.SetAttribute("style", merged);
+                                    }
+                                }
+                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
                             }
                             break;
                         }
                     case "br": {
                             currentParagraph ??= cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
                             currentParagraph.AddBreak();
+                            break;
+                        }
+                    case "hr": {
+                            if (cell != null) {
+                                cell.AddParagraph("", true).AddHorizontalLine();
+                            } else {
+                                section.AddParagraph("").AddHorizontalLine();
+                            }
                             break;
                         }
                     case "strong":
@@ -107,6 +166,14 @@ namespace OfficeIMO.Word.Html.Converters {
                         }
                     case "u": {
                             var fmt = new TextFormatting(formatting.Bold, formatting.Italic, true);
+                            foreach (var child in element.ChildNodes) {
+                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
+                            }
+                            break;
+                        }
+                    case "span": {
+                            var fmt = formatting;
+                            ApplySpanStyles(element, ref fmt);
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
                             }
@@ -155,6 +222,20 @@ namespace OfficeIMO.Word.Html.Converters {
                 }
                 currentParagraph ??= cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
                 AddTextRun(currentParagraph, text, formatting, options);
+            }
+        }
+
+        private static void ApplyClassStyle(IElement element, WordParagraph paragraph, HtmlToWordOptions options) {
+            string? classAttr = element.GetAttribute("class");
+            if (string.IsNullOrWhiteSpace(classAttr)) {
+                return;
+            }
+
+            foreach (var cls in classAttr.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)) {
+                if (options.ClassStyles.TryGetValue(cls, out var style)) {
+                    paragraph.Style = style;
+                    break;
+                }
             }
         }
     }

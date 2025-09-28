@@ -15,6 +15,10 @@ namespace OfficeIMO.Tests {
             paragraph.AddText("bold").Bold = true;
             paragraph.AddText(" and ");
             paragraph.AddText("italic").Italic = true;
+            paragraph.AddText(" with ");
+            paragraph.AddText("strike").Strike = true;
+            paragraph.AddText(" and ");
+            paragraph.AddText("code").SetFontFamily(FontResolver.Resolve("monospace")!);
 
             var list = doc.AddList(WordListStyle.Bulleted);
             list.AddItem("Item 1");
@@ -37,10 +41,26 @@ namespace OfficeIMO.Tests {
             Assert.Contains("# Heading", markdown);
             Assert.Contains("**bold**", markdown);
             Assert.Contains("*italic*", markdown);
+            Assert.Contains("~~strike~~", markdown);
+            Assert.Contains("`code`", markdown);
             Assert.Contains("- Item 1", markdown);
             Assert.Contains("[OfficeIMO](https://example.com/)", markdown);
             Assert.Contains("| H1 | H2 |", markdown);
             Assert.Contains("![", markdown);
+        }
+
+        [Fact]
+        public void WordToMarkdown_HandlesFootNotes() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Hello").AddFootNote("First note");
+            doc.AddParagraph("World").AddFootNote("Second note");
+
+            string markdown = doc.ToMarkdown(new WordToMarkdownOptions());
+
+            Assert.Contains("Hello[^1]", markdown);
+            Assert.Contains("World[^2]", markdown);
+            Assert.Contains("[^1]: First note", markdown);
+            Assert.Contains("[^2]: Second note", markdown);
         }
     }
 }

@@ -158,12 +158,44 @@ public partial class Html {
     }
 
     [Fact]
+    public void Test_Html_Blockquote_RoundTrip() {
+        string html = "<blockquote>Quoted text</blockquote>";
+
+        var doc = html.LoadFromHtml(new HtmlToWordOptions());
+        Assert.Equal("Quoted text", doc.Paragraphs[0].Text);
+        Assert.True(doc.Paragraphs[0].IndentationBefore > 0);
+
+        string roundTrip = doc.ToHtml();
+        Assert.Contains("<blockquote>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Quoted text", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Test_Html_Lists_Structure() {
         string html = "<ul><li>Item 1<ul><li>Sub 1</li></ul></li><li>Item 2</li></ul>";
 
         var doc = html.LoadFromHtml(new HtmlToWordOptions());
 
         Assert.True(doc.Lists.Count > 0);
+    }
+
+    [Fact]
+    public void Test_Html_OrderedList_StartAndType() {
+        string html = "<ol start=\"5\" type=\"a\"><li>First</li><li>Second</li></ol>";
+
+        var doc = html.LoadFromHtml(new HtmlToWordOptions());
+
+        Assert.Equal(5, doc.Lists[0].Numbering.Levels[0].StartNumberingValue);
+        Assert.Equal(NumberFormatValues.LowerLetter, doc.Lists[0].Numbering.Levels[0]._level.NumberingFormat.Val.Value);
+    }
+
+    [Fact]
+    public void Test_Html_UnorderedList_Type() {
+        string html = "<ul type=\"circle\"><li>A</li><li>B</li></ul>";
+
+        var doc = html.LoadFromHtml(new HtmlToWordOptions());
+
+        Assert.Equal("o", doc.Lists[0].Numbering.Levels[0]._level.LevelText.Val);
     }
 
     [Fact]
@@ -202,5 +234,36 @@ public partial class Html {
         var doc = html.LoadFromHtml(new HtmlToWordOptions());
 
         Assert.Single(doc.Images);
+    }
+
+    [Fact]
+    public void Test_Html_ImageAlt_Preserved() {
+        string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+        byte[] imageBytes = File.ReadAllBytes(assetPath);
+        string base64 = Convert.ToBase64String(imageBytes);
+        string html = $"<p><img src=\"data:image/png;base64,{base64}\" alt=\"Company logo\" /></p>";
+
+        var doc = html.LoadFromHtml(new HtmlToWordOptions());
+
+        Assert.Single(doc.Images);
+        Assert.Equal("Company logo", doc.Images[0].Description);
+
+        string roundTrip = doc.ToHtml();
+        Assert.Contains("alt=\"Company logo\"", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_HorizontalRule_RoundTrip() {
+        string html = "<p>Before</p><hr><p>After</p>";
+
+        var doc = html.LoadFromHtml(new HtmlToWordOptions());
+
+        Assert.Equal(3, doc.Paragraphs.Count);
+        Assert.NotNull(doc.Paragraphs[1].Borders.BottomStyle);
+
+        string roundTrip = doc.ToHtml();
+        Assert.Contains("<hr", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Before", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("After", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
 }

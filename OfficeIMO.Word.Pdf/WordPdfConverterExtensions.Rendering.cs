@@ -8,9 +8,22 @@ using W = DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Word.Pdf {
     public static partial class WordPdfConverterExtensions {
-        static IContainer RenderParagraph(IContainer container, WordParagraph paragraph, (int Level, string Marker)? marker) {
+        static IContainer RenderParagraph(IContainer container, WordParagraph paragraph, (int Level, string Marker)? marker, PdfSaveOptions? options) {
             if (paragraph == null) {
                 return container;
+            }
+
+            if (paragraph.Bookmark != null) {
+                container = container.Section(paragraph.Bookmark.Name);
+            }
+
+            if (paragraph.IsHyperLink && paragraph.Hyperlink != null) {
+                var link = paragraph.Hyperlink;
+                if (!string.IsNullOrEmpty(link.Anchor)) {
+                    container = container.SectionLink(link.Anchor);
+                } else if (link.Uri != null) {
+                    container = container.Hyperlink(link.Uri.ToString());
+                }
             }
 
             if (paragraph.ParagraphAlignment == W.JustificationValues.Center) {
@@ -46,20 +59,12 @@ namespace OfficeIMO.Word.Pdf {
                             }
                             row.ConstantItem(indentSize).Text(marker.Value.Marker);
                             row.RelativeItem().Text(text => {
-                                if (paragraph.IsHyperLink && paragraph.Hyperlink != null) {
-                                    ApplyFormatting(text.Hyperlink(content, paragraph.Hyperlink.Uri.ToString()));
-                                } else {
-                                    ApplyFormatting(text.Span(content));
-                                }
+                                ApplyFormatting(text.Span(content));
                             });
                         });
                     } else {
                         col.Item().Text(text => {
-                            if (paragraph.IsHyperLink && paragraph.Hyperlink != null) {
-                                ApplyFormatting(text.Hyperlink(content, paragraph.Hyperlink.Uri.ToString()));
-                            } else {
-                                ApplyFormatting(text.Span(content));
-                            }
+                            ApplyFormatting(text.Span(content));
                         });
                     }
                 }
@@ -68,6 +73,11 @@ namespace OfficeIMO.Word.Pdf {
             return container;
 
             void ApplyFormatting(TextSpanDescriptor span) {
+                if (!string.IsNullOrEmpty(paragraph.FontFamily)) {
+                    span = span.FontFamily(paragraph.FontFamily);
+                } else if (!string.IsNullOrEmpty(options?.FontFamily)) {
+                    span = span.FontFamily(options.FontFamily);
+                }
                 if (paragraph.Bold) {
                     span = span.Bold();
                 }
@@ -127,9 +137,13 @@ namespace OfficeIMO.Word.Pdf {
                 return container;
             }
 
-            container.Text(text => {
-                text.Hyperlink(link.Text, link.Uri.ToString());
-            });
+            if (!string.IsNullOrEmpty(link.Anchor)) {
+                container = container.SectionLink(link.Anchor);
+            } else if (link.Uri != null) {
+                container = container.Hyperlink(link.Uri.ToString());
+            }
+
+            container.Text(link.Text);
 
             return container;
         }

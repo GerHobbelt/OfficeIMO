@@ -4,6 +4,10 @@ using OfficeIMO.Word;
 using OfficeIMO.Word.Html.Helpers;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using Color = SixLabors.ImageSharp.Color;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace OfficeIMO.Word.Html.Converters {
     internal partial class HtmlToWordConverter {
@@ -11,18 +15,117 @@ namespace OfficeIMO.Word.Html.Converters {
             public bool Bold;
             public bool Italic;
             public bool Underline;
+            public string? ColorHex;
+            public string? FontFamily;
+            public int? FontSize;
 
-            public TextFormatting(bool bold = false, bool italic = false, bool underline = false) {
+            public TextFormatting(bool bold = false, bool italic = false, bool underline = false, string? colorHex = null, string? fontFamily = null, int? fontSize = null) {
                 Bold = bold;
                 Italic = italic;
                 Underline = underline;
+                ColorHex = colorHex;
+                FontFamily = fontFamily;
+                FontSize = fontSize;
             }
         }
 
         private static void ApplyParagraphStyleFromCss(WordParagraph paragraph, IElement element) {
-            var style = CssStyleMapper.MapParagraphStyle(element.GetAttribute("style"));
+            string? styleAttribute = element.GetAttribute("style");
+            var style = CssStyleMapper.MapParagraphStyle(styleAttribute);
             if (style.HasValue) {
                 paragraph.Style = style.Value;
+            }
+
+            if (string.IsNullOrWhiteSpace(styleAttribute)) {
+                return;
+            }
+
+            int? marginLeft = null, marginRight = null, marginTop = null, marginBottom = null;
+            int? paddingLeft = null, paddingRight = null, paddingTop = null, paddingBottom = null;
+            JustificationValues? alignment = null;
+
+            foreach (var part in styleAttribute.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)) {
+                var pieces = part.Split(new[] { ':' }, 2);
+                if (pieces.Length != 2) {
+                    continue;
+                }
+                var name = pieces[0].Trim().ToLowerInvariant();
+                var value = pieces[1].Trim();
+                switch (name) {
+                    case "color":
+                        var color = NormalizeColor(value);
+                        if (color != null) {
+                            paragraph.SetColorHex(color);
+                        }
+                        break;
+                    case "background-color":
+                        var bgColor = NormalizeColor(value);
+                        if (bgColor != null) {
+                            var highlight = MapColorToHighlight(bgColor);
+                            if (highlight.HasValue) {
+                                paragraph.SetHighlight(highlight.Value);
+                            }
+                        }
+                        break;
+                    case "font-size":
+                        if (TryParseFontSize(value, out int size)) {
+                            paragraph.SetFontSize(size);
+                        }
+                        break;
+                    case "text-align":
+                        alignment = value.ToLowerInvariant() switch {
+                            "center" => JustificationValues.Center,
+                            "right" => JustificationValues.Right,
+                            "justify" => JustificationValues.Both,
+                            "left" => JustificationValues.Left,
+                            _ => alignment
+                        };
+                        break;
+                    case "margin-left":
+                        if (TryParseSize(value, out int ml)) marginLeft = ml;
+                        break;
+                    case "margin-right":
+                        if (TryParseSize(value, out int mr)) marginRight = mr;
+                        break;
+                    case "margin-top":
+                        if (TryParseSize(value, out int mt)) marginTop = mt;
+                        break;
+                    case "margin-bottom":
+                        if (TryParseSize(value, out int mb)) marginBottom = mb;
+                        break;
+                    case "padding-left":
+                        if (TryParseSize(value, out int pl)) paddingLeft = pl;
+                        break;
+                    case "padding-right":
+                        if (TryParseSize(value, out int pr)) paddingRight = pr;
+                        break;
+                    case "padding-top":
+                        if (TryParseSize(value, out int pt)) paddingTop = pt;
+                        break;
+                    case "padding-bottom":
+                        if (TryParseSize(value, out int pb)) paddingBottom = pb;
+                        break;
+                }
+            }
+
+            if (alignment.HasValue) {
+                paragraph.ParagraphAlignment = alignment;
+            }
+            int before = (marginTop ?? 0) + (paddingTop ?? 0);
+            if (before > 0) {
+                paragraph.LineSpacingBefore = before;
+            }
+            int after = (marginBottom ?? 0) + (paddingBottom ?? 0);
+            if (after > 0) {
+                paragraph.LineSpacingAfter = after;
+            }
+            int left = (marginLeft ?? 0) + (paddingLeft ?? 0);
+            if (left > 0) {
+                paragraph.IndentationBefore = left;
+            }
+            int right = (marginRight ?? 0) + (paddingRight ?? 0);
+            if (right > 0) {
+                paragraph.IndentationAfter = right;
             }
         }
 
@@ -34,9 +137,7 @@ namespace OfficeIMO.Word.Html.Converters {
                 if (match.Index > lastIndex) {
                     var segment = text.Substring(lastIndex, match.Index - lastIndex);
                     var run = paragraph.AddFormattedText(segment, formatting.Bold, formatting.Italic, formatting.Underline ? UnderlineValues.Single : null);
-                    if (!string.IsNullOrEmpty(options.FontFamily)) {
-                        run.SetFontFamily(options.FontFamily);
-                    }
+                    ApplyFormatting(run, formatting, options);
                 }
                 var linkRun = paragraph.AddHyperLink(match.Value, new Uri(match.Value));
                 ApplyFormatting(linkRun, formatting, options);
@@ -44,9 +145,7 @@ namespace OfficeIMO.Word.Html.Converters {
             }
             if (lastIndex < text.Length) {
                 var run = paragraph.AddFormattedText(text.Substring(lastIndex), formatting.Bold, formatting.Italic, formatting.Underline ? UnderlineValues.Single : null);
-                if (!string.IsNullOrEmpty(options.FontFamily)) {
-                    run.SetFontFamily(options.FontFamily);
-                }
+                ApplyFormatting(run, formatting, options);
             }
         }
 
@@ -54,7 +153,183 @@ namespace OfficeIMO.Word.Html.Converters {
             if (formatting.Bold) run.SetBold();
             if (formatting.Italic) run.SetItalic();
             if (formatting.Underline) run.SetUnderline(UnderlineValues.Single);
-            if (!string.IsNullOrEmpty(options.FontFamily)) run.SetFontFamily(options.FontFamily);
+            if (!string.IsNullOrEmpty(formatting.ColorHex)) run.SetColorHex(formatting.ColorHex);
+            if (formatting.FontSize.HasValue) run.SetFontSize(formatting.FontSize.Value);
+            if (!string.IsNullOrEmpty(formatting.FontFamily)) {
+                run.SetFontFamily(formatting.FontFamily);
+            } else if (!string.IsNullOrEmpty(options.FontFamily)) {
+                run.SetFontFamily(options.FontFamily);
+            }
+        }
+
+        private static void ApplySpanStyles(IElement element, ref TextFormatting formatting) {
+            var style = element.GetAttribute("style");
+            if (string.IsNullOrWhiteSpace(style)) {
+                return;
+            }
+
+            foreach (var part in style.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)) {
+                var pieces = part.Split(new[] { ':' }, 2);
+                if (pieces.Length != 2) {
+                    continue;
+                }
+                var name = pieces[0].Trim().ToLowerInvariant();
+                var value = pieces[1].Trim();
+                switch (name) {
+                    case "color":
+                        var color = NormalizeColor(value);
+                        if (color != null) {
+                            formatting.ColorHex = color;
+                        }
+                        break;
+                    case "font-family":
+                        formatting.FontFamily = value.Trim('"', '\'', ' ');
+                        break;
+                    case "font-size":
+                        if (TryParseFontSize(value, out int size)) {
+                            formatting.FontSize = size;
+                        }
+                        break;
+                }
+            }
+        }
+
+        private static string MergeStyles(string parentStyle, string? childStyle) {
+            var parentDict = ParseStyle(parentStyle);
+            var childDict = ParseStyle(childStyle);
+            foreach (var kv in parentDict) {
+                if (!childDict.ContainsKey(kv.Key)) {
+                    childDict[kv.Key] = kv.Value;
+                }
+            }
+            return string.Join("; ", childDict.Select(kvp => $"{kvp.Key}:{kvp.Value}"));
+        }
+
+        private static Dictionary<string, string> ParseStyle(string? style) {
+            Dictionary<string, string> dict = new(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(style)) {
+                return dict;
+            }
+            foreach (var part in style.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)) {
+                var pieces = part.Split(new[] { ':' }, 2);
+                if (pieces.Length == 2) {
+                    dict[pieces[0].Trim()] = pieces[1].Trim();
+                }
+            }
+            return dict;
+        }
+
+        private static bool TryParseFontSize(string value, out int size) {
+            size = 0;
+            if (string.IsNullOrWhiteSpace(value)) {
+                return false;
+            }
+            value = value.Trim().ToLowerInvariant();
+            string number = new(value.Where(c => char.IsDigit(c) || c == '.').ToArray());
+            if (!double.TryParse(number, NumberStyles.Number, CultureInfo.InvariantCulture, out double result)) {
+                return false;
+            }
+            if (value.EndsWith("em", StringComparison.Ordinal)) {
+                result *= 16;
+            }
+            size = (int)Math.Round(result);
+            return size > 0;
+        }
+
+        private static bool TryParseSize(string value, out int size) {
+            size = 0;
+            if (string.IsNullOrWhiteSpace(value)) {
+                return false;
+            }
+            value = value.Trim().ToLowerInvariant();
+            string number = new(value.Where(c => char.IsDigit(c) || c == '.').ToArray());
+            if (!double.TryParse(number, NumberStyles.Number, CultureInfo.InvariantCulture, out double result)) {
+                return false;
+            }
+            if (value.EndsWith("px", StringComparison.Ordinal)) {
+                result *= 0.75; // convert pixels to points
+            } else if (value.EndsWith("em", StringComparison.Ordinal)) {
+                result *= 16; // approximate em to points
+            }
+            size = (int)Math.Round(result * 20); // points to twips
+            return size > 0;
+        }
+
+        private static string? NormalizeColor(string value) {
+            if (string.IsNullOrWhiteSpace(value)) {
+                return null;
+            }
+            value = value.Trim();
+            if (value.StartsWith("rgb", StringComparison.OrdinalIgnoreCase)) {
+                int start = value.IndexOf('(');
+                int end = value.IndexOf(')');
+                if (start >= 0 && end > start) {
+                    var parts = value.Substring(start + 1, end - start - 1).Split(',');
+                    if (parts.Length >= 3 &&
+                        byte.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte r) &&
+                        byte.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte g) &&
+                        byte.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte b)) {
+                        var color = new Color(new Rgb24(r, g, b));
+                        return color.ToHexColor();
+                    }
+                }
+                return null;
+            }
+            try {
+                var parsed = Color.Parse(value);
+                return parsed.ToHexColor();
+            } catch {
+                if (!value.StartsWith("#", StringComparison.Ordinal)) {
+                    try {
+                        var parsed = Color.Parse("#" + value);
+                        return parsed.ToHexColor();
+                    } catch {
+                        return null;
+                    }
+                }
+                return null;
+            }
+        }
+
+        private static readonly Dictionary<HighlightColorValues, Color> _highlightColors = new() {
+            { HighlightColorValues.Yellow, Color.Yellow },
+            { HighlightColorValues.Green, Color.Lime },
+            { HighlightColorValues.Cyan, Color.Cyan },
+            { HighlightColorValues.Magenta, Color.Magenta },
+            { HighlightColorValues.Blue, Color.Blue },
+            { HighlightColorValues.Red, Color.Red },
+            { HighlightColorValues.DarkBlue, Color.DarkBlue },
+            { HighlightColorValues.DarkCyan, Color.DarkCyan },
+            { HighlightColorValues.DarkGreen, Color.DarkGreen },
+            { HighlightColorValues.DarkMagenta, Color.DarkMagenta },
+            { HighlightColorValues.DarkRed, Color.DarkRed },
+            { HighlightColorValues.DarkYellow, Color.Parse("#808000") },
+            { HighlightColorValues.DarkGray, Color.DarkGray },
+            { HighlightColorValues.LightGray, Color.LightGray },
+            { HighlightColorValues.Black, Color.Black },
+            { HighlightColorValues.White, Color.White }
+        };
+
+        private static HighlightColorValues? MapColorToHighlight(string hex) {
+            try {
+                var target = Color.Parse("#" + hex);
+                var targetRgb = target.ToPixel<Rgb24>();
+                HighlightColorValues? best = null;
+                int bestDistance = int.MaxValue;
+                foreach (var pair in _highlightColors) {
+                    var rgb = pair.Value.ToPixel<Rgb24>();
+                    int distance = (rgb.R - targetRgb.R) * (rgb.R - targetRgb.R) +
+                                   (rgb.G - targetRgb.G) * (rgb.G - targetRgb.G) +
+                                   (rgb.B - targetRgb.B) * (rgb.B - targetRgb.B);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = pair.Key;
+                    }
+                }
+                return best;
+            } catch {
+                return null;
+            }
         }
     }
 }
