@@ -98,18 +98,38 @@ namespace OfficeIMO.Examples.Markdown {
             static string Ok() => "🟢 OK";
             static string Warn() => "🟠 Warning";
 
+            static string Slug(string text) {
+                if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+                var sb = new System.Text.StringBuilder(text.Length);
+                foreach (char ch in text.Trim().ToLowerInvariant()) {
+                    if (ch >= 'a' && ch <= 'z') sb.Append(ch);
+                    else if (ch >= '0' && ch <= '9') sb.Append(ch);
+                    else if (char.IsWhiteSpace(ch) || ch == '_' || ch == '-' ) sb.Append('-');
+                    // drop punctuation like '.' '/' ':' etc.
+                }
+                // collapse dashes
+                var s = sb.ToString();
+                while (s.Contains("--")) s = s.Replace("--", "-");
+                return s.Trim('-');
+            }
+
             var summaryRows = new List<DomainRow> {
-                new("evotec.pl", Warn(), Ok(), Warn(), Warn(), Warn(), Ok(), Warn(), "13 / 0"),
-                new("evotec.xyz", Warn(), Ok(), Warn(), Warn(), Ok(), Ok(), Warn(), "13 / 0")
+                new($"[evotec.pl](#{Slug("evotec.pl")})", Warn(), Ok(), Warn(), Warn(), Warn(), Ok(), Warn(), "13 / 0"),
+                new($"[evotec.xyz](#{Slug("evotec.xyz")})", Warn(), Ok(), Warn(), Warn(), Ok(), Ok(), Warn(), "13 / 0")
             };
 
             // Build Markdown document
             var md = MarkdownDoc.Create()
                 .FrontMatter(new { title = "Domain Detective — Mail Classification", date = DateTimeOffset.Now.ToString("u") })
                 .H1("Executive Summary")
-                .TocAtTop("Contents", min: 1, max: 3)
+                .Toc(opts => { opts.MinLevel = 1; opts.MaxLevel = 3; opts.Ordered = false; opts.IncludeTitle = false; opts.Collapsible = true; opts.Collapsed = false; }, placeAtTop: true)
                 .H2("Overview")
-                .P($"This report summarizes the email security posture for {domains.Count} domain(s). The table highlights the presence and status of key controls (MX, SPF, DKIM, DMARC, MTA-STS, TLS-RPT, Classification) and the count of warnings/errors detected. Total across all domains: {totalWarnings} warning(s), {totalErrors} error(s).")
+                .P(p => p
+                    .Text("This report summarizes the ")
+                    .Bold("email security posture")
+                    .Text($" for {domains.Count} domain(s). The table highlights the presence and status of key controls (MX, SPF, DKIM, DMARC, MTA-STS, TLS-RPT, Classification) and the count of warnings/errors detected. Total across all domains: ")
+                    .Underline($"{totalWarnings} warning(s), {totalErrors} error(s)")
+                    .Text("."))
                 .Callout(totalErrors > 0 ? "warning" : "info", "Totals",
                     $"Warnings: {totalWarnings}\nErrors: {totalErrors}")
                 .H2("Legend")
@@ -179,7 +199,14 @@ namespace OfficeIMO.Examples.Markdown {
                   .Table(t => t
                         .Headers("Name","Value")
                         .Rows(d.ScoreBreakdown.Select(x => (IReadOnlyList<string>)new[]{ x.Name, x.Value.ToString("0.##") }))
-                        .AlignLeft(0).AlignRight(1));
+                        .AlignLeft(0).AlignRight(1))
+                  .H2("Legend")
+                  .Table(t => t
+                        .Headers("Status","Meaning")
+                        .Row("🟢 OK","All checks passed or acceptable")
+                        .Row("🟠 Warning","Requires attention; not blocking")
+                        .Row("🔴 Error","Blocking or invalid configuration")
+                        .AlignLeft(0,1));
 
                 if (d.Recommendations.Length > 0) {
                     md.H2("Recommendations").Ul(d.Recommendations);
@@ -188,7 +215,12 @@ namespace OfficeIMO.Examples.Markdown {
                     md.H2("Positives").Ul(d.Positives);
                 }
                 if (d.References.Length > 0) {
-                    md.H2("References").Ul(d.References.Select(u => $"{u}"));
+                    md.H2("References");
+                    md.Ul(ul => {
+                        foreach (var u in d.References) {
+                            ul.ItemLink(u, u);
+                        }
+                    });
                 }
             }
 
@@ -200,7 +232,13 @@ namespace OfficeIMO.Examples.Markdown {
                 Title = "Domain Detective — Mail Classification",
                 Style = HtmlStyle.GithubAuto,
                 CssDelivery = CssDelivery.Inline,
-                IncludeAnchorLinks = true,
+                IncludeAnchorLinks = false,
+                ShowAnchorIcons = true,
+                AnchorIcon = "🔗",
+                CopyHeadingLinkOnClick = true,
+                BackToTopLinks = true,
+                BackToTopMinLevel = 1,
+                BackToTopText = "Back to top",
                 ThemeToggle = true
             };
             md.SaveHtml(htmlPath, htmlOptions);

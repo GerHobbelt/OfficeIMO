@@ -65,17 +65,19 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Excel.ReadForPowerShell.Example(folderPath, false);
             // Excel/PowerShell-style round trip: write → read → modify → write → JSON
             OfficeIMO.Examples.Excel.PowerShellRoundTrip.Example(folderPath, false);
-
-            bool openExcelDefault = OperatingSystem.IsWindows();
             // Excel/Headers + Footers + Properties
-            OfficeIMO.Examples.Excel.HeadersFootersAndProperties.Example(folderPath, openExcelDefault);
-
-            OfficeIMO.Examples.Excel.DomainDetectiveReport.Example(folderPath, openExcelDefault);
+            OfficeIMO.Examples.Excel.HeadersFootersAndProperties.Example(folderPath, false);
+            OfficeIMO.Examples.Excel.DomainDetectiveReport.Example(folderPath, false);
+            // Excel: New Excelish Sheets demo (side-by-side comparison)
+            OfficeIMO.Examples.Excel.DomainDetectiveReportSheets.Example(folderPath, false);
+            // Excel: Classic baseline Sheets demo (explicit/standard techniques)
+            OfficeIMO.Examples.Excel.DomainDetectiveReportSheetsClassic.Example(folderPath, false);
+            // Excel: Anchors and back-to-top demo
+            OfficeIMO.Examples.Excel.AnchorsAndBackToTop.Example(folderPath, false);
+            // Markdown: Anchors + Theme Toggle
+            OfficeIMO.Examples.Markdown.Markdown03_Anchors_Theme.Example_AnchorsAndTheme(folderPath, false);
             // Markdown/DomainDetective report (mirrors the Excel structure)
             OfficeIMO.Examples.Markdown.DomainDetectiveReportMarkdown.Example(folderPath, false);
-
-            return;
-
             // PowerPoint
             OfficeIMO.Examples.PowerPoint.BasicPowerPointDocument.Example_BasicPowerPoint(folderPath, false);
             OfficeIMO.Examples.PowerPoint.AdvancedPowerPoint.Example_AdvancedPowerPoint(folderPath, false);
@@ -89,7 +91,7 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.PowerPoint.ValidateDocument.Example(folderPath, false);
             OfficeIMO.Examples.PowerPoint.TestLazyInit.Example_TestLazyInit(folderPath, false);
             // Html/Html (consolidated set)
-            //             OfficeIMO.Examples.Html.Html.Example_Html01_LoadAndRoundTripBasics(folderPath, false);
+            OfficeIMO.Examples.Html.Html.Example_Html01_LoadAndRoundTripBasics(folderPath, false);
             OfficeIMO.Examples.Html.Html.Example_Html02_SaveAsHtmlFromWord(folderPath, false);
             OfficeIMO.Examples.Html.Html.Example_Html03_TextFormatting(folderPath, false);
             OfficeIMO.Examples.Html.Html.Example_Html04_ListsAndNumbering(folderPath, false);
@@ -116,8 +118,6 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_HeaderTransform_CustomAcronyms(folderPath, false);
             OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_Table_AutoAligners(folderPath, false);
             OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_TocForSection(folderPath, false);
-
-            return;
             // Word/AdvancedDocument
             OfficeIMO.Examples.Word.AdvancedDocument.Example_AdvancedWord(folderPath, false);
             OfficeIMO.Examples.Word.AdvancedDocument.Example_AdvancedWord2(folderPath, false);

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using OfficeIMO.Excel;
 using OfficeIMO.Excel.Fluent;
-using OfficeIMO.Excel.Utilities;
 using System.Linq;
 
 namespace OfficeIMO.Examples.Excel {
@@ -165,7 +164,11 @@ namespace OfficeIMO.Examples.Excel {
                 foreach (var d in data) {
                     var rs = new SheetComposer(doc, d.Domain);
                     rs.Title($"Mail Classification — {d.Domain}", d.Summary)
-                      .Section("Overview")
+                      // Per-domain status callout
+                      .Callout(d.ErrorCount > 0 ? "error" : (string.Equals(d.Status, "Warning", StringComparison.OrdinalIgnoreCase) ? "warning" : "info"),
+                          "Status",
+                          $"Status: {d.Status}; Findings: {d.WarningCount} warning(s), {d.ErrorCount} error(s).")
+                      .SectionWithAnchor("Overview")
                       .DefinitionList(new (string, object?)[] {
                           ("Domain", d.Domain),
                           ("Classification", d.Classification),
@@ -174,13 +177,13 @@ namespace OfficeIMO.Examples.Excel {
                           ("Warnings", d.WarningCount),
                           ("Errors", d.ErrorCount)
                       }, columns: 3)
-                      .Section("Signals")
+                      .SectionWithAnchor("Signals")
                       .PropertiesGrid(new (string, object?)[] {
                           ("Receiving", string.Join(", ", d.ReceivingSignals)),
                           ("Sending", string.Join(", ", d.SendingSignals))
                       }, columns: 2)
                       .Score("Score", d.Score)
-                      .Section("Score Breakdown");
+                      .SectionWithAnchor("Score Breakdown");
 
                     rs.TableFrom(d.ScoreBreakdown, title: null, configure: o => {
                         o.Columns = new[] { nameof(ScorePair.Name), nameof(ScorePair.Value) };
@@ -197,7 +200,7 @@ namespace OfficeIMO.Examples.Excel {
                     });
 
                     // Legend per domain
-                    rs.Section("Legend");
+                    rs.SectionWithAnchor("Legend");
                     int lhdr = rs.CurrentRow;
                     rs.Sheet.Cell(lhdr, 1, "Status"); rs.Sheet.CellBold(lhdr, 1, true); rs.Sheet.CellBackground(lhdr, 1, "#F2F2F2");
                     rs.Sheet.Cell(lhdr, 2, "Meaning"); rs.Sheet.CellBold(lhdr, 2, true); rs.Sheet.CellBackground(lhdr, 2, "#F2F2F2");
@@ -211,11 +214,12 @@ namespace OfficeIMO.Examples.Excel {
                     rs.Spacer();
 
                     if (d.Recommendations.Length > 0) {
-                        rs.Section("Recommendations").BulletedList(d.Recommendations);
+                        rs.SectionWithAnchor("Recommendations").BulletedList(d.Recommendations);
                     }
                     if (d.Positives.Length > 0) {
-                        rs.Section("Positives").BulletedList(d.Positives);
+                        rs.SectionWithAnchor("Positives").BulletedList(d.Positives);
                     }
+                    rs.SectionWithAnchor("References");
                     rs.References(d.References).Finish(autoFitColumns: true);
                 }
 
