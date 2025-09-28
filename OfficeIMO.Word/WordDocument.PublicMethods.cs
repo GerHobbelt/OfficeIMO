@@ -316,6 +316,23 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Creates a numbering definition that can be customized and reused.
+        /// </summary>
+        /// <returns>The created <see cref="WordListNumbering"/>.</returns>
+        public WordListNumbering CreateNumberingDefinition() {
+            return WordListNumbering.CreateNumberingDefinition(this);
+        }
+
+        /// <summary>
+        /// Retrieves a numbering definition by its identifier.
+        /// </summary>
+        /// <param name="abstractNumberId">Identifier of the numbering definition.</param>
+        /// <returns>The <see cref="WordListNumbering"/> if found; otherwise, <c>null</c>.</returns>
+        public WordListNumbering GetNumberingDefinition(int abstractNumberId) {
+            return WordListNumbering.GetNumberingDefinition(this, abstractNumberId);
+        }
+
+        /// <summary>
         /// Adds a table to the end of the document body.
         /// </summary>
         /// <param name="rows">Number of rows to create.</param>
@@ -580,6 +597,19 @@ namespace OfficeIMO.Word {
             }
 
             this.Sections[index].RemoveSection();
+        }
+
+        /// <summary>
+        /// Clones the section at the specified index and inserts the clone after it.
+        /// </summary>
+        /// <param name="index">Zero based index of the section to clone.</param>
+        /// <returns>The cloned <see cref="WordSection"/>.</returns>
+        public WordSection CloneSection(int index) {
+            if (index < 0 || index >= this.Sections.Count) {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            return this.Sections[index].CloneSection();
         }
 
         /// <summary>

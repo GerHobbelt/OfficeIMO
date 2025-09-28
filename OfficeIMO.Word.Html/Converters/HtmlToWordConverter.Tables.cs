@@ -85,7 +85,7 @@ namespace OfficeIMO.Word.Html.Converters {
 
                         var htmlCell = htmlRow.Cells[c];
                         var wordCell = wordRow.Cells[cIndex];
-                        ApplyCellStyles(wordCell, htmlCell as IHtmlTableCellElement);
+                        var alignment = ApplyCellStyles(wordCell, htmlCell as IHtmlTableCellElement);
                         if (wordCell.Paragraphs.Count == 1 && string.IsNullOrEmpty(wordCell.Paragraphs[0].Text)) {
                             wordCell.Paragraphs[0].Remove();
                         }
@@ -97,6 +97,12 @@ namespace OfficeIMO.Word.Html.Converters {
                                 innerParagraph = wordCell.Paragraphs[wordCell.Paragraphs.Count - 1];
                             } else {
                                 innerParagraph = null;
+                            }
+                        }
+
+                        if (alignment.HasValue) {
+                            foreach (var p in wordCell.Paragraphs) {
+                                p.ParagraphAlignment = alignment.Value;
                             }
                         }
 
@@ -418,16 +424,18 @@ namespace OfficeIMO.Word.Html.Converters {
             }
         }
 
-        private static void ApplyCellStyles(WordTableCell cell, IHtmlTableCellElement htmlCell) {
+        private static JustificationValues? ApplyCellStyles(WordTableCell cell, IHtmlTableCellElement htmlCell) {
             if (htmlCell == null) {
-                return;
+                return null;
             }
             var style = htmlCell.GetAttribute("style");
             var borderAttr = htmlCell.GetAttribute("border");
-            if (string.IsNullOrWhiteSpace(style) && string.IsNullOrWhiteSpace(borderAttr)) {
-                return;
+            var alignAttr = htmlCell.GetAttribute("align");
+            if (string.IsNullOrWhiteSpace(style) && string.IsNullOrWhiteSpace(borderAttr) && string.IsNullOrWhiteSpace(alignAttr)) {
+                return null;
             }
 
+            JustificationValues? alignment = null;
             bool borderSet = false;
             if (!string.IsNullOrWhiteSpace(style)) {
                 foreach (var part in style.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)) {
@@ -467,8 +475,29 @@ namespace OfficeIMO.Word.Html.Converters {
                                 borderSet = true;
                             }
                             break;
+                        case "text-align":
+                            var align = value.ToLowerInvariant();
+                            alignment = align switch {
+                                "center" => JustificationValues.Center,
+                                "right" => JustificationValues.Right,
+                                "justify" => JustificationValues.Both,
+                                "left" => JustificationValues.Left,
+                                _ => alignment
+                            };
+                            break;
                     }
                 }
+            }
+
+            if (alignment == null && !string.IsNullOrWhiteSpace(alignAttr)) {
+                var align = alignAttr.Trim().ToLowerInvariant();
+                alignment = align switch {
+                    "center" => JustificationValues.Center,
+                    "right" => JustificationValues.Right,
+                    "justify" => JustificationValues.Both,
+                    "left" => JustificationValues.Left,
+                    _ => alignment
+                };
             }
 
             if (!borderSet && !string.IsNullOrWhiteSpace(borderAttr)) {
@@ -478,6 +507,7 @@ namespace OfficeIMO.Word.Html.Converters {
                     cell.Borders.LeftColorHex = cell.Borders.RightColorHex = cell.Borders.TopColorHex = cell.Borders.BottomColorHex = "000000";
                 }
             }
+            return alignment;
         }
 
         private static bool TryParseBorder(string value, out BorderValues style, out UInt32Value size, out SixColor color) {

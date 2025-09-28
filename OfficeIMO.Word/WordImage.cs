@@ -885,10 +885,24 @@ namespace OfficeIMO.Word {
             get {
                 var picture = GetPicture();
                 var blipFill = picture?.BlipFill;
-                if (blipFill != null && blipFill.GetFirstChild<Tile>() != null) {
-                    _fillMode = ImageFillMode.Tile;
-                } else {
-                    _fillMode = ImageFillMode.Stretch;
+                if (blipFill != null) {
+                    var tile = blipFill.GetFirstChild<Tile>();
+                    if (tile != null) {
+                        if (tile.Alignment?.Value == RectangleAlignmentValues.Center) {
+                            _fillMode = ImageFillMode.Center;
+                        } else {
+                            _fillMode = ImageFillMode.Tile;
+                        }
+                    } else {
+                        var stretch = blipFill.GetFirstChild<Stretch>();
+                        if (stretch != null) {
+                            _fillMode = stretch.GetFirstChild<FillRectangle>() == null
+                                ? ImageFillMode.Fit
+                                : ImageFillMode.Stretch;
+                        } else {
+                            _fillMode = ImageFillMode.Stretch;
+                        }
+                    }
                 }
                 return _fillMode;
             }
@@ -901,16 +915,42 @@ namespace OfficeIMO.Word {
                 var tile = blipFill.GetFirstChild<Tile>();
                 var stretch = blipFill.GetFirstChild<Stretch>();
 
-                if (value == ImageFillMode.Stretch) {
-                    tile?.Remove();
-                    if (stretch == null) {
-                        blipFill.AppendChild(new Stretch(new FillRectangle()));
-                    }
-                } else {
-                    stretch?.Remove();
-                    if (tile == null) {
-                        blipFill.AppendChild(new Tile());
-                    }
+                switch (value) {
+                    case ImageFillMode.Stretch:
+                        tile?.Remove();
+                        if (stretch == null) {
+                            stretch = new Stretch();
+                            blipFill.AppendChild(stretch);
+                        }
+                        if (stretch.GetFirstChild<FillRectangle>() == null) {
+                            stretch.AppendChild(new FillRectangle());
+                        }
+                        break;
+                    case ImageFillMode.Tile:
+                        stretch?.Remove();
+                        if (tile == null) {
+                            tile = new Tile();
+                            blipFill.AppendChild(tile);
+                        }
+                        tile.Alignment = null;
+                        break;
+                    case ImageFillMode.Fit:
+                        tile?.Remove();
+                        if (stretch == null) {
+                            stretch = new Stretch();
+                            blipFill.AppendChild(stretch);
+                        }
+                        var fillRect = stretch.GetFirstChild<FillRectangle>();
+                        fillRect?.Remove();
+                        break;
+                    case ImageFillMode.Center:
+                        stretch?.Remove();
+                        if (tile == null) {
+                            tile = new Tile();
+                            blipFill.AppendChild(tile);
+                        }
+                        tile.Alignment = RectangleAlignmentValues.Center;
+                        break;
                 }
             }
         }
@@ -1764,12 +1804,19 @@ namespace OfficeIMO.Word {
                 blipFlip.Append(srcRect);
             }
 
-            if (_fillMode == ImageFillMode.Stretch) {
-                blipFlip.Append(new Stretch(new FillRectangle()));
-            } else {
-                if (blipFlip.GetFirstChild<Tile>() == null) {
+            switch (_fillMode) {
+                case ImageFillMode.Stretch:
+                    blipFlip.Append(new Stretch(new FillRectangle()));
+                    break;
+                case ImageFillMode.Tile:
                     blipFlip.AppendChild(new Tile());
-                }
+                    break;
+                case ImageFillMode.Fit:
+                    blipFlip.Append(new Stretch());
+                    break;
+                case ImageFillMode.Center:
+                    blipFlip.AppendChild(new Tile { Alignment = RectangleAlignmentValues.Center });
+                    break;
             }
 
             var picture = new DocumentFormat.OpenXml.Drawing.Pictures.Picture();
@@ -2025,9 +2072,8 @@ namespace OfficeIMO.Word {
 
             try {
                 using (FileStream outputFileStream = new FileStream(fileToSave, FileMode.Create, FileAccess.Write, FileShare.None)) {
-                    var stream = _imagePart.GetStream();
+                    using var stream = _imagePart.GetStream(FileMode.Open, FileAccess.Read);
                     stream.CopyTo(outputFileStream);
-                    stream.Close();
                 }
             } catch (UnauthorizedAccessException ex) {
                 throw new IOException($"Failed to save to '{fileToSave}'. Access denied or path is read-only.", ex);
@@ -2035,20 +2081,15 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Retrieves the image data as a new memory stream.
+        /// Retrieves the image data as a stream without loading the entire image into memory.
         /// </summary>
-        /// <returns>A <see cref="Stream"/> containing the image bytes.</returns>
+        /// <returns>A <see cref="Stream"/> for reading the image bytes.</returns>
         public Stream GetStream() {
             if (_imagePart == null) {
                 throw new InvalidOperationException("Image is linked externally and cannot be extracted.");
             }
 
-            MemoryStream ms = new MemoryStream();
-            using (var stream = _imagePart.GetStream()) {
-                stream.CopyTo(ms);
-            }
-            ms.Position = 0;
-            return ms;
+            return _imagePart.GetStream(FileMode.Open, FileAccess.Read);
         }
 
         /// <summary>

@@ -346,7 +346,7 @@ namespace OfficeIMO.Word.Html.Converters {
             void AppendParagraph(IElement parent, WordParagraph para) {
                 if (para.IsBookmark && para.Bookmark != null) {
                     var name = para.Bookmark.Name;
-                    var parts = name.Split(':', 2);
+                    var parts = name.Split(new[] { ':' }, 2);
                     if (parts.Length == 2 && IsStructuralTag(parts[0])) {
                         var structEl = htmlDoc.CreateElement(parts[0]);
                         structEl.SetAttribute("id", parts[1]);
@@ -423,6 +423,21 @@ namespace OfficeIMO.Word.Html.Converters {
                 }
 
                 return null;
+            }
+
+            JustificationValues? GetCellAlignment(WordTableCell cell) {
+                JustificationValues? align = null;
+                foreach (var p in cell.Paragraphs) {
+                    if (p.ParagraphAlignment == null) {
+                        continue;
+                    }
+                    if (align == null) {
+                        align = p.ParagraphAlignment;
+                    } else if (align != p.ParagraphAlignment) {
+                        return null;
+                    }
+                }
+                return align;
             }
 
             string? BuildBorderCss(BorderValues? style, string colorHex, UInt32Value size) {
@@ -542,7 +557,8 @@ namespace OfficeIMO.Word.Html.Converters {
                         if (!string.IsNullOrEmpty(width)) {
                             cellStyles.Add($"width:{width}");
                         }
-                        var align = GetTextAlignCss(cell.Paragraphs.FirstOrDefault()?.ParagraphAlignment);
+                        var cellAlignment = GetCellAlignment(cell);
+                        var align = GetTextAlignCss(cellAlignment);
                         if (!string.IsNullOrEmpty(align)) {
                             cellStyles.Add($"text-align:{align}");
                         }
@@ -673,7 +689,19 @@ namespace OfficeIMO.Word.Html.Converters {
                             AppendRuns(li, paragraph);
                         } else {
                             CloseLists();
-                            if (IsCodeParagraph(paragraph)) {
+                            if (paragraph.IsImage && idx + 1 < elements.Count && elements[idx + 1] is WordParagraph captionPara && string.Equals(captionPara.StyleId, "Caption", StringComparison.OrdinalIgnoreCase)) {
+                                var figure = htmlDoc.CreateElement("figure");
+                                AppendRuns(figure, paragraph);
+                                var figCap = htmlDoc.CreateElement("figcaption");
+                                if (options.IncludeParagraphClasses && !string.IsNullOrEmpty(captionPara.StyleId)) {
+                                    figCap.SetAttribute("class", captionPara.StyleId);
+                                    paragraphStyles.Add(captionPara.StyleId);
+                                }
+                                AppendRuns(figCap, captionPara);
+                                figure.AppendChild(figCap);
+                                body.AppendChild(figure);
+                                idx++;
+                            } else if (IsCodeParagraph(paragraph)) {
                                 List<string> lines = new();
                                 lines.Add(paragraph.Text);
                                 while (idx + 1 < elements.Count && elements[idx + 1] is WordParagraph nextPara && DocumentTraversal.GetListInfo(nextPara) == null && IsCodeParagraph(nextPara)) {

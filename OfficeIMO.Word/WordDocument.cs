@@ -1092,7 +1092,6 @@ namespace OfficeIMO.Word {
             WordDocumentStatistics statistics = new WordDocumentStatistics(word);
 
             WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
-            WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
 
             return word;
         }
@@ -1102,11 +1101,12 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="filePath">Destination file path.</param>
         /// <param name="autoSave">Enable auto-save on dispose.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Created <see cref="WordDocument"/>.</returns>
-        public static async Task<WordDocument> CreateAsync(string filePath = "", bool autoSave = false) {
+        public static async Task<WordDocument> CreateAsync(string filePath = "", bool autoSave = false, CancellationToken cancellationToken = default) {
             if (!string.IsNullOrEmpty(filePath)) {
                 using var fs = new FileStream(filePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.Asynchronous);
-                await fs.FlushAsync();
+                await fs.FlushAsync(cancellationToken);
             }
 
             var documentType = GetDocumentType(filePath);
@@ -1259,9 +1259,10 @@ namespace OfficeIMO.Word {
         /// <param name="readOnly">Open the document in read-only mode.</param>
         /// <param name="autoSave">Enable auto-save on dispose.</param>
         /// <param name="overrideStyles">When <c>true</c>, existing styles are replaced with library versions. Ignored when <paramref name="readOnly"/> is <c>true</c>.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Loaded <see cref="WordDocument"/> instance.</returns>
         /// <exception cref="FileNotFoundException">Thrown when the file does not exist.</exception>
-        public static async Task<WordDocument> LoadAsync(string filePath, bool readOnly = false, bool autoSave = false, bool overrideStyles = false) {
+        public static async Task<WordDocument> LoadAsync(string filePath, bool readOnly = false, bool autoSave = false, bool overrideStyles = false, CancellationToken cancellationToken = default) {
             if (filePath != null) {
                 if (!File.Exists(filePath)) {
                     throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
@@ -1270,7 +1271,7 @@ namespace OfficeIMO.Word {
 
             using var fileStream = new FileStream(filePath, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous);
             var memoryStream = new MemoryStream();
-            await fileStream.CopyToAsync(memoryStream);
+            await fileStream.CopyToAsync(memoryStream, 81920, cancellationToken);
             memoryStream.Seek(0, SeekOrigin.Begin);
 
             var openSettings = new OpenSettings {
@@ -1801,6 +1802,80 @@ namespace OfficeIMO.Word {
                 _ = new WordDocumentVariables(this, true);
             }
             _ = new WordBibliography(this, true);
+        }
+    }
+}
+
+namespace OfficeIMO.Word {
+    /// <summary>
+    /// Extension methods for <see cref="WordDocument"/> providing regular expression search.
+    /// </summary>
+    public static class WordDocumentRegexExtensions {
+        /// <summary>
+        /// Searches the document for text matching the specified regular expression.
+        /// </summary>
+        /// <param name="document">Document to search.</param>
+        /// <param name="regex">Regular expression used for searching.</param>
+        /// <returns>A <see cref="WordFind"/> instance containing all matches.</returns>
+        public static WordFind Find(this WordDocument document, Regex regex) {
+            if (document == null) {
+                throw new ArgumentNullException(nameof(document));
+            }
+            if (regex == null) {
+                throw new ArgumentNullException(nameof(regex));
+            }
+
+            var result = new WordFind();
+
+            result.FindRegex(document.Paragraphs, regex, result.Paragraphs);
+
+            foreach (var table in document.Tables) {
+                result.FindRegex(table.Paragraphs, regex, result.Tables);
+            }
+
+            if (document.Header.Default != null) {
+                result.FindRegex(document.Header.Default.Paragraphs, regex, result.HeaderDefault);
+                foreach (var table in document.Header.Default.Tables) {
+                    result.FindRegex(table.Paragraphs, regex, result.HeaderDefault);
+                }
+            }
+
+            if (document.Header.Even != null) {
+                result.FindRegex(document.Header.Even.Paragraphs, regex, result.HeaderEven);
+                foreach (var table in document.Header.Even.Tables) {
+                    result.FindRegex(table.Paragraphs, regex, result.HeaderEven);
+                }
+            }
+
+            if (document.Header.First != null) {
+                result.FindRegex(document.Header.First.Paragraphs, regex, result.HeaderFirst);
+                foreach (var table in document.Header.First.Tables) {
+                    result.FindRegex(table.Paragraphs, regex, result.HeaderFirst);
+                }
+            }
+
+            if (document.Footer.Default != null) {
+                result.FindRegex(document.Footer.Default.Paragraphs, regex, result.FooterDefault);
+                foreach (var table in document.Footer.Default.Tables) {
+                    result.FindRegex(table.Paragraphs, regex, result.FooterDefault);
+                }
+            }
+
+            if (document.Footer.Even != null) {
+                result.FindRegex(document.Footer.Even.Paragraphs, regex, result.FooterEven);
+                foreach (var table in document.Footer.Even.Tables) {
+                    result.FindRegex(table.Paragraphs, regex, result.FooterEven);
+                }
+            }
+
+            if (document.Footer.First != null) {
+                result.FindRegex(document.Footer.First.Paragraphs, regex, result.FooterFirst);
+                foreach (var table in document.Footer.First.Tables) {
+                    result.FindRegex(table.Paragraphs, regex, result.FooterFirst);
+                }
+            }
+
+            return result;
         }
     }
 }

@@ -2,6 +2,7 @@ using OfficeIMO.Word;
 using System;
 using System.Linq;
 using System.Text;
+using System.IO;
 
 namespace OfficeIMO.Word.Markdown.Converters {
     /// <summary>
@@ -40,6 +41,13 @@ namespace OfficeIMO.Word.Markdown.Converters {
                     var tableText = ConvertTable(table, options);
                     if (!string.IsNullOrEmpty(tableText)) {
                         _output.AppendLine(tableText);
+                    }
+                }
+
+                foreach (var embedded in section.EmbeddedDocuments) {
+                    var html = embedded.GetHtml();
+                    if (!string.IsNullOrEmpty(html)) {
+                        _output.AppendLine(html);
                     }
                 }
             }

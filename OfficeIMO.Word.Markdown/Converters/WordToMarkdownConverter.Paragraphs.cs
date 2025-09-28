@@ -22,6 +22,13 @@ namespace OfficeIMO.Word.Markdown.Converters {
 
             var sb = new StringBuilder();
 
+            if (paragraph.IndentationBefore.HasValue && paragraph.IndentationBefore.Value > 0) {
+                int depth = (int)Math.Round(paragraph.IndentationBefore.Value / 720d);
+                if (depth > 0) {
+                    sb.Append(string.Join(" ", Enumerable.Repeat(">", depth))).Append(' ');
+                }
+            }
+
             int? headingLevel = paragraph.Style.HasValue
                 ? HeadingStyleMapper.GetLevelForHeadingStyle(paragraph.Style.Value)
                 : (int?)null;
@@ -69,12 +76,12 @@ namespace OfficeIMO.Word.Markdown.Converters {
                     text = $"*{text}*";
                 }
 
-                if (run.Strike) {
-                    text = $"~~{text}~~";
-                }
-
                 if (options.EnableUnderline && run.Underline.HasValue && run.Underline.Value != UnderlineValues.None) {
                     text = $"<u>{text}</u>";
+                }
+
+                if (run.Strike) {
+                    text = $"~~{text}~~";
                 }
 
                 if (options.EnableHighlight && run.Highlight.HasValue && run.Highlight.Value != HighlightColorValues.None) {
@@ -117,9 +124,7 @@ namespace OfficeIMO.Word.Markdown.Converters {
                 return string.Empty;
             }
 
-            string alt = !string.IsNullOrEmpty(image.Description)
-                ? image.Description
-                : (string.IsNullOrEmpty(image.FilePath) ? "" : Path.GetFileName(image.FilePath));
+            string alt = image.Description ?? string.Empty;
 
             if (options.ImageExportMode == ImageExportMode.File) {
                 string directory = options.ImageDirectory ?? Directory.GetCurrentDirectory();

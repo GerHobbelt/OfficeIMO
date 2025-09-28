@@ -4,9 +4,9 @@ using OfficeIMO.Word.Markdown;
 
 namespace OfficeIMO.Examples.Markdown {
     internal static partial class Markdown {
-        public static void Example_MarkdownNestedFormatting(string folderPath, bool openWord) {
-            string filePath = Path.Combine(folderPath, "MarkdownNestedFormatting.docx");
-            string markdown = "Text ~~**bold strike**~~, ***bold italic***, ~~<u>strike underline</u>~~ and <u>~~underline strike~~</u>.";
+        public static void Example_MarkdownBlockQuotes(string folderPath, bool openWord) {
+            string filePath = Path.Combine(folderPath, "MarkdownBlockQuotes.docx");
+            string markdown = "> Level 1\n> > Level 2";
             var doc = markdown.LoadFromMarkdown(new MarkdownToWordOptions());
             doc.Save(filePath);
             if (openWord) {
