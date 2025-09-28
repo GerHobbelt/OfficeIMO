@@ -6,6 +6,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Drawing.Charts;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using SixLabors.ImageSharp;
 
 namespace OfficeIMO.Word {
     public partial class WordDocument {
@@ -85,10 +86,47 @@ namespace OfficeIMO.Word {
             return chartInstance;
         }
 
+        /// <summary>
+        /// Creates a list using one of the built-in numbering styles.
+        /// For manually configured lists prefer <see cref="AddCustomList"/>.
+        /// </summary>
         public WordList AddList(WordListStyle style) {
             WordList wordList = new WordList(this);
             wordList.AddList(style);
             return wordList;
+        }
+
+        /// <summary>
+        /// Adds a custom bullet list with formatting options.
+        /// </summary>
+        /// <param name="symbol">Bullet symbol.</param>
+        /// <param name="fontName">Font name for the symbol.</param>
+        /// <param name="colorHex">Hex color of the symbol.</param>
+        /// <param name="fontSize">Font size in points.</param>
+        /// <returns>The created <see cref="WordList"/>.</returns>
+        public WordList AddCustomBulletList(char symbol, string fontName, string colorHex, int? fontSize = null) {
+            return WordList.AddCustomBulletList(this, symbol, fontName, colorHex, fontSize);
+        }
+
+        /// <summary>
+        /// Adds a custom bullet list with formatting options.
+        /// </summary>
+        /// <param name="symbol">Bullet symbol.</param>
+        /// <param name="fontName">Font name for the symbol.</param>
+        /// <param name="color">Bullet color.</param>
+        /// <param name="colorHex">Hex color fallback.</param>
+        /// <param name="fontSize">Font size in points.</param>
+        /// <returns>The created <see cref="WordList"/>.</returns>
+        public WordList AddCustomBulletList(WordBulletSymbol symbol, string fontName, SixLabors.ImageSharp.Color? color = null, string colorHex = null, int? fontSize = null) {
+            return WordList.AddCustomBulletList(this, symbol, fontName, color, colorHex, fontSize);
+        }
+
+        /// <summary>
+        /// Creates a custom list with no predefined levels for manual configuration.
+        /// </summary>
+        /// <returns>The created <see cref="WordList"/>.</returns>
+        public WordList AddCustomList() {
+            return WordList.AddCustomList(this);
         }
 
         public WordList AddTableOfContentList(WordListStyle style) {
@@ -180,6 +218,31 @@ namespace OfficeIMO.Word {
             WordTextBox wordTextBox = new WordTextBox(this, text, wrapTextImage);
             return wordTextBox;
         }
+
+        /// <summary>
+        /// Adds a basic shape to the document in a new paragraph.
+        /// </summary>
+        /// <param name="shapeType">Type of shape to create.</param>
+        /// <param name="widthPt">Width in points or line end X.</param>
+        /// <param name="heightPt">Height in points or line end Y.</param>
+        /// <param name="fillColor">Fill color in hex format.</param>
+        /// <param name="strokeColor">Stroke color in hex format.</param>
+        /// <param name="strokeWeightPt">Stroke weight in points.</param>
+        /// <returns>The created <see cref="WordShape"/>.</returns>
+        public WordShape AddShape(ShapeType shapeType, double widthPt, double heightPt,
+            string fillColor = "#FFFFFF", string strokeColor = "#000000", double strokeWeightPt = 1) {
+            var paragraph = AddParagraph();
+            return paragraph.AddShape(shapeType, widthPt, heightPt, fillColor, strokeColor, strokeWeightPt);
+        }
+
+        /// <summary>
+        /// Adds a basic shape to the document using <see cref="SixLabors.ImageSharp.Color"/> values.
+        /// </summary>
+        public WordShape AddShape(ShapeType shapeType, double widthPt, double heightPt,
+            SixLabors.ImageSharp.Color fillColor, SixLabors.ImageSharp.Color strokeColor, double strokeWeightPt = 1) {
+            return AddShape(shapeType, widthPt, heightPt, fillColor.ToHexColor(), strokeColor.ToHexColor(), strokeWeightPt);
+        }
+
 
         public WordParagraph AddHorizontalLine(BorderValues? lineType = null, SixLabors.ImageSharp.Color? color = null, uint size = 12, uint space = 1) {
             lineType ??= BorderValues.Single;

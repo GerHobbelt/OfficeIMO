@@ -198,6 +198,19 @@ namespace OfficeIMO.Word {
             }
         }
 
+        /// <summary>
+        /// Provides a list of paragraphs that contain shapes.
+        /// </summary>
+        public List<WordParagraph> ParagraphsShapes {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsShapes);
+                }
+                return list;
+            }
+        }
+
         public List<WordParagraph> ParagraphsEmbeddedObjects {
             get {
                 List<WordParagraph> list = new List<WordParagraph>();
@@ -528,6 +541,20 @@ namespace OfficeIMO.Word {
                 List<WordTextBox> list = new List<WordTextBox>();
                 foreach (var section in this.Sections) {
                     list.AddRange(section.TextBoxes);
+                }
+                return list;
+            }
+
+        }
+
+        /// <summary>
+        /// Collection of all shapes in the document.
+        /// </summary>
+        public List<WordShape> Shapes {
+            get {
+                List<WordShape> list = new List<WordShape>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.Shapes);
                 }
                 return list;
             }
@@ -1135,6 +1162,10 @@ namespace OfficeIMO.Word {
             }
         }
 
+        /// <summary>
+        /// Asynchronously saves the document to where it was open from.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token.</param>
         public Task SaveAsync(CancellationToken cancellationToken = default) {
             return SaveAsync("", false, cancellationToken);
         }
@@ -1143,6 +1174,11 @@ namespace OfficeIMO.Word {
             return SaveAsync(filePath, false, cancellationToken);
         }
 
+        /// <summary>
+        /// Asynchronously saves the document and opens it in Microsoft Word (if Word is present).
+        /// </summary>
+        /// <param name="openWord">Whether to open Word after saving.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         public Task SaveAsync(bool openWord, CancellationToken cancellationToken = default) {
             return SaveAsync("", openWord, cancellationToken);
         }
