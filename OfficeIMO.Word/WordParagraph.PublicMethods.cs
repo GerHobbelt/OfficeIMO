@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
 using System.Linq;
 using System.Collections.Generic;
 
@@ -94,7 +96,7 @@ namespace OfficeIMO.Word {
                     }
 
                     if (this.IsHyperLink) {
-                        this.Hyperlink.Remove();
+                        this.RemoveHyperLink();
                     }
 
                     if (this.IsListItem) {
@@ -296,6 +298,44 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Removes hyperlink from this paragraph and detaches its relationship.
+        /// </summary>
+        /// <param name="includingParagraph">If true removes the paragraph when it becomes empty.</param>
+        public void RemoveHyperLink(bool includingParagraph = false) {
+            if (_hyperlink != null) {
+                if (!string.IsNullOrEmpty(_hyperlink.Id)) {
+                    OpenXmlElement parent = _paragraph.Parent;
+                    while (parent != null && !(parent is Body) && !(parent is Header) && !(parent is Footer)) {
+                        parent = parent.Parent;
+                    }
+
+                    OpenXmlPart part = _document._wordprocessingDocument.MainDocumentPart;
+                    if (parent is Header header) {
+                        part = header.HeaderPart;
+                    } else if (parent is Footer footer) {
+                        part = footer.FooterPart;
+                    }
+
+                    var rel = part.HyperlinkRelationships.FirstOrDefault(r => r.Id == _hyperlink.Id);
+                    if (rel != null) {
+                        part.DeleteReferenceRelationship(rel);
+                    }
+                }
+
+                _hyperlink.Remove();
+                _hyperlink = null;
+
+                if (includingParagraph) {
+                    if (this._paragraph.ChildElements.Count == 0) {
+                        this._paragraph.Remove();
+                    } else if (this._paragraph.ChildElements.Count == 1 && this._paragraph.ChildElements.OfType<ParagraphProperties>().Any()) {
+                        this._paragraph.Remove();
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// Add a table after this paragraph and return the table.
         /// </summary>
         /// <param name="rows">The number of rows in the table.</param>
@@ -361,7 +401,10 @@ namespace OfficeIMO.Word {
         /// .AddBar() to add a bar chart
         /// .AddLine() to add a line chart
         /// .AddPie() to add a pie chart
-        /// .AddArea() to add an area chart.
+        /// .AddArea() to add an area chart
+        /// .AddScatter() to add a scatter chart
+        /// .AddRadar() to add a radar chart
+        /// .AddBar3D() to add a 3-D bar chart.
         /// You can't mix and match the types of charts.
         /// </summary>
         /// <param name="title">The title.</param>

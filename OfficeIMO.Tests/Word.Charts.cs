@@ -2,6 +2,7 @@ using DocumentFormat.OpenXml.Drawing.Charts;
 using DocumentFormat.OpenXml.Wordprocessing;
 
 using OfficeIMO.Word;
+using System.Linq;
 
 using Xunit;
 
@@ -100,16 +101,79 @@ namespace OfficeIMO.Tests {
                 Assert.True(document.Charts.Count == 5);
                 Assert.True(document.ParagraphsCharts.Count == 5);
 
+                var scatter = document.AddChart();
+                scatter.AddScatter("data", new List<double> { 1, 2 }, new List<double> { 2, 1 }, Color.Red);
+                var scatterPart = document._wordprocessingDocument.MainDocumentPart.ChartParts.Last();
+                var scatterXml = scatterPart.ChartSpace.GetFirstChild<Chart>().PlotArea.GetFirstChild<ScatterChart>();
+                Assert.NotNull(scatterXml);
+
+                var radar = document.AddChart();
+                radar.AddCategories(categories);
+                radar.AddRadar("USA", new List<int> { 1, 2, 3, 4 }, Color.Green);
+                var radarPart = document._wordprocessingDocument.MainDocumentPart.ChartParts.Last();
+                var radarXml = radarPart.ChartSpace.GetFirstChild<Chart>().PlotArea.GetFirstChild<RadarChart>();
+                Assert.NotNull(radarXml);
+
+                var bar3d = document.AddChart();
+                bar3d.AddCategories(categories);
+                bar3d.AddBar3D("USA", new List<int> { 1, 2, 3, 4 }, Color.Blue);
+                var bar3dPart = document._wordprocessingDocument.MainDocumentPart.ChartParts.Last();
+                var bar3dXml = bar3dPart.ChartSpace.GetFirstChild<Chart>().PlotArea.GetFirstChild<Bar3DChart>();
+                Assert.NotNull(bar3dXml);
+
                 document.Save(false);
             }
 
             using (WordDocument document = WordDocument.Load(filePath)) {
 
                 Assert.True(document.Sections[0].Charts.Count == 3);
-                Assert.True(document.Sections[1].Charts.Count == 2);
-                Assert.True(document.Charts.Count == 5);
+                Assert.True(document.Sections[1].Charts.Count == 5);
+                Assert.True(document.Charts.Count == 8);
 
                 document.Save(false);
+            }
+
+            using (WordDocument document = WordDocument.Load(filePath)) {
+                var maxId = document._wordprocessingDocument.MainDocumentPart
+                    .ChartParts.SelectMany(p => p.ChartSpace.GetFirstChild<Chart>()
+                    .Descendants<AxisId>())
+                    .Max(a => a.Val!.Value);
+
+                var chart = document.AddChart();
+                chart.AddCategories(new List<string> { "A", "B" });
+                chart.AddBar("T", new List<int> { 1, 2 }, Color.Blue);
+
+                var newIds = document._wordprocessingDocument.MainDocumentPart
+                    .ChartParts.Last().ChartSpace.GetFirstChild<Chart>()
+                    .Descendants<AxisId>().Select(a => a.Val!.Value);
+
+                Assert.True(newIds.Min() > maxId);
+                var validation = document.ValidateDocument();
+                var chartErrors = validation.Where(v => v.Description.Contains("chart")).ToList();
+                Assert.Empty(chartErrors);
+            }
+        }
+
+        [Fact]
+        public void Test_ChartsValidation() {
+            var filePath = Path.Combine(_directoryWithFiles, "ChartsValidation.docx");
+
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                var categories = new List<string> { "A", "B", "C" };
+                var bar = document.AddChart();
+                bar.AddCategories(categories);
+                bar.AddBar("Series", new List<int> { 1, 2, 3 }, Color.Blue);
+
+                var scatter = document.AddChart();
+                scatter.AddScatter("Data", new List<double> { 1, 2, 3 }, new List<double> { 3, 2, 1 }, Color.Red);
+
+                document.Save(false);
+            }
+
+            using (WordDocument document = WordDocument.Load(filePath)) {
+                var valid = document.ValidateDocument();
+                var chartErrors = valid.Where(v => v.Description.Contains("chart")).ToList();
+                Assert.Empty(chartErrors);
             }
         }
     }
