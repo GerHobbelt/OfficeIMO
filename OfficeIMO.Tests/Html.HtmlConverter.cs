@@ -17,20 +17,33 @@ public partial class Html {
         var dict = (IDictionary<string, Style>)field!.GetValue(null);
         dict.Remove(styleId);
     }
-    [Fact(Skip = "TODO: Implement HTML to Word conversion - currently only stub implementation")]
+    [Fact]
     public void Test_Html_RoundTrip() {
-        string html = "<p>Hello <b>world</b> and <i>universe</i>.</p>";
-        
+        string html = "<p>Hello <b>world</b> and <i>universe</i>. <u>under</u> <s>strike</s> <a href=\"https://example.com\">link</a></p>";
+
         var doc = html.LoadFromHtml(new HtmlToWordOptions { FontFamily = "Calibri" });
         string roundTrip = doc.ToHtml(new WordToHtmlOptions { IncludeFontStyles = true });
 
-        Assert.Contains("<b>", roundTrip, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("</b>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<strong>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("</strong>", roundTrip, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("world", roundTrip, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("<i>", roundTrip, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("</i>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<em>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("</em>", roundTrip, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("universe", roundTrip, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains($"font-family:{FontResolver.Resolve("Calibri")}", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<u>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("</u>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("under", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<s>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("</s>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("strike", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<a", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("https://example.com", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("link", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("font-family", roundTrip, StringComparison.OrdinalIgnoreCase);
+        var resolved = FontResolver.Resolve("Calibri");
+        bool hasFont = (!string.IsNullOrEmpty(resolved) && roundTrip.IndexOf(resolved, StringComparison.OrdinalIgnoreCase) >= 0) ||
+                       roundTrip.IndexOf("Calibri", StringComparison.OrdinalIgnoreCase) >= 0;
+        Assert.True(hasFont);
     }
 
     [Fact]
@@ -122,15 +135,19 @@ public partial class Html {
         Assert.Contains("data:image/png;base64", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(Skip = "TODO: Implement font family mapping and CSS font-family support")]
+    [Fact]
     public void Test_Html_FontResolver() {
         string html = "<p>Hello</p>";
-        
+
         var doc = html.LoadFromHtml(new HtmlToWordOptions { FontFamily = "monospace" });
         string roundTrip = doc.ToHtml(new WordToHtmlOptions { IncludeFontStyles = true });
-        
-        Assert.Contains($"font-family:{FontResolver.Resolve("monospace")}", roundTrip, StringComparison.OrdinalIgnoreCase);
+
+        string expected = FontResolver.Resolve("monospace")!;
+        Assert.Contains("font-family", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expected, roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("monospace", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
+
 
     [Fact]
     public void Test_Html_Urls_CreateHyperlinks() {

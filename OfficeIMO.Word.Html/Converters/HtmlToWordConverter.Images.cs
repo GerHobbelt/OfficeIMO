@@ -1,12 +1,11 @@
 using AngleSharp.Html.Dom;
 using AngleSharp.Dom;
-using DocumentFormat.OpenXml.Wordprocessing;
+using Wp = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using OfficeIMO.Word;
 using OfficeIMO.Word.Html.Helpers;
 using System;
 using System.IO;
 using System.Net.Http;
-using System.Reflection;
 using System.Text;
 
 namespace OfficeIMO.Word.Html.Converters {
@@ -14,6 +13,18 @@ namespace OfficeIMO.Word.Html.Converters {
         private void ProcessImage(IHtmlImageElement img, WordDocument doc, HtmlToWordOptions options, WordParagraph? currentParagraph, WordHeaderFooter? headerFooter) {
             var src = img.GetAttribute("src");
             if (string.IsNullOrEmpty(src)) return;
+
+            var decl = _inlineParser.ParseDeclaration(img.GetAttribute("style") ?? string.Empty);
+            var floatVal = decl.GetPropertyValue("float")?.Trim().ToLowerInvariant();
+            var wrap = WrapTextImage.InLineWithText;
+            string? horizontalAlignment = null;
+            if (floatVal == "left") {
+                wrap = WrapTextImage.Square;
+                horizontalAlignment = "left";
+            } else if (floatVal == "right") {
+                wrap = WrapTextImage.Square;
+                horizontalAlignment = "right";
+            }
 
             if (!src.StartsWith("data:image", StringComparison.OrdinalIgnoreCase) && !Uri.TryCreate(src, UriKind.Absolute, out _)) {
                 if (!string.IsNullOrEmpty(options.BasePath)) {
@@ -34,15 +45,9 @@ namespace OfficeIMO.Word.Html.Converters {
 
             WordParagraph? paragraph = currentParagraph;
 
-            if (_imageCache.TryGetValue(src, out var cached)) {
+            if (horizontalAlignment == null && _imageCache.TryGetValue(src, out var cached)) {
                 paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
-                var drawingField = typeof(WordImage).GetField("_Image", BindingFlags.Instance | BindingFlags.NonPublic);
-                var drawing = (DocumentFormat.OpenXml.Wordprocessing.Drawing)drawingField!.GetValue(cached);
-                var clone = (DocumentFormat.OpenXml.Wordprocessing.Drawing)drawing.CloneNode(true);
-                var run = new Run(clone);
-                var paragraphField = typeof(WordParagraph).GetField("_paragraph", BindingFlags.Instance | BindingFlags.NonPublic);
-                var p = (Paragraph)paragraphField!.GetValue(paragraph);
-                p.Append(run);
+                cached.Clone(paragraph);
                 return;
             }
 
@@ -58,18 +63,18 @@ namespace OfficeIMO.Word.Html.Converters {
                         ext = parts[1];
                     }
                     paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
-                    paragraph.AddImageFromBase64(base64, "image." + ext, width, height, description: alt);
+                    paragraph.AddImageFromBase64(base64, "image." + ext, width, height, wrap, description: alt);
                     image = paragraph.Image;
                 } else {
                     return;
                 }
             } else if (Uri.TryCreate(src, UriKind.Absolute, out var uri) && uri.IsFile) {
                 paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
-                paragraph.AddImage(uri.LocalPath, width, height, description: alt);
+                paragraph.AddImage(uri.LocalPath, width, height, wrap, description: alt);
                 image = paragraph.Image;
             } else if (File.Exists(src)) {
                 paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
-                paragraph.AddImage(src, width, height, description: alt);
+                paragraph.AddImage(src, width, height, wrap, description: alt);
                 image = paragraph.Image;
             } else {
                 try {
@@ -85,7 +90,7 @@ namespace OfficeIMO.Word.Html.Converters {
                         // ignore
                     }
                     paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
-                    paragraph.AddImage(ms, fileName, width, height, description: alt);
+                    paragraph.AddImage(ms, fileName, width, height, wrap, description: alt);
                     image = paragraph.Image;
                 } catch (Exception ex) {
                     Console.WriteLine($"Failed to load image from '{src}': {ex.Message}");
@@ -97,7 +102,17 @@ namespace OfficeIMO.Word.Html.Converters {
                 }
             }
 
-            _imageCache[src] = image;
+            if (horizontalAlignment != null) {
+                var hPos = image.horizontalPosition;
+                hPos?.GetFirstChild<Wp.PositionOffset>()?.Remove();
+                if (hPos != null) {
+                    hPos.HorizontalAlignment = new Wp.HorizontalAlignment() { Text = horizontalAlignment };
+                }
+            }
+
+            if (horizontalAlignment == null) {
+                _imageCache[src] = image;
+            }
         }
 
         private void ProcessSvgImage(string src, IHtmlImageElement img, WordDocument doc, HtmlToWordOptions options, WordParagraph? currentParagraph, WordHeaderFooter? headerFooter) {
