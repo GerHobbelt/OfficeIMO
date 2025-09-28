@@ -172,6 +172,9 @@ namespace OfficeIMO.Examples {
             Images.Example_ImageTransparencyAdvanced(folderPath, false);
             Images.Example_ImageNewFeatures(folderPath, false);
 
+            Background.Example_BackgroundImageSimple(folderPath, false);
+            Background.Example_BackgroundImageAdvanced(folderPath, false);
+
             PageBreaks.Example_PageBreaks(folderPath, false);
             PageBreaks.Example_PageBreaks1(folderPath, false);
 
@@ -182,6 +185,7 @@ namespace OfficeIMO.Examples {
 
             Comments.Example_PlayingWithComments(folderPath, false);
             Comments.Example_RemoveCommentsAndTrack(folderPath, false);
+            Comments.Example_ThreadedComments(folderPath, false);
 
             BasicExcelFunctionality.BasicExcel_Example1(folderPath, false);
             BasicExcelFunctionality.BasicExcel_Example2(folderPath, false);
@@ -201,6 +205,9 @@ namespace OfficeIMO.Examples {
             Fields.Example_FieldFormatRoman(folderPath, false);
             Fields.Example_FieldFormatAdvanced(folderPath, false);
             Fields.Example_FieldWithMultipleSwitches(folderPath, false);
+
+            CitationsExamples.Example_BasicCitations(folderPath, false);
+            CitationsExamples.Example_AdvancedCitations(folderPath, false);
 
             Watermark.Watermark_Sample2(folderPath, false);
             Watermark.Watermark_Sample1(folderPath, false);
@@ -229,6 +236,7 @@ namespace OfficeIMO.Examples {
             SaveToStream.Example_StreamDocumentProperties(folderPath, false);
             SaveToStream.Example_CreateInProvidedStream(folderPath, false);
             SaveToStream.Example_CreateInProvidedStreamAdvanced(folderPath, false);
+            SaveToStream.Example_SaveToOriginalStream(folderPath, false);
 
             Protect.Example_FinalDocument(folderPath, false);
             Protect.Example_ReadOnlyEnforced(folderPath, false);

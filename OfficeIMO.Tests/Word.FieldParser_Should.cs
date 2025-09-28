@@ -5,8 +5,14 @@ using Xunit;
 
 namespace OfficeIMO.Tests
 {
+    /// <summary>
+    /// Contains tests for the field parser.
+    /// </summary>
     public partial class Word
     {
+        /// <summary>
+        /// Unit tests related to <see cref="WordFieldParser"/> parsing logic.
+        /// </summary>
         public class FieldParser_Should
         {
 
@@ -16,6 +22,11 @@ namespace OfficeIMO.Tests
             [InlineData(@"BIBLIOGRAPHY \*arabic", 1)]
             [InlineData(@"BIBLIOGRAPHY \* ALPHABETICAL", 1)]
             [InlineData(@"Page \* FIRSTCAP \* MERGEFORMAT", 2)]
+            /// <summary>
+            /// Ensures format switches are correctly identified within field codes.
+            /// </summary>
+            /// <param name="FieldCodeString">Field code string under test.</param>
+            /// <param name="expected_amount_of_format_switches">Expected count of switches.</param>
             public void Test_IdentifyFormatSwitches(String FieldCodeString, int expected_amount_of_format_switches)
             {
                 var parser = new WordFieldParser(FieldCodeString);

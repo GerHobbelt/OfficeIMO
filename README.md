@@ -13,6 +13,7 @@ If you would like to contact me you can do so via Twitter or LinkedIn.
 [![twitter](https://img.shields.io/twitter/follow/PrzemyslawKlys.svg?label=Twitter%20%40PrzemyslawKlys&style=social)](https://twitter.com/PrzemyslawKlys)
 [![blog](https://img.shields.io/badge/Blog-evotec.xyz-2A6496.svg)](https://evotec.xyz/hub)
 [![linked](https://img.shields.io/badge/LinkedIn-pklys-0077B5.svg?logo=LinkedIn)](https://www.linkedin.com/in/pklys)
+[![discord](https://img.shields.io/discord/508328927853281280?style=flat-square&label=discord%20chat)](https://evo.yt/discord)
 
 ## What it's all about
 
@@ -154,6 +155,7 @@ Here's a list of features currently supported (and probably a lot I forgot) and 
       - ☑️ Read comments
       - ☑️ Remove comments (single or all)
       - ☑️ Track comments
+      - ☑️ Threaded replies
 - ☑️ Fields
     - ☑️ Add Field
     - ☑️ Read Field
@@ -323,6 +325,19 @@ using (WordDocument document = WordDocument.Create()) {
     using var copy = document.SaveAs(filePath);
     // document.FilePath is still null
     // copy.FilePath equals filePath
+}
+```
+
+### Saving to byte arrays and streams
+
+`SaveAsByteArray` and `SaveAsMemoryStream` let you keep everything in memory. `SaveAs(Stream)` clones the document to a provided stream and returns a new instance loaded from it.
+
+```csharp
+using (WordDocument document = WordDocument.Create()) {
+    document.AddParagraph("In memory");
+    byte[] data = document.SaveAsByteArray();
+    using MemoryStream stream = document.SaveAsMemoryStream();
+    using var clone = document.SaveAs(stream);
 }
 ```
 

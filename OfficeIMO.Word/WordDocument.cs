@@ -531,6 +531,18 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Enable or disable tracking of all revisions, moves and formatting changes.
+        /// </summary>
+        public bool TrackChanges {
+            get => this.Settings.TrackRevisions;
+            set {
+                this.Settings.TrackRevisions = value;
+                this.Settings.TrackFormatting = value;
+                this.Settings.TrackMoves = value;
+            }
+        }
+
+        /// <summary>
         /// Gets the lists in the document
         /// </summary>
         /// <value>
@@ -849,6 +861,11 @@ namespace OfficeIMO.Word {
         public string FilePath { get; set; }
 
         /// <summary>
+        /// Original stream where this document was created / loaded from.
+        /// </summary>
+        internal Stream OriginalStream { get; set; }
+
+        /// <summary>
         /// Provides access to document settings.
         /// </summary>
         public WordSettings Settings;
@@ -873,9 +890,24 @@ namespace OfficeIMO.Word {
         public Dictionary<string, string> DocumentVariables { get; } = new Dictionary<string, string>();
 
         /// <summary>
+        /// Collection of bibliographic sources used in the document.
+        /// </summary>
+        public Dictionary<string, WordBibliographySource> BibliographySources { get; } = new Dictionary<string, WordBibliographySource>();
+
+        /// <summary>
+        /// Provides basic statistics for the document.
+        /// </summary>
+        public WordDocumentStatistics Statistics { get; internal set; }
+
+        /// <summary>
         /// Indicates whether the document is saved automatically.
         /// </summary>
         public bool AutoSave => _wordprocessingDocument.AutoSave;
+
+        /// <summary>
+        /// When <c>true</c> the table of contents is flagged to update before saving.
+        /// </summary>
+        public bool AutoUpdateToc { get; set; }
 
 
         // we expose them to help with integration
@@ -930,8 +962,14 @@ namespace OfficeIMO.Word {
             WordDocument word = new WordDocument();
 
             WordprocessingDocumentType documentType = WordprocessingDocumentType.Document;
-            if (!string.IsNullOrEmpty(filePath) && Path.GetExtension(filePath).Equals(".docm", StringComparison.OrdinalIgnoreCase)) {
-                documentType = WordprocessingDocumentType.MacroEnabledDocument;
+            if (!string.IsNullOrEmpty(filePath)) {
+                if (Path.GetExtension(filePath).Equals(".docm", StringComparison.OrdinalIgnoreCase)) {
+                    documentType = WordprocessingDocumentType.MacroEnabledDocument;
+                } else if (Path.GetExtension(filePath).Equals(".dotx", StringComparison.OrdinalIgnoreCase)) {
+                    documentType = WordprocessingDocumentType.Template;
+                } else if (Path.GetExtension(filePath).Equals(".dotm", StringComparison.OrdinalIgnoreCase)) {
+                    documentType = WordprocessingDocumentType.MacroEnabledTemplate;
+                }
             }
             WordprocessingDocument wordDocument;
 
@@ -1013,6 +1051,7 @@ namespace OfficeIMO.Word {
             //CustomDocumentProperties customDocumentProperties = new CustomDocumentProperties(word);
             WordSection wordSection = new WordSection(word, null);
             WordBackground wordBackground = new WordBackground(word);
+            WordDocumentStatistics statistics = new WordDocumentStatistics(word);
 
             // initialize abstract number id for lists to make sure those are unique
             WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
@@ -1037,7 +1076,9 @@ namespace OfficeIMO.Word {
                 throw new ArgumentNullException(nameof(stream));
             }
 
-            WordDocument word = new WordDocument();
+            WordDocument word = new WordDocument() {
+                OriginalStream = stream,
+            };
 
             // Always create the package in memory to avoid corrupting the target stream
             WordprocessingDocument wordDocument = WordprocessingDocument.Create(new MemoryStream(), documentType, autoSave);
@@ -1112,6 +1153,7 @@ namespace OfficeIMO.Word {
             BuiltinDocumentProperties builtinDocumentProperties = new BuiltinDocumentProperties(word);
             WordSection wordSection = new WordSection(word, null);
             WordBackground wordBackground = new WordBackground(word);
+            WordDocumentStatistics statistics = new WordDocumentStatistics(word);
 
             WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
             WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
@@ -1130,7 +1172,9 @@ namespace OfficeIMO.Word {
             var builtinDocumentProperties = new BuiltinDocumentProperties(this);
             var wordCustomProperties = new WordCustomProperties(this);
             var wordDocumentVariables = new WordDocumentVariables(this);
+            var bibliography = new WordBibliography(this);
             var wordBackground = new WordBackground(this);
+            var statistics = new WordDocumentStatistics(this);
             var compatibilitySettings = new WordCompatibilitySettings(this);
             //CustomDocumentProperties customDocumentProperties = new CustomDocumentProperties(this);
             // add a section that's assigned to top of the document
@@ -1288,7 +1332,9 @@ namespace OfficeIMO.Word {
         /// <param name="overrideStyles">When <c>true</c>, existing styles are replaced with library versions.</param>
         /// <returns></returns>
         public static WordDocument Load(Stream stream, bool readOnly = false, bool autoSave = false, bool overrideStyles = false) {
-            var document = new WordDocument();
+            var document = new WordDocument() {
+                OriginalStream = stream,
+            };
 
             var openSettings = new OpenSettings {
                 AutoSave = autoSave
@@ -1387,14 +1433,6 @@ namespace OfficeIMO.Word {
                         throw new IOException($"Failed to save to '{filePath}'. The file is read-only.");
                     }
 
-                    var directory = Path.GetDirectoryName(Path.GetFullPath(filePath));
-                    if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory)) {
-                        var dirInfo = new DirectoryInfo(directory);
-                        if (dirInfo.Attributes.HasFlag(FileAttributes.ReadOnly)) {
-                            throw new IOException($"Failed to save to '{filePath}'. The directory is read-only.");
-                        }
-                    }
-
                     using var fs = new FileStream(filePath, FileMode.Create, FileAccess.ReadWrite);
                     using (var clone = this._wordprocessingDocument.Clone(fs)) {
                         CopyPackageProperties(_wordprocessingDocument.PackageProperties, clone.PackageProperties);
@@ -1418,7 +1456,7 @@ namespace OfficeIMO.Word {
         /// Save WordDocument to where it was open from
         /// </summary>
         public void Save() {
-            this.Save("", false);
+            this.Save(false);
         }
 
         /// <summary>
@@ -1434,7 +1472,13 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="openWord"></param>
         public void Save(bool openWord) {
-            this.Save("", openWord);
+            if (string.IsNullOrEmpty(this.FilePath) && this.OriginalStream != null)
+            {
+                this.Save(this.OriginalStream);
+            } else
+            {
+                this.Save("", openWord);
+            }
         }
 
         /// <summary>
@@ -1464,14 +1508,6 @@ namespace OfficeIMO.Word {
                     throw new IOException($"Failed to save to '{filePath}'. The file is read-only.");
                 }
 
-                var directory = Path.GetDirectoryName(Path.GetFullPath(filePath));
-                if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory)) {
-                    var dirInfo = new DirectoryInfo(directory);
-                    if (dirInfo.Attributes.HasFlag(FileAttributes.ReadOnly)) {
-                        throw new IOException($"Failed to save to '{filePath}'. The directory is read-only.");
-                    }
-                }
-
                 using var fs = new FileStream(filePath, FileMode.Create, FileAccess.ReadWrite);
                 using (var clone = _wordprocessingDocument.Clone(fs)) {
                     CopyPackageProperties(_wordprocessingDocument.PackageProperties, clone.PackageProperties);
@@ -1487,6 +1523,67 @@ namespace OfficeIMO.Word {
             }
 
             return WordDocument.Load(filePath);
+        }
+
+        /// <summary>
+        /// Save the document to a memory stream and return the stream's byte array.
+        /// </summary>
+        /// <returns>A byte array representing the saved Word document.</returns>
+        public byte[] SaveAsByteArray() {
+            if (FileOpenAccess == FileAccess.Read) {
+                throw new InvalidOperationException("Document is read only, and cannot be saved.");
+            }
+
+            PreSaving();
+
+            if (_wordprocessingDocument == null) {
+                throw new InvalidOperationException("Document couldn't be saved as WordDocument wasn't provided.");
+            }
+
+            try {
+                _wordprocessingDocument.Save();
+
+                using var memoryStream = new MemoryStream();
+                using (var clone = _wordprocessingDocument.Clone(memoryStream, true)) {
+                    CopyPackageProperties(_wordprocessingDocument.PackageProperties, clone.PackageProperties);
+                }
+
+                Helpers.MakeOpenOfficeCompatible(memoryStream);
+                memoryStream.Flush();
+
+                return memoryStream.ToArray();
+            } catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) {
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Save the document to a new <see cref="MemoryStream"/>.
+        /// </summary>
+        /// <returns>A memory stream containing the saved document.</returns>
+        public MemoryStream SaveAsMemoryStream() {
+            var stream = new MemoryStream();
+            Save(stream);
+            stream.Seek(0, SeekOrigin.Begin);
+            return stream;
+        }
+
+        /// <summary>
+        /// Clone the document to the specified stream and return a new instance loaded from it.
+        /// </summary>
+        /// <param name="outputStream">Target stream that must support reading and seeking.</param>
+        /// <returns>A new <see cref="WordDocument"/> loaded from <paramref name="outputStream"/>.</returns>
+        public WordDocument SaveAs(Stream outputStream) {
+            if (outputStream == null) {
+                throw new ArgumentNullException(nameof(outputStream));
+            }
+            if (!outputStream.CanSeek) {
+                throw new ArgumentException("Stream must support seeking", nameof(outputStream));
+            }
+
+            Save(outputStream);
+            outputStream.Seek(0, SeekOrigin.Begin);
+            return WordDocument.Load(outputStream);
         }
 
         /// <summary>
@@ -1587,6 +1684,8 @@ namespace OfficeIMO.Word {
                 CopyPackageProperties(_wordprocessingDocument.PackageProperties, clone.PackageProperties);
             }
 
+            OriginalStream = outputStream;
+            
             if (outputStream.CanSeek) {
                 outputStream.Seek(0, SeekOrigin.Begin);
             }
@@ -1696,12 +1795,16 @@ namespace OfficeIMO.Word {
         private void PreSaving() {
             MoveSectionProperties();
             SaveNumbering();
+            if (AutoUpdateToc && TableOfContent != null) {
+                TableOfContent.Update();
+            }
             _ = new WordCustomProperties(this, true);
             var settingsPart = _wordprocessingDocument.MainDocumentPart.DocumentSettingsPart;
             bool hasVariables = settingsPart?.Settings?.GetFirstChild<DocumentVariables>() != null;
             if (hasVariables || DocumentVariables.Count > 0) {
                 _ = new WordDocumentVariables(this, true);
             }
+            _ = new WordBibliography(this, true);
         }
     }
 }

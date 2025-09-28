@@ -1,8 +1,8 @@
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
 using System;
 using System.IO;
 using System.Text;
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Word {
     /// <summary>
@@ -26,9 +26,8 @@ namespace OfficeIMO.Word {
         /// <param name="fileName">Target file path.</param>
         public void Save(string fileName) {
             using (FileStream stream = new FileStream(fileName, FileMode.Create)) {
-                var altStream = _altContent.GetStream();
+                using var altStream = _altContent.GetStream();
                 altStream.CopyTo(stream);
-                altStream.Close();
             }
         }
 
@@ -39,16 +38,12 @@ namespace OfficeIMO.Word {
             _altChunk.Remove();
 
             var list = _document._document.MainDocumentPart.AlternativeFormatImportParts;
-            AlternativeFormatImportPart itemToDelete = null;
             foreach (var item in list) {
                 var relationshipId = _document._wordprocessingDocument.MainDocumentPart.GetIdOfPart(item);
                 if (relationshipId == _id) {
-                    itemToDelete = item;
+                    _document._wordprocessingDocument.MainDocumentPart.DeletePart(item);
+                    break;
                 }
-            }
-
-            if (itemToDelete != null) {
-                _document._wordprocessingDocument.MainDocumentPart.DeletePart(itemToDelete);
             }
         }
 
@@ -110,21 +105,28 @@ namespace OfficeIMO.Word {
             string altChunkId = mainDocPart.GetIdOfPart(chunk);
             AltChunk altChunk = new AltChunk { Id = altChunkId };
 
-            // if it's a fragment, we don't need to read the file
-            var documentContent = htmlFragment ? fileNameOrContent : File.ReadAllText(fileNameOrContent, Encoding.UTF8);
+            try {
+                // if it's a fragment, we don't need to read the file
+                var documentContent = htmlFragment
+                    ? fileNameOrContent
+                    : File.ReadAllText(fileNameOrContent, Encoding.UTF8);
 
-            using (MemoryStream ms = new MemoryStream(Encoding.UTF8.GetBytes(documentContent))) {
-                chunk.FeedData(ms);
+                using (MemoryStream ms = new MemoryStream(Encoding.UTF8.GetBytes(documentContent))) {
+                    chunk.FeedData(ms);
+                }
+
+                _id = altChunkId;
+                _altChunk = altChunk;
+                _altContent = chunk;
+                _document = wordDocument;
+
+                mainDocPart.Document.Body.Append(altChunk);
+
+                mainDocPart.Document.Save();
+            } catch {
+                mainDocPart.DeletePart(chunk);
+                throw;
             }
-
-            _id = altChunkId;
-            _altChunk = altChunk;
-            _altContent = chunk;
-            _document = wordDocument;
-
-            mainDocPart.Document.Body.Append(altChunk);
-
-            mainDocPart.Document.Save();
         }
     }
 }
