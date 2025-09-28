@@ -5,8 +5,11 @@ using Markdig.Syntax.Inlines;
 using OfficeIMO.Word;
 using System;
 using System.IO;
+using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Linq;
+using SixLabors.ImageSharp;
 
 namespace OfficeIMO.Word.Markdown.Converters {
     internal partial class MarkdownToWordConverter {
@@ -15,45 +18,74 @@ namespace OfficeIMO.Word.Markdown.Converters {
                 return;
             }
 
-            var buffer = new StringBuilder();
-
-            void Flush() {
-                if (buffer.Length > 0) {
-                    InlineRunHelper.AddInlineRuns(paragraph, buffer.ToString(), options.FontFamily);
-                    buffer.Clear();
+            void Handle(Inline? node, bool bold = false, bool italic = false, bool strike = false) {
+                for (var current = node; current != null; current = current.NextSibling) {
+                    switch (current) {
+                        case LiteralInline literal:
+                            var run = paragraph.AddText(literal.Content.ToString());
+                            if (bold) run.SetBold();
+                            if (italic) run.SetItalic();
+                            if (strike) run.SetStrike();
+                            if (!string.IsNullOrEmpty(options.FontFamily)) {
+                                run.SetFontFamily(options.FontFamily);
+                            }
+                            break;
+                        case EmphasisInline emphasis:
+                            bool eBold = bold;
+                            bool eItalic = italic;
+                            bool eStrike = strike;
+                            if (emphasis.DelimiterChar == '~') {
+                                eStrike = true;
+                            } else {
+                                if (emphasis.DelimiterCount == 1) {
+                                    eItalic = true;
+                                } else if (emphasis.DelimiterCount == 2) {
+                                    eBold = true;
+                                } else if (emphasis.DelimiterCount >= 3) {
+                                    eBold = true;
+                                    eItalic = true;
+                                }
+                            }
+                            Handle(emphasis.FirstChild, eBold, eItalic, eStrike);
+                            break;
+                        case LinkInline link:
+                            if (link.IsImage) {
+                                AddImage(document, paragraph, link);
+                            } else {
+                                string label = GetPlainText(link.FirstChild);
+                                var hyperlink = paragraph.AddHyperLink(label, new Uri(link.Url, UriKind.RelativeOrAbsolute));
+                                if (!string.IsNullOrEmpty(options.FontFamily)) {
+                                    hyperlink.SetFontFamily(options.FontFamily);
+                                }
+                            }
+                            break;
+                        case FootnoteLink footnoteLink:
+                            string text = BuildFootnoteText(footnoteLink.Footnote);
+                            paragraph.AddFootNote(text);
+                            break;
+                        case LineBreakInline:
+                            paragraph.AddBreak();
+                            break;
+                        case ContainerInline container:
+                            Handle(container.FirstChild, bold, italic, strike);
+                            break;
+                        default:
+                            if (current is LeafInline leaf) {
+                                var other = paragraph.AddText(leaf.ToString());
+                                if (bold) other.SetBold();
+                                if (italic) other.SetItalic();
+                                if (strike) other.SetStrike();
+                                if (!string.IsNullOrEmpty(options.FontFamily)) {
+                                    other.SetFontFamily(options.FontFamily);
+                                }
+                            }
+                            break;
+                    }
                 }
             }
 
             var start = inline is ContainerInline container ? container.FirstChild : inline;
-            for (var current = start; current != null; current = current.NextSibling) {
-                if (current is LinkInline link) {
-                    Flush();
-                    if (link.IsImage) {
-                        AddImage(document, paragraph, link);
-                    } else {
-                        string label = BuildMarkdown(link.FirstChild);
-                        var hyperlink = paragraph.AddHyperLink(label, new Uri(link.Url, UriKind.RelativeOrAbsolute));
-                        if (!string.IsNullOrEmpty(options.FontFamily)) {
-                            hyperlink.SetFontFamily(options.FontFamily);
-                        }
-                    }
-                } else if (current is FootnoteLink footnoteLink) {
-                    Flush();
-                    string text = BuildFootnoteText(footnoteLink.Footnote);
-                    paragraph.AddFootNote(text);
-                } else if (current is EmphasisInline emphasis && emphasis.DelimiterChar == '~') {
-                    Flush();
-                    string text = BuildMarkdown(emphasis.FirstChild);
-                    var run = paragraph.AddFormattedText(text);
-                    run.SetStrike();
-                    if (!string.IsNullOrEmpty(options.FontFamily)) {
-                        run.SetFontFamily(options.FontFamily);
-                    }
-                } else {
-                    buffer.Append(BuildMarkdown(current));
-                }
-            }
-            Flush();
+            Handle(start);
         }
 
         private static void AddImage(WordDocument document, WordParagraph paragraph, LinkInline link) {
@@ -61,6 +93,8 @@ namespace OfficeIMO.Word.Markdown.Converters {
             string? title = link.Title?.Trim();
             double? width = null;
             double? height = null;
+            byte[]? imageData = null;
+            string? remoteFileName = null;
 
             // Check for size hints in URL (e.g. "path =100x200")
             var matchUrl = Regex.Match(url, @"\s*=([0-9]+)(?:x([0-9]+))?\s*$");
@@ -101,6 +135,35 @@ namespace OfficeIMO.Word.Markdown.Converters {
                 }
             }
 
+            if (width == null && height == null) {
+                try {
+                    if (url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) {
+                        using HttpClient client = new();
+                        imageData = client.GetByteArrayAsync(url).GetAwaiter().GetResult();
+                        using var image = Image.Load(imageData, out var format);
+                        width = image.Width;
+                        height = image.Height;
+                        string extension = format.FileExtensions.FirstOrDefault() ?? "png";
+                        try {
+                            remoteFileName = Path.GetFileName(new Uri(url).LocalPath);
+                        } catch {
+                            remoteFileName = null;
+                        }
+                        if (string.IsNullOrEmpty(remoteFileName)) {
+                            remoteFileName = "image." + extension;
+                        } else if (string.IsNullOrEmpty(Path.GetExtension(remoteFileName))) {
+                            remoteFileName += "." + extension;
+                        }
+                    } else if (File.Exists(url)) {
+                        using var image = Image.Load(url, out _);
+                        width = image.Width;
+                        height = image.Height;
+                    }
+                } catch {
+                    // ignore errors when determining natural image size
+                }
+            }
+
             if (width == null && height != null) {
                 width = height;
             } else if (height == null && width != null) {
@@ -111,43 +174,18 @@ namespace OfficeIMO.Word.Markdown.Converters {
             height ??= 50;
 
             if (url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) {
-                var img = document.AddImageFromUrl(url, width, height);
-                if (!string.IsNullOrEmpty(title)) {
-                    img.Description = title;
+                if (imageData != null) {
+                    using var ms = new MemoryStream(imageData);
+                    paragraph.AddImage(ms, remoteFileName ?? "image", width, height, description: title ?? string.Empty);
+                } else {
+                    var img = document.AddImageFromUrl(url, width, height);
+                    if (!string.IsNullOrEmpty(title)) {
+                        img.Description = title;
+                    }
                 }
             } else {
                 paragraph.AddImage(url, width, height, description: title ?? string.Empty);
             }
-        }
-
-        private static string BuildMarkdown(Inline? inline) {
-            if (inline == null) {
-                return string.Empty;
-            }
-
-            var sb = new StringBuilder();
-            for (var current = inline; current != null; current = current.NextSibling) {
-                switch (current) {
-                    case LiteralInline literal:
-                        sb.Append(literal.Content.ToString());
-                        break;
-                    case EmphasisInline emphasis:
-                        char delimiter = emphasis.DelimiterChar;
-                        string marker = new(delimiter, emphasis.DelimiterCount);
-                        sb.Append(marker);
-                        sb.Append(BuildMarkdown(emphasis.FirstChild));
-                        sb.Append(marker);
-                        break;
-                    case LineBreakInline:
-                        sb.Append('\n');
-                        break;
-                    case ContainerInline container:
-                        sb.Append(BuildMarkdown(container.FirstChild));
-                        break;
-                }
-            }
-
-            return sb.ToString();
         }
 
         private static string BuildFootnoteText(Footnote footnote) {
@@ -158,10 +196,39 @@ namespace OfficeIMO.Word.Markdown.Converters {
                     if (!first) {
                         sb.AppendLine();
                     }
-                    sb.Append(BuildMarkdown(pb.Inline));
+                    sb.Append(GetPlainText(pb.Inline));
                     first = false;
                 }
             }
+            return sb.ToString();
+        }
+
+        private static string GetPlainText(Inline? inline) {
+            if (inline == null) {
+                return string.Empty;
+            }
+
+            var sb = new StringBuilder();
+            void Append(Inline? node) {
+                for (var current = node; current != null; current = current.NextSibling) {
+                    switch (current) {
+                        case LiteralInline literal:
+                            sb.Append(literal.Content.ToString());
+                            break;
+                        case EmphasisInline emphasis:
+                            Append(emphasis.FirstChild);
+                            break;
+                        case LineBreakInline:
+                            sb.Append('\n');
+                            break;
+                        case ContainerInline container:
+                            Append(container.FirstChild);
+                            break;
+                    }
+                }
+            }
+
+            Append(inline);
             return sb.ToString();
         }
 

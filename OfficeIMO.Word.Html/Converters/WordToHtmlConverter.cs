@@ -1,6 +1,7 @@
 using AngleSharp;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
+using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Word;
@@ -114,29 +115,72 @@ namespace OfficeIMO.Word.Html.Converters {
             }
 
             void AppendRuns(IElement parent, WordParagraph para, bool processFootnotes = true) {
-                foreach (var run in para.GetRuns()) {
+                var runs = para.GetRuns().ToList();
+                List<INode> nodes = new();
+                bool inQuote = false;
+                IElement? quote = null;
+                for (int i = 0; i < runs.Count; i++) {
+                    var run = runs[i];
                     if (processFootnotes && options.ExportFootnotes && run.FootNote != null) {
                         var note = run.FootNote;
-                        long id = note.ReferenceId ?? 0;
-                        if (!footnoteMap.TryGetValue(id, out int number)) {
-                            number = footnotes.Count + 1;
-                            footnoteMap[id] = number;
-                            footnotes.Add((number, note));
+                        if (string.Equals(run.CharacterStyleId, "HtmlAbbr", StringComparison.OrdinalIgnoreCase) && nodes.Count > 0) {
+                            string text = string.Join(string.Empty, note.Paragraphs?.Skip(1).Select(r => r.Text) ?? Enumerable.Empty<string>());
+                            var abbr = htmlDoc.CreateElement("abbr");
+                            abbr.SetAttribute("title", text);
+                            var lastNode = nodes[nodes.Count - 1];
+                            abbr.AppendChild(lastNode);
+                            nodes[nodes.Count - 1] = abbr;
+                        } else {
+                            long id = note.ReferenceId ?? 0;
+                            if (!footnoteMap.TryGetValue(id, out int number)) {
+                                number = footnotes.Count + 1;
+                                footnoteMap[id] = number;
+                                footnotes.Add((number, note));
+                            }
+                            var sup = htmlDoc.CreateElement("sup");
+                            var a = htmlDoc.CreateElement("a");
+                            a.SetAttribute("href", $"#fn{number}");
+                            a.SetAttribute("id", $"fnref{number}");
+                            a.TextContent = number.ToString();
+                            sup.AppendChild(a);
+                            nodes.Add(sup);
                         }
-                        var sup = htmlDoc.CreateElement("sup");
-                        var a = htmlDoc.CreateElement("a");
-                        a.SetAttribute("href", $"#fn{number}");
-                        a.SetAttribute("id", $"fnref{number}");
-                        a.TextContent = number.ToString();
-                        sup.AppendChild(a);
-                        parent.AppendChild(sup);
                         continue;
                     }
 
                     if (run.IsImage && run.Image != null) {
+                        var imgObj = run.Image;
+                        var ext = Path.GetExtension(imgObj.FileName)?.ToLowerInvariant();
+                        if (ext == ".svg") {
+                            if (options.EmbedImagesAsBase64) {
+                                var svgXml = Encoding.UTF8.GetString(imgObj.GetBytes());
+                                var parser = new HtmlParser();
+                                var fragment = parser.ParseFragment(svgXml, body);
+                                var svgElement = fragment.OfType<IElement>().FirstOrDefault();
+                                if (svgElement != null) {
+                                    nodes.Add(svgElement);
+                                }
+                            } else {
+                                var imgSvg = htmlDoc.CreateElement("img") as IHtmlImageElement;
+                                string srcSvg;
+                                if (imgObj.IsExternal && imgObj.ExternalUri != null) {
+                                    srcSvg = imgObj.ExternalUri.ToString();
+                                } else {
+                                    srcSvg = string.IsNullOrEmpty(imgObj.FilePath) ? imgObj.FileName : imgObj.FilePath;
+                                }
+                                imgSvg!.Source = srcSvg;
+                                if (imgObj.Width.HasValue) imgSvg.DisplayWidth = (int)Math.Round(imgObj.Width.Value);
+                                if (imgObj.Height.HasValue) imgSvg.DisplayHeight = (int)Math.Round(imgObj.Height.Value);
+                                if (!string.IsNullOrEmpty(imgObj.Description)) {
+                                    imgSvg.AlternativeText = imgObj.Description;
+                                }
+                                nodes.Add(imgSvg);
+                            }
+                            continue;
+                        }
+
                         var img = htmlDoc.CreateElement("img") as IHtmlImageElement;
                         string src;
-                        var imgObj = run.Image;
                         if (imgObj.IsExternal && imgObj.ExternalUri != null) {
                             src = imgObj.ExternalUri.ToString();
                         } else if (!options.EmbedImagesAsBase64) {
@@ -152,11 +196,22 @@ namespace OfficeIMO.Word.Html.Converters {
                         if (!string.IsNullOrEmpty(imgObj.Description)) {
                             img.AlternativeText = imgObj.Description;
                         }
-                        parent.AppendChild(img);
+                        nodes.Add(img);
                         continue;
                     }
 
                     if (string.IsNullOrEmpty(run.Text)) {
+                        continue;
+                    }
+
+                    if (string.Equals(run.CharacterStyleId, "HtmlQuote", StringComparison.OrdinalIgnoreCase)) {
+                        if (!inQuote) {
+                            quote = htmlDoc.CreateElement("q");
+                            nodes.Add(quote);
+                        } else {
+                            quote = null;
+                        }
+                        inQuote = !inQuote;
                         continue;
                     }
 
@@ -214,6 +269,13 @@ namespace OfficeIMO.Word.Html.Converters {
                         runStyles.Add(run.CharacterStyleId);
                     }
 
+                    if (inQuote && quote != null) {
+                        quote.AppendChild(node);
+                    } else {
+                        nodes.Add(node);
+                    }
+                }
+                foreach (var node in nodes) {
                     parent.AppendChild(node);
                 }
             }
@@ -588,16 +650,82 @@ namespace OfficeIMO.Word.Html.Converters {
             }
 
             if (paragraphStyles.Count > 0 || runStyles.Count > 0) {
-                var style = htmlDoc.CreateElement("style");
+                var stylePart = document._wordprocessingDocument.MainDocumentPart.StyleDefinitionsPart;
+                var styleMap = (stylePart?.Styles?.OfType<Style>() ?? Enumerable.Empty<Style>())
+                    .ToDictionary<Style, string, Style>(s => s.StyleId!, s => s, StringComparer.OrdinalIgnoreCase);
+
+                string BuildCss(string styleId) {
+                    var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                    void Merge(string id) {
+                        if (!visited.Add(id)) {
+                            return;
+                        }
+                        if (!styleMap.TryGetValue(id, out var def)) {
+                            return;
+                        }
+                        var baseId = def.BasedOn?.Val;
+                        if (!string.IsNullOrEmpty(baseId)) {
+                            Merge(baseId);
+                        }
+                        var pPr = def.StyleParagraphProperties;
+                        if (pPr?.Justification?.Val != null) {
+                            var justifyVal = pPr.Justification.Val.Value;
+                            var alignment = "left";
+                            if (justifyVal == JustificationValues.Center) {
+                                alignment = "center";
+                            } else if (justifyVal == JustificationValues.Right) {
+                                alignment = "right";
+                            } else if (justifyVal == JustificationValues.Both) {
+                                alignment = "justify";
+                            }
+                            props["text-align"] = alignment;
+                        }
+                        var rPr = def.StyleRunProperties;
+                        if (rPr != null) {
+                            if (rPr.Bold != null) {
+                                props["font-weight"] = "bold";
+                            }
+                            if (rPr.Italic != null) {
+                                props["font-style"] = "italic";
+                            }
+                            if (rPr.Underline != null && rPr.Underline.Val != UnderlineValues.None) {
+                                props["text-decoration"] = "underline";
+                            }
+                            var colorVal = rPr.Color?.Val?.Value;
+                            if (!string.IsNullOrEmpty(colorVal)) {
+                                props["color"] = "#" + colorVal.ToLowerInvariant();
+                            }
+                            var sizeVal = rPr.FontSize?.Val;
+                            if (!string.IsNullOrEmpty(sizeVal) && int.TryParse(sizeVal, out int sz)) {
+                                props["font-size"] = (sz / 2.0).ToString("0.##") + "pt";
+                            }
+                            var font = rPr.RunFonts?.Ascii;
+                            if (!string.IsNullOrEmpty(font)) {
+                                props["font-family"] = font;
+                            }
+                        }
+                    }
+
+                    Merge(styleId);
+
+                    return string.Join(" ", props.Select(kv => kv.Key + ':' + kv.Value + ';'));
+                }
+
+                var styleElement = htmlDoc.CreateElement("style");
                 var sb = new StringBuilder();
+
                 foreach (var s in paragraphStyles) {
-                    sb.Append('.').Append(s).Append(" {}\n");
+                    var css = BuildCss(s);
+                    sb.Append('.').Append(s).Append(" { ").Append(css).Append(" }\n");
                 }
                 foreach (var s in runStyles) {
-                    sb.Append('.').Append(s).Append(" {}\n");
+                    var css = BuildCss(s);
+                    sb.Append('.').Append(s).Append(" { ").Append(css).Append(" }\n");
                 }
-                style.TextContent = sb.ToString();
-                head.AppendChild(style);
+                styleElement.TextContent = sb.ToString();
+                head.AppendChild(styleElement);
             }
 
             return htmlDoc.DocumentElement.OuterHtml;

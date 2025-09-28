@@ -1,11 +1,17 @@
 using AngleSharp.Html.Dom;
+using AngleSharp.Dom;
+using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Word;
+using OfficeIMO.Word.Html.Helpers;
 using System;
 using System.IO;
+using System.Net.Http;
+using System.Reflection;
+using System.Text;
 
 namespace OfficeIMO.Word.Html.Converters {
     internal partial class HtmlToWordConverter {
-        private void ProcessImage(IHtmlImageElement img, WordDocument doc, HtmlToWordOptions options) {
+        private void ProcessImage(IHtmlImageElement img, WordDocument doc, HtmlToWordOptions options, WordParagraph? currentParagraph, WordHeaderFooter? headerFooter) {
             var src = img.GetAttribute("src");
             if (string.IsNullOrEmpty(src)) return;
 
@@ -17,10 +23,30 @@ namespace OfficeIMO.Word.Html.Converters {
                 }
             }
 
+            if (src.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) || src.StartsWith("data:image/svg+xml", StringComparison.OrdinalIgnoreCase)) {
+                ProcessSvgImage(src, img, doc, options, currentParagraph, headerFooter);
+                return;
+            }
+
             double? width = img.DisplayWidth > 0 ? img.DisplayWidth : null;
             double? height = img.DisplayHeight > 0 ? img.DisplayHeight : null;
             var alt = img.AlternativeText;
 
+            WordParagraph? paragraph = currentParagraph;
+
+            if (_imageCache.TryGetValue(src, out var cached)) {
+                paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
+                var drawingField = typeof(WordImage).GetField("_Image", BindingFlags.Instance | BindingFlags.NonPublic);
+                var drawing = (DocumentFormat.OpenXml.Wordprocessing.Drawing)drawingField!.GetValue(cached);
+                var clone = (DocumentFormat.OpenXml.Wordprocessing.Drawing)drawing.CloneNode(true);
+                var run = new Run(clone);
+                var paragraphField = typeof(WordParagraph).GetField("_paragraph", BindingFlags.Instance | BindingFlags.NonPublic);
+                var p = (Paragraph)paragraphField!.GetValue(paragraph);
+                p.Append(run);
+                return;
+            }
+
+            WordImage image;
             if (src.StartsWith("data:image", StringComparison.OrdinalIgnoreCase)) {
                 var commaIndex = src.IndexOf(',');
                 if (commaIndex > 0) {
@@ -31,23 +57,84 @@ namespace OfficeIMO.Word.Html.Converters {
                     if (parts.Length >= 2) {
                         ext = parts[1];
                     }
-                    doc.AddParagraph().AddImageFromBase64(base64, "image." + ext, width, height, description: alt);
+                    paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
+                    paragraph.AddImageFromBase64(base64, "image." + ext, width, height, description: alt);
+                    image = paragraph.Image;
+                } else {
+                    return;
                 }
             } else if (Uri.TryCreate(src, UriKind.Absolute, out var uri) && uri.IsFile) {
-                doc.AddParagraph().AddImage(uri.LocalPath, width, height, description: alt);
+                paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
+                paragraph.AddImage(uri.LocalPath, width, height, description: alt);
+                image = paragraph.Image;
             } else if (File.Exists(src)) {
-                doc.AddParagraph().AddImage(src, width, height, description: alt);
+                paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
+                paragraph.AddImage(src, width, height, description: alt);
+                image = paragraph.Image;
             } else {
                 try {
-                    var image = doc.AddImageFromUrl(src, width, height);
-                    image.Description = alt;
+                    using HttpClient client = new HttpClient();
+                    var data = client.GetByteArrayAsync(src).GetAwaiter().GetResult();
+                    using var ms = new MemoryStream(data);
+                    string fileName = "image";
+                    try {
+                        var uriSrc = new Uri(src);
+                        fileName = Path.GetFileName(uriSrc.LocalPath);
+                        if (string.IsNullOrEmpty(fileName)) fileName = "image";
+                    } catch (UriFormatException) {
+                        // ignore
+                    }
+                    paragraph ??= headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph();
+                    paragraph.AddImage(ms, fileName, width, height, description: alt);
+                    image = paragraph.Image;
                 } catch (Exception ex) {
                     Console.WriteLine($"Failed to load image from '{src}': {ex.Message}");
                     if (!string.IsNullOrEmpty(alt)) {
-                        doc.AddParagraph(alt);
+                        paragraph ??= currentParagraph ?? (headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph());
+                        paragraph.AddText(alt);
                     }
+                    return;
                 }
             }
+
+            _imageCache[src] = image;
+        }
+
+        private void ProcessSvgImage(string src, IHtmlImageElement img, WordDocument doc, HtmlToWordOptions options, WordParagraph? currentParagraph, WordHeaderFooter? headerFooter) {
+            double? width = img.DisplayWidth > 0 ? img.DisplayWidth : null;
+            double? height = img.DisplayHeight > 0 ? img.DisplayHeight : null;
+            var alt = img.AlternativeText;
+
+            WordParagraph paragraph = currentParagraph ?? (headerFooter != null ? headerFooter.AddParagraph() : doc.AddParagraph());
+
+            string svgContent;
+            if (src.StartsWith("data:image/svg+xml", StringComparison.OrdinalIgnoreCase)) {
+                var commaIndex = src.IndexOf(',');
+                if (commaIndex < 0) return;
+                var base64 = src.Substring(commaIndex + 1);
+                var bytes = Convert.FromBase64String(base64);
+                svgContent = Encoding.UTF8.GetString(bytes);
+            } else if (Uri.TryCreate(src, UriKind.Absolute, out var uri) && uri.IsFile) {
+                svgContent = File.ReadAllText(uri.LocalPath);
+            } else if (File.Exists(src)) {
+                svgContent = File.ReadAllText(src);
+            } else {
+                using HttpClient client = new HttpClient();
+                svgContent = client.GetStringAsync(src).GetAwaiter().GetResult();
+            }
+
+            SvgHelper.AddSvg(paragraph, svgContent, width, height, alt);
+            _imageCache[src] = paragraph.Image;
+        }
+
+        private void ProcessSvgElement(AngleSharp.Dom.IElement svg, WordDocument doc, WordSection section, HtmlToWordOptions options, WordParagraph? currentParagraph, WordHeaderFooter? headerFooter) {
+            double? width = null;
+            double? height = null;
+            if (double.TryParse(svg.GetAttribute("width")?.Replace("px", string.Empty), out var w)) width = w;
+            if (double.TryParse(svg.GetAttribute("height")?.Replace("px", string.Empty), out var h)) height = h;
+
+            var paragraph = currentParagraph ?? (headerFooter != null ? headerFooter.AddParagraph() : section.AddParagraph());
+            SvgHelper.AddSvg(paragraph, svg.OuterHtml, width, height, string.Empty);
         }
     }
 }
