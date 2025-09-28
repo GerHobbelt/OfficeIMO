@@ -65,6 +65,17 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Excel.ReadForPowerShell.Example(folderPath, false);
             // Excel/PowerShell-style round trip: write → read → modify → write → JSON
             OfficeIMO.Examples.Excel.PowerShellRoundTrip.Example(folderPath, false);
+
+            bool openExcelDefault = OperatingSystem.IsWindows();
+            // Excel/Headers + Footers + Properties
+            OfficeIMO.Examples.Excel.HeadersFootersAndProperties.Example(folderPath, openExcelDefault);
+
+            OfficeIMO.Examples.Excel.DomainDetectiveReport.Example(folderPath, openExcelDefault);
+            // Markdown/DomainDetective report (mirrors the Excel structure)
+            OfficeIMO.Examples.Markdown.DomainDetectiveReportMarkdown.Example(folderPath, false);
+
+            return;
+
             // PowerPoint
             OfficeIMO.Examples.PowerPoint.BasicPowerPointDocument.Example_BasicPowerPoint(folderPath, false);
             OfficeIMO.Examples.PowerPoint.AdvancedPowerPoint.Example_AdvancedPowerPoint(folderPath, false);
@@ -95,6 +106,18 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownRoundTrip(folderPath, false);
             OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownFootNotes(folderPath, false);
             OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownHeadingsBoldLinks(folderPath, false);
+            // Markdown/Builder & TOC
+            OfficeIMO.Examples.Markdown.Markdown01_Builder_Basics.Example_Builder_Readme(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown01_Builder_Basics.Example_Scaffold_Readme(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_TablesAndLists(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_Toc(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_Table_FromAny_WithOptions(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_Table_FromSequence_WithSelectors(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_HeaderTransform_CustomAcronyms(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_Table_AutoAligners(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown02_DataToTableAndLists.Example_TocForSection(folderPath, false);
+
+            return;
             // Word/AdvancedDocument
             OfficeIMO.Examples.Word.AdvancedDocument.Example_AdvancedWord(folderPath, false);
             OfficeIMO.Examples.Word.AdvancedDocument.Example_AdvancedWord2(folderPath, false);

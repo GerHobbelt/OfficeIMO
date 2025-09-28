@@ -19,6 +19,36 @@ using SixLaborsColor = SixLabors.ImageSharp.Color;
 namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
         /// <summary>
+        /// Enables a totals row for the table covering <paramref name="range"/> and assigns per-column functions by header name.
+        /// Supported functions are those in TotalsRowFunctionValues (Sum, Average, Count, Min, Max, etc.).
+        /// </summary>
+        public void SetTableTotals(string range, System.Collections.Generic.Dictionary<string, DocumentFormat.OpenXml.Spreadsheet.TotalsRowFunctionValues> byHeader)
+        {
+            if (string.IsNullOrWhiteSpace(range)) throw new System.ArgumentNullException(nameof(range));
+            WriteLock(() =>
+            {
+                foreach (var tdp in _worksheetPart.TableDefinitionParts)
+                {
+                    var table = tdp.Table;
+                    if (table?.Reference?.Value != range) continue;
+                    table.TotalsRowShown = true;
+                    var headerNames = table.TableColumns?.Elements<TableColumn>().Select(tc => tc.Name?.Value ?? string.Empty).ToList() ?? new System.Collections.Generic.List<string>();
+                    int idx = 0;
+                    foreach (var tc in table.TableColumns!.Elements<TableColumn>())
+                    {
+                        var name = headerNames[idx++];
+                        if (byHeader.TryGetValue(name, out var fn))
+                        {
+                            tc.TotalsRowFunction = fn;
+                        }
+                    }
+                    tdp.Table.Save();
+                    break;
+                }
+                _worksheetPart.Worksheet.Save();
+            });
+        }
+        /// <summary>
         /// Adds an AutoFilter to the worksheet or table.
         /// </summary>
         /// <param name="range">The cell range to apply the filter to.</param>
@@ -217,14 +247,22 @@ namespace OfficeIMO.Excel {
                     }
                 }
 
-                // Generate unique table ID atomically
+                // Generate unique table ID atomically (must be unique across the entire workbook)
                 uint tableId;
                 lock (_tableIdLock) {
-                    // Get max existing table ID to ensure uniqueness
+                    // Get max existing table ID across all sheets to ensure uniqueness
                     uint maxExistingId = 0;
-                    foreach (var part in _worksheetPart.TableDefinitionParts) {
-                        if (part.Table?.Id?.Value != null && part.Table.Id.Value > maxExistingId) {
-                            maxExistingId = part.Table.Id.Value;
+                    var wbPart = _spreadSheetDocument.WorkbookPart;
+                    if (wbPart != null)
+                    {
+                        foreach (var ws in wbPart.WorksheetParts)
+                        {
+                            foreach (var part in ws.TableDefinitionParts)
+                            {
+                                var idv = part.Table?.Id?.Value;
+                                if (idv != null && idv.Value > maxExistingId)
+                                    maxExistingId = idv.Value;
+                            }
                         }
                     }
                     tableId = Math.Max((uint)_nextTableId, maxExistingId + 1);
@@ -236,6 +274,7 @@ namespace OfficeIMO.Excel {
                 if (string.IsNullOrEmpty(name)) {
                     name = $"Table{tableId}";
                 }
+                name = EnsureValidUniqueTableName(name);
 
                 var table = new Table {
                     Id = tableId,
@@ -310,17 +349,61 @@ namespace OfficeIMO.Excel {
 
                 var tableParts = _worksheetPart.Worksheet.Elements<TableParts>().FirstOrDefault();
                 if (tableParts == null) {
-                    tableParts = new TableParts { Count = 1 };
+                    tableParts = new TableParts();
                     _worksheetPart.Worksheet.Append(tableParts);
-                } else {
-                    tableParts.Count = (tableParts.Count ?? 0) + 1;
                 }
 
                 var relId = _worksheetPart.GetIdOfPart(tableDefinitionPart);
                 tableParts.Append(new TablePart { Id = relId });
+                tableParts.Count = (uint)tableParts.Elements<TablePart>().Count();
 
                 _worksheetPart.Worksheet.Save();
             });
+        }
+
+        private string EnsureValidUniqueTableName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) name = "Table";
+
+            // Sanitize: letters, digits, underscore only; no spaces; must not start with a digit
+            var sanitized = new System.Text.StringBuilder(name.Length);
+            foreach (char ch in name)
+            {
+                if (char.IsLetterOrDigit(ch) || ch == '_') sanitized.Append(ch);
+                else if (ch == ' ') sanitized.Append('_');
+                else sanitized.Append('_');
+            }
+            if (sanitized.Length == 0) sanitized.Append("Table");
+            if (char.IsDigit(sanitized[0])) sanitized.Insert(0, '_');
+
+            string baseName = sanitized.ToString();
+
+            // Collect existing table names across the workbook
+            var wp = _spreadSheetDocument.WorkbookPart;
+            var used = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+            if (wp != null)
+            {
+                foreach (var ws in wp.WorksheetParts)
+                {
+                    foreach (var tdp in ws.TableDefinitionParts)
+                    {
+                        var t = tdp.Table;
+                        if (t?.Name?.Value != null)
+                            used.Add(t.Name.Value);
+                    }
+                }
+            }
+
+            if (!used.Contains(baseName)) return baseName;
+
+            // Add numeric suffix until unique
+            int i = 2;
+            while (true)
+            {
+                string candidate = baseName + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (!used.Contains(candidate)) return candidate;
+                i++;
+            }
         }
 
     }
