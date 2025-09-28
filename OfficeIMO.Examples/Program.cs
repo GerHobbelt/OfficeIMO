@@ -43,8 +43,14 @@ namespace OfficeIMO.Examples {
 
             Paragraphs.Example_BasicParagraphs(folderPath, false);
             Paragraphs.Example_BasicParagraphStyles(folderPath, false);
+            Paragraphs.Example_RegisterCustomParagraphStyle(folderPath, false);
+            Paragraphs.Example_MultipleCustomParagraphStyles(folderPath, false);
+            Paragraphs.Example_OverrideBuiltInParagraphStyle(folderPath, false);
             Paragraphs.Example_MultipleParagraphsViaDifferentWays(folderPath, false);
             Paragraphs.Example_BasicTabStops(folderPath, false);
+            Paragraphs.Example_RunCharacterStylesSimple(folderPath, false);
+            Paragraphs.Example_RunCharacterStylesAdvanced(folderPath, false);
+            Paragraphs.Example_InsertParagraphAt(folderPath, false);
 
             BasicDocument.Example_BasicDocument(folderPath, false);
             BasicDocument.Example_BasicDocumentSaveAs1(folderPath, false);
@@ -67,6 +73,7 @@ namespace OfficeIMO.Examples {
             Lists.Example_CustomList1(folderPath, false);
             Lists.Example_BasicListsWithChangedStyling(folderPath, false);
             Lists.Example_CloneList(folderPath, false);
+            Lists.Example_ListStartNumber(folderPath, false);
 
             Tables.Example_BasicTables1(folderPath, false);
             Tables.Example_BasicTablesLoad1(folderPath, false);
@@ -78,6 +85,8 @@ namespace OfficeIMO.Examples {
             Tables.Example_TableBorders(folderPath, false);
             Tables.Example_NestedTables(folderPath, false);
             Tables.Example_TablesAddedAfterParagraph(folderPath, false);
+            Tables.Example_InsertTableAfterSimple(folderPath, false);
+            Tables.Example_InsertTableAfterAdvanced(folderPath, false);
             Tables.Example_BasicTables8(folderPath, false);
             Tables.Example_Tables1CopyRow(folderPath, false);
             Tables.Example_BasicTables8_StylesModification(folderPath, false);
@@ -211,6 +220,8 @@ namespace OfficeIMO.Examples {
             FootNotes.Example_DocumentWithFootNotesEmpty(folderPath, false);
 
             SaveToStream.Example_StreamDocumentProperties(folderPath, false);
+            SaveToStream.Example_CreateInProvidedStream(folderPath, false);
+            SaveToStream.Example_CreateInProvidedStreamAdvanced(folderPath, false);
 
             Protect.Example_FinalDocument(folderPath, false);
             Protect.Example_ReadOnlyEnforced(folderPath, false);
@@ -240,6 +251,9 @@ namespace OfficeIMO.Examples {
             Macros.Example_ListMacros(templatesPath, folderPath, false);
             Macros.Example_ExtractAndRemoveMacro(templatesPath, folderPath, false);
             Macros.Example_ListAndRemoveMacro(templatesPath, folderPath, false);
+
+            XmlSerialization.Example_XmlSerializationBasic(folderPath, false);
+            XmlSerialization.Example_XmlSerializationAdvanced(folderPath, false);
         }
     }
 }

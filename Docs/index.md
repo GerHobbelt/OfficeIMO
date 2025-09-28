@@ -78,6 +78,7 @@
 [WordHeadersAndFooters](./officeimo.word.wordheadersandfooters.md)
 
 [WordHelpers](./officeimo.word.wordhelpers.md)
+[WordXmlSerialization](./officeimo.word.wordxmlserialization.md)
 
 [WordHyperLink](./officeimo.word.wordhyperlink.md)
 
@@ -113,6 +114,7 @@
 [WordParagraphStyle](./officeimo.word.wordparagraphstyle.md)
 
 [WordParagraphStyles](./officeimo.word.wordparagraphstyles.md)
+[Custom Paragraph Styles](./custom-paragraph-styles.md)
 
 [WordPieChart](./officeimo.word.wordpiechart.md)
 [WordPieChart3D](./officeimo.word.wordpiechart3d.md)

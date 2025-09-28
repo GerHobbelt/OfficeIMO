@@ -176,12 +176,15 @@ Here's a list of features currently supported (and probably a lot I forgot) and 
         - ☑️ Pie and Pie 3D
         - ☑️ Bar and Bar 3D
         - ☑️ Line and Line 3D
+        - ☑️ Combo (Bar + Line)
         - ☑️ Area and Area 3D
         - ☑️ Scatter
         - ☑️ Radar
     - ☑️ Add categories and legends
     - ☑️ Configure axes
     - ☑️ Add multiple series
+    - ⚠️ When mixing bar and line series call `AddChartAxisX` before adding
+      any data so both chart types share the same category axis.
 - ☑️ Lists
     - ☑️ Add lists
     - ☑️ Remove lists
@@ -245,7 +248,36 @@ using (WordDocument document = WordDocument.Create(filePath)) {
     paragraph.ParagraphAlignment = JustificationValues.Center;
     paragraph.Color = SixLabors.ImageSharp.Color.Red;
 
-    document.Save(true);
+document.Save(true);
+}
+```
+
+### Creating documents directly in a stream
+
+This overload allows generating a document entirely in memory or on any provided stream.
+
+```csharp
+using var stream = new MemoryStream();
+using (var document = WordDocument.Create(stream)) {
+    document.AddParagraph("Stream based document");
+    document.Save(stream);
+}
+stream.Position = 0;
+using (var loaded = WordDocument.Load(stream)) {
+    Console.WriteLine(loaded.Paragraphs[0].Text);
+}
+```
+
+### Saving as a new document
+
+`SaveAs` clones the current document to a new path and returns a new `WordDocument` instance without changing the original `FilePath`.
+
+```csharp
+using (WordDocument document = WordDocument.Create()) {
+    document.AddParagraph("Some text");
+    using var copy = document.SaveAs(filePath);
+    // document.FilePath is still null
+    // copy.FilePath equals filePath
 }
 ```
 
