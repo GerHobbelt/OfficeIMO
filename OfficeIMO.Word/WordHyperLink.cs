@@ -307,5 +307,92 @@ namespace OfficeIMO.Word {
             paragraph._hyperlink = hyperlink;
             return paragraph;
         }
+
+        public static WordHyperLink CreateFormattedHyperlink(WordHyperLink reference, string newText, Uri newUri) {
+            if (reference == null) throw new ArgumentNullException(nameof(reference));
+
+            return reference.InsertFormattedHyperlinkAfter(newText, newUri);
+        }
+
+        public WordHyperLink InsertFormattedHyperlinkAfter(string newText, Uri newUri) {
+            if (newText == null) throw new ArgumentNullException(nameof(newText));
+            if (newUri == null) throw new ArgumentNullException(nameof(newUri));
+
+            HyperlinkRelationship rel;
+            var header = _paragraph.Ancestors<Header>().FirstOrDefault();
+            var footer = _paragraph.Ancestors<Footer>().FirstOrDefault();
+
+            if (header != null) {
+                rel = header.HeaderPart.AddHyperlinkRelationship(newUri, true);
+            } else if (footer != null) {
+                rel = footer.FooterPart.AddHyperlinkRelationship(newUri, true);
+            } else {
+                rel = _document._wordprocessingDocument.MainDocumentPart.AddHyperlinkRelationship(newUri, true);
+            }
+
+            Hyperlink hyperlink = new Hyperlink() {
+                Id = rel.Id,
+                History = _hyperlink.History
+            };
+
+            Run run = new Run(new Text(newText) {
+                Space = SpaceProcessingModeValues.Preserve
+            });
+
+            if (_runProperties != null) {
+                run.RunProperties = (RunProperties)_runProperties.CloneNode(true);
+            }
+
+            hyperlink.Append(run);
+
+            _hyperlink.InsertAfterSelf(hyperlink);
+
+            return new WordHyperLink(_document, _paragraph, hyperlink);
+        }
+
+        public WordHyperLink InsertFormattedHyperlinkBefore(string newText, Uri newUri) {
+            if (newText == null) throw new ArgumentNullException(nameof(newText));
+            if (newUri == null) throw new ArgumentNullException(nameof(newUri));
+
+            HyperlinkRelationship rel;
+            var header = _paragraph.Ancestors<Header>().FirstOrDefault();
+            var footer = _paragraph.Ancestors<Footer>().FirstOrDefault();
+
+            if (header != null) {
+                rel = header.HeaderPart.AddHyperlinkRelationship(newUri, true);
+            } else if (footer != null) {
+                rel = footer.FooterPart.AddHyperlinkRelationship(newUri, true);
+            } else {
+                rel = _document._wordprocessingDocument.MainDocumentPart.AddHyperlinkRelationship(newUri, true);
+            }
+
+            Hyperlink hyperlink = new Hyperlink() {
+                Id = rel.Id,
+                History = _hyperlink.History
+            };
+
+            Run run = new Run(new Text(newText) {
+                Space = SpaceProcessingModeValues.Preserve
+            });
+
+            if (_runProperties != null) {
+                run.RunProperties = (RunProperties)_runProperties.CloneNode(true);
+            }
+
+            hyperlink.Append(run);
+
+            _hyperlink.InsertBeforeSelf(hyperlink);
+
+            return new WordHyperLink(_document, _paragraph, hyperlink);
+        }
+
+        public static WordHyperLink DuplicateHyperlink(WordHyperLink reference) {
+            if (reference == null) throw new ArgumentNullException(nameof(reference));
+
+            Hyperlink duplicate = (Hyperlink)reference._hyperlink.CloneNode(true);
+            reference._hyperlink.InsertAfterSelf(duplicate);
+
+            return new WordHyperLink(reference._document, reference._paragraph, duplicate);
+        }
     }
 }
