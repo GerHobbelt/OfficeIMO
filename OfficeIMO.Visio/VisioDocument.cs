@@ -136,6 +136,21 @@ namespace OfficeIMO.Visio {
                     string? masterIdAttr = shapeElement.Attribute("Master")?.Value;
                     if (!string.IsNullOrEmpty(masterIdAttr) && masters.TryGetValue(masterIdAttr, out VisioMaster master)) {
                         shape.Master = master;
+                        if (shape.Width == 0 || shape.Height == 0) {
+                            VisioShape masterShape = shape.Master.Shape;
+                            if (shape.Width == 0) {
+                                shape.Width = masterShape.Width;
+                            }
+                            if (shape.Height == 0) {
+                                shape.Height = masterShape.Height;
+                            }
+                            if (shape.LocPinX == 0) {
+                                shape.LocPinX = masterShape.LocPinX;
+                            }
+                            if (shape.LocPinY == 0) {
+                                shape.LocPinY = masterShape.LocPinY;
+                            }
+                        }
                     }
 
                     page.Shapes.Add(shape);
@@ -205,7 +220,7 @@ namespace OfficeIMO.Visio {
                 }
             }
 
-            XElement? xform = shapeElement.Element(ns + "XForm");
+            XElement? xform = shapeElement.Element(ns + "XForm") ?? shapeElement.Element(ns + "XForm1D");
             if (xform != null) {
                 if (!pinXFound) {
                     XElement? pinX = xform.Element(ns + "PinX");
@@ -297,6 +312,18 @@ namespace OfficeIMO.Visio {
                         }
                     }
                     shape.ConnectionPoints.Add(new VisioConnectionPoint(x, y, dirX, dirY));
+                }
+            }
+
+            XElement? propSection = shapeElement.Elements(ns + "Section").FirstOrDefault(e => e.Attribute("N")?.Value == "Prop");
+            if (propSection != null) {
+                foreach (XElement row in propSection.Elements(ns + "Row")) {
+                    string? key = row.Attribute("N")?.Value;
+                    XElement? valueCell = row.Elements(ns + "Cell").FirstOrDefault(c => c.Attribute("N")?.Value == "Value");
+                    string? value = valueCell?.Attribute("V")?.Value;
+                    if (!string.IsNullOrEmpty(key) && value != null) {
+                        shape.Data[key] = value;
+                    }
                 }
             }
 
@@ -500,6 +527,20 @@ namespace OfficeIMO.Visio {
                             }
                             WriteRectangleGeometry(writer, masterWidth, masterHeight);
                             WriteConnectionSection(writer, s.ConnectionPoints);
+                            if (s.Data.Count > 0) {
+                                writer.WriteStartElement("Section", ns);
+                                writer.WriteAttributeString("N", "Prop");
+                                foreach (KeyValuePair<string, string> kv in s.Data) {
+                                    writer.WriteStartElement("Row", ns);
+                                    writer.WriteAttributeString("N", kv.Key);
+                                    writer.WriteStartElement("Cell", ns);
+                                    writer.WriteAttributeString("N", "Value");
+                                    writer.WriteAttributeString("V", kv.Value);
+                                    writer.WriteEndElement();
+                                    writer.WriteEndElement();
+                                }
+                                writer.WriteEndElement();
+                            }
                             if (!string.IsNullOrEmpty(s.Text)) {
                                 writer.WriteElementString("Text", ns, s.Text);
                             }
@@ -677,10 +718,28 @@ namespace OfficeIMO.Visio {
                                 writer.WriteAttributeString("Master", shape.Master.Id);
                                 WriteCell(writer, "PinX", shape.PinX);
                                 WriteCell(writer, "PinY", shape.PinY);
-                                if (Math.Abs(shape.LocPinX - shape.Width / 2) > 0) {
+                                double width = shape.Width;
+                                if (width <= 0 && shape.Master.Shape.Width > 0) {
+                                    width = shape.Master.Shape.Width;
+                                }
+                                if (width <= 0) {
+                                    width = 1;
+                                }
+                                double height = shape.Height;
+                                if (height <= 0 && shape.Master.Shape.Height > 0) {
+                                    height = shape.Master.Shape.Height;
+                                }
+                                if (height <= 0) {
+                                    height = 1;
+                                }
+                                shape.Width = width;
+                                shape.Height = height;
+                                WriteCell(writer, "Width", width);
+                                WriteCell(writer, "Height", height);
+                                if (Math.Abs(shape.LocPinX - width / 2) > 0) {
                                     WriteCell(writer, "LocPinX", shape.LocPinX);
                                 }
-                                if (Math.Abs(shape.LocPinY - shape.Height / 2) > 0) {
+                                if (Math.Abs(shape.LocPinY - height / 2) > 0) {
                                     WriteCell(writer, "LocPinY", shape.LocPinY);
                                 }
                                 if (Math.Abs(shape.Angle) > 0) {
@@ -690,6 +749,20 @@ namespace OfficeIMO.Visio {
                                     WriteCell(writer, "LineWeight", shape.LineWeight);
                                 }
                                 WriteConnectionSection(writer, shape.ConnectionPoints);
+                                if (shape.Data.Count > 0) {
+                                    writer.WriteStartElement("Section", ns);
+                                    writer.WriteAttributeString("N", "Prop");
+                                    foreach (KeyValuePair<string, string> kv in shape.Data) {
+                                        writer.WriteStartElement("Row", ns);
+                                        writer.WriteAttributeString("N", kv.Key);
+                                        writer.WriteStartElement("Cell", ns);
+                                        writer.WriteAttributeString("N", "Value");
+                                        writer.WriteAttributeString("V", kv.Value);
+                                        writer.WriteEndElement();
+                                        writer.WriteEndElement();
+                                    }
+                                    writer.WriteEndElement();
+                                }
                                 if (!string.IsNullOrEmpty(shape.Text)) {
                                     writer.WriteElementString("Text", ns, shape.Text);
                                 }
@@ -716,6 +789,20 @@ namespace OfficeIMO.Visio {
                                 }
                                 WriteRectangleGeometry(writer, width, height);
                                 WriteConnectionSection(writer, shape.ConnectionPoints);
+                                if (shape.Data.Count > 0) {
+                                    writer.WriteStartElement("Section", ns);
+                                    writer.WriteAttributeString("N", "Prop");
+                                    foreach (KeyValuePair<string, string> kv in shape.Data) {
+                                        writer.WriteStartElement("Row", ns);
+                                        writer.WriteAttributeString("N", kv.Key);
+                                        writer.WriteStartElement("Cell", ns);
+                                        writer.WriteAttributeString("N", "Value");
+                                        writer.WriteAttributeString("V", kv.Value);
+                                        writer.WriteEndElement();
+                                        writer.WriteEndElement();
+                                    }
+                                    writer.WriteEndElement();
+                                }
                                 if (!string.IsNullOrEmpty(shape.Text)) {
                                     writer.WriteElementString("Text", ns, shape.Text);
                                 }
@@ -730,21 +817,21 @@ namespace OfficeIMO.Visio {
                             double startY;
                             if (connector.FromConnectionPoint != null) {
                                 VisioConnectionPoint cp = connector.FromConnectionPoint;
-                                startX = from.PinX - from.Width / 2 + cp.X;
-                                startY = from.PinY - from.Height / 2 + cp.Y;
+                                (startX, startY) = from.GetAbsolutePoint(cp.X, cp.Y);
                             } else {
-                                startX = from.PinX + from.Width / 2;
-                                startY = from.PinY;
+                                (double left, double bottom, double right, double top) = from.GetBounds();
+                                startX = right;
+                                startY = (top + bottom) / 2;
                             }
                             double endX;
                             double endY;
                             if (connector.ToConnectionPoint != null) {
                                 VisioConnectionPoint cp = connector.ToConnectionPoint;
-                                endX = to.PinX - to.Width / 2 + cp.X;
-                                endY = to.PinY - to.Height / 2 + cp.Y;
+                                (endX, endY) = to.GetAbsolutePoint(cp.X, cp.Y);
                             } else {
-                                endX = to.PinX - to.Width / 2;
-                                endY = to.PinY;
+                                (double left, double bottom, double right, double top) = to.GetBounds();
+                                endX = left;
+                                endY = (top + bottom) / 2;
                             }
 
                             writer.WriteStartElement("Shape", ns);

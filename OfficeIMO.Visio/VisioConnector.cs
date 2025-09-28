@@ -8,9 +8,20 @@ namespace OfficeIMO.Visio {
     public class VisioConnector {
         private static int _idCounter;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="VisioConnector"/> class connecting two shapes.
+        /// </summary>
+        /// <param name="from">Shape from which the connector starts.</param>
+        /// <param name="to">Shape at which the connector ends.</param>
         public VisioConnector(VisioShape from, VisioShape to) : this(GetNextId(from, to), from, to) {
         }
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="VisioConnector"/> class with an explicit identifier.
+        /// </summary>
+        /// <param name="id">Identifier of the connector.</param>
+        /// <param name="from">Shape from which the connector starts.</param>
+        /// <param name="to">Shape at which the connector ends.</param>
         public VisioConnector(string id, VisioShape from, VisioShape to) {
             Id = id;
             From = from;
@@ -32,9 +43,20 @@ namespace OfficeIMO.Visio {
         /// </summary>
         public VisioShape To { get; }
 
+        /// <summary>
+        /// Connection point on the starting shape.
+        /// </summary>
         public VisioConnectionPoint? FromConnectionPoint { get; set; }
 
+        /// <summary>
+        /// Connection point on the ending shape.
+        /// </summary>
         public VisioConnectionPoint? ToConnectionPoint { get; set; }
+
+        /// <summary>
+        /// Gets or sets the kind of connector.
+        /// </summary>
+        public ConnectorKind Kind { get; set; } = ConnectorKind.Straight;
 
         private static string GetNextId(VisioShape from, VisioShape to) {
             int fromId = int.TryParse(from.Id, out int fi) ? fi : 0;

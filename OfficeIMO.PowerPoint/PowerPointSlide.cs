@@ -137,9 +137,40 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Sets the slide layout using master and layout indexes.
+        /// </summary>
+        public void SetLayout(int masterIndex, int layoutIndex) {
+            PresentationPart presentationPart = _slidePart.GetParentParts().OfType<PresentationPart>().First();
+
+            SlideMasterPart[] masters = presentationPart.SlideMasterParts.ToArray();
+            if (masterIndex < 0 || masterIndex >= masters.Length) {
+                throw new ArgumentOutOfRangeException(nameof(masterIndex));
+            }
+
+            SlideMasterPart masterPart = masters[masterIndex];
+            SlideLayoutPart[] layouts = masterPart.SlideLayoutParts.ToArray();
+            if (layoutIndex < 0 || layoutIndex >= layouts.Length) {
+                throw new ArgumentOutOfRangeException(nameof(layoutIndex));
+            }
+
+            SlideLayoutPart layoutPart = layouts[layoutIndex];
+            SlideLayoutPart? current = _slidePart.SlideLayoutPart;
+            if (current != null) {
+                string relId = _slidePart.GetIdOfPart(current);
+                _slidePart.DeletePart(relId);
+            }
+
+            _slidePart.AddPart(layoutPart);
+        }
+
+        /// <summary>
         ///     Retrieves a shape by its name.
         /// </summary>
         public PowerPointShape? GetShape(string name) {
+            if (name == null) {
+                throw new ArgumentNullException(nameof(name));
+            }
+
             return _shapes.FirstOrDefault(s => s.Name == name);
         }
 
@@ -147,6 +178,10 @@ namespace OfficeIMO.PowerPoint {
         ///     Retrieves a textbox by its name.
         /// </summary>
         public PowerPointTextBox? GetTextBox(string name) {
+            if (name == null) {
+                throw new ArgumentNullException(nameof(name));
+            }
+
             return TextBoxes.FirstOrDefault(tb => tb.Name == name);
         }
 
@@ -154,6 +189,10 @@ namespace OfficeIMO.PowerPoint {
         ///     Retrieves a picture by its name.
         /// </summary>
         public PowerPointPicture? GetPicture(string name) {
+            if (name == null) {
+                throw new ArgumentNullException(nameof(name));
+            }
+
             return Pictures.FirstOrDefault(p => p.Name == name);
         }
 
@@ -161,6 +200,10 @@ namespace OfficeIMO.PowerPoint {
         ///     Retrieves a table by its name.
         /// </summary>
         public PowerPointTable? GetTable(string name) {
+            if (name == null) {
+                throw new ArgumentNullException(nameof(name));
+            }
+
             return Tables.FirstOrDefault(t => t.Name == name);
         }
 
@@ -168,6 +211,10 @@ namespace OfficeIMO.PowerPoint {
         ///     Retrieves a chart by its name.
         /// </summary>
         public PowerPointChart? GetChart(string name) {
+            if (name == null) {
+                throw new ArgumentNullException(nameof(name));
+            }
+
             return Charts.FirstOrDefault(c => c.Name == name);
         }
 
@@ -175,6 +222,10 @@ namespace OfficeIMO.PowerPoint {
         ///     Removes the specified shape from the slide.
         /// </summary>
         public void RemoveShape(PowerPointShape shape) {
+            if (shape == null) {
+                throw new ArgumentNullException(nameof(shape));
+            }
+
             shape.Element.Remove();
             _shapes.Remove(shape);
         }
@@ -190,10 +241,49 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Adds a title textbox to the slide.
+        /// </summary>
+        public PowerPointTextBox AddTitle(string text, long left = 0L, long top = 0L,
+            long width = 914400L, long height = 914400L) {
+            if (text == null) {
+                throw new ArgumentNullException(nameof(text));
+            }
+
+            string name = GenerateUniqueName("Title");
+            Shape shape = new(
+                new NonVisualShapeProperties(
+                    new NonVisualDrawingProperties { Id = (UInt32Value)(uint)(_shapes.Count + 1), Name = name },
+                    new NonVisualShapeDrawingProperties(new A.ShapeLocks { NoGrouping = true }),
+                    new ApplicationNonVisualDrawingProperties(new PlaceholderShape { Type = PlaceholderValues.Title })
+                ),
+                new ShapeProperties(
+                    new A.Transform2D(new A.Offset { X = left, Y = top }, new A.Extents { Cx = width, Cy = height }),
+                    new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle }
+                ),
+                new TextBody(
+                    new A.BodyProperties(),
+                    new A.ListStyle(),
+                    new A.Paragraph(new A.Run(new A.Text(text)))
+                )
+            );
+
+            CommonSlideData data = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
+            ShapeTree tree = data.ShapeTree ??= new ShapeTree();
+            tree.AppendChild(shape);
+            PowerPointTextBox textBox = new(shape);
+            _shapes.Add(textBox);
+            return textBox;
+        }
+
+        /// <summary>
         ///     Adds a textbox with the specified text.
         /// </summary>
         public PowerPointTextBox AddTextBox(string text, long left = 0L, long top = 0L, long width = 914400L,
             long height = 914400L) {
+            if (text == null) {
+                throw new ArgumentNullException(nameof(text));
+            }
+
             string name = GenerateUniqueName("TextBox");
             Shape shape = new(
                 new NonVisualShapeProperties(
@@ -225,6 +315,14 @@ namespace OfficeIMO.PowerPoint {
         /// </summary>
         public PowerPointPicture AddPicture(string imagePath, long left = 0L, long top = 0L, long width = 914400L,
             long height = 914400L) {
+            if (imagePath == null) {
+                throw new ArgumentNullException(nameof(imagePath));
+            }
+
+            if (!File.Exists(imagePath)) {
+                throw new FileNotFoundException("Image file not found.", imagePath);
+            }
+
             ImagePart imagePart = _slidePart.AddImagePart(ImagePartType.Png);
             using FileStream stream = new(imagePath, FileMode.Open, FileAccess.Read);
             imagePart.FeedData(stream);
@@ -260,6 +358,14 @@ namespace OfficeIMO.PowerPoint {
         /// </summary>
         public PowerPointTable AddTable(int rows, int columns, long left = 0L, long top = 0L, long width = 5000000L,
             long height = 3000000L) {
+            if (rows <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(rows));
+            }
+
+            if (columns <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(columns));
+            }
+
             A.Table table = new();
             A.TableProperties props = new();
             props.Append(new A.TableStyleId { Text = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}" });

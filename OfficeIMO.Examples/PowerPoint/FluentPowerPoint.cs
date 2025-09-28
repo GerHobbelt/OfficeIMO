@@ -14,12 +14,15 @@ namespace OfficeIMO.Examples.PowerPoint {
 
             using (PowerPointPresentation presentation = PowerPointPresentation.Create(filePath)) {
                 presentation.AsFluent()
-                    .Slide()
+                    .Slide(s => s
+                        .Layout(0, 0)
                         .Title("Fluent Presentation")
-                        .Text("Hello from fluent API")
+                        .TextBox("Hello from fluent API")
                         .Bullets("First", "Second")
-                        .Notes("Example notes");
-                presentation.Save();
+                        .Notes("Example notes"))
+                    .Slide(s => s.Title("Second Slide"))
+                    .End()
+                    .Save();
             }
         }
     }
