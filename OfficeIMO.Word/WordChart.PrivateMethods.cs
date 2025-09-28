@@ -35,13 +35,18 @@ namespace OfficeIMO.Word {
         private PieChartSeries InitializePieChartSeries() {
             if (_chart != null) {
                 var pieChart = _chart.PlotArea.GetFirstChild<PieChart>();
-                if (pieChart != null) {
-                    var pieChartSeries = pieChart.GetFirstChild<PieChartSeries>();
-                    var dataLabels = pieChart.GetFirstChild<DataLabels>() ?? pieChart.AppendChild(AddDataLabel());
+                OpenXmlCompositeElement chartElement = pieChart;
+                if (chartElement == null) {
+                    chartElement = _chart.PlotArea.GetFirstChild<Pie3DChart>();
+                }
+
+                if (chartElement != null) {
+                    var pieChartSeries = chartElement.GetFirstChild<PieChartSeries>();
+                    var dataLabels = chartElement.GetFirstChild<DataLabels>() ?? chartElement.AppendChild(AddDataLabel());
 
                     if (pieChartSeries == null) {
                         pieChartSeries = CreatePieChartSeries(_index, "Title?");
-                        pieChart.InsertBefore(pieChartSeries, dataLabels);
+                        chartElement.InsertBefore(pieChartSeries, dataLabels);
                     }
                     return pieChartSeries;
                 }
@@ -599,6 +604,127 @@ namespace OfficeIMO.Word {
             return series3d;
         }
 
+        private Line3DChart CreateLine3DChart(UInt32Value catAxisId, UInt32Value valAxisId) {
+            Line3DChart chart = new Line3DChart();
+            chart.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+
+            Grouping grouping = new Grouping() { Val = GroupingValues.Standard };
+            DataLabels labels = AddDataLabel();
+            GapDepth gapDepth = new GapDepth() { Val = (UInt16Value)150U };
+
+            chart.Append(grouping);
+            chart.Append(labels);
+            chart.Append(gapDepth);
+
+            AxisId axisId1 = new AxisId() { Val = catAxisId };
+            axisId1.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+            AxisId axisId2 = new AxisId() { Val = valAxisId };
+            axisId2.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+
+            chart.Append(axisId1);
+            chart.Append(axisId2);
+            return chart;
+        }
+
+        private Chart GenerateLine3DChart(Chart chart) {
+            UInt32Value catId = GenerateAxisId();
+            UInt32Value valId = GenerateAxisId();
+
+            Line3DChart chart3d = CreateLine3DChart(catId, valId);
+            CategoryAxis catAxis = AddCategoryAxisInternal(catId, valId, AxisPositionValues.Bottom);
+            ValueAxis valAxis = AddValueAxisInternal(valId, catId, AxisPositionValues.Left);
+
+            chart.PlotArea.Append(chart3d);
+            chart.PlotArea.Append(catAxis);
+            chart.PlotArea.Append(valAxis);
+            return chart;
+        }
+
+        private LineChartSeries AddLine3DChartSeries<T>(UInt32Value index, string series, SixLabors.ImageSharp.Color color, List<string> categories, List<T> values) {
+            LineChartSeries series3d = AddLineChartSeries(index, series, color, categories, values);
+            return series3d;
+        }
+
+        private PieChartSeries AddPie3DChartSeries<T>(UInt32Value index, string series, SixLabors.ImageSharp.Color color, List<string> categories, List<T> values) {
+            PieChartSeries pieSeries = new PieChartSeries();
+            DocumentFormat.OpenXml.Drawing.Charts.Index idx = new DocumentFormat.OpenXml.Drawing.Charts.Index() { Val = index };
+            Order order = new Order() { Val = index };
+
+            SeriesText text = new SeriesText();
+            var seriesRef = AddSeries(0, series);
+            text.Append(seriesRef);
+
+            var shape = AddShapeProperties(color);
+            CategoryAxisData cats = AddCategoryAxisData(categories);
+            Values vals = AddValuesAxisData(values);
+
+            pieSeries.Append(idx);
+            pieSeries.Append(order);
+            pieSeries.Append(text);
+            pieSeries.Append(shape);
+            pieSeries.Append(cats);
+            pieSeries.Append(vals);
+            return pieSeries;
+        }
+
+        private Pie3DChart CreatePie3DChart() {
+            Pie3DChart chart3d = new Pie3DChart();
+            chart3d.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+
+            DataLabels labels = AddDataLabel();
+            chart3d.Append(labels);
+            return chart3d;
+        }
+
+        private Chart GeneratePie3DChart(Chart chart) {
+            Pie3DChart pie3d = CreatePie3DChart();
+            chart.PlotArea.Append(pie3d);
+            return chart;
+        }
+
+        private Area3DChart CreateArea3DChart(UInt32Value catAxisId, UInt32Value valAxisId) {
+            Area3DChart chart = new Area3DChart();
+            chart.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+
+            Grouping grouping = new Grouping() { Val = GroupingValues.Standard };
+            chart.Append(grouping);
+
+            DataLabels labels = AddDataLabel();
+            GapDepth gapDepth = new GapDepth() { Val = (UInt16Value)150U };
+
+            chart.Append(labels);
+            chart.Append(gapDepth);
+
+            AxisId axisId1 = new AxisId() { Val = catAxisId };
+            axisId1.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+            AxisId axisId2 = new AxisId() { Val = valAxisId };
+            axisId2.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+
+            chart.Append(axisId1);
+            chart.Append(axisId2);
+
+            return chart;
+        }
+
+        private Chart GenerateArea3DChart(Chart chart) {
+            UInt32Value catId = GenerateAxisId();
+            UInt32Value valId = GenerateAxisId();
+
+            Area3DChart area3d = CreateArea3DChart(catId, valId);
+            CategoryAxis catAxis = AddCategoryAxisInternal(catId, valId, AxisPositionValues.Bottom);
+            ValueAxis valAxis = AddValueAxisInternal(valId, catId, AxisPositionValues.Left);
+
+            chart.PlotArea.Append(area3d);
+            chart.PlotArea.Append(catAxis);
+            chart.PlotArea.Append(valAxis);
+
+            return chart;
+        }
+
+        private AreaChartSeries AddArea3DChartSeries<T>(UInt32Value index, string series, SixLabors.ImageSharp.Color color, List<string> categories, List<T> values) {
+            return AddAreaChartSeries(index, series, color, categories, values);
+        }
+
         private void EnsureChartExistsScatter() {
             if (_chart == null) {
                 _chart = GenerateChart();
@@ -617,10 +743,37 @@ namespace OfficeIMO.Word {
             }
         }
 
+        private void EnsureChartExistsArea3D() {
+            if (_chart == null) {
+                _chart = GenerateChart();
+                _chart = GenerateArea3DChart(_chart);
+                _chartPart.ChartSpace.Append(_chart);
+                UpdateTitle();
+            }
+        }
+
         private void EnsureChartExistsBar3D() {
             if (_chart == null) {
                 _chart = GenerateChart();
                 _chart = GenerateBar3DChart(_chart);
+                _chartPart.ChartSpace.Append(_chart);
+                UpdateTitle();
+            }
+        }
+
+        private void EnsureChartExistsPie3D() {
+            if (_chart == null) {
+                _chart = GenerateChart();
+                _chart = GeneratePie3DChart(_chart);
+                _chartPart.ChartSpace.Append(_chart);
+                UpdateTitle();
+            }
+        }
+
+        private void EnsureChartExistsLine3D() {
+            if (_chart == null) {
+                _chart = GenerateChart();
+                _chart = GenerateLine3DChart(_chart);
                 _chartPart.ChartSpace.Append(_chart);
                 UpdateTitle();
             }

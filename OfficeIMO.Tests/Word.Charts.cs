@@ -121,14 +121,28 @@ namespace OfficeIMO.Tests {
                 var bar3dXml = bar3dPart.ChartSpace.GetFirstChild<Chart>().PlotArea.GetFirstChild<Bar3DChart>();
                 Assert.NotNull(bar3dXml);
 
+                var pie3d = document.AddChart();
+                pie3d.AddPie3D("Poland", 10);
+                pie3d.AddPie3D("USA", 20);
+                var pie3dPart = document._wordprocessingDocument.MainDocumentPart.ChartParts.Last();
+                var pie3dXml = pie3dPart.ChartSpace.GetFirstChild<Chart>().PlotArea.GetFirstChild<Pie3DChart>();
+                Assert.NotNull(pie3dXml);
+
+                var line3d = document.AddChart();
+                line3d.AddChartAxisX(categories);
+                line3d.AddLine3D("USA", new List<int> { 1, 2, 3, 4 }, Color.Purple);
+                var line3dPart = document._wordprocessingDocument.MainDocumentPart.ChartParts.Last();
+                var line3dXml = line3dPart.ChartSpace.GetFirstChild<Chart>().PlotArea.GetFirstChild<Line3DChart>();
+                Assert.NotNull(line3dXml);
+
                 document.Save(false);
             }
 
             using (WordDocument document = WordDocument.Load(filePath)) {
 
                 Assert.True(document.Sections[0].Charts.Count == 3);
-                Assert.True(document.Sections[1].Charts.Count == 5);
-                Assert.True(document.Charts.Count == 8);
+                Assert.True(document.Sections[1].Charts.Count == 7);
+                Assert.True(document.Charts.Count == 10);
 
                 document.Save(false);
             }
@@ -150,7 +164,30 @@ namespace OfficeIMO.Tests {
                 Assert.True(newIds.Min() > maxId);
                 var validation = document.ValidateDocument();
                 var chartErrors = validation.Where(v => v.Description.Contains("chart")).ToList();
-                Assert.Empty(chartErrors);
+                Assert.True(chartErrors.Count == 0,
+                    Word.FormatValidationErrors(chartErrors));
+            }
+        }
+
+        [Fact]
+        public void Test_Line3DChartAxisCount() {
+            var filePath = Path.Combine(_directoryWithFiles, "Line3DChartAxisCount.docx");
+
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                var categories = new List<string> { "A", "B", "C" };
+                var chart = document.AddChart();
+                chart.AddChartAxisX(categories);
+                chart.AddLine3D("Series", new List<int> { 1, 2, 3 }, Color.Blue);
+
+                document.Save(false);
+            }
+
+            using (WordDocument document = WordDocument.Load(filePath)) {
+                var part = document._wordprocessingDocument.MainDocumentPart.ChartParts.First();
+                var line3d = part.ChartSpace.GetFirstChild<Chart>()
+                    .PlotArea.GetFirstChild<Line3DChart>();
+                var axisCount = line3d.Elements<AxisId>().Count();
+                Assert.Equal(2, axisCount);
             }
         }
 
@@ -173,7 +210,115 @@ namespace OfficeIMO.Tests {
             using (WordDocument document = WordDocument.Load(filePath)) {
                 var valid = document.ValidateDocument();
                 var chartErrors = valid.Where(v => v.Description.Contains("chart")).ToList();
-                Assert.Empty(chartErrors);
+                Assert.True(chartErrors.Count == 0,
+                    Word.FormatValidationErrors(chartErrors));
+            }
+        }
+
+        [Fact]
+        public void Test_ChartsWithDecimalValues() {
+            var filePath = Path.Combine(_directoryWithFiles, "ChartsWithDecimalValues.docx");
+
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                // Test decimal values that could cause culture-dependent serialization issues
+                var decimalValues = new[] { 20.2, 15.7, 8.9, 12.4 };
+
+                // Test Pie Chart with decimal values
+                document.AddParagraph("Pie Chart with Decimal Values:");
+                var pieChart = document.AddChart("Pie Chart Test");
+                pieChart.AddPie("Category A", decimalValues[0]);
+                pieChart.AddPie("Category B", decimalValues[1]);
+                pieChart.AddPie("Category C", decimalValues[2]);
+
+                // Test Bar Chart with decimal values
+                document.AddParagraph("Bar Chart with Decimal Values:");
+                var barChart = document.AddChart("Bar Chart Test");
+                barChart.AddCategories(new List<string> { "Q1", "Q2", "Q3", "Q4" });
+                barChart.AddBar("Sales", new List<double> { decimalValues[0], decimalValues[1], decimalValues[2], decimalValues[3] }, Color.Blue);
+
+                // Test Line Chart with decimal values
+                document.AddParagraph("Line Chart with Decimal Values:");
+                var lineChart = document.AddChart("Line Chart Test");
+                lineChart.AddChartAxisX(new List<string> { "Jan", "Feb", "Mar", "Apr" });
+                lineChart.AddLine("Growth", new List<double> { decimalValues[0], decimalValues[1], decimalValues[2], decimalValues[3] }, Color.Red);
+
+                document.Save(false);
+            }
+
+            // Verify document can be loaded and validates correctly
+            using (WordDocument document = WordDocument.Load(filePath)) {
+                Assert.Equal(3, document.Charts.Count);
+
+                var validation = document.ValidateDocument();
+                var chartErrors = validation.Where(v => v.Description.Contains("chart")).ToList();
+                Assert.True(chartErrors.Count == 0,
+                    Word.FormatValidationErrors(chartErrors));
+
+                // Verify the document can be saved again (full round-trip test)
+                document.Save(false);
+            }
+        }
+
+        [Fact]
+        public void Test_AreaChartWithLegend() {
+            var filePath = Path.Combine(_directoryWithFiles, "AreaChartWithLegend.docx");
+
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                var categories = new List<string> { "Food", "Housing", "Mix", "Data" };
+
+                // Create area chart with legend (this was causing validation errors before the fix)
+                var areaChart = document.AddChart("Area Chart");
+                areaChart.AddCategories(categories);
+                areaChart.AddArea("Brazil", new List<int> { 100, 1, 18, 230 }, Color.Brown);
+                areaChart.AddArea("Poland", new List<int> { 13, 20, 230, 150 }, Color.Green);
+                areaChart.AddArea("USA", new List<int> { 10, 305, 18, 23 }, Color.AliceBlue);
+                areaChart.AddLegend(LegendPositionValues.Top);
+
+                document.Save(false);
+            }
+
+            using (WordDocument document = WordDocument.Load(filePath)) {
+                Assert.Single(document.Charts);
+
+                var validation = document.ValidateDocument();
+                var chartErrors = validation.Where(v => v.Description.Contains("chart") || v.Description.Contains("legend")).ToList();
+                Assert.True(chartErrors.Count == 0,
+                    Word.FormatValidationErrors(chartErrors));
+            }
+        }
+
+        [Fact]
+        public void Test_LegendPositioning() {
+            var filePath = Path.Combine(_directoryWithFiles, "LegendPositioning.docx");
+
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                var categories = new List<string> { "A", "B", "C" };
+
+                // Test different legend positions to ensure they all validate correctly
+                var positions = new[] {
+                    LegendPositionValues.Top,
+                    LegendPositionValues.Bottom,
+                    LegendPositionValues.Left,
+                    LegendPositionValues.Right
+                };
+
+                foreach (var position in positions) {
+                    var chart = document.AddChart($"Chart with {position} Legend");
+                    chart.AddCategories(categories);
+                    chart.AddBar("Data", new List<int> { 1, 2, 3 }, Color.Blue);
+                    chart.AddLegend(position);
+                }
+
+                document.Save(false);
+            }
+
+            using (WordDocument document = WordDocument.Load(filePath)) {
+                Assert.Equal(4, document.Charts.Count);
+
+                var validation = document.ValidateDocument();
+                var chartErrors = validation.Where(v => v.Description.Contains("chart") || v.Description.Contains("legend")).ToList();
+                Assert.True(chartErrors.Count == 0,
+                    Word.FormatValidationErrors(chartErrors));
             }
         }
     }

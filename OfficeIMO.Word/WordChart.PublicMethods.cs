@@ -16,6 +16,16 @@ namespace OfficeIMO.Word {
             return this;
         }
 
+        public WordChart AddPie3D<T>(string category, T value) {
+            if (!(value is int || value is double || value is float)) {
+                throw new NotSupportedException("Value must be of type int, double, or float");
+            }
+            EnsureChartExistsPie3D();
+            AddSingleCategory(category);
+            AddSingleValue(value);
+            return this;
+        }
+
         public void AddChartLine<T>(string name, int[] values, SixLabors.ImageSharp.Color color) {
             EnsureChartExistsLine();
             if (_chart != null) {
@@ -144,6 +154,28 @@ namespace OfficeIMO.Word {
             }
         }
 
+        public void AddLine3D<T>(string name, List<T> values, SixLabors.ImageSharp.Color color) {
+            EnsureChartExistsLine3D();
+            if (_chart != null) {
+                var line3d = _chart.PlotArea.GetFirstChild<Line3DChart>();
+                if (line3d != null) {
+                    var series = AddLine3DChartSeries(this._index, name, color, this.Categories, values);
+                    InsertSeries(line3d, series);
+                }
+            }
+        }
+
+        public void AddArea3D<T>(string name, List<T> values, SixLabors.ImageSharp.Color color) {
+            EnsureChartExistsArea3D();
+            if (_chart != null) {
+                var area3d = _chart.PlotArea.GetFirstChild<Area3DChart>();
+                if (area3d != null) {
+                    var series = AddArea3DChartSeries(this._index, name, color, this.Categories, values);
+                    InsertSeries(area3d, series);
+                }
+            }
+        }
+
         public void AddLegend(LegendPositionValues legendPosition) {
             if (_chart != null) {
                 Legend legend = new Legend();
@@ -151,7 +183,16 @@ namespace OfficeIMO.Word {
                 Overlay overlay = new Overlay() { Val = false };
                 legend.Append(postion);
                 legend.Append(overlay);
-                _chart.Append(legend);
+
+                // Insert legend in correct position according to OpenXML schema
+                // Legend should come after PlotArea but before other elements like PlotVisibleOnly
+                var plotVisibleOnly = _chart.GetFirstChild<PlotVisibleOnly>();
+                if (plotVisibleOnly != null) {
+                    _chart.InsertBefore(legend, plotVisibleOnly);
+                } else {
+                    // If no PlotVisibleOnly, just append at the end
+                    _chart.Append(legend);
+                }
             }
         }
     }

@@ -123,6 +123,9 @@ namespace OfficeIMO.Examples {
             Charts.Example_ScatterChart(folderPath, false);
             Charts.Example_RadarChart(folderPath, false);
             Charts.Example_Bar3DChart(folderPath, false);
+            Charts.Example_Pie3DChart(folderPath, false);
+            Charts.Example_Line3DChart(folderPath, false);
+            Charts.Example_Area3DChart(folderPath, false);
 
             Images.Example_AddingImages(folderPath, false);
             Images.Example_ReadWordWithImages();
@@ -176,8 +179,9 @@ namespace OfficeIMO.Examples {
 
             SaveToStream.Example_StreamDocumentProperties(folderPath, false);
 
-            Protect.Example_ProtectFinalDocument(folderPath, false);
-            Protect.Example_ProtectAlwaysReadOnly(folderPath, false);
+            Protect.Example_FinalDocument(folderPath, false);
+            Protect.Example_ReadOnlyEnforced(folderPath, false);
+            Protect.Example_ReadOnlyRecommended(folderPath, false);
 
             WordTextBox.Example_AddingTextbox(folderPath, false);
             WordTextBox.Example_AddingTextbox2(folderPath, false);
@@ -185,6 +189,11 @@ namespace OfficeIMO.Examples {
             WordTextBox.Example_AddingTextbox5(folderPath, false);
             WordTextBox.Example_AddingTextbox3(folderPath, false);
             WordTextBox.Example_AddingTextboxCentimeters(folderPath, false);
+
+            Shapes.Example_AddBasicShape(folderPath, false);
+            Shapes.Example_AddMultipleShapes(folderPath, false);
+            Shapes.Example_RemoveShape(folderPath, false);
+            Shapes.Example_LoadShapes(folderPath, false);
         }
     }
 }
