@@ -30,7 +30,47 @@ namespace OfficeIMO.Word.Pdf {
         /// Measurement unit for the margin value.
         /// </summary>
         public Unit MarginUnit { get; set; } = Unit.Centimetre;
-        
+
+        /// <summary>
+        /// Optional left page margin for the generated PDF.
+        /// </summary>
+        public float? MarginLeft { get; set; }
+
+        /// <summary>
+        /// Measurement unit for the left margin value.
+        /// </summary>
+        public Unit MarginLeftUnit { get; set; } = Unit.Centimetre;
+
+        /// <summary>
+        /// Optional right page margin for the generated PDF.
+        /// </summary>
+        public float? MarginRight { get; set; }
+
+        /// <summary>
+        /// Measurement unit for the right margin value.
+        /// </summary>
+        public Unit MarginRightUnit { get; set; } = Unit.Centimetre;
+
+        /// <summary>
+        /// Optional top page margin for the generated PDF.
+        /// </summary>
+        public float? MarginTop { get; set; }
+
+        /// <summary>
+        /// Measurement unit for the top margin value.
+        /// </summary>
+        public Unit MarginTopUnit { get; set; } = Unit.Centimetre;
+
+        /// <summary>
+        /// Optional bottom page margin for the generated PDF.
+        /// </summary>
+        public float? MarginBottom { get; set; }
+
+        /// <summary>
+        /// Measurement unit for the bottom margin value.
+        /// </summary>
+        public Unit MarginBottomUnit { get; set; } = Unit.Centimetre;
+
         /// <summary>
         /// Optional default page size applied when creating new documents.
         /// </summary>
@@ -40,5 +80,40 @@ namespace OfficeIMO.Word.Pdf {
         /// Optional default page orientation applied when creating new documents.
         /// </summary>
         public DocumentFormat.OpenXml.Wordprocessing.PageOrientationValues? DefaultOrientation { get; set; }
+
+        /// <summary>
+        /// Optional PDF title that overrides the Word document title.
+        /// </summary>
+        public string? Title { get; set; }
+
+        /// <summary>
+        /// Optional PDF author that overrides the Word document author.
+        /// </summary>
+        public string? Author { get; set; }
+
+        /// <summary>
+        /// Optional PDF subject that overrides the Word document subject.
+        /// </summary>
+        public string? Subject { get; set; }
+
+        /// <summary>
+        /// Optional PDF keywords that override the Word document keywords.
+        /// </summary>
+        public string? Keywords { get; set; }
+
+        /// <summary>
+        /// Optional QuestPDF license type used when generating the PDF.
+        /// </summary>
+        public LicenseType? QuestPdfLicenseType { get; set; }
+
+        /// <summary>
+        /// Determines whether page numbers are rendered in the PDF footer. Defaults to true.
+        /// </summary>
+        public bool IncludePageNumbers { get; set; } = true;
+
+        /// <summary>
+        /// Optional format for page numbers. Use "{current}" for the current page and "{total}" for total pages.
+        /// </summary>
+        public string? PageNumberFormat { get; set; }
     }
 }

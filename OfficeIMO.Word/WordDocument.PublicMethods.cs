@@ -76,8 +76,22 @@ namespace OfficeIMO.Word {
             newWordParagraph._paragraph = new Paragraph(newWordParagraph._run);
 
             this._document.Body.Append(newWordParagraph._paragraph);
-            this.Paragraphs.Add(newWordParagraph);
+            var currentSection = this.Sections.LastOrDefault();
+            currentSection?.Paragraphs.Add(newWordParagraph);
             return newWordParagraph;
+        }
+
+        /// <summary>
+        /// Determines whether a paragraph style with the specified identifier exists in the document.
+        /// </summary>
+        /// <param name="styleId">The style identifier to look for.</param>
+        /// <returns><c>true</c> if the style exists; otherwise, <c>false</c>.</returns>
+        public bool StyleExists(string styleId) {
+            if (string.IsNullOrWhiteSpace(styleId)) {
+                return false;
+            }
+            var styles = _wordprocessingDocument?.MainDocumentPart?.StyleDefinitionsPart?.Styles;
+            return styles != null && styles.OfType<DocumentFormat.OpenXml.Wordprocessing.Style>().Any(s => string.Equals(s.StyleId, styleId, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>

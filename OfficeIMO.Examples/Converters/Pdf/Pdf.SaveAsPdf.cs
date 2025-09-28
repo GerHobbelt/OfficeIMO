@@ -57,7 +57,9 @@ namespace OfficeIMO.Examples.Word {
                     PageSize = PageSizes.A4,
                     Orientation = PdfPageOrientation.Landscape,
                     Margin = 2,
-                    MarginUnit = Unit.Centimetre
+                    MarginUnit = Unit.Centimetre,
+                    MarginBottom = 1,
+                    MarginBottomUnit = Unit.Centimetre
                 });
             }
         }
@@ -77,6 +79,20 @@ namespace OfficeIMO.Examples.Word {
                     });
                     File.WriteAllBytes(pdfPath, pdfStream.ToArray());
                 }
+            }
+        }
+
+        public static void Example_SaveAsPdfToByteArray(string folderPath, bool openWord) {
+            Console.WriteLine("[*] Creating document and exporting to PDF byte array");
+            string docPath = Path.Combine(folderPath, "ExportToPdfBytes.docx");
+            string pdfPath = Path.Combine(folderPath, "ExportToPdfBytes.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                document.AddParagraph("Hello World");
+                document.Save();
+
+                byte[] pdfBytes = document.SaveAsPdf();
+                File.WriteAllBytes(pdfPath, pdfBytes);
             }
         }
     }

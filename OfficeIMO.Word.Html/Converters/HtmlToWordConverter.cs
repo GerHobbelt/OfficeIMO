@@ -1,7 +1,10 @@
 using AngleSharp;
+using AngleSharp.Css;
+using AngleSharp.Css.Dom;
+using AngleSharp.Css.Parser;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
-using AngleSharp.Html.Parser;
+using AngleSharp.Io;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Word;
 using OfficeIMO.Word.Html.Helpers;
@@ -10,8 +13,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Text;
-using System.Text.RegularExpressions;
+using System.Net;
 
 namespace OfficeIMO.Word.Html.Converters {
     /// <summary>
@@ -26,25 +28,17 @@ namespace OfficeIMO.Word.Html.Converters {
     /// </summary>
     internal partial class HtmlToWordConverter {
         private readonly Dictionary<string, string> _footnoteMap = new(StringComparer.OrdinalIgnoreCase);
-        private readonly List<CssRule> _cssRules = new();
-
-        private sealed class CssRule {
-            public CssRule(string selector, Dictionary<string, string> declarations) {
-                Selector = selector;
-                Declarations = declarations;
-            }
-
-            public string Selector { get; }
-            public Dictionary<string, string> Declarations { get; }
-        }
+        private readonly List<ICssStyleRule> _cssRules = new();
+        private readonly CssParser _cssParser = new();
+        private IBrowsingContext? _context;
         public async Task<WordDocument> ConvertAsync(string html, HtmlToWordOptions options) {
             if (html == null) throw new ArgumentNullException(nameof(html));
             options ??= new HtmlToWordOptions();
 
             var config = Configuration.Default.WithDefaultLoader();
             var context = BrowsingContext.New(config);
-            var parser = context.GetService<IHtmlParser>();
-            var document = await parser.ParseDocumentAsync(html);
+            _context = context;
+            var document = await context.OpenAsync(req => req.Content(html));
 
             var wordDoc = WordDocument.Create();
 
@@ -52,7 +46,23 @@ namespace OfficeIMO.Word.Html.Converters {
             _cssRules.Clear();
 
             foreach (var path in options.StylesheetPaths) {
-                if (!string.IsNullOrEmpty(path) && File.Exists(path)) {
+                if (string.IsNullOrEmpty(path)) {
+                    continue;
+                }
+                if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)) {
+                    if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps) {
+                        await LoadAndParseCssAsync(context, new Url(absolute.ToString()));
+                    } else if (absolute.Scheme == Uri.UriSchemeFile && File.Exists(absolute.LocalPath)) {
+                        ParseCss(File.ReadAllText(absolute.LocalPath));
+                    }
+                } else if (document.BaseUrl != null) {
+                    var url = new Url(new Url(document.BaseUrl), path);
+                    if (url.Scheme == "http" || url.Scheme == "https") {
+                        await LoadAndParseCssAsync(context, url);
+                    } else if (url.Scheme == "file" && File.Exists(url.Path)) {
+                        ParseCss(File.ReadAllText(url.Path));
+                    }
+                } else if (File.Exists(path)) {
                     ParseCss(File.ReadAllText(path));
                 }
             }
@@ -66,12 +76,35 @@ namespace OfficeIMO.Word.Html.Converters {
                 foreach (var style in document.Head.QuerySelectorAll("style")) {
                     ParseCss(style.TextContent);
                 }
+                var baseElement = document.Head.QuerySelector("base[href]") as IHtmlBaseElement;
+                Uri? baseUri = null;
+                if (baseElement != null && Uri.TryCreate(baseElement.Href, UriKind.Absolute, out var bu)) {
+                    baseUri = bu;
+                } else if (document.BaseUrl != null && Uri.TryCreate(document.BaseUrl.Href, UriKind.Absolute, out var du)) {
+                    baseUri = du;
+                }
                 foreach (var link in document.Head.QuerySelectorAll("link")) {
                     var rel = link.GetAttribute("rel");
-                    if (string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
-                        var href = link.GetAttribute("href");
-                        if (!string.IsNullOrEmpty(href) && File.Exists(href)) {
-                            ParseCss(File.ReadAllText(href));
+                    if (!string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
+                        continue;
+                    }
+
+                    var hrefAttr = link.GetAttribute("href");
+                    if (string.IsNullOrEmpty(hrefAttr)) {
+                        continue;
+                    }
+
+                    if (File.Exists(hrefAttr)) {
+                        ParseCss(File.ReadAllText(hrefAttr));
+                        continue;
+                    }
+
+                    if (baseUri != null) {
+                        var combined = new Uri(baseUri, hrefAttr);
+                        if (combined.Scheme == Uri.UriSchemeHttp || combined.Scheme == Uri.UriSchemeHttps) {
+                            await LoadAndParseCssAsync(context, new Url(combined.ToString()));
+                        } else if (combined.Scheme == Uri.UriSchemeFile && File.Exists(combined.LocalPath)) {
+                            ParseCss(File.ReadAllText(combined.LocalPath));
                         }
                     }
                 }
@@ -102,6 +135,21 @@ namespace OfficeIMO.Word.Html.Converters {
             }
 
             return wordDoc;
+        }
+
+        private async Task LoadAndParseCssAsync(IBrowsingContext context, Url url) {
+            var loader = context.GetService<IResourceLoader>();
+            if (loader == null) {
+                return;
+            }
+            var request = new ResourceRequest(null, url);
+            var download = loader.FetchAsync(request);
+            var response = await download.Task;
+            if (response.StatusCode == HttpStatusCode.OK) {
+                using var reader = new StreamReader(response.Content);
+                var css = await reader.ReadToEndAsync();
+                ParseCss(css);
+            }
         }
 
         private void ProcessNode(INode node, WordDocument doc, WordSection section, HtmlToWordOptions options,
@@ -145,7 +193,9 @@ namespace OfficeIMO.Word.Html.Converters {
                         }
                     case "blockquote": {
                             var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
-                            paragraph.SetStyleId("Quote");
+                            if (doc.StyleExists("Quote")) {
+                                paragraph.SetStyleId("Quote");
+                            }
                             paragraph.IndentationBefore = 720;
                             ApplyParagraphStyleFromCss(paragraph, element);
                             ApplyClassStyle(element, paragraph, options);
@@ -372,11 +422,32 @@ namespace OfficeIMO.Word.Html.Converters {
                         }
                     case "link": {
                             var rel = element.GetAttribute("rel");
-                            if (string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
-                                var href = element.GetAttribute("href");
-                                if (!string.IsNullOrEmpty(href) && File.Exists(href)) {
-                                    ParseCss(File.ReadAllText(href));
+                            if (!string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
+                                break;
+                            }
+
+                            var hrefAttr = element.GetAttribute("href");
+                            var href = (element as IHtmlLinkElement)?.Href ?? hrefAttr;
+                            if (string.IsNullOrEmpty(href)) {
+                                break;
+                            }
+
+                            if (!string.IsNullOrEmpty(hrefAttr) && File.Exists(hrefAttr)) {
+                                ParseCss(File.ReadAllText(hrefAttr));
+                                break;
+                            }
+
+                            var url = new Url(href);
+                            if (!url.IsAbsolute && element.BaseUrl != null) {
+                                url = new Url(new Url(element.BaseUrl), href);
+                            }
+
+                            if (url.Scheme == "http" || url.Scheme == "https") {
+                                if (_context != null) {
+                                    LoadAndParseCssAsync(_context, url).GetAwaiter().GetResult();
                                 }
+                            } else if (url.Scheme == "file" && File.Exists(url.Path)) {
+                                ParseCss(File.ReadAllText(url.Path));
                             }
                             break;
                         }
@@ -392,7 +463,7 @@ namespace OfficeIMO.Word.Html.Converters {
                 if (string.IsNullOrWhiteSpace(text)) {
                     return;
                 }
-                currentParagraph ??= cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
+                currentParagraph ??= cell != null ? cell.AddParagraph(paragraph: null, removeExistingParagraphs: true) : section.AddParagraph("");
                 AddTextRun(currentParagraph, text, formatting, options);
             }
         }
@@ -419,27 +490,18 @@ namespace OfficeIMO.Word.Html.Converters {
         }
 
         private void ParseCss(string css) {
-            foreach (Match match in Regex.Matches(css, @"(?<sel>[^{}]+)\{(?<body>[^{}]+)\}")) {
-                var selectors = match.Groups["sel"].Value.Split(',');
-                var declarations = ParseDeclarations(match.Groups["body"].Value);
-                foreach (var selector in selectors) {
-                    var trimmed = selector.Trim();
-                    if (trimmed.Length > 0) {
-                        _cssRules.Add(new CssRule(trimmed, new Dictionary<string, string>(declarations)));
-                    }
-                }
+            if (string.IsNullOrWhiteSpace(css)) {
+                return;
             }
-        }
 
-        private static Dictionary<string, string> ParseDeclarations(string body) {
-            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var part in body.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)) {
-                var pieces = part.Split(new[] { ':' }, 2);
-                if (pieces.Length == 2) {
-                    dict[pieces[0].Trim().ToLowerInvariant()] = pieces[1].Trim();
+            try {
+                var sheet = _cssParser.ParseStyleSheet(css);
+                foreach (var rule in sheet.Rules.OfType<ICssStyleRule>()) {
+                    _cssRules.Add(rule);
                 }
+            } catch (Exception) {
+                // ignore invalid CSS blocks
             }
-            return dict;
         }
 
         private void ApplyCssToElement(IElement element) {
@@ -447,52 +509,57 @@ namespace OfficeIMO.Word.Html.Converters {
                 return;
             }
 
-            var accumulated = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var accumulated = new Dictionary<string, (string Value, Priority Specificity, bool Important)>(
+                StringComparer.OrdinalIgnoreCase);
             foreach (var rule in _cssRules) {
-                if (SelectorMatches(rule.Selector, element)) {
-                    foreach (var kvp in rule.Declarations) {
-                        accumulated[kvp.Key] = kvp.Value;
+                var selector = rule.Selector;
+                if (selector != null && selector.Match(element, null)) {
+                    var specificity = selector.Specificity;
+                    foreach (var property in rule.Style) {
+                        var name = property.Name;
+                        var important = property.IsImportant;
+                        if (!accumulated.TryGetValue(name, out var existing)) {
+                            accumulated[name] = (property.Value, specificity, important);
+                        } else if (important) {
+                            if (!existing.Important || specificity >= existing.Specificity) {
+                                accumulated[name] = (property.Value, specificity, true);
+                            }
+                        } else if (!existing.Important && specificity >= existing.Specificity) {
+                            accumulated[name] = (property.Value, specificity, false);
+                        }
                     }
                 }
             }
 
             var inline = element.GetAttribute("style");
             if (!string.IsNullOrEmpty(inline)) {
-                foreach (var kvp in ParseDeclarations(inline)) {
-                    accumulated[kvp.Key] = kvp.Value;
+                try {
+                    var declaration = _cssParser.ParseDeclaration(inline);
+                    foreach (var property in declaration) {
+                        var name = property.Name;
+                        var important = property.IsImportant;
+                        if (!accumulated.TryGetValue(name, out var existing)) {
+                            accumulated[name] = (property.Value, Priority.Inline, important);
+                        } else if (important) {
+                            if (!existing.Important || Priority.Inline >= existing.Specificity) {
+                                accumulated[name] = (property.Value, Priority.Inline, true);
+                            }
+                        } else if (!existing.Important && Priority.Inline >= existing.Specificity) {
+                            accumulated[name] = (property.Value, Priority.Inline, false);
+                        }
+                    }
+                } catch (Exception) {
+                    // ignore invalid inline style
                 }
             }
 
             if (accumulated.Count > 0) {
                 var sb = new StringBuilder();
                 foreach (var kvp in accumulated) {
-                    sb.Append(kvp.Key).Append(':').Append(kvp.Value).Append(';');
+                    sb.Append(kvp.Key).Append(':').Append(kvp.Value.Value).Append(';');
                 }
                 element.SetAttribute("style", sb.ToString());
             }
-        }
-
-        private static bool SelectorMatches(string selector, IElement element) {
-            selector = selector.Trim();
-            if (selector.StartsWith(".", StringComparison.Ordinal)) {
-                var cls = selector.Substring(1);
-                var classAttr = element.GetAttribute("class");
-                if (classAttr == null) {
-                    return false;
-                }
-                foreach (var c in classAttr.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)) {
-                    if (string.Equals(c, cls, StringComparison.OrdinalIgnoreCase)) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            if (selector.StartsWith("#", StringComparison.Ordinal)) {
-                var id = selector.Substring(1);
-                var elemId = element.GetAttribute("id");
-                return string.Equals(elemId, id, StringComparison.OrdinalIgnoreCase);
-            }
-            return string.Equals(element.TagName, selector.ToUpperInvariant(), StringComparison.Ordinal);
         }
     }
 }

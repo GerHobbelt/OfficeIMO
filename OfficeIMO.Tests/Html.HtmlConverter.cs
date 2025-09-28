@@ -1,8 +1,10 @@
 using OfficeIMO.Word.Html;
 using OfficeIMO.Word;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Xunit;
@@ -10,6 +12,11 @@ using Xunit;
 namespace OfficeIMO.Tests;
 
 public partial class Html {
+    private static void RemoveCustomStyle(string styleId) {
+        var field = typeof(WordParagraphStyle).GetField("_customStyles", BindingFlags.NonPublic | BindingFlags.Static);
+        var dict = (IDictionary<string, Style>)field!.GetValue(null);
+        dict.Remove(styleId);
+    }
     [Fact(Skip = "TODO: Implement HTML to Word conversion - currently only stub implementation")]
     public void Test_Html_RoundTrip() {
         string html = "<p>Hello <b>world</b> and <i>universe</i>.</p>";
@@ -26,7 +33,7 @@ public partial class Html {
         Assert.Contains($"font-family:{FontResolver.Resolve("Calibri")}", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(Skip = "TODO: Implement heading conversion (h1-h6 -> WordParagraphStyles.Heading1-6)")]
+    [Fact]
     public void Test_Html_Headings_RoundTrip() {
         string html = "<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3><h4>Heading 4</h4><h5>Heading 5</h5><h6>Heading 6</h6>";
         
@@ -41,7 +48,7 @@ public partial class Html {
         }
     }
 
-    [Fact(Skip = "TODO: Implement list conversion (ul/ol -> WordList)")]
+    [Fact]
     public void Test_Html_Lists_RoundTrip() {
         string html = "<ul><li>Item 1<ul><li>Sub 1</li><li>Sub 2</li></ul></li><li>Item 2</li></ul><ol><li>First</li><li>Second</li></ol>";
         
@@ -54,7 +61,7 @@ public partial class Html {
         Assert.Contains("Second", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(Skip = "TODO: Implement table conversion (HTML table -> WordTable)")]
+    [Fact]
     public void Test_Html_Table_RoundTrip() {
         string html = "<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>";
         
@@ -78,7 +85,7 @@ public partial class Html {
         Assert.Contains("Inner", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(Skip = "TODO: Implement image conversion (base64 -> WordImage)")]
+    [Fact]
     public void Test_Html_Image_Base64_RoundTrip() {
         string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
         byte[] imageBytes = File.ReadAllBytes(assetPath);
@@ -92,7 +99,7 @@ public partial class Html {
         Assert.Contains("data:image/png;base64", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(Skip = "TODO: Implement image conversion (file URL -> WordImage)")]
+    [Fact]
     public void Test_Html_Image_File_RoundTrip() {
         string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
         string uri = new Uri(assetPath).AbsoluteUri;
@@ -168,6 +175,35 @@ public partial class Html {
         string roundTrip = doc.ToHtml();
         Assert.Contains("<blockquote>", roundTrip, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Quoted text", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_Blockquote_WithoutQuoteStyle() {
+        RemoveCustomStyle("Quote");
+        string html = "<blockquote>Quoted text</blockquote>";
+
+        var doc = html.LoadFromHtml(new HtmlToWordOptions());
+
+        Assert.False(doc.StyleExists("Quote"));
+        Assert.Equal("Quoted text", doc.Paragraphs[0].Text);
+        Assert.True(doc.Paragraphs[0].IndentationBefore > 0);
+        Assert.Null(doc.Paragraphs[0].Style);
+    }
+
+    [Fact]
+    public void Test_Html_Blockquote_WithQuoteStyle() {
+        RemoveCustomStyle("Quote");
+        var quote = WordParagraphStyle.CreateFontStyle("Quote", "Arial");
+        WordParagraphStyle.RegisterCustomStyle("Quote", quote);
+
+        string html = "<blockquote>Quoted text</blockquote>";
+        var doc = html.LoadFromHtml(new HtmlToWordOptions());
+
+        Assert.True(doc.StyleExists("Quote"));
+        Assert.Equal("Quoted text", doc.Paragraphs[0].Text);
+        Assert.Equal(WordParagraphStyles.Custom, doc.Paragraphs[0].Style);
+
+        RemoveCustomStyle("Quote");
     }
 
     [Fact]
