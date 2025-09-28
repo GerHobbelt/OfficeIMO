@@ -28,13 +28,13 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public string Name {
             get {
-                return _sheet.Name;
+                return _sheet.Name?.Value ?? string.Empty;
             }
             set {
                 _sheet.Name = value;
             }
         }
-        private readonly UInt32Value Id;
+        private readonly UInt32Value _id;
         private readonly WorksheetPart _worksheetPart;
         private readonly SpreadsheetDocument _spreadSheetDocument;
         private readonly ExcelDocument _excelDocument;
@@ -58,10 +58,17 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public NoLockContext BeginNoLock() => new();
 
+        /// <summary>
+        /// Represents a scope where worksheet operations bypass locking.
+        /// </summary>
         public sealed class NoLockContext : IDisposable
         {
             private readonly IDisposable _scope;
             internal NoLockContext() => _scope = Locking.EnterNoLockScope();
+
+            /// <summary>
+            /// Ends the no-lock scope and restores normal locking behavior.
+            /// </summary>
             public void Dispose() => _scope.Dispose();
         }
 
@@ -86,13 +93,9 @@ namespace OfficeIMO.Excel {
             _sheet = sheet;
             _spreadSheetDocument = spreadSheetDocument;
 
-            var list = _spreadSheetDocument.WorkbookPart.WorksheetParts.ToList();
-            foreach (var worksheetPart in list) {
-                var id = spreadSheetDocument.WorkbookPart.GetIdOfPart(worksheetPart);
-                if (id == _sheet.Id) {
-                    _worksheetPart = worksheetPart;
-                }
-            }
+            var workbookPart = spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
+            _worksheetPart = (WorksheetPart)workbookPart.GetPartById(sheet.Id!);
+            _id = sheet.SheetId!;
         }
 
         /// <summary>
@@ -106,7 +109,7 @@ namespace OfficeIMO.Excel {
             _excelDocument = excelDocument;
             _spreadSheetDocument = spreadSheetDocument;
 
-            UInt32Value id = excelDocument.id.Max() + 1;
+            UInt32Value id = excelDocument.id.Max(v => v.Value) + 1;
             if (name == "") {
                 name = "Sheet1";
             }
@@ -116,11 +119,12 @@ namespace OfficeIMO.Excel {
             worksheetPart.Worksheet = new Worksheet(new SheetData());
 
             // Add Sheets to the Workbook.
-            Sheets sheets = null;
-            if (spreadSheetDocument.WorkbookPart.Workbook.Sheets != null) {
-                sheets = spreadSheetDocument.WorkbookPart.Workbook.Sheets;
+            var spWorkbookPart = spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
+            Sheets sheets;
+            if (spWorkbookPart.Workbook.Sheets != null) {
+                sheets = spWorkbookPart.Workbook.Sheets;
             } else {
-                sheets = spreadSheetDocument.WorkbookPart.Workbook.AppendChild<Sheets>(new Sheets());
+                sheets = spWorkbookPart.Workbook.AppendChild(new Sheets());
             }
 
             // Append a new worksheet and associate it with the workbook.
@@ -133,7 +137,7 @@ namespace OfficeIMO.Excel {
 
             this._sheet = sheet;
             this.Name = name;
-            this.Id = sheet.SheetId;
+            this._id = sheet.SheetId!;
             this._worksheetPart = worksheetPart;
 
             excelDocument.id.Add(id);
@@ -147,14 +151,14 @@ namespace OfficeIMO.Excel {
                 throw new ArgumentOutOfRangeException(nameof(column));
             }
 
-            SheetData sheetData = _worksheetPart.Worksheet.GetFirstChild<SheetData>();
-            if (sheetData == null) {
-                sheetData = _worksheetPart.Worksheet.AppendChild(new SheetData());
-            }
+              SheetData? sheetData = _worksheetPart.Worksheet.GetFirstChild<SheetData>();
+              if (sheetData == null) {
+                  sheetData = _worksheetPart.Worksheet.AppendChild(new SheetData());
+              }
 
             // Find or create row with proper ordering
-            Row rowElement = null;
-            Row insertAfterRow = null;
+              Row? rowElement = null;
+              Row? insertAfterRow = null;
             foreach (Row r in sheetData.Elements<Row>()) {
                 if (r.RowIndex != null) {
                     if (r.RowIndex.Value == (uint)row) {
@@ -187,8 +191,8 @@ namespace OfficeIMO.Excel {
             string cellReference = GetColumnName(column) + row.ToString(CultureInfo.InvariantCulture);
 
             // Find or create cell with proper ordering
-            Cell cell = null;
-            Cell insertAfterCell = null;
+              Cell? cell = null;
+              Cell? insertAfterCell = null;
             foreach (Cell c in rowElement.Elements<Cell>()) {
                 if (c.CellReference != null) {
                     if (c.CellReference.Value == cellReference) {
@@ -347,7 +351,8 @@ namespace OfficeIMO.Excel {
 
         private SixLabors.Fonts.Font? GetWorkbookDefaultFont() {
             try {
-                var stylesPart = _spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+                var workbookPart = _spreadSheetDocument.WorkbookPart;
+                var stylesPart = workbookPart?.WorkbookStylesPart;
                 var stylesheet = stylesPart?.Stylesheet;
                 var fonts = stylesheet?.Fonts;
                 var firstFont = fonts?.Elements<DocumentFormat.OpenXml.Spreadsheet.Font>().FirstOrDefault();
@@ -385,7 +390,8 @@ namespace OfficeIMO.Excel {
             var defaultFont = GetDefaultFont();
             if (cell.StyleIndex == null) return defaultFont;
 
-            var stylesPart = _spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+            var workbookPart = _spreadSheetDocument.WorkbookPart;
+            var stylesPart = workbookPart?.WorkbookStylesPart;
             var stylesheet = stylesPart?.Stylesheet;
             var fonts = stylesheet?.Fonts;
             var cellFormats = stylesheet?.CellFormats;
@@ -414,6 +420,9 @@ namespace OfficeIMO.Excel {
             }
         }
 
+        /// <summary>
+        /// Releases resources held by this worksheet.
+        /// </summary>
         public void Dispose() {
             // No local lock to dispose anymore - using document's lock
         }

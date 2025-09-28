@@ -237,10 +237,11 @@ namespace OfficeIMO.Excel {
 
         private void ApplyWrapText(Cell cell)
         {
-            WorkbookStylesPart stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+            var workbookPart = _excelDocument._spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
+            WorkbookStylesPart? stylesPart = workbookPart.WorkbookStylesPart;
             if (stylesPart == null)
             {
-                stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.AddNewPart<WorkbookStylesPart>();
+                stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
             }
 
             Stylesheet stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
@@ -315,9 +316,10 @@ namespace OfficeIMO.Excel {
 
         private void ApplyFontBold(Cell cell, bool bold)
         {
-            var stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+            var workbookPart = _excelDocument._spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
+            var stylesPart = workbookPart.WorkbookStylesPart;
             if (stylesPart == null)
-                stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.AddNewPart<WorkbookStylesPart>();
+                stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
 
             var stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
             stylesheet.Fonts ??= new Fonts(new DocumentFormat.OpenXml.Spreadsheet.Font());
@@ -386,9 +388,10 @@ namespace OfficeIMO.Excel {
 
         private void ApplyBackground(Cell cell, string hexColor)
         {
-            var stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+            var workbookPart = _excelDocument._spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
+            var stylesPart = workbookPart.WorkbookStylesPart;
             if (stylesPart == null)
-                stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.AddNewPart<WorkbookStylesPart>();
+                stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
 
             var stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
             stylesheet.Fills ??= new Fills(new Fill(new PatternFill { PatternType = PatternValues.None }));
@@ -439,9 +442,10 @@ namespace OfficeIMO.Excel {
         private void ApplyBuiltInNumberFormat(int row, int column, uint builtInFormatId) {
             Cell cell = GetCell(row, column);
 
-            WorkbookStylesPart stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+            var workbookPart = _excelDocument._spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
+            WorkbookStylesPart? stylesPart = workbookPart.WorkbookStylesPart;
             if (stylesPart == null) {
-                stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.AddNewPart<WorkbookStylesPart>();
+                stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
             }
 
             Stylesheet stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
@@ -483,76 +487,70 @@ namespace OfficeIMO.Excel {
         private void FormatCellCore(int row, int column, string numberFormat) {
             Cell cell = GetCell(row, column);
 
-            WorkbookStylesPart stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.WorkbookStylesPart;
+            var workbookPart = _excelDocument._spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
+            WorkbookStylesPart? stylesPart = workbookPart.WorkbookStylesPart;
             if (stylesPart == null) {
-                stylesPart = _excelDocument._spreadSheetDocument.WorkbookPart.AddNewPart<WorkbookStylesPart>();
+                stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
             }
 
             Stylesheet stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
 
-                stylesheet.Fonts ??= new Fonts(new DocumentFormat.OpenXml.Spreadsheet.Font());
-                stylesheet.Fonts.Count = (uint)stylesheet.Fonts.Count();
+            stylesheet.Fonts ??= new Fonts(new DocumentFormat.OpenXml.Spreadsheet.Font());
+            stylesheet.Fonts.Count = (uint)stylesheet.Fonts.Count();
 
-                stylesheet.Fills ??= new Fills(new Fill());
-                stylesheet.Fills.Count = (uint)stylesheet.Fills.Count();
+            stylesheet.Fills ??= new Fills(new Fill());
+            stylesheet.Fills.Count = (uint)stylesheet.Fills.Count();
 
-                stylesheet.Borders ??= new Borders(new Border());
-                stylesheet.Borders.Count = (uint)stylesheet.Borders.Count();
+            stylesheet.Borders ??= new Borders(new Border());
+            stylesheet.Borders.Count = (uint)stylesheet.Borders.Count();
 
-                stylesheet.CellStyleFormats ??= new CellStyleFormats(new CellFormat());
-                stylesheet.CellStyleFormats.Count = (uint)stylesheet.CellStyleFormats.Count();
+            stylesheet.CellStyleFormats ??= new CellStyleFormats(new CellFormat());
+            stylesheet.CellStyleFormats.Count = (uint)stylesheet.CellStyleFormats.Count();
 
-                stylesheet.CellFormats ??= new CellFormats(new CellFormat());
-                if (stylesheet.CellFormats.Count == null || stylesheet.CellFormats.Count.Value == 0) {
-                    stylesheet.CellFormats.Count = 1;
-                }
+            stylesheet.CellFormats ??= new CellFormats(new CellFormat());
+            if (stylesheet.CellFormats.Count == null || stylesheet.CellFormats.Count.Value == 0) {
+                stylesheet.CellFormats.Count = 1;
+            }
 
-                stylesheet.NumberingFormats ??= new NumberingFormats();
+            stylesheet.NumberingFormats ??= new NumberingFormats();
+            NumberingFormat? existingFormat = stylesheet.NumberingFormats.Elements<NumberingFormat>()
+                .FirstOrDefault(n => n.FormatCode != null && n.FormatCode.Value == numberFormat);
 
-                NumberingFormat existingFormat = stylesheet.NumberingFormats.Elements<NumberingFormat>()
-                    .FirstOrDefault(n => n.FormatCode != null && n.FormatCode.Value == numberFormat);
+            uint numberFormatId;
+            if (existingFormat != null) {
+                numberFormatId = existingFormat.NumberFormatId!.Value;
+            } else {
+                numberFormatId = stylesheet.NumberingFormats.Elements<NumberingFormat>().Any()
+                    ? stylesheet.NumberingFormats.Elements<NumberingFormat>().Max(n => n.NumberFormatId!.Value) + 1
+                    : 164U;
+                NumberingFormat numberingFormat = new NumberingFormat {
+                    NumberFormatId = numberFormatId,
+                    FormatCode = StringValue.FromString(numberFormat)
+                };
+                stylesheet.NumberingFormats.Append(numberingFormat);
+                stylesheet.NumberingFormats.Count = (uint)stylesheet.NumberingFormats.Count();
+            }
 
-                uint numberFormatId;
-                if (existingFormat != null) {
-                    numberFormatId = existingFormat.NumberFormatId.Value;
-                } else {
-                    numberFormatId = stylesheet.NumberingFormats.Elements<NumberingFormat>().Any()
-                        ? stylesheet.NumberingFormats.Elements<NumberingFormat>().Max(n => n.NumberFormatId.Value) + 1
-                        : 164U;
-                    NumberingFormat numberingFormat = new NumberingFormat {
-                        NumberFormatId = numberFormatId,
-                        FormatCode = StringValue.FromString(numberFormat)
-                    };
-                    stylesheet.NumberingFormats.Append(numberingFormat);
-                    stylesheet.NumberingFormats.Count = (uint)stylesheet.NumberingFormats.Count();
-                }
+            var cellFormats = stylesheet.CellFormats.Elements<CellFormat>().ToList();
+            int formatIndex = cellFormats.FindIndex(cf => cf.NumberFormatId != null && cf.NumberFormatId.Value == numberFormatId && cf.ApplyNumberFormat != null && cf.ApplyNumberFormat.Value);
+            if (formatIndex == -1) {
+                CellFormat cellFormat = new CellFormat {
+                    NumberFormatId = numberFormatId,
+                    FontId = 0,
+                    FillId = 0,
+                    BorderId = 0,
+                    FormatId = 0,
+                    ApplyNumberFormat = true
+                };
+                stylesheet.CellFormats.Append(cellFormat);
+                stylesheet.CellFormats.Count = (uint)stylesheet.CellFormats.Count();
+                formatIndex = cellFormats.Count;
+            }
 
-                var cellFormats = stylesheet.CellFormats.Elements<CellFormat>().ToList();
-                int formatIndex = cellFormats.FindIndex(cf => cf.NumberFormatId != null && cf.NumberFormatId.Value == numberFormatId && cf.ApplyNumberFormat != null && cf.ApplyNumberFormat.Value);
-                if (formatIndex == -1) {
-                    CellFormat cellFormat = new CellFormat {
-                        NumberFormatId = numberFormatId,
-                        FontId = 0,
-                        FillId = 0,
-                        BorderId = 0,
-                        FormatId = 0,
-                        ApplyNumberFormat = true
-                    };
-                    stylesheet.CellFormats.Append(cellFormat);
-                    stylesheet.CellFormats.Count = (uint)stylesheet.CellFormats.Count();
-                    formatIndex = cellFormats.Count;
-                }
-
-                cell.StyleIndex = (uint)formatIndex;
+            cell.StyleIndex = (uint)formatIndex;
                 stylesPart.Stylesheet.Save();
         }
 
-        /// <summary>
-        /// Sets the value of a cell.
-        /// </summary>
-        /// <param name="row">The 1-based row index.</param>
-        /// <param name="column">The 1-based column index.</param>
-        /// <param name="value">The value to assign.</param>
         /// <summary>
         /// Sets the specified value into a cell, inferring the data type.
         /// </summary>

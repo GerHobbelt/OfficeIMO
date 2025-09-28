@@ -1,20 +1,20 @@
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Vml;
+using DocumentFormat.OpenXml.Wordprocessing;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
-using DocumentFormat.OpenXml.Wordprocessing;
-using DocumentFormat.OpenXml;
-using V = DocumentFormat.OpenXml.Vml;
+using Color = SixLabors.ImageSharp.Color;
 using Ovml = DocumentFormat.OpenXml.Vml.Office;
 using Paragraph = DocumentFormat.OpenXml.Wordprocessing.Paragraph;
 using ParagraphProperties = DocumentFormat.OpenXml.Wordprocessing.ParagraphProperties;
 using Picture = DocumentFormat.OpenXml.Wordprocessing.Picture;
 using Run = DocumentFormat.OpenXml.Wordprocessing.Run;
 using RunProperties = DocumentFormat.OpenXml.Wordprocessing.RunProperties;
+using V = DocumentFormat.OpenXml.Vml;
 using Wvml = DocumentFormat.OpenXml.Vml.Wordprocessing;
-using DocumentFormat.OpenXml.Vml;
-using Color = SixLabors.ImageSharp.Color;
 
 namespace OfficeIMO.Word {
     /// <summary>
@@ -395,7 +395,9 @@ namespace OfficeIMO.Word {
 
         /// <summary>
         /// Gets or sets color of the watermark.
-        /// Some colors are not supported. If you set unsupported color, it will be ignored.
+        /// Accepted formats for setting the color are named colors (for example, "red")
+        /// or three- or six-digit hexadecimal strings with or without a leading '#'.
+        /// Invalid color values will result in <see cref="ArgumentException"/> being thrown.
         /// </summary>
         public SixLabors.ImageSharp.Color? Color {
             get {
@@ -415,20 +417,39 @@ namespace OfficeIMO.Word {
 
         /// <summary>
         /// Gets or sets the fill color of the watermark.
-        /// The value can be a known color name or a hex value without the leading '#'.
+        /// The value can be a named color (e.g., "red") or a three- or six-digit hex value with
+        /// or without the leading '#'. Three-digit hex values are expanded to six digits.
+        /// Invalid inputs will throw <see cref="ArgumentException"/>.
         /// </summary>
         public string ColorHex {
             get {
                 var shape = _shape;
                 if (shape?.FillColor?.Value != null) {
-                    return shape.FillColor.Value;
+                    var color = shape.FillColor.Value;
+                    return color.StartsWith("#", StringComparison.Ordinal) ? color.Substring(1) : color;
                 }
                 return "";
             }
             set {
                 var shape = _shape;
-                if (shape?.FillColor != null) {
-                    shape.FillColor.Value = value;
+                if (shape?.FillColor != null && value != null) {
+                    var normalized = Helpers.NormalizeColor(value);
+                    if (normalized == null) {
+                        throw new ArgumentException("Color value cannot be null or empty.", nameof(value));
+                    }
+                    var colorWithHash = "#" + normalized;
+                    shape.FillColor.Value = colorWithHash;
+
+                    var fill = shape.GetFirstChild<V.Fill>();
+                    if (fill != null) {
+                        fill.Color = colorWithHash;
+                    }
+
+                    var textPath = shape.GetFirstChild<V.TextPath>();
+                    if (textPath != null) {
+                        textPath.SetAttribute(new OpenXmlAttribute("fillcolor", string.Empty, colorWithHash));
+                        textPath.SetAttribute(new OpenXmlAttribute("strokecolor", string.Empty, colorWithHash));
+                    }
                 }
             }
         }

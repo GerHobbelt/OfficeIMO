@@ -7,13 +7,15 @@ using OfficeIMO;
 using OfficeIMO.Word;
 using OfficeIMO.Word.Fluent;
 using Xunit;
+using Color = SixLabors.ImageSharp.Color;
 
 namespace OfficeIMO.Tests {
     public partial class Word {
         private static void RemoveCustomStyle(string styleId) {
             var field = typeof(WordParagraphStyle).GetField("_customStyles", BindingFlags.NonPublic | BindingFlags.Static);
-            var dict = (IDictionary<string, Style>)field!.GetValue(null);
-            dict.Remove(styleId);
+            var dict = (IDictionary<string, Style>?)field!.GetValue(null);
+            Assert.NotNull(dict);
+            dict!.Remove(styleId);
         }
 
         [Fact]
@@ -75,6 +77,32 @@ namespace OfficeIMO.Tests {
 
             using (var document = WordDocument.Load(filePath)) {
                 Assert.Equal(JustificationValues.Both, document.Paragraphs.Last().ParagraphAlignment);
+            }
+        }
+
+        [Fact]
+        public void Test_FluentParagraphBuilderBorderAndShading() {
+            string filePath = Path.Combine(_directoryWithFiles, "FluentParagraphBuilderBorderShading.docx");
+
+            using (var document = WordDocument.Create(filePath)) {
+                document.AsFluent()
+                    .Paragraph(p => p.Text("Border and shading")
+                        .Border(b => {
+                            b.LeftStyle = BorderValues.Thick;
+                            b.LeftColor = Color.Blue;
+                            b.LeftSize = 24;
+                        })
+                        .Shading(Color.LightGray))
+                    .End()
+                    .Save(false);
+            }
+
+            using (var document = WordDocument.Load(filePath)) {
+                var paragraph = document.Paragraphs[0];
+                Assert.Equal(BorderValues.Thick, paragraph.Borders.LeftStyle);
+                Assert.Equal(Color.Blue.ToHexColor(), paragraph.Borders.LeftColor!.Value.ToHexColor());
+                Assert.Equal(24U, paragraph.Borders.LeftSize!.Value);
+                Assert.Equal(Color.LightGray.ToHexColor(), paragraph.ShadingFillColorHex);
             }
         }
     }
