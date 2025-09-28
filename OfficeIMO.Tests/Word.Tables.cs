@@ -555,6 +555,93 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
         }
+
+        [Fact]
+        public void Test_SplitVerticallyKeepsIndices() {
+            string filePath = Path.Combine(_directoryWithFiles, "SplitVerticallyIndices.docx");
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                WordTable table = document.AddTable(4, 2, WordTableStyle.PlainTable1);
+
+                table.Rows[0].Cells[0].MergeVertically(2, true);
+
+                Assert.True(table.Rows[0].Cells[0].HasVerticalMerge);
+                Assert.True(table.Rows[1].Cells[0].HasVerticalMerge);
+                Assert.True(table.Rows[2].Cells[0].HasVerticalMerge);
+
+                Assert.Equal(4, table.RowsCount);
+                foreach (var row in table.Rows) {
+                    Assert.Equal(2, row.CellsCount);
+                }
+
+                table.Rows[0].Cells[0].SplitVertically(2);
+
+                Assert.Equal(4, table.RowsCount);
+                foreach (var row in table.Rows) {
+                    Assert.Equal(2, row.CellsCount);
+                }
+
+                document.Save();
+            }
+
+            using (WordDocument document = WordDocument.Load(Path.Combine(_directoryWithFiles, "SplitVerticallyIndices.docx"))) {
+                var table = document.Tables[0];
+
+                Assert.Equal(4, table.RowsCount);
+                foreach (var row in table.Rows) {
+                    Assert.Equal(2, row.CellsCount);
+                }
+                Assert.False(table.Rows[0].Cells[0].HasVerticalMerge);
+                Assert.False(table.Rows[1].Cells[0].HasVerticalMerge);
+                Assert.False(table.Rows[2].Cells[0].HasVerticalMerge);
+
+                document.Save();
+            }
+        }
+
+        [Fact]
+        public void Test_SplitHorizontallyKeepsIndices() {
+            string filePath = Path.Combine(_directoryWithFiles, "SplitHorizontallyIndices.docx");
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                WordTable table = document.AddTable(2, 4, WordTableStyle.PlainTable1);
+
+                table.Rows[0].Cells[1].MergeHorizontally(2, true);
+
+                Assert.Equal(2, table.RowsCount);
+                foreach (var row in table.Rows) {
+                    Assert.Equal(4, row.CellsCount);
+                }
+
+                Assert.True(table.Rows[0].Cells[1].HasHorizontalMerge);
+                Assert.True(table.Rows[0].Cells[2].HasHorizontalMerge);
+                Assert.True(table.Rows[0].Cells[3].HasHorizontalMerge);
+
+                table.Rows[0].Cells[1].SplitHorizontally(2);
+
+                foreach (var row in table.Rows) {
+                    Assert.Equal(4, row.CellsCount);
+                }
+
+                Assert.False(table.Rows[0].Cells[1].HasHorizontalMerge);
+                Assert.False(table.Rows[0].Cells[2].HasHorizontalMerge);
+                Assert.False(table.Rows[0].Cells[3].HasHorizontalMerge);
+
+                document.Save();
+            }
+
+            using (WordDocument document = WordDocument.Load(Path.Combine(_directoryWithFiles, "SplitHorizontallyIndices.docx"))) {
+                var table = document.Tables[0];
+
+                Assert.Equal(2, table.RowsCount);
+                foreach (var row in table.Rows) {
+                    Assert.Equal(4, row.CellsCount);
+                }
+                Assert.False(table.Rows[0].Cells[1].HasHorizontalMerge);
+                Assert.False(table.Rows[0].Cells[2].HasHorizontalMerge);
+                Assert.False(table.Rows[0].Cells[3].HasHorizontalMerge);
+
+                document.Save();
+            }
+        }
         [Fact]
         public void Test_CreatingWordDocumentWithTablesWithSections() {
             string filePath = Path.Combine(_directoryWithFiles, "CreatedDocumentWithTablesAndSections.docx");
@@ -1164,6 +1251,34 @@ namespace OfficeIMO.Tests {
                 Assert.True(document.Tables[0].Rows.Count == 8);
 
                 document.Save(false);
+            }
+        }
+
+        [Fact]
+        public void Test_CloningTable() {
+            string filePath = Path.Combine(_directoryWithFiles, "TableClone.docx");
+            using (WordDocument document = WordDocument.Create(filePath)) {
+                WordTable table = document.AddTable(2, 2);
+                table.Rows[0].Cells[0].Paragraphs[0].Text = "A1";
+                table.Rows[0].Cells[1].Paragraphs[0].Text = "A2";
+                table.Rows[1].Cells[0].Paragraphs[0].Text = "B1";
+                table.Rows[1].Cells[1].Paragraphs[0].Text = "B2";
+
+                WordTable cloned = table.Clone();
+
+                Assert.Equal(2, document.Tables.Count);
+                Assert.Equal("A1", cloned.Rows[0].Cells[0].Paragraphs[0].Text);
+                Assert.Equal("B2", cloned.Rows[1].Cells[1].Paragraphs[0].Text);
+
+                document.Save(false);
+            }
+
+            using (WordDocument document = WordDocument.Load(filePath)) {
+                Assert.Equal(2, document.Tables.Count);
+                Assert.Equal(document.Tables[0].Rows[0].Cells[0].Paragraphs[0].Text,
+                             document.Tables[1].Rows[0].Cells[0].Paragraphs[0].Text);
+                Assert.Equal(document.Tables[0].Rows[1].Cells[1].Paragraphs[0].Text,
+                             document.Tables[1].Rows[1].Cells[1].Paragraphs[0].Text);
             }
         }
 

@@ -36,6 +36,7 @@ namespace OfficeIMO.Examples {
             AdvancedDocument.Example_AdvancedWord2(folderPath, false);
 
             ContentControls.Example_AddContentControl(folderPath, false);
+            CheckBoxes.Example_BasicCheckBox(folderPath, false);
 
             Paragraphs.Example_BasicParagraphs(folderPath, false);
             Paragraphs.Example_BasicParagraphStyles(folderPath, false);
@@ -62,6 +63,7 @@ namespace OfficeIMO.Examples {
             Lists.Example_BasicLists12(folderPath, false);
             Lists.Example_CustomList1(folderPath, false);
             Lists.Example_BasicListsWithChangedStyling(folderPath, false);
+            Lists.Example_CloneList(folderPath, false);
 
             Tables.Example_BasicTables1(folderPath, false);
             Tables.Example_BasicTablesLoad1(folderPath, false);
@@ -79,6 +81,9 @@ namespace OfficeIMO.Examples {
             Tables.Example_UnifiedTableBorders(folderPath, false);
             Tables.Example_BasicTables10_StylesModificationWithCentimeters(folderPath, false);
             Tables.Example_DifferentTableSizes(folderPath, false);
+            Tables.Example_CloneTable(folderPath, false);
+            Tables.Example_SplitVertically(folderPath, false);
+            Tables.Example_SplitHorizontally(folderPath, false);
             PageSettings.Example_BasicSettings(folderPath, false);
             PageSettings.Example_PageOrientation(folderPath, false);
 
@@ -110,6 +115,8 @@ namespace OfficeIMO.Examples {
             HyperLinks.EasyExample(folderPath, false);
             HyperLinks.Example_BasicWordWithHyperLinks(folderPath, false);
             HyperLinks.Example_FormattedHyperLinks(folderPath, false);
+            HyperLinks.Example_FormattedHyperLinksAdvanced(folderPath, false);
+            HyperLinks.Example_FormattedHyperLinksListReuse(folderPath, false);
             HyperLinks.Example_AddingFields(folderPath, false);
             HyperLinks.Example_BasicWordWithHyperLinksInTables(folderPath, false);
 
@@ -146,6 +153,7 @@ namespace OfficeIMO.Examples {
             TOC.Example_BasicTOC2(folderPath, false);
 
             Comments.Example_PlayingWithComments(folderPath, false);
+            Comments.Example_RemoveCommentsAndTrack(folderPath, false);
 
             BasicExcelFunctionality.BasicExcel_Example1(folderPath, false);
             BasicExcelFunctionality.BasicExcel_Example2(folderPath, false);
@@ -163,6 +171,7 @@ namespace OfficeIMO.Examples {
             Watermark.Watermark_Sample1(folderPath, false);
             Watermark.Watermark_Sample3(folderPath, false);
             Watermark.Watermark_SampleImage1(folderPath, false);
+            Watermark.Watermark_Remove(folderPath, false);
 
             Embed.Example_EmbedFileHTML(folderPath, templatesPath, false);
             Embed.Example_EmbedFileRTF(folderPath, templatesPath, false);
@@ -170,12 +179,14 @@ namespace OfficeIMO.Examples {
             Embed.Example_EmbedFileRTFandHTMLandTOC(folderPath, templatesPath, false);
             Embed.Example_EmbedFileMultiple(folderPath, templatesPath, false);
             Embed.Example_EmbedHTMLFragment(folderPath, false);
+            Embed.Example_EmbedFragmentAfter(folderPath, false);
 
             CleanupDocuments.CleanupDocuments_Sample01(false);
             CleanupDocuments.CleanupDocuments_Sample02(folderPath, false);
 
             FindAndReplace.Example_FindAndReplace01(folderPath, false);
             FindAndReplace.Example_FindAndReplace02(folderPath, false);
+            FindAndReplace.Example_ReplaceTextWithHtmlFragment(folderPath, false);
 
             FootNotes.Example_DocumentWithFootNotes(templatesPath, false);
             FootNotes.Example_DocumentWithFootNotesEmpty(folderPath, false);
@@ -193,10 +204,17 @@ namespace OfficeIMO.Examples {
             WordTextBox.Example_AddingTextbox3(folderPath, false);
             WordTextBox.Example_AddingTextboxCentimeters(folderPath, false);
 
+            Embed.Example_EmbedFileExcel(folderPath, templatesPath, false);
             Shapes.Example_AddBasicShape(folderPath, false);
+            Shapes.Example_AddLine(folderPath, false);
+            Shapes.Example_AddEllipseAndPolygon(folderPath, false);
             Shapes.Example_AddMultipleShapes(folderPath, false);
             Shapes.Example_RemoveShape(folderPath, false);
             Shapes.Example_LoadShapes(folderPath, false);
+
+            Revisions.Example_TrackedChanges(folderPath, false);
+            MailMerge.Example_MailMergeSimple(folderPath, false);
+            MailMerge.Example_MailMergeAdvanced(folderPath, false);
         }
     }
 }

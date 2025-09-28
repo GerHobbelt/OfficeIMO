@@ -151,6 +151,17 @@ namespace OfficeIMO.Word {
             }
         }
 
+        public List<WordParagraph> ParagraphsCheckBoxes {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsCheckBoxes);
+                }
+
+                return list;
+            }
+        }
+
         public List<WordParagraph> ParagraphsCharts {
             get {
                 List<WordParagraph> list = new List<WordParagraph>();
@@ -177,6 +188,16 @@ namespace OfficeIMO.Word {
                 List<WordParagraph> list = new List<WordParagraph>();
                 foreach (var section in this.Sections) {
                     list.AddRange(section.ParagraphsTextBoxes);
+                }
+                return list;
+            }
+        }
+
+        public List<WordParagraph> ParagraphsEmbeddedObjects {
+            get {
+                List<WordParagraph> list = new List<WordParagraph>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.ParagraphsEmbeddedObjects);
                 }
                 return list;
             }
@@ -269,6 +290,90 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Removes comment with the specified id.
+        /// </summary>
+        /// <param name="commentId">Id of the comment to remove.</param>
+        public void RemoveComment(string commentId) {
+            var comment = this.Comments.FirstOrDefault(c => c.Id == commentId);
+            comment?.Delete();
+        }
+
+        /// <summary>
+        /// Removes the specified comment from the document.
+        /// </summary>
+        /// <param name="comment">Comment instance to remove.</param>
+        public void RemoveComment(WordComment comment) {
+            comment?.Delete();
+        }
+
+        /// <summary>
+        /// Removes all comments from the document.
+        /// </summary>
+        public void RemoveAllComments() {
+            foreach (var comment in this.Comments.ToList()) {
+                comment.Delete();
+            }
+        }
+
+        /// <summary>
+        /// Gets the value of a document variable or <c>null</c> if the variable does not exist.
+        /// </summary>
+        /// <param name="name">Variable name.</param>
+        public string GetDocumentVariable(string name) {
+            return DocumentVariables.ContainsKey(name) ? DocumentVariables[name] : null;
+        }
+
+        /// <summary>
+        /// Sets the value of a document variable. Creates it if it does not exist.
+        /// </summary>
+        /// <param name="name">Variable name.</param>
+        /// <param name="value">Variable value.</param>
+        public void SetDocumentVariable(string name, string value) {
+            DocumentVariables[name] = value;
+        }
+
+        /// <summary>
+        /// Removes the document variable with the specified name if present.
+        /// </summary>
+        /// <param name="name">Variable name.</param>
+        public void RemoveDocumentVariable(string name) {
+            DocumentVariables.Remove(name);
+        }
+
+        /// <summary>
+        /// Removes the document variable at the specified index.
+        /// </summary>
+        /// <param name="index">Zero-based index of the variable to remove.</param>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when index is out of range.</exception>
+        public void RemoveDocumentVariableAt(int index) {
+            if (index < 0 || index >= DocumentVariables.Count) {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+            string key = DocumentVariables.Keys.ElementAt(index);
+            DocumentVariables.Remove(key);
+        }
+
+        /// <summary>
+        /// Determines whether the document contains any document variables.
+        /// </summary>
+        public bool HasDocumentVariables => DocumentVariables.Count > 0;
+
+        /// <summary>
+        /// Returns a read-only view of all document variables.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> GetDocumentVariables() {
+            return new Dictionary<string, string>(DocumentVariables);
+        }
+
+        /// <summary>
+        /// Enable or disable tracking of comment changes.
+        /// </summary>
+        public bool TrackComments {
+            get => this.Settings.TrackComments;
+            set => this.Settings.TrackComments = value;
+        }
+
+        /// <summary>
         /// Gets the lists in the document
         /// </summary>
         /// <value>
@@ -305,7 +410,8 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
-        /// Provides a list of all watermarks within the document from all the sections
+        /// Provides a list of all watermarks within the document from all the
+        /// sections, including watermarks defined in headers.
         /// </summary>
         public List<WordWatermark> Watermarks {
             get {
@@ -365,6 +471,16 @@ namespace OfficeIMO.Word {
                     list.AddRange(section.Images);
                 }
 
+                return list;
+            }
+        }
+
+        public List<WordEmbeddedObject> EmbeddedObjects {
+            get {
+                List<WordEmbeddedObject> list = new List<WordEmbeddedObject>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.EmbeddedObjects);
+                }
                 return list;
             }
         }
@@ -435,6 +551,17 @@ namespace OfficeIMO.Word {
             }
         }
 
+        public List<WordCheckBox> CheckBoxes {
+            get {
+                List<WordCheckBox> list = new List<WordCheckBox>();
+                foreach (var section in this.Sections) {
+                    list.AddRange(section.CheckBoxes);
+                }
+
+                return list;
+            }
+        }
+
         public List<WordEquation> Equations {
             get {
                 List<WordEquation> list = new List<WordEquation>();
@@ -456,6 +583,10 @@ namespace OfficeIMO.Word {
         public BuiltinDocumentProperties BuiltinDocumentProperties;
 
         public readonly Dictionary<string, WordCustomProperty> CustomDocumentProperties = new Dictionary<string, WordCustomProperty>();
+        /// <summary>
+        /// Collection of document variables accessible via <see cref="DocVariable"/> fields.
+        /// </summary>
+        public Dictionary<string, string> DocumentVariables { get; } = new Dictionary<string, string>();
 
         public bool AutoSave => _wordprocessingDocument.AutoSave;
 
@@ -607,6 +738,7 @@ namespace OfficeIMO.Word {
             var applicationProperties = new ApplicationProperties(this);
             var builtinDocumentProperties = new BuiltinDocumentProperties(this);
             var wordCustomProperties = new WordCustomProperties(this);
+            var wordDocumentVariables = new WordDocumentVariables(this);
             var wordBackground = new WordBackground(this);
             var compatibilitySettings = new WordCompatibilitySettings(this);
             //CustomDocumentProperties customDocumentProperties = new CustomDocumentProperties(this);
@@ -795,11 +927,10 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="filePath"></param>
         /// <param name="openWord"></param>
-        /// <exception cref="Exception"></exception>
         /// <exception cref="InvalidOperationException"></exception>
         public void Save(string filePath, bool openWord) {
             if (FileOpenAccess == FileAccess.Read) {
-                throw new Exception("Document is read only, and cannot be saved.");
+                throw new InvalidOperationException("Document is read only, and cannot be saved.");
             }
             PreSaving();
 
@@ -879,14 +1010,12 @@ namespace OfficeIMO.Word {
         /// Save the WordDocument to Stream
         /// </summary>
         /// <param name="outputStream"></param>
-        /// <exception cref="Exception"></exception>
+        /// <exception cref="InvalidOperationException"></exception>
         public void Save(Stream outputStream) {
             if (FileOpenAccess == FileAccess.Read) {
-                throw new Exception("Document is read only, and cannot be saved.");
+                throw new InvalidOperationException("Document is read only, and cannot be saved.");
             }
             PreSaving();
-
-            this._wordprocessingDocument.Clone(outputStream);
 
             // Clone and SaveAs don't actually clone document properties for some reason, so they must be copied manually
             using (var clone = this._wordprocessingDocument.Clone(outputStream)) {
@@ -985,6 +1114,11 @@ namespace OfficeIMO.Word {
             MoveSectionProperties();
             SaveNumbering();
             _ = new WordCustomProperties(this, true);
+            var settingsPart = _wordprocessingDocument.MainDocumentPart.DocumentSettingsPart;
+            bool hasVariables = settingsPart?.Settings?.GetFirstChild<DocumentVariables>() != null;
+            if (hasVariables || DocumentVariables.Count > 0) {
+                _ = new WordDocumentVariables(this, true);
+            }
         }
     }
 }

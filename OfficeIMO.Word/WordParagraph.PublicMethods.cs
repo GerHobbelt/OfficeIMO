@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentFormat.OpenXml;
+using W14 = DocumentFormat.OpenXml.Office2010.Word;
 using DocumentFormat.OpenXml.Packaging;
 using System.Linq;
 using System.Collections.Generic;
@@ -52,6 +53,16 @@ namespace OfficeIMO.Word {
         /// <returns>The WordParagraph that AddImage was called on.</returns>
         public WordParagraph AddImage(Stream imageStream, string fileName, double? width, double? height, WrapTextImage wrapImageText = WrapTextImage.InLineWithText, string description = "") {
             var wordImage = new WordImage(_document, this, imageStream, fileName, width, height, wrapImageText, description);
+            VerifyRun();
+            _run.Append(wordImage._Image);
+            return this;
+        }
+
+        /// <summary>
+        /// Add image from a Base64 encoded string.
+        /// </summary>
+        public WordParagraph AddImageFromBase64(string base64String, string fileName, double? width = null, double? height = null, WrapTextImage wrapImageText = WrapTextImage.InLineWithText, string description = "") {
+            var wordImage = new WordImage(_document, this, base64String, fileName, width, height, wrapImageText, description);
             VerifyRun();
             _run.Append(wordImage._Image);
             return this;
@@ -384,6 +395,15 @@ namespace OfficeIMO.Word {
             WordTable wordTable = new WordTable(this._document, this, rows, columns, tableStyle, "Before");
             return wordTable;
         }
+        public WordParagraph AddEmbeddedObject(string filePath, string imageFilePath, double? width = null, double? height = null) {
+            var wordEmbeddedObject = new WordEmbeddedObject(this, this._document, filePath, imageFilePath, "", width, height);
+            return this;
+        }
+
+        public WordParagraph AddEmbeddedObject(string filePath, WordEmbeddedObjectOptions options) {
+            var wordEmbeddedObject = new WordEmbeddedObject(this, this._document, filePath, options);
+            return this;
+        }
 
         /// <summary>
         /// Provides ability for configuration of Tabs in a paragraph
@@ -496,6 +516,34 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Add a rectangle shape to the paragraph using <see cref="SixLabors.ImageSharp.Color"/>.
+        /// </summary>
+        public WordShape AddShape(double widthPt, double heightPt, SixLabors.ImageSharp.Color fillColor) {
+            return AddShape(widthPt, heightPt, fillColor.ToHexColor());
+        }
+
+        /// <summary>
+        /// Add a line shape to the paragraph.
+        /// </summary>
+        /// <param name="startXPt">Start X position in points.</param>
+        /// <param name="startYPt">Start Y position in points.</param>
+        /// <param name="endXPt">End X position in points.</param>
+        /// <param name="endYPt">End Y position in points.</param>
+        /// <param name="color">Stroke color in hex format.</param>
+        /// <param name="strokeWeightPt">Stroke weight in points.</param>
+        public WordLine AddLine(double startXPt, double startYPt, double endXPt, double endYPt, string color = "#000000", double strokeWeightPt = 1) {
+            WordLine wordLine = new WordLine(this._document, this, startXPt, startYPt, endXPt, endYPt, color, strokeWeightPt);
+            return wordLine;
+        }
+
+        /// <summary>
+        /// Add a line shape to the paragraph using <see cref="SixLabors.ImageSharp.Color"/>.
+        /// </summary>
+        public WordLine AddLine(double startXPt, double startYPt, double endXPt, double endYPt, SixLabors.ImageSharp.Color color, double strokeWeightPt = 1) {
+            return AddLine(startXPt, startYPt, endXPt, endYPt, color.ToHexColor(), strokeWeightPt);
+        }
+
+        /// <summary>
         /// Adds a simple content control (structured document tag) to the paragraph.
         /// </summary>
         /// <param name="alias">Optional alias for the content control.</param>
@@ -521,6 +569,53 @@ namespace OfficeIMO.Word {
 
             var paragraph = new WordParagraph(this._document, this._paragraph, sdtRun);
             return paragraph.StructuredDocumentTag;
+        }
+
+        /// <summary>
+        /// Adds a checkbox content control to the paragraph.
+        /// </summary>
+        /// <param name="isChecked">Initial checked state.</param>
+        /// <param name="alias">Optional alias for the control.</param>
+        /// <returns>The created <see cref="WordCheckBox"/> instance.</returns>
+        public WordCheckBox AddCheckBox(bool isChecked = false, string alias = null) {
+            var sdtRun = new SdtRun();
+
+            var props = new SdtProperties();
+            if (!string.IsNullOrEmpty(alias)) {
+                props.Append(new SdtAlias() { Val = alias });
+            }
+            props.Append(new SdtId() { Val = new DocumentFormat.OpenXml.Int32Value(new Random().Next(1, int.MaxValue)) });
+
+            var checkBox = new W14.SdtContentCheckBox();
+            checkBox.Append(new W14.Checked() { Val = isChecked ? W14.OnOffValues.One : W14.OnOffValues.Zero });
+            props.Append(checkBox);
+
+            var content = new SdtContentRun(new Run());
+
+            sdtRun.Append(props);
+            sdtRun.Append(content);
+
+            this._paragraph.Append(sdtRun);
+
+            var paragraph = new WordParagraph(this._document, this._paragraph, sdtRun);
+            return paragraph.CheckBox;
+        }
+
+        /// <summary>
+        /// Removes the checkbox from the paragraph.
+        /// </summary>
+        public void RemoveCheckBox() {
+            this.CheckBox?.Remove();
+        }
+
+        /// <summary>
+        /// Sets the checked state of the paragraph's checkbox.
+        /// </summary>
+        /// <param name="value">New checked state.</param>
+        public void SetCheckBoxValue(bool value) {
+            if (this.CheckBox != null) {
+                this.CheckBox.IsChecked = value;
+            }
         }
     }
 }

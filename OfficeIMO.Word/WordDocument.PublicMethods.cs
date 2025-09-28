@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Drawing.Charts;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -200,6 +204,13 @@ namespace OfficeIMO.Word {
             return this.AddParagraph().AddField(wordFieldType, wordFieldFormat, advanced, parameters);
         }
 
+        public WordParagraph AddEmbeddedObject(string filePath, string imageFilePath, double? width = null, double? height = null) {
+            return this.AddParagraph().AddEmbeddedObject(filePath, imageFilePath, width, height);
+        }
+
+        public WordParagraph AddEmbeddedObject(string filePath, WordEmbeddedObjectOptions options) {
+            return this.AddParagraph().AddEmbeddedObject(filePath, options);
+        }
         /// <summary>
         /// Adds a new paragraph with a content control (structured document tag).
         /// </summary>
@@ -216,6 +227,27 @@ namespace OfficeIMO.Word {
 
         public WordEmbeddedDocument AddEmbeddedFragment(string htmlContent, WordAlternativeFormatImportPartType type) {
             return new WordEmbeddedDocument(this, htmlContent, type, true);
+        }
+
+        /// <summary>
+        /// Removes an embedded document from the document.
+        /// </summary>
+        /// <param name="embeddedDocument">Embedded document to remove.</param>
+        public void RemoveEmbeddedDocument(WordEmbeddedDocument embeddedDocument) {
+            if (embeddedDocument == null) {
+                throw new ArgumentNullException(nameof(embeddedDocument));
+            }
+
+            embeddedDocument.Remove();
+        }
+
+        /// <summary>
+        /// Removes all watermarks from the document including headers.
+        /// </summary>
+        public void RemoveWatermark() {
+            foreach (var section in this.Sections) {
+                section.RemoveWatermark();
+            }
         }
 
 

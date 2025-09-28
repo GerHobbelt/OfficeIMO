@@ -93,12 +93,12 @@ Here's a list of features currently supported (and probably a lot I forgot) and 
 - ☑️ Sections
     - ☑️ Add Paragraphs
     - ☑️ Add Headers and Footers (Odd/Even/First)
-    - ◼️ Remove Headers and Footers (Odd/Even/First)
+    - ☑️ Remove Headers and Footers (Odd/Even/First)
     - ☑️ Remove Paragraphs
-    - ◼️ Remove Sections
+    - ☑️ Remove Sections
 - ☑️ Headers and Footers in the document (not including sections)
     - ☑️ Add Default, Odd, Even, First
-    - ◼️ Remove Default, Odd, Even, First
+    - ☑️ Remove Default, Odd, Even, First
 - ☑️ Paragraphs/Text and make it bold, underlined, colored and so on
 - ☑️ Paragraphs and change alignment
 - ☑️ Tables
@@ -111,16 +111,17 @@ Here's a list of features currently supported (and probably a lot I forgot) and 
     - ☑️ Remove cells
     - ☑️ Others
         - ☑️ Merge cells (vertically, horizontally)
-        - ◼️ Split cells (vertically)
+        - ☑️ Split cells (vertically)
         - ☑️ Split cells (horizontally)
+        - ☑️ Detect merged cells (vertically, horizontally)
         - ☑️ Nested tables
         - ☑️ Repeat header row on each page
         - ☑️ Control row page breaks
         - ☑️ Set row height and table width
-- ☑️ Images/Pictures (supports BMP, GIF, JPEG, PNG, TIFF with various wrapping options)
+- ☑️ Images/Pictures (supports BMP, GIF, JPEG, PNG, TIFF, EMF with various wrapping options)
     - ☑️ Add images from file to Word
+    - ☑️ Add images from Base64 strings
     - ☑️ Save image from Word to File
-    - ◼️ Additional image types (e.g., EMF)
     - ◼️ Other location types
 - ☑️ Hyperlinks
     - ☑️ Add HyperLink
@@ -137,11 +138,12 @@ Here's a list of features currently supported (and probably a lot I forgot) and 
     - ☑️ Read Bookmark
     - ☑️ Remove Bookmark
     - ☑️ Change Bookmark
-- ◼️ Comments
-    - ☑️ Add comments
-    - ☑️ Read comments
-    - ◼️ Remove comments
-    - ◼️ Track comments
+- ☑️ Find and replace text
+  - ☑️ Comments
+      - ☑️ Add comments
+      - ☑️ Read comments
+      - ☑️ Remove comments (single or all)
+      - ☑️ Track comments
 - ☑️ Fields
     - ☑️ Add Field
     - ☑️ Read Field
@@ -160,25 +162,49 @@ Here's a list of features currently supported (and probably a lot I forgot) and 
     - ☑️ Read controls
     - ☑️ Update control text
     - ☑️ Remove controls
-- ◼️ Shapes
-- ◼️ Charts
+- ☑️ Shapes
+    - ☑️ Add rectangles
+    - ☑️ Add ellipses
+    - ☑️ Add lines
+    - ☑️ Add polygons
+    - ☑️ Set fill and stroke color
+    - ☑️ Remove shapes
+- ☑️ Charts
     - ☑️ Add charts
-        - ☑️ Pie charts
-        - ☑️ Bar charts
-        - ☑️ Line charts
-        - ☑️ Area charts
+        - ☑️ Pie and Pie 3D
+        - ☑️ Bar and Bar 3D
+        - ☑️ Line and Line 3D
+        - ☑️ Area and Area 3D
+        - ☑️ Scatter
+        - ☑️ Radar
     - ☑️ Add categories and legends
-- ◼️ Lists
+    - ☑️ Configure axes
+    - ☑️ Add multiple series
+- ☑️ Lists
     - ☑️ Add lists
     - ☑️ Remove lists
-- ◼️ Table of contents
+- ☑️ Table of contents
     - ☑️ Add TOC
     - ☑️ Update TOC fields on open
 - ☑️ Borders
+    - ☑️ Built-in styles or custom settings
+    - ☑️ Change size, color, style and spacing
 - ☑️ Background
-- ◼️ Watermarks
-    - ☑️ Add watermark
-    - ◼️ Remove watermark
+    - ☑️ Set background color
+- ☑️ Watermarks
+    - ☑️ Add text or image watermark
+    - ☑️ Set rotation, width and height
+    - ☑️ Remove watermark
+
+- ☑️ Cover pages
+    - ☑️ Add built-in cover pages
+
+- ☑️ Embedded content
+    - ☑️ Add embedded documents (RTF, HTML, TXT)
+    - ☑️ Add HTML fragments
+    - ☑️ Insert HTML fragment after a paragraph
+    - ☑️ Replace text with an HTML fragment
+    - ☑️ Remove embedded documents
 
 - ☑️ Experimental Excel component
     - ☑️ Create and load workbooks
@@ -191,6 +217,7 @@ This list of features is for times when you want to quickly fix something rather
 This features are available as part of `WordHelpers` class.
 
 - ☑️ Remove Headers and Footers from a file
+- ☑️ Convert DOTX template to DOCX
 
 ## Examples
 
@@ -372,6 +399,16 @@ using (WordDocument document = WordDocument.Create(filePath)) {
     document.CustomDocumentProperties.Add("TestProperty", new WordCustomProperty { Value = DateTime.Today });
     document.CustomDocumentProperties.Add("MyName", new WordCustomProperty("Some text"));
     document.CustomDocumentProperties.Add("IsTodayGreatDay", new WordCustomProperty(true));
+
+    // document variables available via DocVariable fields
+    document.SetDocumentVariable("Project", "OfficeIMO");
+    document.SetDocumentVariable("Year", DateTime.Now.Year.ToString());
+
+    if (document.HasDocumentVariables) {
+        foreach (var pair in document.DocumentVariables) {
+            Console.WriteLine($"{pair.Key}: {pair.Value}");
+        }
+    }
 
     document.Save(openWord);
 }

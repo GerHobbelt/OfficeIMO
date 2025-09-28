@@ -58,6 +58,8 @@
 
 [WordDocument](./officeimo.word.worddocument.md)
 
+[WordDocumentVariables](./officeimo.word.worddocumentvariables.md)
+
 [WordEquation](./officeimo.word.wordequation.md)
 
 [WordField](./officeimo.word.wordfield.md)
@@ -119,6 +121,7 @@
 [WordSettings](./officeimo.word.wordsettings.md)
 
 [WordStructuredDocumentTag](./officeimo.word.wordstructureddocumenttag.md)
+[WordCheckBox](./officeimo.word.wordcheckbox.md)
 
 [WordTable](./officeimo.word.wordtable.md)
 
