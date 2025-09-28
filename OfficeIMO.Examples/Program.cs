@@ -28,11 +28,13 @@ namespace OfficeIMO.Examples {
             OfficeIMO.Examples.Html.Html.Example_HtmlLists(folderPath, false);
             OfficeIMO.Examples.Html.Html.Example_HtmlRoundTrip(folderPath, false);
             OfficeIMO.Examples.Html.Html.Example_HtmlTables(folderPath, false);
+            OfficeIMO.Examples.Html.Html.Example_HtmlNestedTables(folderPath, false);
             // Markdown/Markdown
             OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownInterface(folderPath, false);
             OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownLists(folderPath, false);
             OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownRoundTrip(folderPath, false);
             OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownFootNotes(folderPath, false);
+            OfficeIMO.Examples.Markdown.Markdown.Example_MarkdownHeadingsBoldLinks(folderPath, false);
             // Word/AdvancedDocument
             OfficeIMO.Examples.Word.AdvancedDocument.Example_AdvancedWord(folderPath, false);
             OfficeIMO.Examples.Word.AdvancedDocument.Example_AdvancedWord2(folderPath, false);

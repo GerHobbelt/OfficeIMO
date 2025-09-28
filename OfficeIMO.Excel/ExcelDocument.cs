@@ -22,12 +22,19 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public List<ExcelSheet> Sheets {
             get {
+                // Always rebuild the ID list to avoid duplicate entries when
+                // accessing the Sheets property multiple times
+                id.Clear();
+                id.Add(0);
+
                 List<ExcelSheet> listExcel = new List<ExcelSheet>();
                 if (_spreadSheetDocument.WorkbookPart.Workbook.Sheets != null) {
                     var elements = _spreadSheetDocument.WorkbookPart.Workbook.Sheets.OfType<Sheet>().ToList();
                     foreach (Sheet s in elements) {
                         ExcelSheet excelSheet = new ExcelSheet(this, _spreadSheetDocument, s);
-                        id.Add(s.SheetId);
+                        if (!id.Contains(s.SheetId)) {
+                            id.Add(s.SheetId);
+                        }
                         listExcel.Add(excelSheet);
                     }
                 }
@@ -82,10 +89,12 @@ namespace OfficeIMO.Excel {
         /// <param name="autoSave">Enable auto-save on dispose.</param>
         /// <returns>Loaded <see cref="ExcelDocument"/> instance.</returns>
         public static ExcelDocument Load(string filePath, bool readOnly = false, bool autoSave = false) {
-            if (filePath != null) {
-                if (!File.Exists(filePath)) {
-                    throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
-                }
+            if (filePath == null) {
+                throw new ArgumentNullException(nameof(filePath));
+            }
+
+            if (!File.Exists(filePath)) {
+                throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
             }
             ExcelDocument document = new ExcelDocument();
             document.FilePath = filePath;
@@ -93,8 +102,6 @@ namespace OfficeIMO.Excel {
             var openSettings = new OpenSettings {
                 AutoSave = autoSave
             };
-
-            FileMode fileMode = readOnly ? FileMode.Open : FileMode.OpenOrCreate;
 
             SpreadsheetDocument spreadSheetDocument = SpreadsheetDocument.Open(filePath, !readOnly, openSettings);
 
@@ -120,7 +127,7 @@ namespace OfficeIMO.Excel {
                     throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
                 }
             }
-            using var fileStream = new FileStream(filePath, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous);
+            using var fileStream = new FileStream(filePath, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, readOnly ? FileShare.Read : FileShare.ReadWrite, 4096, FileOptions.Asynchronous);
             var memoryStream = new MemoryStream();
             await fileStream.CopyToAsync(memoryStream);
             memoryStream.Seek(0, SeekOrigin.Begin);

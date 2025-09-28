@@ -9,11 +9,14 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Word;
 using OfficeIMO.Word.Html.Helpers;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace OfficeIMO.Word.Html.Converters {
     /// <summary>
@@ -30,6 +33,7 @@ namespace OfficeIMO.Word.Html.Converters {
         private readonly Dictionary<string, string> _footnoteMap = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<ICssStyleRule> _cssRules = new();
         private readonly CssParser _cssParser = new();
+        private static readonly ConcurrentDictionary<string, ICssStyleRule[]> _stylesheetCache = new(StringComparer.OrdinalIgnoreCase);
         private IBrowsingContext? _context;
         public async Task<WordDocument> ConvertAsync(string html, HtmlToWordOptions options) {
             if (html == null) throw new ArgumentNullException(nameof(html));
@@ -53,17 +57,17 @@ namespace OfficeIMO.Word.Html.Converters {
                     if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps) {
                         await LoadAndParseCssAsync(context, new Url(absolute.ToString()));
                     } else if (absolute.Scheme == Uri.UriSchemeFile && File.Exists(absolute.LocalPath)) {
-                        ParseCss(File.ReadAllText(absolute.LocalPath));
+                        ParseCss(File.ReadAllText(absolute.LocalPath), absolute.LocalPath);
                     }
                 } else if (document.BaseUrl != null) {
                     var url = new Url(new Url(document.BaseUrl), path);
                     if (url.Scheme == "http" || url.Scheme == "https") {
                         await LoadAndParseCssAsync(context, url);
                     } else if (url.Scheme == "file" && File.Exists(url.Path)) {
-                        ParseCss(File.ReadAllText(url.Path));
+                        ParseCss(File.ReadAllText(url.Path), url.Path);
                     }
                 } else if (File.Exists(path)) {
-                    ParseCss(File.ReadAllText(path));
+                    ParseCss(File.ReadAllText(path), path);
                 }
             }
             foreach (var content in options.StylesheetContents) {
@@ -95,7 +99,7 @@ namespace OfficeIMO.Word.Html.Converters {
                     }
 
                     if (File.Exists(hrefAttr)) {
-                        ParseCss(File.ReadAllText(hrefAttr));
+                        ParseCss(File.ReadAllText(hrefAttr), hrefAttr);
                         continue;
                     }
 
@@ -104,7 +108,7 @@ namespace OfficeIMO.Word.Html.Converters {
                         if (combined.Scheme == Uri.UriSchemeHttp || combined.Scheme == Uri.UriSchemeHttps) {
                             await LoadAndParseCssAsync(context, new Url(combined.ToString()));
                         } else if (combined.Scheme == Uri.UriSchemeFile && File.Exists(combined.LocalPath)) {
-                            ParseCss(File.ReadAllText(combined.LocalPath));
+                            ParseCss(File.ReadAllText(combined.LocalPath), combined.LocalPath);
                         }
                     }
                 }
@@ -148,7 +152,7 @@ namespace OfficeIMO.Word.Html.Converters {
             if (response.StatusCode == HttpStatusCode.OK) {
                 using var reader = new StreamReader(response.Content);
                 var css = await reader.ReadToEndAsync();
-                ParseCss(css);
+                ParseCss(css, url.Href);
             }
         }
 
@@ -183,11 +187,13 @@ namespace OfficeIMO.Word.Html.Converters {
                         }
                     case "p": {
                             var paragraph = cell != null ? cell.AddParagraph("", true) : section.AddParagraph("");
+                            var fmt = formatting;
+                            ApplySpanStyles(element, ref fmt);
                             ApplyParagraphStyleFromCss(paragraph, element);
                             ApplyClassStyle(element, paragraph, options);
                             AddBookmarkIfPresent(element, paragraph);
                             foreach (var child in element.ChildNodes) {
-                                ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
+                                ProcessNode(child, doc, section, options, paragraph, listStack, fmt, cell);
                             }
                             break;
                         }
@@ -197,11 +203,13 @@ namespace OfficeIMO.Word.Html.Converters {
                                 paragraph.SetStyleId("Quote");
                             }
                             paragraph.IndentationBefore = 720;
+                            var fmt = formatting;
+                            ApplySpanStyles(element, ref fmt);
                             ApplyParagraphStyleFromCss(paragraph, element);
                             ApplyClassStyle(element, paragraph, options);
                             AddBookmarkIfPresent(element, paragraph);
                             foreach (var child in element.ChildNodes) {
-                                ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell);
+                                ProcessNode(child, doc, section, options, paragraph, listStack, fmt, cell);
                             }
                             break;
                         }
@@ -237,6 +245,7 @@ namespace OfficeIMO.Word.Html.Converters {
                             if (!string.IsNullOrWhiteSpace(divStyle)) {
                                 ApplySpanStyles(element, ref fmt);
                             }
+                            WordParagraph? para = currentParagraph;
                             foreach (var child in element.ChildNodes) {
                                 if (!string.IsNullOrWhiteSpace(divStyle) && child is IElement childElement) {
                                     var merged = MergeStyles(divStyle, childElement.GetAttribute("style"));
@@ -244,7 +253,10 @@ namespace OfficeIMO.Word.Html.Converters {
                                         childElement.SetAttribute("style", merged);
                                     }
                                 }
-                                ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell);
+                                ProcessNode(child, doc, section, options, para, listStack, fmt, cell);
+                                if (para == null && doc.Paragraphs.Count > 0) {
+                                    para = doc.Paragraphs.Last();
+                                }
                             }
                             break;
                         }
@@ -396,7 +408,7 @@ namespace OfficeIMO.Word.Html.Converters {
                     case "figure": {
                             var img = element.QuerySelector("img") as IHtmlImageElement;
                             if (img != null) {
-                                ProcessImage(img, doc);
+                                ProcessImage(img, doc, options);
                             }
                             var caption = element.QuerySelector("figcaption");
                             if (caption != null) {
@@ -413,7 +425,7 @@ namespace OfficeIMO.Word.Html.Converters {
                             break;
                         }
                     case "img": {
-                            ProcessImage((IHtmlImageElement)element, doc);
+                            ProcessImage((IHtmlImageElement)element, doc, options);
                             break;
                         }
                     case "style": {
@@ -433,7 +445,7 @@ namespace OfficeIMO.Word.Html.Converters {
                             }
 
                             if (!string.IsNullOrEmpty(hrefAttr) && File.Exists(hrefAttr)) {
-                                ParseCss(File.ReadAllText(hrefAttr));
+                                ParseCss(File.ReadAllText(hrefAttr), hrefAttr);
                                 break;
                             }
 
@@ -447,7 +459,7 @@ namespace OfficeIMO.Word.Html.Converters {
                                     LoadAndParseCssAsync(_context, url).GetAwaiter().GetResult();
                                 }
                             } else if (url.Scheme == "file" && File.Exists(url.Path)) {
-                                ParseCss(File.ReadAllText(url.Path));
+                                ParseCss(File.ReadAllText(url.Path), url.Path);
                             }
                             break;
                         }
@@ -489,19 +501,32 @@ namespace OfficeIMO.Word.Html.Converters {
             }
         }
 
-        private void ParseCss(string css) {
+        private void ParseCss(string css, string? key = null) {
             if (string.IsNullOrWhiteSpace(css)) {
                 return;
             }
 
-            try {
-                var sheet = _cssParser.ParseStyleSheet(css);
-                foreach (var rule in sheet.Rules.OfType<ICssStyleRule>()) {
-                    _cssRules.Add(rule);
+            key ??= ComputeHash(css);
+            if (!_stylesheetCache.TryGetValue(key, out var rules)) {
+                try {
+                    var sheet = _cssParser.ParseStyleSheet(css);
+                    rules = sheet.Rules.OfType<ICssStyleRule>().ToArray();
+                    _stylesheetCache[key] = rules;
+                } catch (Exception) {
+                    _stylesheetCache[key] = Array.Empty<ICssStyleRule>();
+                    return;
                 }
-            } catch (Exception) {
-                // ignore invalid CSS blocks
             }
+
+            foreach (var rule in rules) {
+                _cssRules.Add(rule);
+            }
+        }
+
+        private static string ComputeHash(string content) {
+            using var sha = SHA256.Create();
+            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(content));
+            return BitConverter.ToString(bytes).Replace("-", "");
         }
 
         private void ApplyCssToElement(IElement element) {
