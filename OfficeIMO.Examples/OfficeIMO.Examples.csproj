@@ -4,12 +4,14 @@
         <OutputType>Exe</OutputType>
         <TargetFramework>net8.0</TargetFramework>
         <LangVersion>Latest</LangVersion>
-        <VersionPrefix>1.0.5</VersionPrefix>
+        <VersionPrefix>1.0.6</VersionPrefix>
     </PropertyGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\OfficeIMO.Excel\OfficeIMO.Excel.csproj" />
         <ProjectReference Include="..\OfficeIMO.Word\OfficeIMO.Word.csproj" />
+        <ProjectReference Include="..\OfficeIMO.Pdf\OfficeIMO.Pdf.csproj" />
+        <ProjectReference Include="..\OfficeIMO.Html\OfficeIMO.Html.csproj" />
     </ItemGroup>
 
     <ItemGroup>

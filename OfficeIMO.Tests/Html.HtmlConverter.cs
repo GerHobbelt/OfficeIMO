@@ -1,0 +1,43 @@
+using System;
+using System.IO;
+using OfficeIMO.Html;
+using Xunit;
+
+namespace OfficeIMO.Tests;
+
+public partial class Html {
+    [Fact]
+    public void Test_Html_RoundTrip() {
+        string html = "<p>Hello <b>world</b> and <i>universe</i>.</p>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions { FontFamily = "Calibri" });
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions { IncludeStyles = true });
+
+        Assert.Contains("<b>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("</b>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("world", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<i>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("</i>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("universe", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("font-family:Calibri", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_Headings_RoundTrip() {
+        string html = "<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3><h4>Heading 4</h4><h5>Heading 5</h5><h6>Heading 6</h6>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions { FontFamily = "Calibri" });
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions { IncludeStyles = true });
+
+        for (int i = 1; i <= 6; i++) {
+            string tag = $"h{i}";
+            Assert.Contains("<" + tag + ">", roundTrip, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains($"Heading {i}", roundTrip, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("</" + tag + ">", roundTrip, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+}

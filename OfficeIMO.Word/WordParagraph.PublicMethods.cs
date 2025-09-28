@@ -315,6 +315,17 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Adds a cross reference field to the paragraph.
+        /// </summary>
+        /// <param name="referenceId">Bookmark or heading identifier.</param>
+        /// <param name="type">Type of reference.</param>
+        /// <returns>The paragraph that this was called on.</returns>
+        public WordParagraph AddCrossReference(string referenceId, WordCrossReferenceType type) {
+            WordCrossReference.AddCrossReference(this, referenceId, type);
+            return this;
+        }
+
+        /// <summary>
         /// Adds a citation field referencing the specified source tag.
         /// </summary>
         /// <param name="sourceTag">Tag of the bibliographic source.</param>
@@ -590,6 +601,16 @@ namespace OfficeIMO.Word {
         /// </summary>
         public WordChart AddComboChart(string title = "", bool roundedCorners = false, int width = 600, int height = 600) {
             return AddChart(title, roundedCorners, width, height);
+        }
+
+        /// <summary>
+        /// Inserts a SmartArt diagram at the current position.
+        /// </summary>
+        /// <param name="type">Layout of SmartArt to create.</param>
+        /// <returns>The created <see cref="WordSmartArt"/>.</returns>
+        public WordSmartArt AddSmartArt(SmartArtType type) {
+            var paragraph = this.AddParagraph();
+            return new WordSmartArt(this._document, paragraph, type);
         }
 
         /// <summary>

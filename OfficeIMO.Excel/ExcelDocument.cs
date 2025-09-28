@@ -48,6 +48,11 @@ namespace OfficeIMO.Excel {
         public string FilePath;
 
         /// <summary>
+        /// FileOpenAccess of the document
+        /// </summary>
+        public FileAccess FileOpenAccess => _spreadSheetDocument.FileOpenAccess;
+
+        /// <summary>
         /// Creates a new Excel document at the specified path.
         /// </summary>
         /// <param name="filePath">Path to the new file.</param>
@@ -79,7 +84,7 @@ namespace OfficeIMO.Excel {
         public static ExcelDocument Load(string filePath, bool readOnly = false, bool autoSave = false) {
             if (filePath != null) {
                 if (!File.Exists(filePath)) {
-                    throw new FileNotFoundException("File doesn't exists", filePath);
+                    throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
                 }
             }
             ExcelDocument document = new ExcelDocument();
@@ -90,9 +95,8 @@ namespace OfficeIMO.Excel {
             };
 
             FileMode fileMode = readOnly ? FileMode.Open : FileMode.OpenOrCreate;
-            var package = Package.Open(filePath, fileMode);
 
-            SpreadsheetDocument spreadSheetDocument = SpreadsheetDocument.Open(package, openSettings);
+            SpreadsheetDocument spreadSheetDocument = SpreadsheetDocument.Open(filePath, !readOnly, openSettings);
 
             document._spreadSheetDocument = spreadSheetDocument;
 
@@ -113,7 +117,7 @@ namespace OfficeIMO.Excel {
         public static async Task<ExcelDocument> LoadAsync(string filePath, bool readOnly = false, bool autoSave = false) {
             if (filePath != null) {
                 if (!File.Exists(filePath)) {
-                    throw new FileNotFoundException("File doesn't exists", filePath);
+                    throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
                 }
             }
             using var fileStream = new FileStream(filePath, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous);

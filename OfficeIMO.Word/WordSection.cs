@@ -195,6 +195,13 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Provides a list of paragraphs that contain SmartArt diagrams.
+        /// </summary>
+        public List<WordParagraph> ParagraphsSmartArts {
+            get { return Paragraphs.Where(p => p.IsSmartArt).ToList(); }
+        }
+
+        /// <summary>
         /// Gets all page break objects within the section.
         /// </summary>
         public List<WordBreak> PageBreaks {
@@ -387,6 +394,21 @@ namespace OfficeIMO.Word {
         }
 
         /// <summary>
+        /// Collection of SmartArt diagrams available within the section.
+        /// </summary>
+        public List<WordSmartArt> SmartArts {
+            get {
+                List<WordSmartArt> list = new List<WordSmartArt>();
+                var paragraphs = ParagraphsSmartArts;
+                foreach (var paragraph in paragraphs) {
+                    list.Add(paragraph.SmartArt);
+                }
+                return list;
+            }
+
+        }
+
+        /// <summary>
         /// Gets all equations within the section.
         /// </summary>
         public List<WordEquation> Equations {
@@ -410,6 +432,15 @@ namespace OfficeIMO.Word {
                 foreach (var paragraph in paragraphs) {
                     list.Add(paragraph.StructuredDocumentTag);
                 }
+
+                var sdtBlocks = GetSdtBlockList();
+                foreach (var block in sdtBlocks) {
+                    var element = ConvertStdBlockToWordElements(_document, block);
+                    if (element is WordStructuredDocumentTag sdt) {
+                        list.Add(sdt);
+                    }
+                }
+
                 return list;
             }
         }

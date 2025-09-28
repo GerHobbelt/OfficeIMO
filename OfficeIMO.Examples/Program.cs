@@ -3,6 +3,8 @@ using System.IO;
 using OfficeIMO.Examples.Excel;
 using OfficeIMO.Examples.Word;
 
+using HtmlExamples = OfficeIMO.Examples.Html.Html;
+
 namespace OfficeIMO.Examples {
     internal static class Program {
         private static void Setup(string path) {
@@ -22,6 +24,10 @@ namespace OfficeIMO.Examples {
             BasicDocument.Example_BasicWordWithBreaks(folderPath, false);
             BasicDocument.Example_BasicWordWithDefaultStyleChange(folderPath, false);
             BasicDocument.Example_BasicWordWithDefaultFontChange(folderPath, false);
+            Fonts.Example_EmbedFont(templatesPath, folderPath, false);
+            Fonts.Example_EmbeddedAndBuiltinFonts(templatesPath, folderPath, false);
+            Fonts.Example_EmbeddedFontStyle(templatesPath, folderPath, false);
+            Fonts.Example_EmbedFontWithStyle(templatesPath, folderPath, false);
             BasicDocument.Example_BasicLoadHamlet(templatesPath, folderPath, false);
             BasicDocument.Example_BasicWordWithPolishChars(folderPath, false);
             BasicDocument.Example_BasicWordWithNewLines(folderPath, false);
@@ -103,6 +109,8 @@ namespace OfficeIMO.Examples {
             Tables.Example_CloneTable(folderPath, false);
             Tables.Example_SplitVertically(folderPath, false);
             Tables.Example_SplitHorizontally(folderPath, false);
+            Tables.Example_ConditionalFormattingValues(folderPath, false);
+            Tables.Example_ConditionalFormattingAdvanced(folderPath, false);
             PageSettings.Example_BasicSettings(folderPath, false);
             PageSettings.Example_PageOrientation(folderPath, false);
 
@@ -113,6 +121,7 @@ namespace OfficeIMO.Examples {
             PageNumbers.Example_PageNumbers5(folderPath, false);
             PageNumbers.Example_PageNumbers6(folderPath, false);
             PageNumbers.Example_PageNumbers7(folderPath, false);
+            PageNumbers.Example_PageNumbers8(folderPath, false);
 
             Sections.Example_BasicSections(folderPath, false);
             Sections.Example_BasicSections2(folderPath, false);
@@ -208,6 +217,7 @@ namespace OfficeIMO.Examples {
 
             CitationsExamples.Example_BasicCitations(folderPath, false);
             CitationsExamples.Example_AdvancedCitations(folderPath, false);
+            CrossReferences.Example_BasicCrossReferences(folderPath, false);
 
             Watermark.Watermark_Sample2(folderPath, false);
             Watermark.Watermark_Sample1(folderPath, false);
@@ -256,6 +266,8 @@ namespace OfficeIMO.Examples {
             Shapes.Example_AddMultipleShapes(folderPath, false);
             Shapes.Example_RemoveShape(folderPath, false);
             Shapes.Example_LoadShapes(folderPath, false);
+            SmartArt.Example_AddBasicSmartArt(folderPath, false);
+            SmartArt.Example_AddAdvancedSmartArt(folderPath, false);
 
             Revisions.Example_TrackedChanges(folderPath, false);
             MailMerge.Example_MailMergeSimple(folderPath, false);
@@ -267,8 +279,10 @@ namespace OfficeIMO.Examples {
             Macros.Example_ExtractAndRemoveMacro(templatesPath, folderPath, false);
             Macros.Example_ListAndRemoveMacro(templatesPath, folderPath, false);
 
+            HtmlExamples.Example_HtmlRoundTrip(folderPath, false);
             XmlSerialization.Example_XmlSerializationBasic(folderPath, false);
             XmlSerialization.Example_XmlSerializationAdvanced(folderPath, false);
+            CompareDocuments.Example_BasicComparison(folderPath, false);
         }
     }
 }
