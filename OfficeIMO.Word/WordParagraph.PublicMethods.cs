@@ -12,6 +12,9 @@ using MathParagraph = DocumentFormat.OpenXml.Math.Paragraph;
 using OfficeMath = DocumentFormat.OpenXml.Math.OfficeMath;
 
 namespace OfficeIMO.Word {
+    /// <summary>
+    /// Contains public methods for editing paragraphs.
+    /// </summary>
     public partial class WordParagraph {
         // Should the return type be changed to signify the difference between paragraph and run?
         /// <summary>
@@ -470,11 +473,25 @@ namespace OfficeIMO.Word {
             WordTable wordTable = new WordTable(this._document, this, rows, columns, tableStyle, "Before");
             return wordTable;
         }
+        /// <summary>
+        /// Embeds an object with a preview image.
+        /// </summary>
+        /// <param name="filePath">Path to the object file.</param>
+        /// <param name="imageFilePath">Preview image path.</param>
+        /// <param name="width">Optional width in points.</param>
+        /// <param name="height">Optional height in points.</param>
+        /// <returns>The paragraph containing the embedded object.</returns>
         public WordParagraph AddEmbeddedObject(string filePath, string imageFilePath, double? width = null, double? height = null) {
             var wordEmbeddedObject = new WordEmbeddedObject(this, this._document, filePath, imageFilePath, "", width, height);
             return this;
         }
 
+        /// <summary>
+        /// Embeds an object with custom options.
+        /// </summary>
+        /// <param name="filePath">Path to the object file.</param>
+        /// <param name="options">Embedding options.</param>
+        /// <returns>The paragraph containing the embedded object.</returns>
         public WordParagraph AddEmbeddedObject(string filePath, WordEmbeddedObjectOptions options) {
             var wordEmbeddedObject = new WordEmbeddedObject(this, this._document, filePath, options);
             return this;
@@ -544,8 +561,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Creates a chart ready for combining bar and line series.
         /// Use <see cref="WordChart.AddChartAxisX"/> to supply category labels
-        /// and then <see cref="WordChart.AddBar"/> / <see cref="WordChart.AddLine"/>
-        /// to add data. <c>AddChartAxisX</c> must be called before adding any
+        /// and then call <see cref="WordChart.AddBar(string,int,SixLabors.ImageSharp.Color)"/> or
+        /// <see cref="WordChart.AddLine"/> to add data. <c>AddChartAxisX</c> must be called before adding any
         /// series so that both chart types share the same axes.
         /// </summary>
         public WordChart AddComboChart(string title = "", bool roundedCorners = false, int width = 600, int height = 600) {

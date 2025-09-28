@@ -133,8 +133,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Creates a chart ready for combining bar and line series.
         /// Use <see cref="WordChart.AddChartAxisX"/> to supply category labels
-        /// and then <see cref="WordChart.AddBar"/> / <see cref="WordChart.AddLine"/>
-        /// to add data. The call to <c>AddChartAxisX</c> must be performed
+        /// and then call <see cref="WordChart.AddBar(string,int,SixLabors.ImageSharp.Color)"/> or
+        /// <see cref="WordChart.AddLine"/> to add data. The call to <c>AddChartAxisX</c> must be performed
         /// before adding any series so both chart types share the same axes.
         /// </summary>
         public WordChart AddComboChart(string title = "", bool roundedCorners = false, int width = 600, int height = 600) {
@@ -189,10 +189,21 @@ namespace OfficeIMO.Word {
             return WordList.AddCustomBulletList(this, kind, fontName, color, colorHex, fontSize);
         }
 
+        /// <summary>
+        /// Creates a bullet list where the bullet symbol is provided as an image.
+        /// </summary>
+        /// <param name="imageStream">Stream containing the image data.</param>
+        /// <param name="fileName">File name used to determine the image type.</param>
+        /// <returns>The created <see cref="WordList"/>.</returns>
         public WordList AddPictureBulletList(Stream imageStream, string fileName) {
             return WordList.AddPictureBulletList(this, imageStream, fileName);
         }
 
+        /// <summary>
+        /// Creates a bullet list where the bullet symbol is loaded from an image file.
+        /// </summary>
+        /// <param name="imagePath">Path to the image file.</param>
+        /// <returns>The created <see cref="WordList"/>.</returns>
         public WordList AddPictureBulletList(string imagePath) {
             return WordList.AddPictureBulletList(this, imagePath);
         }

@@ -6,6 +6,9 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Word {
+    /// <summary>
+    /// Represents a section within a Word document.
+    /// </summary>
     public partial class WordSection {
         /// <summary>
         /// Provides a list of all elements within the section including paragraphs, tables, images, etc.
@@ -52,10 +55,16 @@ namespace OfficeIMO.Word {
             }
         }
 
+        /// <summary>
+        /// Provides a list of paragraphs that contain hyperlinks.
+        /// </summary>
         public List<WordParagraph> ParagraphsHyperLinks {
             get { return Paragraphs.Where(p => p.IsHyperLink).ToList(); }
         }
 
+        /// <summary>
+        /// Provides a list of paragraphs that contain fields.
+        /// </summary>
         public List<WordParagraph> ParagraphsFields {
             get { return Paragraphs.Where(p => p.IsField).ToList(); }
         }
