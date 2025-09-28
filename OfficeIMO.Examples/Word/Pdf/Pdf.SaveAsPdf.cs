@@ -1,8 +1,10 @@
-using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Pdf;
 using OfficeIMO.Word;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
 using System;
 using System.IO;
+using W = DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Examples.Word {
     internal static partial class Pdf {
@@ -27,8 +29,8 @@ namespace OfficeIMO.Examples.Word {
                 WordParagraph formatted = document.AddParagraph("Bold Italic Underlined Centered");
                 formatted.Bold = true;
                 formatted.Italic = true;
-                formatted.Underline = UnderlineValues.Single;
-                formatted.ParagraphAlignment = JustificationValues.Center;
+                formatted.Underline = W.UnderlineValues.Single;
+                formatted.ParagraphAlignment = W.JustificationValues.Center;
 
                 WordList list = document.AddList(WordListStyle.ArticleSections);
                 list.AddItem("First Item");
@@ -45,7 +47,30 @@ namespace OfficeIMO.Examples.Word {
                 document.AddParagraph().AddImage(imagePath, 50, 50);
 
                 document.Save();
-                document.SaveAsPdf(pdfPath);
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    PageSize = PageSizes.A4,
+                    Orientation = PdfPageOrientation.Landscape,
+                    Margin = 2,
+                    MarginUnit = Unit.Centimetre
+                });
+            }
+        }
+
+        public static void Example_SaveAsPdfInMemory(string folderPath, bool openWord) {
+            Console.WriteLine("[*] Creating document and exporting to in-memory PDF");
+            string docPath = Path.Combine(folderPath, "ExportToPdfInMemory.docx");
+            string pdfPath = Path.Combine(folderPath, "ExportToPdfInMemory.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                document.AddParagraph("Hello World");
+                document.Save();
+
+                using (MemoryStream pdfStream = new MemoryStream()) {
+                    document.SaveAsPdf(pdfStream, new PdfSaveOptions {
+                        PageSize = new PageSize(300, 500)
+                    });
+                    File.WriteAllBytes(pdfPath, pdfStream.ToArray());
+                }
             }
         }
     }

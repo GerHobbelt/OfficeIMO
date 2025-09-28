@@ -1,6 +1,7 @@
+using OfficeIMO.Html;
+using OfficeIMO.Word;
 using System;
 using System.IO;
-using OfficeIMO.Html;
 using Xunit;
 
 namespace OfficeIMO.Tests;
@@ -39,5 +40,90 @@ public partial class Html {
             Assert.Contains($"Heading {i}", roundTrip, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("</" + tag + ">", roundTrip, StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    [Fact]
+    public void Test_Html_Lists_RoundTrip() {
+        string html = "<ul><li>Item 1<ul><li>Sub 1</li><li>Sub 2</li></ul></li><li>Item 2</li></ul><ol><li>First</li><li>Second</li></ol>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions());
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions { PreserveListStyles = true });
+
+        Assert.Contains("<ul", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<ol", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Sub 1", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Second", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_Table_RoundTrip() {
+        string html = "<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions());
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions());
+
+        Assert.Contains("<table>", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("A", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("D", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_NestedTable_RoundTrip() {
+        string html = "<table><tr><td>Outer</td><td><table><tr><td>Inner</td></tr></table></td></tr></table>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions());
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions());
+
+        int tableCount = roundTrip.Split(new string[] { "<table>" }, StringSplitOptions.None).Length - 1;
+        Assert.True(tableCount >= 2);
+        Assert.Contains("Inner", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_Image_Base64_RoundTrip() {
+        string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+        byte[] imageBytes = File.ReadAllBytes(assetPath);
+        string base64 = Convert.ToBase64String(imageBytes);
+        string html = $"<p><img src=\"data:image/png;base64,{base64}\" /></p>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions());
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions());
+
+        Assert.Contains("<img", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("data:image/png;base64", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_Image_File_RoundTrip() {
+        string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+        string uri = new Uri(assetPath).AbsoluteUri;
+        string html = $"<p><img src=\"{uri}\" /></p>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions());
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions());
+
+        Assert.Contains("<img", roundTrip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("data:image/png;base64", roundTrip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Test_Html_FontResolver() {
+        string html = "<p>Hello</p>";
+        using MemoryStream ms = new MemoryStream();
+        HtmlToWordConverter.Convert(html, ms, new HtmlToWordOptions { FontFamily = "monospace" });
+
+        ms.Position = 0;
+        string roundTrip = WordToHtmlConverter.Convert(ms, new WordToHtmlOptions { IncludeStyles = true });
+        Assert.Contains($"font-family:{FontResolver.Resolve("monospace")}", roundTrip, StringComparison.OrdinalIgnoreCase);
     }
 }

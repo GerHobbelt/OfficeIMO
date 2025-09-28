@@ -43,7 +43,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\OfficeIMO.Converters\OfficeIMO.Converters.csproj" />
         <ProjectReference Include="..\OfficeIMO.Word\OfficeIMO.Word.csproj" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+        <Reference Include="System.Net.Http" />
     </ItemGroup>
 
     <ItemGroup>

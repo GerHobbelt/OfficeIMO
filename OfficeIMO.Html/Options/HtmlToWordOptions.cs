@@ -1,13 +1,14 @@
 using System;
+using OfficeIMO.Converters;
 
 namespace OfficeIMO.Html {
     /// <summary>
     /// Options controlling HTML to Word conversion.
     /// </summary>
-    public class HtmlToWordOptions {
+    public class HtmlToWordOptions : ConversionOptions {
         /// <summary>
-        /// Optional font family applied to created runs.
+        /// When true, attempts to keep list styling information during conversion.
         /// </summary>
-        public string? FontFamily { get; set; }
+        public bool PreserveListStyles { get; set; }
     }
 }
