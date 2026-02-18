@@ -1,25 +1,32 @@
-using System.Globalization;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Presentation;
-using DocumentFormat.OpenXml.Spreadsheet;
+using P14 = DocumentFormat.OpenXml.Office2010.PowerPoint;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
-using S = DocumentFormat.OpenXml.Spreadsheet;
 
 namespace OfficeIMO.PowerPoint {
     /// <summary>
     ///     Represents a single slide in a presentation.
     /// </summary>
-    public class PowerPointSlide {
+    public partial class PowerPointSlide {
         private readonly List<PowerPointShape> _shapes = new();
         private readonly SlidePart _slidePart;
         private PowerPointNotes? _notes;
         private uint _nextShapeId = 2;
+        private const string P14Namespace = "http://schemas.microsoft.com/office/powerpoint/2010/main";
+        private const string P159Namespace = "http://schemas.microsoft.com/office/powerpoint/2015/09/main";
 
         internal PowerPointSlide(SlidePart slidePart) {
             _slidePart = slidePart;
             LoadExistingShapes();
         }
+
+        internal SlidePart SlidePart => _slidePart;
 
         /// <summary>
         ///     Collection of shapes on the slide.
@@ -78,6 +85,67 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Sets a background image for the slide.
+        /// </summary>
+        public void SetBackgroundImage(string imagePath) {
+            if (imagePath == null) {
+                throw new ArgumentNullException(nameof(imagePath));
+            }
+            if (!File.Exists(imagePath)) {
+                throw new FileNotFoundException("Image file not found.", imagePath);
+            }
+
+            ImagePartType imageType = GetImagePartType(imagePath);
+            PartTypeInfo partTypeInfo = imageType.ToPartTypeInfo();
+            string imageExtension = PowerPointPartFactory.GetImageExtension(imageType, imagePath);
+            string imagePartUri = PowerPointPartFactory.GetIndexedPartUri(
+                _slidePart.OpenXmlPackage,
+                "ppt/media",
+                "image",
+                imageExtension,
+                allowBaseWithoutIndex: false);
+
+            ImagePart imagePart = PowerPointPartFactory.CreatePart<ImagePart>(
+                _slidePart,
+                partTypeInfo.ContentType,
+                imagePartUri);
+
+            using FileStream stream = new(imagePath, FileMode.Open, FileAccess.Read);
+            imagePart.FeedData(stream);
+            string relationshipId = _slidePart.GetIdOfPart(imagePart);
+
+            CommonSlideData common = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
+            Background background = common.Background ?? new Background();
+            BackgroundProperties props = background.BackgroundProperties ?? new BackgroundProperties();
+
+            props.RemoveAllChildren<A.SolidFill>();
+            props.RemoveAllChildren<A.BlipFill>();
+
+            props.Append(new A.BlipFill(
+                new A.Blip { Embed = relationshipId },
+                new A.Stretch(new A.FillRectangle())
+            ));
+
+            background.BackgroundProperties = props;
+            common.Background = background;
+        }
+
+        /// <summary>
+        ///     Clears any background image from the slide.
+        /// </summary>
+        public void ClearBackgroundImage() {
+            CommonSlideData? common = _slidePart.Slide.CommonSlideData;
+            if (common?.Background?.BackgroundProperties == null) {
+                return;
+            }
+
+            common.Background.BackgroundProperties.RemoveAllChildren<A.BlipFill>();
+            if (!common.Background.BackgroundProperties.HasChildren) {
+                common.Background = null;
+            }
+        }
+
+        /// <summary>
         ///     Transition applied when moving to this slide.
         /// </summary>
         public SlideTransition Transition {
@@ -93,6 +161,68 @@ namespace OfficeIMO.PowerPoint {
 
                 if (t.GetFirstChild<WipeTransition>() != null) {
                     return SlideTransition.Wipe;
+                }
+
+                BlindsTransition? blinds = t.GetFirstChild<BlindsTransition>();
+                if (blinds != null) {
+                    return blinds.Direction?.Value == DirectionValues.Vertical
+                        ? SlideTransition.BlindsVertical
+                        : SlideTransition.BlindsHorizontal;
+                }
+
+                CombTransition? comb = t.GetFirstChild<CombTransition>();
+                if (comb != null) {
+                    return comb.Direction?.Value == DirectionValues.Vertical
+                        ? SlideTransition.CombVertical
+                        : SlideTransition.CombHorizontal;
+                }
+
+                PushTransition? push = t.GetFirstChild<PushTransition>();
+                if (push != null) {
+                    TransitionSlideDirectionValues? direction = push.Direction?.Value;
+                    if (direction == TransitionSlideDirectionValues.Up) {
+                        return SlideTransition.PushUp;
+                    }
+
+                    if (direction == TransitionSlideDirectionValues.Down) {
+                        return SlideTransition.PushDown;
+                    }
+
+                    if (direction == TransitionSlideDirectionValues.Right) {
+                        return SlideTransition.PushRight;
+                    }
+
+                    return SlideTransition.PushLeft;
+                }
+
+                if (t.GetFirstChild<CutTransition>() != null) {
+                    return SlideTransition.Cut;
+                }
+
+                if (t.GetFirstChild<P14.FlashTransition>() != null) {
+                    return SlideTransition.Flash;
+                }
+
+                P14.WarpTransition? warp = t.GetFirstChild<P14.WarpTransition>();
+                if (warp != null) {
+                    return warp.Direction?.Value == TransitionInOutDirectionValues.Out
+                        ? SlideTransition.WarpOut
+                        : SlideTransition.WarpIn;
+                }
+
+                if (t.GetFirstChild<P14.PrismTransition>() != null) {
+                    return SlideTransition.Prism;
+                }
+
+                P14.FerrisTransition? ferris = t.GetFirstChild<P14.FerrisTransition>();
+                if (ferris != null) {
+                    return ferris.Direction?.Value == P14.TransitionLeftRightDirectionTypeValues.Right
+                        ? SlideTransition.FerrisRight
+                        : SlideTransition.FerrisLeft;
+                }
+
+                if (HasMorphTransition(t)) {
+                    return SlideTransition.Morph;
                 }
 
                 return SlideTransition.None;
@@ -111,10 +241,134 @@ namespace OfficeIMO.PowerPoint {
                     case SlideTransition.Wipe:
                         transition.Append(new WipeTransition());
                         break;
+                    case SlideTransition.BlindsVertical:
+                        transition.Append(new BlindsTransition { Direction = DirectionValues.Vertical });
+                        break;
+                    case SlideTransition.BlindsHorizontal:
+                        transition.Append(new BlindsTransition { Direction = DirectionValues.Horizontal });
+                        break;
+                    case SlideTransition.CombHorizontal:
+                        transition.Append(new CombTransition { Direction = DirectionValues.Horizontal });
+                        break;
+                    case SlideTransition.CombVertical:
+                        transition.Append(new CombTransition { Direction = DirectionValues.Vertical });
+                        break;
+                    case SlideTransition.PushUp:
+                        transition.Append(new PushTransition { Direction = TransitionSlideDirectionValues.Up });
+                        break;
+                    case SlideTransition.PushDown:
+                        transition.Append(new PushTransition { Direction = TransitionSlideDirectionValues.Down });
+                        break;
+                    case SlideTransition.PushLeft:
+                        transition.Append(new PushTransition { Direction = TransitionSlideDirectionValues.Left });
+                        break;
+                    case SlideTransition.PushRight:
+                        transition.Append(new PushTransition { Direction = TransitionSlideDirectionValues.Right });
+                        break;
+                    case SlideTransition.Cut:
+                        transition.Append(new CutTransition());
+                        break;
+                    case SlideTransition.Flash:
+                        transition.AddNamespaceDeclaration("p14", P14Namespace);
+                        transition.Append(new P14.FlashTransition());
+                        break;
+                    case SlideTransition.WarpIn:
+                        transition.AddNamespaceDeclaration("p14", P14Namespace);
+                        transition.Append(new P14.WarpTransition { Direction = TransitionInOutDirectionValues.In });
+                        break;
+                    case SlideTransition.WarpOut:
+                        transition.AddNamespaceDeclaration("p14", P14Namespace);
+                        transition.Append(new P14.WarpTransition { Direction = TransitionInOutDirectionValues.Out });
+                        break;
+                    case SlideTransition.Prism:
+                        transition.AddNamespaceDeclaration("p14", P14Namespace);
+                        transition.Append(new P14.PrismTransition { IsContent = true });
+                        break;
+                    case SlideTransition.FerrisLeft:
+                        transition.AddNamespaceDeclaration("p14", P14Namespace);
+                        transition.Append(new P14.FerrisTransition { Direction = P14.TransitionLeftRightDirectionTypeValues.Left });
+                        break;
+                    case SlideTransition.FerrisRight:
+                        transition.AddNamespaceDeclaration("p14", P14Namespace);
+                        transition.Append(new P14.FerrisTransition { Direction = P14.TransitionLeftRightDirectionTypeValues.Right });
+                        break;
+                    case SlideTransition.Morph:
+                        transition.AddNamespaceDeclaration("p159", P159Namespace);
+                        transition.Append(CreateMorphTransition());
+                        break;
                 }
 
                 _slidePart.Slide.Transition = transition;
             }
+        }
+
+        /// <summary>
+        ///     Gets or sets whether the slide is hidden in slide show mode.
+        /// </summary>
+        public bool Hidden {
+            get {
+                SlideId slideId = GetSlideId();
+                OpenXmlAttribute? showAttribute = slideId.GetAttributes()
+                    .FirstOrDefault(attribute =>
+                        attribute.LocalName == "show" && string.IsNullOrEmpty(attribute.NamespaceUri));
+                if (showAttribute == null || string.IsNullOrEmpty(showAttribute.Value.Value)) {
+                    return false;
+                }
+
+                return string.Equals(showAttribute.Value.Value, "0", StringComparison.Ordinal) ||
+                       string.Equals(showAttribute.Value.Value, "false", StringComparison.OrdinalIgnoreCase);
+            }
+            set {
+                SlideId slideId = GetSlideId();
+                if (value) {
+                    slideId.SetAttribute(new OpenXmlAttribute("show", string.Empty, "0"));
+                } else {
+                    slideId.RemoveAttribute("show", string.Empty);
+                }
+            }
+        }
+
+        /// <summary>
+        ///     Hides the slide in slide show mode.
+        /// </summary>
+        public void Hide() => Hidden = true;
+
+        /// <summary>
+        ///     Shows the slide in slide show mode.
+        /// </summary>
+        public void Show() => Hidden = false;
+
+        private static bool HasMorphTransition(Transition transition) {
+            return transition.ChildElements.Any(element =>
+                element.LocalName == "morph" && element.NamespaceUri == P159Namespace);
+        }
+
+        private static OpenXmlUnknownElement CreateMorphTransition() {
+            OpenXmlUnknownElement morph = new OpenXmlUnknownElement("p159", "morph", P159Namespace);
+            morph.SetAttribute(new OpenXmlAttribute("option", string.Empty, "byObject"));
+            return morph;
+        }
+
+        private SlideId GetSlideId() {
+            PresentationPart presentationPart = _slidePart.GetParentParts()
+                .OfType<PresentationPart>()
+                .FirstOrDefault()
+                ?? throw new InvalidOperationException("Slide is not attached to a presentation.");
+
+            SlideIdList? slideIdList = presentationPart.Presentation?.SlideIdList;
+            if (slideIdList == null) {
+                throw new InvalidOperationException("Presentation has no slide list.");
+            }
+
+            string relId = presentationPart.GetIdOfPart(_slidePart);
+            SlideId? slideId = slideIdList.Elements<SlideId>()
+                .FirstOrDefault(id => id.RelationshipId?.Value == relId);
+
+            if (slideId == null) {
+                throw new InvalidOperationException("Slide not found in presentation.");
+            }
+
+            return slideId;
         }
 
         /// <summary>
@@ -189,6 +443,26 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Textboxes that map to placeholders in the slide layout.
+        /// </summary>
+        public IReadOnlyList<PowerPointTextBox> Placeholders =>
+            TextBoxes.Where(tb => tb.IsPlaceholder).ToList();
+
+        /// <summary>
+        ///     Retrieves the first placeholder textbox matching the specified type.
+        /// </summary>
+        public PowerPointTextBox? GetPlaceholder(PlaceholderValues placeholderType, uint? index = null) {
+            IEnumerable<PowerPointTextBox> matches = TextBoxes
+                .Where(tb => tb.PlaceholderType == placeholderType);
+
+            if (index != null) {
+                matches = matches.Where(tb => tb.PlaceholderIndex == index);
+            }
+
+            return matches.FirstOrDefault();
+        }
+
+        /// <summary>
         ///     Retrieves a picture by its name.
         /// </summary>
         public PowerPointPicture? GetPicture(string name) {
@@ -208,6 +482,46 @@ namespace OfficeIMO.PowerPoint {
             }
 
             return Tables.FirstOrDefault(t => t.Name == name);
+        }
+
+        /// <summary>
+        ///     Replaces text across all textboxes on the slide.
+        /// </summary>
+        public int ReplaceText(string oldValue, string newValue, bool includeTables = true, bool includeNotes = false) {
+            if (oldValue == null) {
+                throw new ArgumentNullException(nameof(oldValue));
+            }
+            if (oldValue.Length == 0) {
+                throw new ArgumentException("Old value cannot be empty.", nameof(oldValue));
+            }
+
+            string replacement = newValue ?? string.Empty;
+            int count = 0;
+
+            foreach (PowerPointTextBox textBox in TextBoxes) {
+                count += textBox.ReplaceText(oldValue, replacement);
+            }
+
+            if (includeTables) {
+                foreach (PowerPointTable table in Tables) {
+                    for (int r = 0; r < table.Rows; r++) {
+                        for (int c = 0; c < table.Columns; c++) {
+                            count += table.GetCell(r, c).ReplaceText(oldValue, replacement);
+                        }
+                    }
+                }
+            }
+
+            if (includeNotes && _slidePart.NotesSlidePart != null) {
+                string notesText = Notes.Text ?? string.Empty;
+                int occurrences = CountOccurrences(notesText, oldValue);
+                if (occurrences > 0) {
+                    Notes.Text = notesText.Replace(oldValue, replacement);
+                    count += occurrences;
+                }
+            }
+
+            return count;
         }
 
         /// <summary>
@@ -243,299 +557,23 @@ namespace OfficeIMO.PowerPoint {
             return name;
         }
 
-        /// <summary>
-        ///     Adds a title textbox to the slide.
-        /// </summary>
-        public PowerPointTextBox AddTitle(string text, long left = 838200L, long top = 365125L,
-            long width = 7772400L, long height = 1470025L) {
-            if (text == null) {
-                throw new ArgumentNullException(nameof(text));
-            }
-
-            string name = GenerateUniqueName("Title");
-            Shape shape = new(
-                new NonVisualShapeProperties(
-                    new NonVisualDrawingProperties { Id = _nextShapeId++, Name = name },
-                    new NonVisualShapeDrawingProperties(new A.ShapeLocks { NoGrouping = true }),
-                    new ApplicationNonVisualDrawingProperties(new PlaceholderShape { Type = PlaceholderValues.Title })
-                ),
-                new ShapeProperties(
-                    new A.Transform2D(new A.Offset { X = left, Y = top }, new A.Extents { Cx = width, Cy = height }),
-                    new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle }
-                ),
-                new TextBody(
-                    new A.BodyProperties(),
-                    new A.ListStyle(),
-                    new A.Paragraph(new A.Run(new A.Text(text)))
-                )
-            );
-
-            CommonSlideData data = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
-            ShapeTree tree = data.ShapeTree ??= new ShapeTree();
-            tree.AppendChild(shape);
-            PowerPointTextBox textBox = new(shape);
-            _shapes.Add(textBox);
-            return textBox;
-        }
-
-        /// <summary>
-        ///     Adds a textbox with the specified text.
-        /// </summary>
-        public PowerPointTextBox AddTextBox(string text, long left = 838200L, long top = 2174875L, long width = 7772400L,
-            long height = 3962400L) {
-            if (text == null) {
-                throw new ArgumentNullException(nameof(text));
-            }
-
-            string name = GenerateUniqueName("TextBox");
-            Shape shape = new(
-                new NonVisualShapeProperties(
-                    new NonVisualDrawingProperties { Id = _nextShapeId++, Name = name },
-                    new NonVisualShapeDrawingProperties(new A.ShapeLocks { NoGrouping = true }),
-                    new ApplicationNonVisualDrawingProperties(new PlaceholderShape())
-                ),
-                new ShapeProperties(
-                    new A.Transform2D(new A.Offset { X = left, Y = top }, new A.Extents { Cx = width, Cy = height }),
-                    new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle }
-                ),
-                new TextBody(
-                    new A.BodyProperties(),
-                    new A.ListStyle(),
-                    new A.Paragraph(new A.Run(new A.Text(text)))
-                )
-            );
-
-            CommonSlideData data = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
-            ShapeTree tree = data.ShapeTree ??= new ShapeTree();
-            tree.AppendChild(shape);
-            PowerPointTextBox textBox = new(shape);
-            _shapes.Add(textBox);
-            return textBox;
-        }
-
-        /// <summary>
-        ///     Adds an image from the given file path.
-        /// </summary>
-        public PowerPointPicture AddPicture(string imagePath, long left = 0L, long top = 0L, long width = 914400L,
-            long height = 914400L) {
-            if (imagePath == null) {
-                throw new ArgumentNullException(nameof(imagePath));
-            }
-
-            if (!File.Exists(imagePath)) {
-                throw new FileNotFoundException("Image file not found.", imagePath);
-            }
-
-            ImagePart imagePart = _slidePart.AddImagePart(GetImagePartType(imagePath).ToPartTypeInfo());
-            using FileStream stream = new(imagePath, FileMode.Open, FileAccess.Read);
-            imagePart.FeedData(stream);
-            string relationshipId = _slidePart.GetIdOfPart(imagePart);
-
-            string name = GenerateUniqueName("Picture");
-            DocumentFormat.OpenXml.Presentation.Picture picture = new(
-                new NonVisualPictureProperties(
-                    new NonVisualDrawingProperties { Id = _nextShapeId++, Name = name },
-                    new NonVisualPictureDrawingProperties(new A.PictureLocks { NoChangeAspect = true }),
-                    new ApplicationNonVisualDrawingProperties()
-                ),
-                new BlipFill(
-                    new A.Blip { Embed = relationshipId },
-                    new A.Stretch(new A.FillRectangle())
-                ),
-                new ShapeProperties(
-                    new A.Transform2D(new A.Offset { X = left, Y = top }, new A.Extents { Cx = width, Cy = height }),
-                    new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle }
-                )
-            );
-
-            CommonSlideData data = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
-            ShapeTree tree = data.ShapeTree ??= new ShapeTree();
-            tree.AppendChild(picture);
-            PowerPointPicture pic = new(picture, _slidePart);
-            _shapes.Add(pic);
-            return pic;
-        }
-
-        private static ImagePartType GetImagePartType(string imagePath) {
-            string extension = Path.GetExtension(imagePath).ToLowerInvariant();
-            return extension switch {
-                ".jpg" or ".jpeg" => ImagePartType.Jpeg,
-                ".gif" => ImagePartType.Gif,
-                ".bmp" => ImagePartType.Bmp,
-                _ => ImagePartType.Png
-            };
-        }
-
-        /// <summary>
-        ///     Adds a table with the specified rows and columns.
-        /// </summary>
-        public PowerPointTable AddTable(int rows, int columns, long left = 0L, long top = 0L, long width = 5000000L,
-            long height = 3000000L) {
-            if (rows <= 0) {
-                throw new ArgumentOutOfRangeException(nameof(rows));
-            }
-
-            if (columns <= 0) {
-                throw new ArgumentOutOfRangeException(nameof(columns));
-            }
-
-            A.Table table = new();
-            A.TableProperties props = new();
-            props.Append(new A.TableStyleId { Text = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}" });
-            props.FirstRow = true;
-            props.BandRow = true;
-            table.Append(props);
-
-            A.TableGrid grid = new();
-            // Match template column widths (~2103120 EMU) and include a16:colId metadata
-            const uint baseColId = 20000;
-            for (int c = 0; c < columns; c++) {
-                var gridCol = new A.GridColumn { Width = 2103120L };
-                uint colIdValue = baseColId + (uint)c;
-                var colIdElement = CreateA16ExtensionElement("colId", colIdValue);
-                var ext = new A.Extension { Uri = "{9D8B030D-6E8A-4147-A177-3AD203B41FA5}" };
-                ext.Append(colIdElement);
-                gridCol.Append(new A.ExtensionList(ext));
-                grid.Append(gridCol);
-            }
-
-            table.Append(grid);
-
-            const uint baseRowId = 10000;
-            for (int r = 0; r < rows; r++) {
-                A.TableRow row = new() { Height = 370840L };
-                for (int c = 0; c < columns; c++) {
-                    A.TableCell cell = new(
-                        new A.TextBody(new A.BodyProperties(), new A.ListStyle(),
-                            new A.Paragraph(new A.Run(new A.Text(string.Empty)))),
-                        new A.TableCellProperties());
-
-                    row.Append(cell);
-                }
-
-                uint rowIdValue = baseRowId + (uint)r;
-                var rowIdElement = CreateA16ExtensionElement("rowId", rowIdValue);
-                var rowExt = new A.Extension { Uri = "{0D108BD9-81ED-4DB2-BD59-A6C34878D82A}" };
-                rowExt.Append(rowIdElement);
-                row.Append(new A.ExtensionList(rowExt));
-
-                table.Append(row);
-            }
-
-            string name = GenerateUniqueName("Table");
-            GraphicFrame frame = new(
-                new NonVisualGraphicFrameProperties(
-                    new NonVisualDrawingProperties { Id = _nextShapeId++, Name = name },
-                    new NonVisualGraphicFrameDrawingProperties(),
-                    new ApplicationNonVisualDrawingProperties()
-                ),
-                new Transform(new A.Offset { X = left, Y = top }, new A.Extents { Cx = width, Cy = height }),
-                new A.Graphic(new A.GraphicData(table) {
-                    Uri = "http://schemas.openxmlformats.org/drawingml/2006/table"
-                })
-            );
-
-            CommonSlideData data = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
-            ShapeTree tree = data.ShapeTree ??= new ShapeTree();
-            tree.AppendChild(frame);
-            PowerPointTable tbl = new(frame);
-            _shapes.Add(tbl);
-            return tbl;
-        }
-
-        /// <summary>
-        ///     Adds a basic clustered column chart with default data.
-        /// </summary>
-        public PowerPointChart AddChart() {
-            ChartPart chartPart = _slidePart.AddNewPart<ChartPart>();
-            string chartRelId = _slidePart.GetIdOfPart(chartPart);
-
-            // Embed workbook + styles/colors exactly like the template
-            var stylePart = chartPart.AddNewPart<ChartStylePart>("rId1");
-            PowerPointUtils.PopulateChartStyle(stylePart);
-            var colorStylePart = chartPart.AddNewPart<ChartColorStylePart>("rId2");
-            PowerPointUtils.PopulateChartColorStyle(colorStylePart);
-            var embedded = chartPart.AddNewPart<EmbeddedPackagePart>(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "rId3");
-            using (var ms = new MemoryStream(TemplateChartWorkbookBytes())) {
-                embedded.FeedData(ms);
-            }
-
-            GenerateDefaultChart(chartPart);
-
-            string relId = chartRelId;
-            string name = GenerateUniqueName("Chart");
-            GraphicFrame frame = new(
-                new NonVisualGraphicFrameProperties(
-                    new NonVisualDrawingProperties { Id = _nextShapeId++, Name = name },
-                    new NonVisualGraphicFrameDrawingProperties(),
-                    new ApplicationNonVisualDrawingProperties()
-                ),
-                new Transform(new A.Offset { X = 0L, Y = 0L }, new A.Extents { Cx = 5486400L, Cy = 3200400L }),
-                new A.Graphic(new A.GraphicData(new C.ChartReference { Id = relId }) {
-                    Uri = "http://schemas.openxmlformats.org/drawingml/2006/chart"
-                })
-            );
-
-            CommonSlideData data = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
-            ShapeTree tree = data.ShapeTree ??= new ShapeTree();
-            tree.AppendChild(frame);
-            PowerPointChart chart = new(frame);
-            _shapes.Add(chart);
-            return chart;
-        }
-
-        private static OpenXmlUnknownElement CreateA16ExtensionElement(string localName, uint value) {
-            const string a16Namespace = "http://schemas.microsoft.com/office/drawing/2014/main";
-            var element = new OpenXmlUnknownElement("a16", localName, a16Namespace);
-            element.AddNamespaceDeclaration("a16", a16Namespace);
-            element.SetAttribute(new OpenXmlAttribute("val", string.Empty, value.ToString(CultureInfo.InvariantCulture)));
-            return element;
-        }
-
-        private static byte[] TemplateChartWorkbookBytes() {
-            return PowerPointUtils.GetChartWorkbookTemplateBytes();
-        }
-
-        private static void GenerateDefaultChart(ChartPart chartPart) {
-            PowerPointUtils.PopulateChartTemplate(chartPart);
-        }
-
-        private static byte[] GenerateEmbeddedWorkbookBytes() {
-            using MemoryStream ms = new();
-            using (var doc = SpreadsheetDocument.Create(ms, SpreadsheetDocumentType.Workbook)) {
-                WorkbookPart wbPart = doc.AddWorkbookPart();
-                wbPart.Workbook = new S.Workbook();
-
-                WorksheetPart wsPart = wbPart.AddNewPart<WorksheetPart>();
-                S.SheetData sheetData = new(
-                    new S.Row(
-                        new S.Cell { CellValue = new S.CellValue("Category"), DataType = S.CellValues.String },
-                        new S.Cell { CellValue = new S.CellValue("Value"), DataType = S.CellValues.String }
-                    ),
-                    new S.Row(
-                        new S.Cell { CellValue = new S.CellValue("A"), DataType = S.CellValues.String },
-                        new S.Cell { CellValue = new S.CellValue("4"), DataType = S.CellValues.Number }
-                    ),
-                    new S.Row(
-                        new S.Cell { CellValue = new S.CellValue("B"), DataType = S.CellValues.String },
-                        new S.Cell { CellValue = new S.CellValue("5"), DataType = S.CellValues.Number }
-                    )
-                );
-                wsPart.Worksheet = new S.Worksheet(sheetData);
-
-                S.Sheets sheets = new();
-                sheets.Append(new S.Sheet { Name = "Sheet1", SheetId = 1U, Id = wbPart.GetIdOfPart(wsPart) });
-                wbPart.Workbook.AppendChild(sheets);
-                wbPart.Workbook.Save();
-            }
-            return ms.ToArray();
-        }
-
         internal void Save() {
             _slidePart.Slide.Save();
             _notes?.Save();
+        }
+
+        private static int CountOccurrences(string value, string oldValue) {
+            int count = 0;
+            int index = 0;
+            while (true) {
+                index = value.IndexOf(oldValue, index, StringComparison.Ordinal);
+                if (index < 0) {
+                    break;
+                }
+                count++;
+                index += oldValue.Length;
+            }
+            return count;
         }
 
         private void LoadExistingShapes() {
@@ -558,8 +596,12 @@ namespace OfficeIMO.PowerPoint {
                 }
 
                 switch (element) {
-                    case Shape s when s.TextBody != null:
-                        _shapes.Add(new PowerPointTextBox(s));
+                    case Shape s:
+                        if (s.TextBody != null) {
+                            _shapes.Add(new PowerPointTextBox(s, _slidePart));
+                        } else {
+                            _shapes.Add(new PowerPointAutoShape(s));
+                        }
                         break;
                     case DocumentFormat.OpenXml.Presentation.Picture p:
                         _shapes.Add(new PowerPointPicture(p, _slidePart));
@@ -568,7 +610,7 @@ namespace OfficeIMO.PowerPoint {
                         _shapes.Add(new PowerPointTable(g));
                         break;
                     case GraphicFrame g when g.Graphic?.GraphicData?.GetFirstChild<C.ChartReference>() != null:
-                        _shapes.Add(new PowerPointChart(g));
+                        _shapes.Add(new PowerPointChart(g, _slidePart));
                         break;
                 }
             }

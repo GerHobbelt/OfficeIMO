@@ -1,0 +1,245 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Presentation;
+using A = DocumentFormat.OpenXml.Drawing;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
+
+namespace OfficeIMO.PowerPoint {
+    public partial class PowerPointSlide {
+        /// <summary>
+        ///     Adds a basic clustered column chart with default data.
+        /// </summary>
+        public PowerPointChart AddChart() {
+            return AddChartInternal(null, 0L, 0L, 5486400L, 3200400L);
+        }
+
+        /// <summary>
+        ///     Adds a basic clustered column chart with default data at a specific position.
+        /// </summary>
+        public PowerPointChart AddChart(long left, long top, long width, long height) {
+            return AddChartInternal(null, left, top, width, height);
+        }
+
+        /// <summary>
+        ///     Adds a basic clustered column chart with default data using centimeter measurements.
+        /// </summary>
+        public PowerPointChart AddChartCm(double leftCm, double topCm, double widthCm, double heightCm) {
+            return AddChart(
+                PowerPointUnits.FromCentimeters(leftCm),
+                PowerPointUnits.FromCentimeters(topCm),
+                PowerPointUnits.FromCentimeters(widthCm),
+                PowerPointUnits.FromCentimeters(heightCm));
+        }
+
+        /// <summary>
+        ///     Adds a basic clustered column chart with default data using inch measurements.
+        /// </summary>
+        public PowerPointChart AddChartInches(double leftInches, double topInches, double widthInches,
+            double heightInches) {
+            return AddChart(
+                PowerPointUnits.FromInches(leftInches),
+                PowerPointUnits.FromInches(topInches),
+                PowerPointUnits.FromInches(widthInches),
+                PowerPointUnits.FromInches(heightInches));
+        }
+
+        /// <summary>
+        ///     Adds a basic clustered column chart with default data using point measurements.
+        /// </summary>
+        public PowerPointChart AddChartPoints(double leftPoints, double topPoints, double widthPoints,
+            double heightPoints) {
+            return AddChart(
+                PowerPointUnits.FromPoints(leftPoints),
+                PowerPointUnits.FromPoints(topPoints),
+                PowerPointUnits.FromPoints(widthPoints),
+                PowerPointUnits.FromPoints(heightPoints));
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using the supplied data.
+        /// </summary>
+        public PowerPointChart AddChart(PowerPointChartData data, long left = 0L, long top = 0L, long width = 5486400L,
+            long height = 3200400L) {
+            if (data == null) {
+                throw new ArgumentNullException(nameof(data));
+            }
+
+            return AddChartInternal(data, left, top, width, height);
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using the supplied data with centimeter measurements.
+        /// </summary>
+        public PowerPointChart AddChartCm(PowerPointChartData data, double leftCm, double topCm, double widthCm,
+            double heightCm) {
+            return AddChart(data,
+                PowerPointUnits.FromCentimeters(leftCm),
+                PowerPointUnits.FromCentimeters(topCm),
+                PowerPointUnits.FromCentimeters(widthCm),
+                PowerPointUnits.FromCentimeters(heightCm));
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using the supplied data with inch measurements.
+        /// </summary>
+        public PowerPointChart AddChartInches(PowerPointChartData data, double leftInches, double topInches,
+            double widthInches, double heightInches) {
+            return AddChart(data,
+                PowerPointUnits.FromInches(leftInches),
+                PowerPointUnits.FromInches(topInches),
+                PowerPointUnits.FromInches(widthInches),
+                PowerPointUnits.FromInches(heightInches));
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using the supplied data with point measurements.
+        /// </summary>
+        public PowerPointChart AddChartPoints(PowerPointChartData data, double leftPoints, double topPoints,
+            double widthPoints, double heightPoints) {
+            return AddChart(data,
+                PowerPointUnits.FromPoints(leftPoints),
+                PowerPointUnits.FromPoints(topPoints),
+                PowerPointUnits.FromPoints(widthPoints),
+                PowerPointUnits.FromPoints(heightPoints));
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using object data selectors.      
+        /// </summary>
+        public PowerPointChart AddChart<T>(IEnumerable<T> items, Func<T, string> categorySelector,
+            params PowerPointChartSeriesDefinition<T>[] seriesDefinitions) {
+            return AddChart(items, categorySelector, 0L, 0L, 5486400L, 3200400L, seriesDefinitions);
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using object data selectors (centimeters).
+        /// </summary>
+        public PowerPointChart AddChartCm<T>(IEnumerable<T> items, Func<T, string> categorySelector, double leftCm,
+            double topCm, double widthCm, double heightCm, params PowerPointChartSeriesDefinition<T>[] seriesDefinitions) {
+            return AddChart(items, categorySelector,
+                PowerPointUnits.FromCentimeters(leftCm),
+                PowerPointUnits.FromCentimeters(topCm),
+                PowerPointUnits.FromCentimeters(widthCm),
+                PowerPointUnits.FromCentimeters(heightCm),
+                seriesDefinitions);
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using object data selectors (inches).
+        /// </summary>
+        public PowerPointChart AddChartInches<T>(IEnumerable<T> items, Func<T, string> categorySelector,
+            double leftInches, double topInches, double widthInches, double heightInches,
+            params PowerPointChartSeriesDefinition<T>[] seriesDefinitions) {
+            return AddChart(items, categorySelector,
+                PowerPointUnits.FromInches(leftInches),
+                PowerPointUnits.FromInches(topInches),
+                PowerPointUnits.FromInches(widthInches),
+                PowerPointUnits.FromInches(heightInches),
+                seriesDefinitions);
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using object data selectors (points).
+        /// </summary>
+        public PowerPointChart AddChartPoints<T>(IEnumerable<T> items, Func<T, string> categorySelector,
+            double leftPoints, double topPoints, double widthPoints, double heightPoints,
+            params PowerPointChartSeriesDefinition<T>[] seriesDefinitions) {
+            return AddChart(items, categorySelector,
+                PowerPointUnits.FromPoints(leftPoints),
+                PowerPointUnits.FromPoints(topPoints),
+                PowerPointUnits.FromPoints(widthPoints),
+                PowerPointUnits.FromPoints(heightPoints),
+                seriesDefinitions);
+        }
+
+        /// <summary>
+        ///     Adds a clustered column chart using object data selectors at a specific position.
+        /// </summary>
+        public PowerPointChart AddChart<T>(IEnumerable<T> items, Func<T, string> categorySelector,
+            long left, long top, long width, long height,
+            params PowerPointChartSeriesDefinition<T>[] seriesDefinitions) {
+            var data = PowerPointChartData.From(items, categorySelector, seriesDefinitions);
+            return AddChartInternal(data, left, top, width, height);
+        }
+
+        private PowerPointChart AddChartInternal(PowerPointChartData? data, long left, long top, long width, long height) {
+            PowerPointChartData chartData = data ?? PowerPointChartData.CreateDefault();
+            string chartPartUri = PowerPointPartFactory.GetIndexedPartUri(
+                _slidePart.OpenXmlPackage,
+                "ppt/charts",
+                "chart",
+                ".xml",
+                allowBaseWithoutIndex: false);
+            ChartPart chartPart = PowerPointPartFactory.CreatePart<ChartPart>(
+                _slidePart,
+                contentType: null,
+                chartPartUri);
+            string chartRelId = _slidePart.GetIdOfPart(chartPart);
+
+            // Embed workbook + styles/colors exactly like the template
+            string stylePartUri = PowerPointPartFactory.GetIndexedPartUri(
+                _slidePart.OpenXmlPackage,
+                "ppt/charts",
+                "style",
+                ".xml",
+                allowBaseWithoutIndex: false);
+            ChartStylePart stylePart = PowerPointPartFactory.CreatePart<ChartStylePart>(
+                chartPart,
+                contentType: null,
+                stylePartUri);
+            PowerPointUtils.PopulateChartStyle(stylePart);
+            string colorStylePartUri = PowerPointPartFactory.GetIndexedPartUri(
+                _slidePart.OpenXmlPackage,
+                "ppt/charts",
+                "colors",
+                ".xml",
+                allowBaseWithoutIndex: false);
+            ChartColorStylePart colorStylePart = PowerPointPartFactory.CreatePart<ChartColorStylePart>(
+                chartPart,
+                contentType: null,
+                colorStylePartUri);
+            PowerPointUtils.PopulateChartColorStyle(colorStylePart);
+
+            string embeddedPartUri = PowerPointPartFactory.GetIndexedPartUri(
+                _slidePart.OpenXmlPackage,
+                "ppt/embeddings",
+                "Microsoft_Excel_Worksheet",
+                ".xlsx",
+                allowBaseWithoutIndex: false);
+            EmbeddedPackagePart embedded = PowerPointPartFactory.CreatePart<EmbeddedPackagePart>(
+                chartPart,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                embeddedPartUri);
+            byte[] workbookBytes = PowerPointUtils.BuildChartWorkbook(chartData);
+            using (var ms = new MemoryStream(workbookBytes)) {
+                embedded.FeedData(ms);
+            }
+
+            string embeddedRelId = chartPart.GetIdOfPart(embedded);
+            PowerPointUtils.PopulateChart(chartPart, embeddedRelId, chartData);
+
+            string name = GenerateUniqueName("Chart");
+            GraphicFrame frame = new(
+                new NonVisualGraphicFrameProperties(
+                    new NonVisualDrawingProperties { Id = _nextShapeId++, Name = name },
+                    new NonVisualGraphicFrameDrawingProperties(),
+                    new ApplicationNonVisualDrawingProperties()
+                ),
+                new Transform(new A.Offset { X = left, Y = top }, new A.Extents { Cx = width, Cy = height }),
+                new A.Graphic(new A.GraphicData(new C.ChartReference { Id = chartRelId }) {
+                    Uri = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+                })
+            );
+
+            CommonSlideData dataElement = _slidePart.Slide.CommonSlideData ??= new CommonSlideData(new ShapeTree());
+            ShapeTree tree = dataElement.ShapeTree ??= new ShapeTree();
+            tree.AppendChild(frame);
+            PowerPointChart chart = new(frame, _slidePart);
+            _shapes.Add(chart);
+            return chart;
+        }
+
+    }
+}
