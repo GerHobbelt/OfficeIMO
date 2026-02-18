@@ -230,6 +230,15 @@ article.markdown-body .md-layout.two-col > nav.md-toc.sidebar.sticky { position:
 article.markdown-body table { margin: .75rem 0 1.1rem 0; }
 article.markdown-body pre { margin: .75rem 0 1.1rem 0; }
 article.markdown-body blockquote { margin: .65rem 0 1rem 0; }
+
+/* Task lists (GitHub-like) */
+article.markdown-body ul.contains-task-list,
+article.markdown-body ol.contains-task-list { list-style: none; padding-left: 0; }
+article.markdown-body ul.contains-task-list > li,
+article.markdown-body ol.contains-task-list > li { padding-left: 1.6rem; position: relative; }
+article.markdown-body li.task-list-item { list-style: none; }
+article.markdown-body input.task-list-item-checkbox { margin: 0 .35rem 0 0; vertical-align: middle; }
+article.markdown-body li.task-list-item > input.task-list-item-checkbox { position: absolute; left: 0; top: .2em; }
 @media (max-width: 1000px) {
   article.markdown-body nav.md-toc.sidebar.right,
   article.markdown-body nav.md-toc.sidebar.left { float: none; width: auto; margin: 0 0 1rem 0; }
@@ -274,6 +283,21 @@ article.markdown-body li,
 article.markdown-body blockquote,
 article.markdown-body td,
 article.markdown-body th { overflow-wrap: anywhere; word-break: break-word; }
+
+/* Footnotes */
+article.markdown-body section.footnotes { margin-top: 2rem; }
+article.markdown-body section.footnotes > hr { border: 0; border-top: 1px solid rgba(27,31,36,.15); margin: 1rem 0; }
+article.markdown-body section.footnotes ol { margin: 0; padding-left: 1.25rem; }
+article.markdown-body section.footnotes li { margin: .35rem 0; }
+article.markdown-body a.footnote-backref { margin-left: .5rem; text-decoration: none; opacity: .8; }
+article.markdown-body a.footnote-backref:hover { opacity: 1; text-decoration: underline; }
+@media (prefers-color-scheme: dark) {
+  article.markdown-body section.footnotes > hr { border-top-color: rgba(240,246,252,.2); }
+}
+html[data-theme=dark] article.markdown-body section.footnotes > hr { border-top-color: rgba(240,246,252,.2); }
+
+/* Escaped raw HTML blocks */
+article.markdown-body pre.md-raw-html { white-space: pre-wrap; }
 ";
 
     // Word-like, document-centric styling – Calibri/Cambria fonts, comfortable spacing,
