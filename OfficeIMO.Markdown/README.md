@@ -60,9 +60,9 @@ Blocks
 - Paragraphs and hard breaks: two spaces or explicit `\n` from composed content
 - Fenced code blocks: triple backticks with optional language; optional `_caption_` line below
 - Images: `![alt](src "title")` with optional `{width=.. height=..}` hints
-- Lists: unordered `-/*/+`, ordered `1.` (single level); task items `- [ ]` / `- [x]`
+- Lists: unordered `-/*/+`, ordered `1.`; supports nesting via indentation; task items `- [ ]` / `- [x]`
 - Tables: GitHub pipe tables with per‑column alignment markers (`:---`, `:---:`, `---:`)
-- Block quotes: `>` lines (single level)
+- Block quotes: `>` lines; supports nesting and lazy continuation
 - Callouts: `> [!info] Title` lines (Docs‑style), followed by body paragraphs
 - Horizontal rule: `---`
 - Footnotes: references `[^id]` and definitions `[^id]:` with continuation lines
@@ -183,6 +183,13 @@ var parsed = MarkdownReader.Parse(markdown, new MarkdownReaderOptions { Tables =
 // TOC placeholders in Markdown are recognized and rendered:
 // [TOC] or [[TOC]] or {:toc} or <!-- TOC -->
 // Parameterized form: [TOC min=2 max=3 layout=sidebar-right sticky=true scrollspy=true title="On this page"]
+
+// Optional input normalization for chat/model output before parsing
+var normalizedParsed = MarkdownReader.Parse("**Status\nHEALTHY**", new MarkdownReaderOptions {
+    InputNormalization = new MarkdownInputNormalizationOptions {
+        NormalizeSoftWrappedStrongSpans = true
+    }
+});
 ```
 
 Header transforms and acronyms
@@ -247,12 +254,16 @@ Doc‑level helpers
 
  HTML options
 - Kind: Fragment | Document
-- Style: Plain | Clean | GithubLight | GithubDark | GithubAuto | Word
+- Style: Plain | Clean | GithubLight | GithubDark | GithubAuto | ChatLight | ChatDark | ChatAuto | Word
 - CssDelivery: Inline | ExternalFile | LinkHref | None
 - AssetMode: Online (link) | Offline (download+inline)
 - Title, BodyClass (default "markdown-body"), IncludeAnchorLinks, ThemeToggle
 - EmitMode: Emit (default) | ManifestOnly for host-side asset merging
 - Prism: Enabled, Theme (Prism/Okaidia/GithubDark/GithubAuto), Languages, Plugins, CdnBase
+
+Chat styles
+- ChatLight/ChatDark/ChatAuto are compact, embed-friendly themes intended for chat UIs (no large page margins).
+
 TOC HTML options (via TocOptions in TocAtTop/TocHere/TocFor*)
 - Layout: List (default, plain nested list), Panel (card), SidebarRight/SidebarLeft
 - Collapsible: wrap in <details>; Collapsed: default state

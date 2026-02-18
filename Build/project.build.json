@@ -1,21 +1,25 @@
 {
-  "$schema": "https://raw.githubusercontent.com/EvotecIT/PSPublishModule/master/Schemas/project.build.schema.json",
+  "$schema": "https://raw.githubusercontent.com/EvotecIT/PSPublishModule/main/Schemas/project.build.schema.json",
   "RootPath": "..",
   "ExpectedVersion": null,
   "ExpectedVersionMap": {
     "OfficeIMO.CSV": "0.1.X",
     "OfficeIMO.Excel": "0.6.X",
     "OfficeIMO.Markdown": "0.5.X",
-    "OfficeIMO.Word": "1.0.X"
+    "OfficeIMO.MarkdownRenderer": "0.1.X",
+    "OfficeIMO.Pdf": "0.1.X",
+    "OfficeIMO.PowerPoint": "1.0.X",
+    "OfficeIMO.Reader": "0.1.X",
+    "OfficeIMO.Word": "1.0.X",
+    "OfficeIMO.Word.Html": "1.0.X",
+    "OfficeIMO.Word.Markdown": "1.0.X",
+    "OfficeIMO.Word.Pdf": "1.0.X"
   },
   "ExpectedVersionMapAsInclude": true,
   "ExpectedVersionMapUseWildcards": false,
   "ExcludeProjects": [
     "OfficeIMO.Visio",
-    "OfficeIMO.Project",
-    "OfficeIMO.Word.Html",
-    "OfficeIMO.Word.Markdown",
-    "OfficeIMO.Word.Pdf"
+    "OfficeIMO.Project"
   ],
   "NugetSource": [],
   "IncludePrerelease": false,
@@ -23,7 +27,7 @@
   "OutputPath": null,
   "StagingPath": "Artefacts/ProjectBuild",
   "CleanStaging": true,
-  "PlanOutputPath": "Artefacts/ProjectBuild/project.build.plan.json",
+  "PlanOutputPath": null,
   "UpdateVersions": true,
   "Build": true,
   "PublishNuget": false,
@@ -43,6 +47,8 @@
   "GitHubIncludeProjectNameInTag": true,
   "GitHubGenerateReleaseNotes": true,
   "GitHubReleaseMode": "Single",
-  "GitHubPrimaryProject": "OfficeIMO.Word",
-  "GitHubTagTemplate": "{Project}-v{Version}"
+  "GitHubPrimaryProject": null,
+  "GitHubTagTemplate": "{Repo}-v{UtcTimestamp}",
+  "GitHubReleaseName": "{Repo} {UtcDateTime}"
 }
+

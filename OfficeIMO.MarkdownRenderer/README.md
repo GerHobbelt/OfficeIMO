@@ -6,19 +6,168 @@ Small helper library to render Markdown using `OfficeIMO.Markdown` into HTML tha
 - `BuildShellHtml(...)`: returns a full HTML page that preloads CSS/Prism/Mermaid once
 - `RenderBodyHtml(...)`: returns an HTML fragment for a given Markdown string
 - `BuildUpdateScript(...)`: returns a JavaScript snippet calling `updateContent(...)`
+- `RenderUpdateScript(...)`: convenience helper that renders Markdown and returns the `updateContent(...)` snippet
 
-Typical usage (WebView2)
+Chat quickstart (WebView2)
 
 ```csharp
 using OfficeIMO.MarkdownRenderer;
 
 // 1) Load shell once
-var opts = new MarkdownRendererOptions();
+var opts = MarkdownRendererPresets.CreateChatStrict(baseHref: null);
 webView.NavigateToString(MarkdownRenderer.BuildShellHtml("Chat", opts));
 
 // 2) For each message update
-string bodyHtml = MarkdownRenderer.RenderBodyHtml(markdownText, opts);
-await webView.ExecuteScriptAsync(MarkdownRenderer.BuildUpdateScript(bodyHtml));
+await webView.ExecuteScriptAsync(MarkdownRenderer.RenderUpdateScript(markdownText, opts));
+```
+
+Alternative update path (recommended for streaming/large payloads)
+
+`BuildShellHtml(...)` includes a WebView2 message listener, so you can send the updated HTML without calling `ExecuteScriptAsync`:
+
+```csharp
+using OfficeIMO.MarkdownRenderer;
+
+var opts = MarkdownRendererPresets.CreateChatStrict(baseHref: null);
+webView.NavigateToString(MarkdownRenderer.BuildShellHtml("Chat", opts));
+
+// After CoreWebView2 is initialized and navigation completed:
+var bodyHtml = MarkdownRenderer.RenderBodyHtml(markdownText, opts);
+webView.CoreWebView2.PostWebMessageAsString(bodyHtml);
+```
+
+You can also send an object payload if you want to extend the message contract later:
+
+```csharp
+webView.CoreWebView2.PostWebMessageAsJson("{\"bodyHtml\":" + System.Text.Json.JsonSerializer.Serialize(bodyHtml) + "}");
+```
+
+Chat bubble helpers (optional)
+
+If you want message "bubbles" without authoring HTML in the app, use the bubble wrapper helpers.
+The chat presets already use `HtmlStyle.ChatAuto` which includes bubble CSS classes (opt-in):
+
+```csharp
+var opts = MarkdownRendererPresets.CreateChatStrict();
+
+// Render a single user message as a bubble
+var bubbleHtml = MarkdownRenderer.RenderChatBubbleBodyHtml(markdownText, ChatMessageRole.User, opts);
+webView.CoreWebView2.PostWebMessageAsString(bubbleHtml);
+```
+
+Presets
+
+- `MarkdownRendererPresets.CreateChatStrict(...)`: safe defaults for untrusted content and a compact chat-friendly theme (`HtmlStyle.ChatAuto`).
+- `MarkdownRendererPresets.CreateChatRelaxed(...)`: enables HTML parsing and sanitizes raw HTML blocks (still conservative).
+- `MarkdownRendererPresets.CreateChatStrictMinimal(...)`: strict, but disables Mermaid/Chart/Math/Prism and copy buttons.
+  - strict presets also enable chat-output normalization for short soft-wrapped `**bold**` labels, inline-code line breaks, escaped inline-code spans (`\`code\``), and tight strong boundaries (`**bold**next`).
+
+Options (high level)
+
+- `MarkdownRendererOptions.ReaderOptions`: parsing behavior (HTML enabled/disabled, URL scheme restrictions, etc.).
+- `MarkdownRendererOptions.HtmlOptions`: HTML + CSS rendering (theme, Prism, link/image hardening, same-origin restrictions).
+- `MarkdownRendererOptions.NormalizeSoftWrappedStrongSpans` / `NormalizeInlineCodeSpanLineBreaks` / `NormalizeEscapedInlineCodeSpans` / `NormalizeTightStrongBoundaries`: optional markdown text normalization before parsing.
+- `MarkdownRendererOptions.MarkdownPreProcessors`: custom markdown text transforms before parsing.
+- `MarkdownRendererOptions.Mermaid` / `Chart` / `Math`: optional client-side renderers for fenced blocks.
+- `MarkdownRendererOptions.HtmlPostProcessors`: last-mile HTML transformations (custom diagram types, host integration).
+
+Normalization is backed by `OfficeIMO.Markdown.MarkdownInputNormalizer`, so the same behavior is available directly via `MarkdownReaderOptions.InputNormalization` when parsing outside the renderer.
+
+Offline assets (no network at runtime)
+
+If your host runs with limited or no network access (or you want deterministic rendering), set:
+
+- `MarkdownRendererOptions.HtmlOptions.AssetMode = AssetMode.Offline`
+
+When `AssetMode.Offline` is used, the shell builder will attempt to inline Mermaid/Chart/Math assets into the HTML
+as `data:` URLs (best-effort). This avoids WebView runtime fetches.
+
+```csharp
+using OfficeIMO.Markdown;
+using OfficeIMO.MarkdownRenderer;
+
+var opts = MarkdownRendererPresets.CreateChatStrict();
+opts.HtmlOptions.AssetMode = AssetMode.Offline;
+
+// Optional: point to local files so bundling never hits the network.
+opts.Mermaid.ScriptUrl = @"C:\app\assets\mermaid.min.js";
+opts.Chart.ScriptUrl = @"C:\app\assets\chart.umd.min.js";
+opts.Math.CssUrl = @"C:\app\assets\katex.min.css";
+opts.Math.ScriptUrl = @"C:\app\assets\katex.min.js";
+opts.Math.AutoRenderScriptUrl = @"C:\app\assets\auto-render.min.js";
+
+webView.NavigateToString(MarkdownRenderer.BuildShellHtml("Chat", opts));
+```
+
+Notes:
+
+- Bundling supports `http(s)` URLs and local file paths. Custom schemes (e.g. virtual host mappings) are not fetchable
+  by the .NET process and will not be inlined.
+- If you set a strict CSP via `MarkdownRendererOptions.ContentSecurityPolicy`, ensure it allows `data:` sources for
+  `script-src` and `style-src` (or keep `AssetMode.Online` and host assets from allowed origins).
+
+Theming and customization
+
+- You are not stuck with the built-in styles. You can:
+  - choose a built-in preset: `HtmlStyle.ChatAuto`, `HtmlStyle.GithubAuto`, `HtmlStyle.Clean`, `HtmlStyle.Plain`, etc.
+  - override colors/spacing via `MarkdownRendererOptions.ShellCss` (appended after built-ins, so it wins)
+  - fully replace styling by using `HtmlStyle.Plain` and providing your own CSS
+
+Useful HTML structure and CSS hooks
+
+- Shell root: `#omdRoot` (this is where content is injected)
+- Default content wrapper (from `RenderBodyHtml`): `<article class="markdown-body">...</article>` (class is controlled by `HtmlOptions.BodyClass`)
+- Optional bubble wrappers (from `RenderChatBubbleBodyHtml`):
+  - `.omd-chat-row`
+  - `.omd-chat-bubble`
+  - roles: `.omd-role-user`, `.omd-role-assistant`, `.omd-role-system`
+- Optional block helpers emitted by the renderer:
+  - blocked images: `.omd-image-blocked`
+  - charts: `canvas.omd-chart`
+  - math: `.omd-math`
+
+Overriding styles in the chat app
+
+```csharp
+var opts = MarkdownRendererPresets.CreateChatStrict();
+opts.ShellCss = """
+/* Example: tighter paragraphs + custom bubble colors */
+.omd-chat-bubble { border-radius: 18px; }
+.omd-chat-row.omd-role-user .omd-chat-bubble { background: rgba(0, 120, 212, .18); }
+""";
+
+webView.NavigateToString(MarkdownRenderer.BuildShellHtml("Chat", opts));
+```
+
+WebView2 host message contract (optional)
+
+Shell listens for WebView2 messages and updates content:
+
+- Host -> Web
+  - `PostWebMessageAsString(bodyHtml)` (string payload)
+  - `PostWebMessageAsJson({ type: "omd.update", bodyHtml: "..." })` (recommended object payload)
+
+Shell may also send helper messages to the host:
+
+- Web -> Host
+  - `{ type: "omd.copy", text: "..." }` when the user clicks a copy button (code/table)
+
+If the host handles `omd.copy`, it can put the text onto the native clipboard (more reliable than browser clipboard APIs in some environments).
+
+Copy buttons (code + tables)
+
+The chat presets enable copy buttons by default:
+
+- `MarkdownRendererOptions.EnableCodeCopyButtons = true`
+- `MarkdownRendererOptions.EnableTableCopyButtons = true`
+
+If you are building your own preset, enable them explicitly:
+
+```csharp
+var opts = new MarkdownRendererOptions();
+opts.EnableCodeCopyButtons = true;
+opts.EnableTableCopyButtons = true;
+webView.NavigateToString(MarkdownRenderer.BuildShellHtml("Chat", opts));
 ```
 
 Mermaid diagrams
