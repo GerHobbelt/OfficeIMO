@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using OfficeIMO.Markdown;
 using Xunit;
 
@@ -22,8 +23,8 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
             var doc = MarkdownReader.Parse(md);
 
-            var html = Assert.IsType<HtmlRawBlock>(doc.Blocks[0]);
-            Assert.Equal("<!-- start\ncontinues -->", html.Html);
+            var comment = Assert.IsType<HtmlCommentBlock>(doc.Blocks[0]);
+            Assert.Equal("<!-- start\ncontinues -->", comment.Comment);
             Assert.IsType<ParagraphBlock>(doc.Blocks[1]);
         }
 
@@ -149,8 +150,9 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
             var doc = MarkdownReader.Parse(md);
 
-            var html = Assert.IsType<HtmlRawBlock>(doc.Blocks[0]);
-            Assert.Equal("<details>\n<summary>Summary</summary>\n\n<div>Body</div>\n</details>", html.Html);
+            var details = Assert.IsType<DetailsBlock>(doc.Blocks[0]);
+            Assert.Equal("Summary", Assert.IsType<TextRun>(details.Summary!.Inlines.Items[0]).Text);
+            Assert.Equal("<details>\n<summary>Summary</summary>\n\n<div>Body</div>\n</details>", ((IMarkdownBlock)details).RenderMarkdown());
             Assert.IsType<ParagraphBlock>(doc.Blocks[1]);
         }
 
@@ -183,8 +185,9 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
             var doc = MarkdownReader.Parse(md);
 
-            var html = Assert.IsType<HtmlRawBlock>(doc.Blocks[0]);
-            Assert.Equal("<details>\n<summary>One</summary>\n\n<section>\n<p>Inner</p>\n</section>\n\n</details>", html.Html);
+            var details = Assert.IsType<DetailsBlock>(doc.Blocks[0]);
+            Assert.Equal("One", Assert.IsType<TextRun>(details.Summary!.Inlines.Items[0]).Text);
+            Assert.Equal("<details>\n<summary>One</summary>\n\n<section>\n<p>Inner</p>\n</section>\n\n</details>", ((IMarkdownBlock)details).RenderMarkdown());
             Assert.IsType<ParagraphBlock>(doc.Blocks[1]);
         }
 
@@ -194,8 +197,8 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
             var doc = MarkdownReader.Parse(md);
 
-            var html = Assert.IsType<HtmlRawBlock>(doc.Blocks[0]);
-            Assert.Equal("<details>\n<summary>Summary</summary>\n\n<table>\n<thead>\n<tr><th>H</th></tr>\n</thead>\n\n<tbody>\n<tr><td>R1</td></tr>\n</tbody>\n</table>\n\n<div>Tail</div>\n</details>", html.Html);
+            var details = Assert.IsType<DetailsBlock>(doc.Blocks[0]);
+            Assert.Equal("<details>\n<summary>Summary</summary>\n\n<table>\n<thead>\n<tr><th>H</th></tr>\n</thead>\n\n<tbody>\n<tr><td>R1</td></tr>\n</tbody>\n</table>\n\n<div>Tail</div>\n</details>", ((IMarkdownBlock)details).RenderMarkdown());
         }
 
         [Fact]
@@ -204,19 +207,42 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
             var doc = MarkdownReader.Parse(md);
 
-            var html = Assert.IsType<HtmlRawBlock>(doc.Blocks[0]);
-            Assert.Equal("<details>\n<summary>Summary</summary>\n<component />\n\n<div>Body</div>\n</details>", html.Html);
+            var details = Assert.IsType<DetailsBlock>(doc.Blocks[0]);
+            Assert.Equal("<details>\n<summary>Summary</summary>\n<component />\n\n<div>Body</div>\n</details>", ((IMarkdownBlock)details).RenderMarkdown());
             Assert.IsType<ParagraphBlock>(doc.Blocks[1]);
         }
 
+
+        [Theory]
+        [InlineData("html-comment-single.md")]
+        [InlineData("html-comment-multi.md")]
+        public void Html_Comment_Fixtures_Parse(string fixtureName) {
+            string markdown = LoadFixture(fixtureName);
+            var doc = MarkdownReader.Parse(markdown);
+            Assert.Single(doc.Blocks);
+            var comment = Assert.IsType<HtmlCommentBlock>(doc.Blocks[0]);
+            string expected = NormalizeFixture(markdown);
+            Assert.Equal(expected, comment.Comment);
+        }
+
+        private static string LoadFixture(string name) {
+            var path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Markdown", "Fixtures", name);
+            path = Path.GetFullPath(path);
+            return File.ReadAllText(path);
+        }
+
+        private static string NormalizeFixture(string content) {
+            string normalized = content.Replace("\r\n", "\n").Replace('\r', '\n');
+            return normalized.TrimEnd('\n');
+        }
         [Fact]
         public void Type6_Details_Block_Closes_With_Unmatched_Inner_Tags() {
             string md = "<details>\n<div>\n<p>Loose</p>\n</details>\nParagraph";
 
             var doc = MarkdownReader.Parse(md);
 
-            var html = Assert.IsType<HtmlRawBlock>(doc.Blocks[0]);
-            Assert.Equal("<details>\n<div>\n<p>Loose</p>\n</details>", html.Html);
+            var details = Assert.IsType<DetailsBlock>(doc.Blocks[0]);
+            Assert.Equal("<details>\n<div>\n<p>Loose</p>\n</details>", ((IMarkdownBlock)details).RenderMarkdown());
             Assert.IsType<ParagraphBlock>(doc.Blocks[1]);
         }
 
