@@ -1,5 +1,7 @@
+using System.Globalization;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Presentation;
+using DocumentFormat.OpenXml.Spreadsheet;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 using S = DocumentFormat.OpenXml.Spreadsheet;
@@ -324,13 +326,13 @@ namespace OfficeIMO.PowerPoint {
                 throw new FileNotFoundException("Image file not found.", imagePath);
             }
 
-            ImagePart imagePart = _slidePart.AddImagePart(ImagePartType.Png.ToPartTypeInfo());
+            ImagePart imagePart = _slidePart.AddImagePart(GetImagePartType(imagePath).ToPartTypeInfo());
             using FileStream stream = new(imagePath, FileMode.Open, FileAccess.Read);
             imagePart.FeedData(stream);
             string relationshipId = _slidePart.GetIdOfPart(imagePart);
 
             string name = GenerateUniqueName("Picture");
-            Picture picture = new(
+            DocumentFormat.OpenXml.Presentation.Picture picture = new(
                 new NonVisualPictureProperties(
                     new NonVisualDrawingProperties { Id = _nextShapeId++, Name = name },
                     new NonVisualPictureDrawingProperties(new A.PictureLocks { NoChangeAspect = true }),
@@ -354,6 +356,16 @@ namespace OfficeIMO.PowerPoint {
             return pic;
         }
 
+        private static ImagePartType GetImagePartType(string imagePath) {
+            string extension = Path.GetExtension(imagePath).ToLowerInvariant();
+            return extension switch {
+                ".jpg" or ".jpeg" => ImagePartType.Jpeg,
+                ".gif" => ImagePartType.Gif,
+                ".bmp" => ImagePartType.Bmp,
+                _ => ImagePartType.Png
+            };
+        }
+
         /// <summary>
         ///     Adds a table with the specified rows and columns.
         /// </summary>
@@ -370,25 +382,42 @@ namespace OfficeIMO.PowerPoint {
             A.Table table = new();
             A.TableProperties props = new();
             props.Append(new A.TableStyleId { Text = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}" });
+            props.FirstRow = true;
+            props.BandRow = true;
             table.Append(props);
 
             A.TableGrid grid = new();
+            // Match template column widths (~2103120 EMU) and include a16:colId metadata
+            const uint baseColId = 20000;
             for (int c = 0; c < columns; c++) {
-                grid.Append(new A.GridColumn { Width = 3708400L });
+                var gridCol = new A.GridColumn { Width = 2103120L };
+                uint colIdValue = baseColId + (uint)c;
+                var colIdElement = CreateA16ExtensionElement("colId", colIdValue);
+                var ext = new A.Extension { Uri = "{9D8B030D-6E8A-4147-A177-3AD203B41FA5}" };
+                ext.Append(colIdElement);
+                gridCol.Append(new A.ExtensionList(ext));
+                grid.Append(gridCol);
             }
 
             table.Append(grid);
 
+            const uint baseRowId = 10000;
             for (int r = 0; r < rows; r++) {
                 A.TableRow row = new() { Height = 370840L };
                 for (int c = 0; c < columns; c++) {
                     A.TableCell cell = new(
                         new A.TextBody(new A.BodyProperties(), new A.ListStyle(),
                             new A.Paragraph(new A.Run(new A.Text(string.Empty)))),
-                        new A.TableCellProperties()
-                    );
+                        new A.TableCellProperties());
+
                     row.Append(cell);
                 }
+
+                uint rowIdValue = baseRowId + (uint)r;
+                var rowIdElement = CreateA16ExtensionElement("rowId", rowIdValue);
+                var rowExt = new A.Extension { Uri = "{0D108BD9-81ED-4DB2-BD59-A6C34878D82A}" };
+                rowExt.Append(rowIdElement);
+                row.Append(new A.ExtensionList(rowExt));
 
                 table.Append(row);
             }
@@ -418,25 +447,24 @@ namespace OfficeIMO.PowerPoint {
         ///     Adds a basic clustered column chart with default data.
         /// </summary>
         public PowerPointChart AddChart() {
-            // Generate a unique relationship ID for the chart part
-            var slideRelationships = new HashSet<string>(
-                _slidePart.Parts.Select(p => p.RelationshipId)
-                .Union(_slidePart.ExternalRelationships.Select(r => r.Id))
-                .Union(_slidePart.HyperlinkRelationships.Select(r => r.Id))
-                .Where(id => !string.IsNullOrEmpty(id))
-            );
+            ChartPart chartPart = _slidePart.AddNewPart<ChartPart>();
+            string chartRelId = _slidePart.GetIdOfPart(chartPart);
 
-            int chartIdNum = 1;
-            string chartRelId;
-            do {
-                chartRelId = "rId" + chartIdNum;
-                chartIdNum++;
-            } while (slideRelationships.Contains(chartRelId));
+            // Embed workbook + styles/colors exactly like the template
+            var stylePart = chartPart.AddNewPart<ChartStylePart>("rId1");
+            PowerPointUtils.PopulateChartStyle(stylePart);
+            var colorStylePart = chartPart.AddNewPart<ChartColorStylePart>("rId2");
+            PowerPointUtils.PopulateChartColorStyle(colorStylePart);
+            var embedded = chartPart.AddNewPart<EmbeddedPackagePart>(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "rId3");
+            using (var ms = new MemoryStream(TemplateChartWorkbookBytes())) {
+                embedded.FeedData(ms);
+            }
 
-            ChartPart chartPart = _slidePart.AddNewPart<ChartPart>(chartRelId);
             GenerateDefaultChart(chartPart);
 
-            string relId = _slidePart.GetIdOfPart(chartPart);
+            string relId = chartRelId;
             string name = GenerateUniqueName("Chart");
             GraphicFrame frame = new(
                 new NonVisualGraphicFrameProperties(
@@ -458,104 +486,51 @@ namespace OfficeIMO.PowerPoint {
             return chart;
         }
 
+        private static OpenXmlUnknownElement CreateA16ExtensionElement(string localName, uint value) {
+            const string a16Namespace = "http://schemas.microsoft.com/office/drawing/2014/main";
+            var element = new OpenXmlUnknownElement("a16", localName, a16Namespace);
+            element.AddNamespaceDeclaration("a16", a16Namespace);
+            element.SetAttribute(new OpenXmlAttribute("val", string.Empty, value.ToString(CultureInfo.InvariantCulture)));
+            return element;
+        }
+
+        private static byte[] TemplateChartWorkbookBytes() {
+            return PowerPointUtils.GetChartWorkbookTemplateBytes();
+        }
+
         private static void GenerateDefaultChart(ChartPart chartPart) {
-            uint categoryAxisId = PowerPointChartAxisIdGenerator.GetNextId();
-            uint valueAxisId = PowerPointChartAxisIdGenerator.GetNextId();
-            C.ChartSpace chartSpace =
-                new(new C.EditingLanguage { Val = "en-US" }, new C.RoundedCorners { Val = false });
-            C.Chart chart = new();
-            C.PlotArea plotArea = new();
-            C.BarChart barChart = new(new C.BarDirection { Val = C.BarDirectionValues.Column },
-                new C.BarGrouping { Val = C.BarGroupingValues.Clustered });
+            PowerPointUtils.PopulateChartTemplate(chartPart);
+        }
 
-            C.BarChartSeries series = new(new C.Index { Val = 0U }, new C.Order { Val = 0U },
-                new C.SeriesText(new C.NumericValue { Text = "Series 1" }));
+        private static byte[] GenerateEmbeddedWorkbookBytes() {
+            using MemoryStream ms = new();
+            using (var doc = SpreadsheetDocument.Create(ms, SpreadsheetDocumentType.Workbook)) {
+                WorkbookPart wbPart = doc.AddWorkbookPart();
+                wbPart.Workbook = new S.Workbook();
 
-            C.CategoryAxisData catData = new(new C.StringLiteral(new C.PointCount { Val = 2U },
-                new C.StringPoint { Index = 0U, NumericValue = new C.NumericValue("A") },
-                new C.StringPoint { Index = 1U, NumericValue = new C.NumericValue("B") }));
-            C.Values values = new(new C.NumberLiteral(new C.PointCount { Val = 2U },
-                new C.NumericPoint { Index = 0U, NumericValue = new C.NumericValue("4") },
-                new C.NumericPoint { Index = 1U, NumericValue = new C.NumericValue("5") }));
+                WorksheetPart wsPart = wbPart.AddNewPart<WorksheetPart>();
+                S.SheetData sheetData = new(
+                    new S.Row(
+                        new S.Cell { CellValue = new S.CellValue("Category"), DataType = S.CellValues.String },
+                        new S.Cell { CellValue = new S.CellValue("Value"), DataType = S.CellValues.String }
+                    ),
+                    new S.Row(
+                        new S.Cell { CellValue = new S.CellValue("A"), DataType = S.CellValues.String },
+                        new S.Cell { CellValue = new S.CellValue("4"), DataType = S.CellValues.Number }
+                    ),
+                    new S.Row(
+                        new S.Cell { CellValue = new S.CellValue("B"), DataType = S.CellValues.String },
+                        new S.Cell { CellValue = new S.CellValue("5"), DataType = S.CellValues.Number }
+                    )
+                );
+                wsPart.Worksheet = new S.Worksheet(sheetData);
 
-            series.Append(catData, values);
-            barChart.Append(series, new C.AxisId { Val = categoryAxisId }, new C.AxisId { Val = valueAxisId });
-
-            C.CategoryAxis catAxis = new(new C.AxisId { Val = categoryAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
-                new C.TickLabelPosition { Val = C.TickLabelPositionValues.NextTo },
-                new C.CrossingAxis { Val = valueAxisId }, new C.Crosses { Val = C.CrossesValues.AutoZero },
-                new C.AutoLabeled { Val = true }, new C.LabelAlignment { Val = C.LabelAlignmentValues.Center },
-                new C.LabelOffset { Val = (UInt16Value)100U });
-
-            C.ValueAxis valAxis = new(new C.AxisId { Val = valueAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.AxisPosition { Val = C.AxisPositionValues.Left }, new C.MajorGridlines(),
-                new C.NumberingFormat { FormatCode = "General", SourceLinked = true },
-                new C.TickLabelPosition { Val = C.TickLabelPositionValues.NextTo },
-                new C.CrossingAxis { Val = categoryAxisId }, new C.Crosses { Val = C.CrossesValues.AutoZero },
-                new C.CrossBetween { Val = C.CrossBetweenValues.Between });
-
-            plotArea.Append(barChart, catAxis, valAxis);
-            chart.Append(plotArea, new C.PlotVisibleOnly { Val = true });
-            chartSpace.Append(chart);
-
-            // Generate a unique relationship ID for the embedded Excel part
-            var chartRelationships = new HashSet<string>(
-                chartPart.Parts.Select(p => p.RelationshipId)
-                .Union(chartPart.ExternalRelationships.Select(r => r.Id))
-                .Union(chartPart.HyperlinkRelationships.Select(r => r.Id))
-                .Where(id => !string.IsNullOrEmpty(id))
-            );
-
-            int excelIdNum = 1;
-            string excelRelId;
-            do {
-                excelRelId = "rId" + excelIdNum;
-                excelIdNum++;
-            } while (chartRelationships.Contains(excelRelId));
-
-            EmbeddedPackagePart excelPart =
-                chartPart.AddNewPart<EmbeddedPackagePart>(
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    excelRelId);
-            using (MemoryStream ms = new()) {
-                using (SpreadsheetDocument doc = SpreadsheetDocument.Create(ms, SpreadsheetDocumentType.Workbook)) {
-                    WorkbookPart wbPart = doc.AddWorkbookPart();
-                    wbPart.Workbook = new S.Workbook();
-                    WorksheetPart wsPart = wbPart.AddNewPart<WorksheetPart>();
-                    S.SheetData sheetData = new(
-                        new S.Row(
-                            new S.Cell { CellValue = new S.CellValue("Category"), DataType = S.CellValues.String },
-                            new S.Cell { CellValue = new S.CellValue("Value"), DataType = S.CellValues.String }
-                        ),
-                        new S.Row(
-                            new S.Cell { CellValue = new S.CellValue("A"), DataType = S.CellValues.String },
-                            new S.Cell { CellValue = new S.CellValue("4"), DataType = S.CellValues.Number }
-                        ),
-                        new S.Row(
-                            new S.Cell { CellValue = new S.CellValue("B"), DataType = S.CellValues.String },
-                            new S.Cell { CellValue = new S.CellValue("5"), DataType = S.CellValues.Number }
-                        )
-                    );
-                    wsPart.Worksheet = new S.Worksheet(sheetData);
-                    wbPart.Workbook.Append(new S.Sheets(new S.Sheet {
-                        Id = wbPart.GetIdOfPart(wsPart),
-                        SheetId = 1U,
-                        Name = "Sheet1"
-                    }));
-                    wbPart.Workbook.Save();
-                }
-
-                ms.Position = 0;
-                excelPart.FeedData(ms);
+                S.Sheets sheets = new();
+                sheets.Append(new S.Sheet { Name = "Sheet1", SheetId = 1U, Id = wbPart.GetIdOfPart(wsPart) });
+                wbPart.Workbook.AppendChild(sheets);
+                wbPart.Workbook.Save();
             }
-
-            chartSpace.Append(new C.ExternalData { Id = chartPart.GetIdOfPart(excelPart) });
-
-            chartPart.ChartSpace = chartSpace;
-            chartPart.ChartSpace.Save();
+            return ms.ToArray();
         }
 
         internal void Save() {
@@ -573,7 +548,7 @@ namespace OfficeIMO.PowerPoint {
             foreach (OpenXmlElement element in tree.ChildElements) {
                 uint? id = element switch {
                     Shape s => s.NonVisualShapeProperties?.NonVisualDrawingProperties?.Id?.Value,
-                    Picture p => p.NonVisualPictureProperties?.NonVisualDrawingProperties?.Id?.Value,
+                    DocumentFormat.OpenXml.Presentation.Picture p => p.NonVisualPictureProperties?.NonVisualDrawingProperties?.Id?.Value,
                     GraphicFrame g => g.NonVisualGraphicFrameProperties?.NonVisualDrawingProperties?.Id?.Value,
                     _ => null
                 };
@@ -586,7 +561,7 @@ namespace OfficeIMO.PowerPoint {
                     case Shape s when s.TextBody != null:
                         _shapes.Add(new PowerPointTextBox(s));
                         break;
-                    case Picture p:
+                    case DocumentFormat.OpenXml.Presentation.Picture p:
                         _shapes.Add(new PowerPointPicture(p, _slidePart));
                         break;
                     case GraphicFrame g when g.Graphic?.GraphicData?.GetFirstChild<A.Table>() != null:
