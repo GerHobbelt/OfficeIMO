@@ -1,5 +1,6 @@
 using DocumentFormat.OpenXml.Drawing;
 using DocumentFormat.OpenXml.Wordprocessing;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Break = DocumentFormat.OpenXml.Wordprocessing.Break;
@@ -24,6 +25,40 @@ namespace OfficeIMO.Word {
     public partial class WordParagraph : WordElement {
         internal WordDocument _document = null!;
         internal Paragraph _paragraph = null!;
+        private object? _parentElement;
+        private bool _parentEvaluated;
+
+        /// <summary>
+        /// Gets the parent object that owns this paragraph (for example a table cell, header, footer or section).
+        /// </summary>
+        public object? Parent {
+            get {
+                if (!_parentEvaluated) {
+                    RefreshParent();
+                }
+
+                return _parentElement;
+            }
+            internal set {
+                _parentElement = value;
+                _parentEvaluated = true;
+            }
+        }
+
+        internal void RefreshParent() {
+            if (_document != null && _paragraph != null) {
+                _parentElement = ResolveParent(_document, _paragraph);
+            } else {
+                _parentElement = null;
+            }
+
+            _parentEvaluated = true;
+        }
+
+        internal void InvalidateParent() {
+            _parentElement = null;
+            _parentEvaluated = false;
+        }
 
         /// <summary>
         /// This allows to know where the paragraph is located. Useful for hyperlinks or other stuff.
@@ -288,32 +323,61 @@ namespace OfficeIMO.Word {
         internal readonly SdtRun? _stdRun;
         internal readonly DocumentFormat.OpenXml.Math.Paragraph? _mathParagraph;
 
+
+
+        private const string NormalizedLineFeed = "\n";
+
+        // Non text-wrapping breaks (for example, page or column breaks) are surfaced as the Unicode line
+        // separator so that they remain discoverable during text operations and can be restored exactly.
+        private const char NonTextBreakPlaceholder = '\u2028';
+
+        private static bool IsTextWrappingBreak(Break breakNode) {
+            return breakNode.Type is null || breakNode.Type.Value == BreakValues.TextWrapping;
+        }
+
+        private static bool ShouldEmitTextNode(string segment, int totalSegments, bool isLastSegment) {
+            // Emit text nodes for non-empty segments, retain a single empty segment when clearing text,
+            // and keep the trailing empty segment created by a terminal newline so that round-trips preserve it.
+            if (segment.Length > 0) {
+                return true;
+            }
+
+            if (totalSegments == 1) {
+                return true;
+            }
+
+            return isLastSegment;
+        }
+
         /// <summary>
-        /// Get or set a text within Paragraph
+        /// Gets or sets the text for this run.
+        /// Text-wrapping breaks (<c>null</c> or <c>BreakValues.TextWrapping</c>) are surfaced as <c>"\n"</c>
+        /// in the returned string so callers receive the same representation on every platform. The setter
+        /// accepts any mix of <c>"\r\n"</c>, <c>"\r"</c>, or <c>"\n"</c> and normalizes them to
+        /// <c>"\n"</c> before updating the OpenXML elements. Non text-wrapping breaks—such as page or column
+        /// breaks—are represented using the Unicode line separator character (<c>'\u2028'</c>) so that text
+        /// operations (for example find/replace) can preserve their positions. When the text is modified those
+        /// breaks are re-inserted at their original locations.
         /// </summary>
         public string Text {
             get {
-                if (_run == null) {
-                    return string.Empty;
-                }
-
-                var builder = new StringBuilder();
-                var children = _run.ChildElements.ToList();
-                for (int i = 0; i < children.Count; i++) {
-                    var child = children[i];
-                    switch (child) {
-                        case Text text:
-                            builder.Append(text.Text);
-                            break;
-                        case DocumentFormat.OpenXml.Wordprocessing.Break:
-                            if (i < children.Count - 1) {
-                                builder.Append(Environment.NewLine);
-                            }
-                            break;
+                if (_run != null) {
+                    var builder = new StringBuilder();
+                    foreach (var child in _run.ChildElements) {
+                        switch (child) {
+                            case Text text:
+                                builder.Append(text.Text);
+                                break;
+                            case Break breakNode:
+                                if (IsTextWrappingBreak(breakNode)) {
+                                    builder.Append(NormalizedLineFeed);
+                                } else {
+                                    builder.Append(NonTextBreakPlaceholder);
+                                }
+                                break;
+                        }
                     }
-                }
 
-                if (builder.Length > 0) {
                     return builder.ToString();
                 }
 
@@ -322,33 +386,84 @@ namespace OfficeIMO.Word {
             set {
                 var run = VerifyRun();
 
-                foreach (var textNode in run.Elements<Text>().ToList()) {
-                    textNode.Remove();
-                }
+                var preservedBreaks = new List<(int TextIndex, Break Break)>();
+                int textNodesEncountered = 0;
 
-                foreach (var breakNode in run.Elements<DocumentFormat.OpenXml.Wordprocessing.Break>().ToList()) {
-                    breakNode.Remove();
+                foreach (var child in run.ChildElements.ToList()) {
+                    switch (child) {
+                        case Text textNode:
+                            textNode.Remove();
+                            textNodesEncountered++;
+                            break;
+                        case Break breakNode:
+                            if (IsTextWrappingBreak(breakNode)) {
+                                breakNode.Remove();
+                            } else {
+                                preservedBreaks.Add((textNodesEncountered, breakNode));
+                                breakNode.Remove();
+                            }
+                            break;
+                    }
                 }
 
                 var normalized = (value ?? string.Empty)
-                    .Replace("\r\n", "\n")
-                    .Replace("\r", "\n");
+                    .Replace("\r\n", NormalizedLineFeed)
+                    .Replace("\r", NormalizedLineFeed);
 
-                var segments = normalized.Split('\n');
+                static List<(string Text, bool EndsWithTextWrappingBreak)> BuildSegments(string source) {
+                    var result = new List<(string Text, bool EndsWithTextWrappingBreak)>();
+                    var blocks = source.Split(NonTextBreakPlaceholder);
 
-                for (int i = 0; i < segments.Length; i++) {
-                    var segment = segments[i];
-                    bool isLast = i == segments.Length - 1;
-                    bool shouldAddText = segment.Length > 0 || segments.Length == 1 || (isLast && segment.Length == 0);
+                    foreach (var block in blocks) {
+                        var lines = block.Split('\n');
+                        if (lines.Length == 0) {
+                            result.Add((string.Empty, false));
+                            continue;
+                        }
+
+                        for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++) {
+                            var line = lines[lineIndex];
+                            bool endsWithBreak = lineIndex < lines.Length - 1;
+                            result.Add((line, endsWithBreak));
+                        }
+                    }
+
+                    return result;
+                }
+
+                var segments = BuildSegments(normalized);
+                int emittedTextCount = 0;
+                int preservedIndex = 0;
+
+                void AppendPreservedBreaksForTextIndex(int textIndex) {
+                    while (preservedIndex < preservedBreaks.Count && preservedBreaks[preservedIndex].TextIndex == textIndex) {
+                        run.Append(preservedBreaks[preservedIndex].Break);
+                        preservedIndex++;
+                    }
+                }
+
+                AppendPreservedBreaksForTextIndex(0);
+
+                for (int i = 0; i < segments.Count; i++) {
+                    var (segment, endsWithTextWrappingBreak) = segments[i];
+                    bool isLast = i == segments.Count - 1;
+                    bool shouldAddText = ShouldEmitTextNode(segment, segments.Count, isLast);
 
                     if (shouldAddText) {
                         var textNode = new Text(segment) { Space = SpaceProcessingModeValues.Preserve };
                         run.Append(textNode);
+                        emittedTextCount++;
+                        AppendPreservedBreaksForTextIndex(emittedTextCount);
                     }
 
-                    if (!isLast) {
-                        run.Append(new DocumentFormat.OpenXml.Wordprocessing.Break());
+                    if (endsWithTextWrappingBreak) {
+                        run.Append(new Break());
                     }
+                }
+
+                while (preservedIndex < preservedBreaks.Count) {
+                    run.Append(preservedBreaks[preservedIndex].Break);
+                    preservedIndex++;
                 }
             }
         }
@@ -419,6 +534,8 @@ namespace OfficeIMO.Word {
                     this._paragraph.AppendChild(_run);
                 }
             }
+
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, bool newRun = true) {
@@ -429,6 +546,8 @@ namespace OfficeIMO.Word {
                 this._run = new Run();
                 this._paragraph.AppendChild(_run);
             }
+
+            RefreshParent();
         }
 
         /// <summary>
@@ -439,6 +558,7 @@ namespace OfficeIMO.Word {
         public WordParagraph(WordDocument document, Paragraph paragraph) {
             this._document = document;
             this._paragraph = paragraph;
+            RefreshParent();
         }
 
         /// <summary>
@@ -451,6 +571,7 @@ namespace OfficeIMO.Word {
             _document = document;
             _paragraph = paragraph;
             _run = run;
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, Hyperlink hyperlink) {
@@ -459,6 +580,7 @@ namespace OfficeIMO.Word {
             _hyperlink = hyperlink;
 
             //this.Hyperlink = new WordHyperLink(document, paragraph, hyperlink);
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, List<Run> runs) {
@@ -466,6 +588,7 @@ namespace OfficeIMO.Word {
             _paragraph = paragraph;
             _runs = runs;
             //this.Field = new WordField(document, paragraph, runs);
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, SimpleField simpleField) {
@@ -475,6 +598,7 @@ namespace OfficeIMO.Word {
             _simpleField = simpleField;
 
             //  this.Field = new WordField(document, paragraph, simpleField);
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, BookmarkStart bookmarkStart) {
@@ -484,6 +608,7 @@ namespace OfficeIMO.Word {
             _bookmarkStart = bookmarkStart;
 
             // this.Bookmark = new WordBookmark(document, paragraph, bookmarkStart);
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.OfficeMath officeMath) {
@@ -493,6 +618,7 @@ namespace OfficeIMO.Word {
             _officeMath = officeMath;
 
             //this.Equation = new WordEquation(document, paragraph, officeMath);
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, SdtRun stdRun) {
@@ -500,6 +626,7 @@ namespace OfficeIMO.Word {
             _paragraph = paragraph;
             _stdRun = stdRun;
             //this.StructuredDocumentTag = new WordStructuredDocumentTag(document, paragraph, stdRun);
+            RefreshParent();
         }
 
         internal WordParagraph(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.Paragraph mathParagraph) {
@@ -507,6 +634,7 @@ namespace OfficeIMO.Word {
             _paragraph = paragraph;
             _mathParagraph = mathParagraph;
             //  this.Equation = new WordEquation(document, paragraph, mathParagraph);
+            RefreshParent();
         }
 
         internal WordStructuredDocumentTag? StructuredDocumentTag {

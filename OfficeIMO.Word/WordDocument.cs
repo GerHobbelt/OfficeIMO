@@ -14,6 +14,7 @@ namespace OfficeIMO.Word {
         internal List<int> _listNumbersUsed = new List<int>();
         internal int? _tableOfContentIndex;
         internal TableOfContentStyle? _tableOfContentStyle;
+        private bool _tableOfContentUpdateQueued;
         private bool _disposed;
 
         internal int BookmarkId {
@@ -1733,7 +1734,31 @@ namespace OfficeIMO.Word {
         /// Releases resources associated with this <see cref="WordDocument"/> instance.
         /// </summary>
         public void Dispose() {
-            DisposeAsync().GetAwaiter().GetResult();
+            if (this._disposed) {
+                return;
+            }
+
+            var wordProcessingDocument = this._wordprocessingDocument;
+            if (wordProcessingDocument != null) {
+                try {
+                    if (wordProcessingDocument.AutoSave && wordProcessingDocument.FileOpenAccess != FileAccess.Read) {
+                        Save();
+                    }
+
+                    wordProcessingDocument.Dispose();
+                } catch {
+                    // ignored
+                }
+
+                this._wordprocessingDocument = null!;
+            }
+
+            if (this.OriginalStream != null) {
+                // Original stream is owned by the caller and should remain open.
+            }
+
+            this._disposed = true;
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
@@ -1744,16 +1769,18 @@ namespace OfficeIMO.Word {
                 return;
             }
 
-            if (this._wordprocessingDocument != null) {
+            var wordProcessingDocument = this._wordprocessingDocument;
+            if (wordProcessingDocument != null) {
                 try {
-                    if (this._wordprocessingDocument.AutoSave && FileOpenAccess != FileAccess.Read) {
-                        await SaveAsync();
+                    if (wordProcessingDocument.AutoSave && wordProcessingDocument.FileOpenAccess != FileAccess.Read) {
+                        await SaveAsync().ConfigureAwait(false);
                     }
 
-                    await Task.Run(() => this._wordprocessingDocument.Dispose());
+                    await Task.Run(() => wordProcessingDocument.Dispose()).ConfigureAwait(false);
                 } catch {
                     // ignored
                 }
+
                 this._wordprocessingDocument = null!;
             }
 
@@ -1871,10 +1898,43 @@ namespace OfficeIMO.Word {
         /// </summary>
         public WordCompatibilitySettings CompatibilitySettings { get; set; } = null!;
 
+        internal void NotifyTableOfContentUpdateQueued() {
+            _tableOfContentUpdateQueued = true;
+        }
+
+        internal void ResetTableOfContentUpdateQueue() {
+            _tableOfContentUpdateQueued = false;
+        }
+
+        /// <summary>
+        /// Ensures heading edits keep the table-of-contents refresh state aligned with the document settings.
+        /// </summary>
         internal void HeadingModified() {
-            if (TableOfContent != null) {
-                Settings.UpdateFieldsOnOpen = true;
+            var updateOnOpen = Settings.UpdateFieldsOnOpen;
+
+            if (_tableOfContentUpdateQueued) {
+                if (updateOnOpen) {
+                    // Updates are already queued and Word will refresh them on open.
+                    return;
+                }
+
+                // Word will not refresh fields anymore, so drop the stale queued state before requeueing.
+                ResetTableOfContentUpdateQueue();
             }
+
+            if (updateOnOpen) {
+                // Keep the queue flag in sync with Word's behaviour when UpdateFieldsOnOpen is set by the user.
+                _tableOfContentUpdateQueued = true;
+                return;
+            }
+
+            var tableOfContent = TableOfContent;
+            if (tableOfContent == null) {
+                return;
+            }
+
+            // Re-enable the automatic refresh by marking the table-of-contents fields dirty again.
+            tableOfContent.QueueUpdateOnOpen(force: true);
         }
 
         private void PreSaving() {
