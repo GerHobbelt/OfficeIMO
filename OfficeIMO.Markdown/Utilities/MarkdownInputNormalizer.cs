@@ -32,6 +32,47 @@ public sealed class MarkdownInputNormalizationOptions {
     /// Default: false.
     /// </summary>
     public bool NormalizeTightStrongBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, trims accidental whitespace immediately inside strong delimiters
+    /// (for example, <c>** Healthy**</c> or <c>**Healthy **</c> become <c>**Healthy**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeLooseStrongDelimiters { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing space after an ordered list marker when the content starts with
+    /// emphasis-like characters (for example, <c>2.**Task**</c> becomes <c>2. **Task**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeOrderedListMarkerSpacing { get; set; } = false;
+
+    /// <summary>
+    /// When true, converts ordered list markers in <c>1)</c> form to <c>1.</c> with normalized spacing.
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeOrderedListParenMarkers { get; set; } = false;
+
+    /// <summary>
+    /// When true, removes stray caret artifacts after ordered list markers
+    /// (for example, <c>2.^ **Task**</c> becomes <c>2. **Task**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeOrderedListCaretArtifacts { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing space before parenthetical phrases adjacent to prose or strong spans
+    /// (for example, <c>**Task**(detail)</c> becomes <c>**Task** (detail)</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeTightParentheticalSpacing { get; set; } = false;
+
+    /// <summary>
+    /// When true, flattens malformed nested strong delimiters emitted by some model outputs
+    /// (for example, <c>**from **Service Control Manager**.**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeNestedStrongDelimiters { get; set; } = false;
 }
 
 /// <summary>
@@ -51,7 +92,31 @@ public static class MarkdownInputNormalizer {
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly Regex TightStrongSuffixRegex = new Regex(
-        @"(\*\*[^*\r\n]+\*\*)(?=[\p{L}\p{N}])",
+        @"(\*\*[^\s*\r\n](?:[^*\r\n]*[^\s*\r\n])?\*\*)(?=[\p{L}\p{N}])",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex LooseStrongDelimiterWhitespaceRegex = new Regex(
+        @"\*\*(?<inner>[^*\r\n]+)\*\*",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex OrderedListMarkerMissingSpaceRegex = new Regex(
+        @"^(?<prefix>[ \t]{0,3}\d+[.)])(?=[*_`\[])",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex OrderedListParenMarkerRegex = new Regex(
+        @"^(?<indent>[ \t]{0,3})(?<num>\d+)\)\s*(?=\S)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex OrderedListCaretArtifactRegex = new Regex(
+        @"^(?<lead>[ \t]{0,3}\d+\.)\s*\^\s*",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex TightParentheticalSpacingRegex = new Regex(
+        @"(?:(?<=\*\*)|(?<=[\p{L}\p{N}\)]))\((?=[\p{L}][^\r\n)]*\))",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex NestedStrongSpanRegex = new Regex(
+        @"(?<!\S)\*\*(?<left>[^*\r\n]{6,}?\s)\*\*(?<inner>[A-Za-z0-9`][^*:\r\n]*?)\*\*(?<right>[^*\r\n]*?)\*\*",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>
@@ -76,12 +141,55 @@ public static class MarkdownInputNormalizer {
                     return match.Value;
                 }
 
+                // Avoid collapsing list boundaries such as:
+                // **First item text**
+                // 2.** Second item**
+                if (LooksLikeOrderedListMarkerFragment(right)) {
+                    return match.Value;
+                }
+
                 return "**" + left + " " + right + "**";
+            });
+        }
+
+        if (options.NormalizeNestedStrongDelimiters) {
+            value = FlattenNestedStrongSpansOutsideFencedCodeBlocks(value);
+        }
+
+        if (options.NormalizeLooseStrongDelimiters) {
+            value = ApplyRegexOutsideFencedCodeBlocks(value, LooseStrongDelimiterWhitespaceRegex, static match => {
+                var inner = match.Groups["inner"].Value;
+                var trimmed = inner.Trim();
+                if (trimmed.Length == 0 || trimmed.Length == inner.Length) {
+                    return match.Value;
+                }
+
+                return "**" + trimmed + "**";
             });
         }
 
         if (options.NormalizeTightStrongBoundaries) {
             value = ApplyRegexOutsideFencedCodeBlocks(value, TightStrongSuffixRegex, static match => match.Groups[1].Value + " ");
+        }
+
+        if (options.NormalizeOrderedListMarkerSpacing) {
+            value = ApplyRegexOutsideFencedCodeBlocks(value, OrderedListMarkerMissingSpaceRegex, static match => match.Groups["prefix"].Value + " ");
+        }
+
+        if (options.NormalizeOrderedListParenMarkers) {
+            value = ApplyRegexOutsideFencedCodeBlocks(value, OrderedListParenMarkerRegex, static match => match.Groups["indent"].Value + match.Groups["num"].Value + ". ");
+        }
+
+        if (options.NormalizeOrderedListCaretArtifacts) {
+            value = ApplyRegexOutsideFencedCodeBlocks(value, OrderedListCaretArtifactRegex, static match => match.Groups["lead"].Value + " ");
+        }
+
+        if (options.NormalizeTightParentheticalSpacing) {
+            value = ApplyRegexOutsideFencedCodeBlocks(
+                value,
+                TightParentheticalSpacingRegex,
+                static _ => " (",
+                preserveInlineCodeSpans: true);
         }
 
         if (options.NormalizeInlineCodeSpanLineBreaks) {
@@ -109,7 +217,53 @@ public static class MarkdownInputNormalizer {
         return value;
     }
 
-    private static string ApplyRegexOutsideFencedCodeBlocks(string input, Regex regex, MatchEvaluator evaluator) {
+    private static string FlattenNestedStrongSpansOutsideFencedCodeBlocks(string value) {
+        var current = value ?? string.Empty;
+        while (true) {
+            var flattened = ApplyRegexOutsideFencedCodeBlocks(
+                current,
+                NestedStrongSpanRegex,
+                static match =>
+                    "**"
+                    + match.Groups["left"].Value
+                    + match.Groups["inner"].Value
+                    + match.Groups["right"].Value
+                    + "**");
+            if (flattened == current) {
+                return flattened;
+            }
+
+            current = flattened;
+        }
+    }
+
+    private static bool LooksLikeOrderedListMarkerFragment(string value) {
+        if (string.IsNullOrWhiteSpace(value)) {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length < 2) {
+            return false;
+        }
+
+        int index = 0;
+        while (index < trimmed.Length && char.IsDigit(trimmed[index])) {
+            index++;
+        }
+
+        if (index == 0 || index != trimmed.Length - 1) {
+            return false;
+        }
+
+        return trimmed[index] == '.' || trimmed[index] == ')';
+    }
+
+    private static string ApplyRegexOutsideFencedCodeBlocks(
+        string input,
+        Regex regex,
+        MatchEvaluator evaluator,
+        bool preserveInlineCodeSpans = false) {
         if (string.IsNullOrEmpty(input)) {
             return input ?? string.Empty;
         }
@@ -142,7 +296,7 @@ public static class MarkdownInputNormalizer {
 
             if (MarkdownFence.TryReadFenceRun(line, out var runMarker, out var runLength, out var runSuffix)) {
                 if (!inFence) {
-                    FlushOutsideSegment(output, outsideSegment, regex, evaluator);
+                    FlushOutsideSegment(output, outsideSegment, regex, evaluator, preserveInlineCodeSpans);
                     inFence = true;
                     fenceMarker = runMarker;
                     fenceRunLength = runLength;
@@ -166,16 +320,53 @@ public static class MarkdownInputNormalizer {
             }
         }
 
-        FlushOutsideSegment(output, outsideSegment, regex, evaluator);
+        FlushOutsideSegment(output, outsideSegment, regex, evaluator, preserveInlineCodeSpans);
         return output.ToString();
     }
 
-    private static void FlushOutsideSegment(StringBuilder output, StringBuilder outsideSegment, Regex regex, MatchEvaluator evaluator) {
+    private static void FlushOutsideSegment(
+        StringBuilder output,
+        StringBuilder outsideSegment,
+        Regex regex,
+        MatchEvaluator evaluator,
+        bool preserveInlineCodeSpans) {
         if (outsideSegment.Length == 0) {
             return;
         }
 
-        output.Append(regex.Replace(outsideSegment.ToString(), evaluator));
+        var segment = outsideSegment.ToString();
+        output.Append(preserveInlineCodeSpans
+            ? ReplaceOutsideInlineCodeSpans(segment, regex, evaluator)
+            : regex.Replace(segment, evaluator));
         outsideSegment.Clear();
+    }
+
+    private static string ReplaceOutsideInlineCodeSpans(string value, Regex regex, MatchEvaluator evaluator) {
+        if (string.IsNullOrEmpty(value) || value.IndexOf('`') < 0) {
+            return regex.Replace(value ?? string.Empty, evaluator);
+        }
+
+        var matches = InlineCodeSpanRegex.Matches(value);
+        if (matches.Count == 0) {
+            return regex.Replace(value, evaluator);
+        }
+
+        var output = new StringBuilder(value.Length);
+        var cursor = 0;
+        for (var i = 0; i < matches.Count; i++) {
+            var code = matches[i];
+            if (code.Index > cursor) {
+                output.Append(regex.Replace(value.Substring(cursor, code.Index - cursor), evaluator));
+            }
+
+            output.Append(code.Value);
+            cursor = code.Index + code.Length;
+        }
+
+        if (cursor < value.Length) {
+            output.Append(regex.Replace(value.Substring(cursor), evaluator));
+        }
+
+        return output.ToString();
     }
 }

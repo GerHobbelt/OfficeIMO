@@ -171,7 +171,13 @@ public static partial class MarkdownReader {
                 NormalizeSoftWrappedStrongSpans = source.InputNormalization?.NormalizeSoftWrappedStrongSpans ?? false,
                 NormalizeInlineCodeSpanLineBreaks = source.InputNormalization?.NormalizeInlineCodeSpanLineBreaks ?? false,
                 NormalizeEscapedInlineCodeSpans = source.InputNormalization?.NormalizeEscapedInlineCodeSpans ?? false,
-                NormalizeTightStrongBoundaries = source.InputNormalization?.NormalizeTightStrongBoundaries ?? false
+                NormalizeTightStrongBoundaries = source.InputNormalization?.NormalizeTightStrongBoundaries ?? false,
+                NormalizeLooseStrongDelimiters = source.InputNormalization?.NormalizeLooseStrongDelimiters ?? false,
+                NormalizeOrderedListMarkerSpacing = source.InputNormalization?.NormalizeOrderedListMarkerSpacing ?? false,
+                NormalizeOrderedListParenMarkers = source.InputNormalization?.NormalizeOrderedListParenMarkers ?? false,
+                NormalizeOrderedListCaretArtifacts = source.InputNormalization?.NormalizeOrderedListCaretArtifacts ?? false,
+                NormalizeTightParentheticalSpacing = source.InputNormalization?.NormalizeTightParentheticalSpacing ?? false,
+                NormalizeNestedStrongDelimiters = source.InputNormalization?.NormalizeNestedStrongDelimiters ?? false
             }
         };
     }
@@ -179,14 +185,33 @@ public static partial class MarkdownReader {
     private static MarkdownInputNormalizationOptions? CreatePreParseNormalizationOptions(MarkdownInputNormalizationOptions? source) {
         bool normalizeSoftWrappedStrong = source?.NormalizeSoftWrappedStrongSpans ?? false;
         bool normalizeInlineCodeLineBreaks = source?.NormalizeInlineCodeSpanLineBreaks ?? false;
+        bool normalizeLooseStrongDelimiters = source?.NormalizeLooseStrongDelimiters ?? false;
+        bool normalizeOrderedListMarkerSpacing = source?.NormalizeOrderedListMarkerSpacing ?? false;
+        bool normalizeOrderedListParenMarkers = source?.NormalizeOrderedListParenMarkers ?? false;
+        bool normalizeOrderedListCaretArtifacts = source?.NormalizeOrderedListCaretArtifacts ?? false;
+        bool normalizeTightParentheticalSpacing = source?.NormalizeTightParentheticalSpacing ?? false;
+        bool normalizeNestedStrongDelimiters = source?.NormalizeNestedStrongDelimiters ?? false;
 
-        if (!normalizeSoftWrappedStrong && !normalizeInlineCodeLineBreaks) {
+        if (!normalizeSoftWrappedStrong
+            && !normalizeInlineCodeLineBreaks
+            && !normalizeLooseStrongDelimiters
+            && !normalizeOrderedListMarkerSpacing
+            && !normalizeOrderedListParenMarkers
+            && !normalizeOrderedListCaretArtifacts
+            && !normalizeTightParentheticalSpacing
+            && !normalizeNestedStrongDelimiters) {
             return null;
         }
 
         return new MarkdownInputNormalizationOptions {
             NormalizeSoftWrappedStrongSpans = normalizeSoftWrappedStrong,
-            NormalizeInlineCodeSpanLineBreaks = normalizeInlineCodeLineBreaks
+            NormalizeInlineCodeSpanLineBreaks = normalizeInlineCodeLineBreaks,
+            NormalizeLooseStrongDelimiters = normalizeLooseStrongDelimiters,
+            NormalizeOrderedListMarkerSpacing = normalizeOrderedListMarkerSpacing,
+            NormalizeOrderedListParenMarkers = normalizeOrderedListParenMarkers,
+            NormalizeOrderedListCaretArtifacts = normalizeOrderedListCaretArtifacts,
+            NormalizeTightParentheticalSpacing = normalizeTightParentheticalSpacing,
+            NormalizeNestedStrongDelimiters = normalizeNestedStrongDelimiters
         };
     }
 

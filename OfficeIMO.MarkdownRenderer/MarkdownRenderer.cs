@@ -119,7 +119,13 @@ public static class MarkdownRenderer {
             NormalizeSoftWrappedStrongSpans = options.NormalizeSoftWrappedStrongSpans,
             NormalizeInlineCodeSpanLineBreaks = options.NormalizeInlineCodeSpanLineBreaks,
             NormalizeEscapedInlineCodeSpans = options.NormalizeEscapedInlineCodeSpans,
-            NormalizeTightStrongBoundaries = options.NormalizeTightStrongBoundaries
+            NormalizeTightStrongBoundaries = options.NormalizeTightStrongBoundaries,
+            NormalizeLooseStrongDelimiters = options.NormalizeLooseStrongDelimiters,
+            NormalizeOrderedListMarkerSpacing = options.NormalizeOrderedListMarkerSpacing,
+            NormalizeOrderedListParenMarkers = options.NormalizeOrderedListParenMarkers,
+            NormalizeOrderedListCaretArtifacts = options.NormalizeOrderedListCaretArtifacts,
+            NormalizeTightParentheticalSpacing = options.NormalizeTightParentheticalSpacing,
+            NormalizeNestedStrongDelimiters = options.NormalizeNestedStrongDelimiters
         });
 
         var pre = options.MarkdownPreProcessors;
