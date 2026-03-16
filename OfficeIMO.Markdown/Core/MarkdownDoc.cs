@@ -5,6 +5,23 @@ namespace OfficeIMO.Markdown;
 /// Supports a fluent-chaining style and an explicit object model via <see cref="Add(IMarkdownBlock)"/>.
 /// </summary>
 public class MarkdownDoc {
+    /// <summary>Resolved heading metadata within a document.</summary>
+    public sealed class HeadingInfo {
+        /// <summary>The heading block.</summary>
+        public HeadingBlock Block { get; }
+        /// <summary>Heading level.</summary>
+        public int Level => Block.Level;
+        /// <summary>Plain-text heading text.</summary>
+        public string Text => Block.Text;
+        /// <summary>Resolved anchor id for the heading within this document.</summary>
+        public string Anchor { get; }
+
+        internal HeadingInfo(HeadingBlock block, string anchor) {
+            Block = block ?? throw new ArgumentNullException(nameof(block));
+            Anchor = anchor ?? string.Empty;
+        }
+    }
+
     private readonly List<IMarkdownBlock> _blocks = new();
     private IMarkdownBlock? _lastBlock;
     private IFrontMatterMarkdownBlock? _frontMatter;
@@ -14,6 +31,14 @@ public class MarkdownDoc {
 
     /// <summary>All blocks added to the document (excluding front matter).</summary>
     public IReadOnlyList<IMarkdownBlock> Blocks => _blocks;
+    /// <summary>Document-level front matter/header block when present.</summary>
+    public FrontMatterBlock? DocumentHeader => _frontMatter as FrontMatterBlock;
+    /// <summary>Structured document front matter entries when present.</summary>
+    public IReadOnlyList<FrontMatterBlock.Entry> FrontMatterEntries => DocumentHeader?.Entries ?? Array.Empty<FrontMatterBlock.Entry>();
+    /// <summary>All top-level document blocks in order, including front matter when present.</summary>
+    public IReadOnlyList<IMarkdownBlock> TopLevelBlocks => BuildTopLevelBlocks();
+    /// <summary>Whether the document has front matter.</summary>
+    public bool HasDocumentHeader => DocumentHeader != null;
 
     /// <summary>Adds a block instance (object-model style).</summary>
     /// <param name="block">Block to append to the document.</param>
@@ -26,6 +51,244 @@ public class MarkdownDoc {
             _lastBlock = block;
         }
         return this;
+    }
+
+    /// <summary>Enumerates all document blocks depth-first, including front matter when present.</summary>
+    public IEnumerable<IMarkdownBlock> DescendantsAndSelf() {
+        foreach (var block in TopLevelBlocks) {
+            foreach (var descendant in EnumerateBlockAndDescendants(block)) {
+                yield return descendant;
+            }
+        }
+    }
+
+    /// <summary>Enumerates top-level document blocks of the requested type.</summary>
+    public IEnumerable<TBlock> TopLevelBlocksOfType<TBlock>() where TBlock : class, IMarkdownBlock {
+        foreach (var block in TopLevelBlocks) {
+            if (block is TBlock typedBlock) {
+                yield return typedBlock;
+            }
+        }
+    }
+
+    /// <summary>Finds the first top-level document block of the requested type.</summary>
+    public TBlock? FindFirstTopLevelBlockOfType<TBlock>() where TBlock : class, IMarkdownBlock {
+        foreach (var block in TopLevelBlocks) {
+            if (block is TBlock typedBlock) {
+                return typedBlock;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Checks whether the document has a top-level block of the requested type.</summary>
+    public bool HasTopLevelBlockOfType<TBlock>() where TBlock : class, IMarkdownBlock =>
+        FindFirstTopLevelBlockOfType<TBlock>() != null;
+
+    /// <summary>Enumerates all document blocks of the requested type depth-first.</summary>
+    public IEnumerable<TBlock> DescendantsOfType<TBlock>() where TBlock : class, IMarkdownBlock {
+        foreach (var block in DescendantsAndSelf()) {
+            if (block is TBlock typedBlock) {
+                yield return typedBlock;
+            }
+        }
+    }
+
+    /// <summary>Finds the first document block of the requested type depth-first.</summary>
+    public TBlock? FindFirstDescendantOfType<TBlock>() where TBlock : class, IMarkdownBlock {
+        foreach (var block in DescendantsAndSelf()) {
+            if (block is TBlock typedBlock) {
+                return typedBlock;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Checks whether the document has any block of the requested type depth-first.</summary>
+    public bool HasDescendantOfType<TBlock>() where TBlock : class, IMarkdownBlock =>
+        FindFirstDescendantOfType<TBlock>() != null;
+
+    /// <summary>Enumerates all list items in document order, including nested items.</summary>
+    public IEnumerable<ListItem> DescendantListItems() {
+        foreach (var block in TopLevelBlocks) {
+            foreach (var item in EnumerateListItems(block)) {
+                yield return item;
+            }
+        }
+    }
+
+    /// <summary>Enumerates all headings in document order, including nested headings.</summary>
+    public IEnumerable<HeadingBlock> DescendantHeadings() {
+        foreach (var block in DescendantsAndSelf()) {
+            if (block is HeadingBlock heading) {
+                yield return heading;
+            }
+        }
+    }
+
+    /// <summary>Gets the resolved anchor id for a heading within this document.</summary>
+    public string GetHeadingAnchor(HeadingBlock heading) {
+        if (heading == null) throw new ArgumentNullException(nameof(heading));
+
+        var (_, headingCatalog) = GetBlocksAndHeadingSlugs();
+        return headingCatalog.GetHeadingAnchor(heading);
+    }
+
+    /// <summary>Returns resolved heading metadata in document order.</summary>
+    public IReadOnlyList<HeadingInfo> GetHeadingInfos() {
+        var headings = DescendantHeadings().ToArray();
+        if (headings.Length == 0) {
+            return Array.Empty<HeadingInfo>();
+        }
+
+        var infos = new HeadingInfo[headings.Length];
+        for (int i = 0; i < headings.Length; i++) {
+            infos[i] = new HeadingInfo(headings[i], GetHeadingAnchor(headings[i]));
+        }
+        return infos;
+    }
+
+    /// <summary>Finds the heading with the specified resolved anchor, if present.</summary>
+    public HeadingInfo? FindHeadingByAnchor(string anchor) {
+        if (string.IsNullOrWhiteSpace(anchor)) {
+            return null;
+        }
+
+        var normalized = anchor.Trim();
+        if (normalized.StartsWith("#", StringComparison.Ordinal)) {
+            normalized = normalized.Substring(1);
+        }
+
+        var headings = GetHeadingInfos();
+        for (int i = 0; i < headings.Count; i++) {
+            if (string.Equals(headings[i].Anchor, normalized, StringComparison.Ordinal)) {
+                return headings[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Checks whether a heading with the specified resolved anchor is present.</summary>
+    public bool HasHeadingAnchor(string anchor) => FindHeadingByAnchor(anchor) != null;
+
+    /// <summary>Finds the first heading whose plain text matches the provided heading text.</summary>
+    public HeadingInfo? FindHeading(string text, StringComparison comparison = StringComparison.OrdinalIgnoreCase) {
+        if (string.IsNullOrEmpty(text)) {
+            return null;
+        }
+
+        var headings = GetHeadingInfos();
+        for (int i = 0; i < headings.Count; i++) {
+            if (string.Equals(headings[i].Text, text, comparison)) {
+                return headings[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Checks whether a heading whose plain text matches the provided heading text is present.</summary>
+    public bool HasHeading(string text, StringComparison comparison = StringComparison.OrdinalIgnoreCase) =>
+        FindHeading(text, comparison) != null;
+
+    /// <summary>Finds headings whose plain text matches the provided heading text.</summary>
+    public IReadOnlyList<HeadingInfo> FindHeadings(string text, StringComparison comparison = StringComparison.OrdinalIgnoreCase) {
+        if (string.IsNullOrEmpty(text)) {
+            return Array.Empty<HeadingInfo>();
+        }
+
+        var headings = GetHeadingInfos();
+        var matches = new List<HeadingInfo>();
+        for (int i = 0; i < headings.Count; i++) {
+            if (string.Equals(headings[i].Text, text, comparison)) {
+                matches.Add(headings[i]);
+            }
+        }
+
+        return matches;
+    }
+
+    /// <summary>Finds a front matter entry by key when the document header is present.</summary>
+    public FrontMatterBlock.Entry? FindFrontMatterEntry(string key, StringComparison comparison = StringComparison.OrdinalIgnoreCase) =>
+        DocumentHeader?.FindEntry(key, comparison);
+
+    /// <summary>Checks whether the document header contains an entry with the specified key.</summary>
+    public bool HasFrontMatterEntry(string key, StringComparison comparison = StringComparison.OrdinalIgnoreCase) =>
+        DocumentHeader?.HasEntry(key, comparison) == true;
+
+    /// <summary>Gets a typed front matter value by key when the document header is present.</summary>
+    public bool TryGetFrontMatterValue<T>(string key, out T? value) {
+        if (DocumentHeader != null && DocumentHeader.TryGetValue<T>(key, out value)) {
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private IReadOnlyList<IMarkdownBlock> BuildTopLevelBlocks() {
+        if (_frontMatter == null) {
+            return _blocks;
+        }
+
+        var blocks = new List<IMarkdownBlock>(_blocks.Count + 1) {
+            (IMarkdownBlock)_frontMatter
+        };
+        blocks.AddRange(_blocks);
+        return blocks;
+    }
+
+    private static IEnumerable<IMarkdownBlock> EnumerateBlockAndDescendants(IMarkdownBlock block) {
+        yield return block;
+
+        if (block is IMarkdownListBlock listBlock) {
+            for (int i = 0; i < listBlock.ListItems.Count; i++) {
+                var item = listBlock.ListItems[i];
+                for (int j = 0; j < item.BlockChildren.Count; j++) {
+                    foreach (var descendant in EnumerateBlockAndDescendants(item.BlockChildren[j])) {
+                        yield return descendant;
+                    }
+                }
+            }
+
+            yield break;
+        }
+
+        if (block is IChildMarkdownBlockContainer container) {
+            for (int i = 0; i < container.ChildBlocks.Count; i++) {
+                foreach (var descendant in EnumerateBlockAndDescendants(container.ChildBlocks[i])) {
+                    yield return descendant;
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<ListItem> EnumerateListItems(IMarkdownBlock block) {
+        if (block is IMarkdownListBlock listBlock) {
+            for (int i = 0; i < listBlock.ListItems.Count; i++) {
+                var item = listBlock.ListItems[i];
+                yield return item;
+
+                for (int j = 0; j < item.BlockChildren.Count; j++) {
+                    foreach (var descendant in EnumerateListItems(item.BlockChildren[j])) {
+                        yield return descendant;
+                    }
+                }
+            }
+
+            yield break;
+        }
+
+        if (block is IChildMarkdownBlockContainer container) {
+            for (int i = 0; i < container.ChildBlocks.Count; i++) {
+                foreach (var descendant in EnumerateListItems(container.ChildBlocks[i])) {
+                    yield return descendant;
+                }
+            }
+        }
     }
 
     /// <summary>Sets YAML front matter from an anonymous object or dictionary.</summary>

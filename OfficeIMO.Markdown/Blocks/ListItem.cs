@@ -8,8 +8,17 @@ public sealed class ListItem {
     public InlineSequence Content { get; }
     /// <summary>Additional paragraphs inside the list item (multi-paragraph list items).</summary>
     public List<InlineSequence> AdditionalParagraphs { get; } = new List<InlineSequence>();
+    /// <summary>
+    /// Paragraph blocks owned by this list item.
+    /// This exposes list-item paragraph content as blocks for AST-style consumers.
+    /// </summary>
+    public IReadOnlyList<ParagraphBlock> ParagraphBlocks => BuildParagraphBlocks();
     /// <summary>Nested block content inside the list item (e.g., nested ordered/unordered lists, code blocks).</summary>
     public List<IMarkdownBlock> Children { get; } = new List<IMarkdownBlock>();
+    /// <summary>Read-only AST-style view of nested child blocks inside the list item.</summary>
+    public IReadOnlyList<IMarkdownBlock> ChildBlocks => Children;
+    /// <summary>Ordered AST-style view of all list-item child blocks, including lead paragraphs.</summary>
+    public IReadOnlyList<IMarkdownBlock> BlockChildren => BuildBlockChildren();
     /// <summary>True when rendered as a task item (<c>- [ ]</c> or <c>- [x]</c>).</summary>
     public bool IsTask { get; }
     /// <summary>Whether the task is checked.</summary>
@@ -62,11 +71,11 @@ public sealed class ListItem {
         if (!renderLoose && AdditionalParagraphs.Count == 0) {
             var sbTight = new StringBuilder();
             sbTight.Append(checkbox).Append(Content.RenderHtml());
-            for (int i = 0; i < Children.Count; i++) {
-                if (Children[i] is ITightListItemHtmlMarkdownBlock tightHtmlBlock) {
+            for (int i = 0; i < ChildBlocks.Count; i++) {
+                if (ChildBlocks[i] is ITightListItemHtmlMarkdownBlock tightHtmlBlock) {
                     sbTight.Append(tightHtmlBlock.RenderTightListItemHtml());
                 } else {
-                    sbTight.Append(Children[i].RenderHtml());
+                    sbTight.Append(ChildBlocks[i].RenderHtml());
                 }
             }
             return sbTight.ToString();
@@ -83,8 +92,8 @@ public sealed class ListItem {
             first = false;
         }
 
-        for (int i = 0; i < Children.Count; i++) {
-            sb.Append(Children[i].RenderHtml());
+        for (int i = 0; i < ChildBlocks.Count; i++) {
+            sb.Append(ChildBlocks[i].RenderHtml());
         }
         return sb.ToString();
     }
@@ -133,19 +142,43 @@ public sealed class ListItem {
             return children;
         }
 
-        if (Content.Nodes.Count > 0 || (AdditionalParagraphs.Count == 0 && Children.Count == 0)) {
-            children.Add(BuildParagraphSyntaxNode(Content));
-        }
-
-        for (int i = 0; i < AdditionalParagraphs.Count; i++) {
-            children.Add(BuildParagraphSyntaxNode(AdditionalParagraphs[i]));
-        }
-
-        for (int i = 0; i < Children.Count; i++) {
-            children.Add(MarkdownBlockSyntaxBuilder.BuildBlock(Children[i]));
+        var blockChildren = BuildBlockChildren();
+        for (int i = 0; i < blockChildren.Count; i++) {
+            if (blockChildren[i] is ParagraphBlock paragraph) {
+                children.Add(BuildParagraphSyntaxNode(paragraph.Inlines));
+            } else {
+                children.Add(MarkdownBlockSyntaxBuilder.BuildBlock(blockChildren[i]));
+            }
         }
 
         return children;
+    }
+
+    private IReadOnlyList<ParagraphBlock> BuildParagraphBlocks() {
+        var paragraphs = new List<ParagraphBlock>();
+        if (Content.Nodes.Count > 0 || (AdditionalParagraphs.Count == 0 && Children.Count == 0)) {
+            paragraphs.Add(new ParagraphBlock(Content));
+        }
+
+        for (int i = 0; i < AdditionalParagraphs.Count; i++) {
+            paragraphs.Add(new ParagraphBlock(AdditionalParagraphs[i]));
+        }
+
+        return paragraphs;
+    }
+
+    private IReadOnlyList<IMarkdownBlock> BuildBlockChildren() {
+        var blocks = new List<IMarkdownBlock>();
+        var paragraphs = BuildParagraphBlocks();
+        for (int i = 0; i < paragraphs.Count; i++) {
+            blocks.Add(paragraphs[i]);
+        }
+
+        for (int i = 0; i < ChildBlocks.Count; i++) {
+            blocks.Add(ChildBlocks[i]);
+        }
+
+        return blocks;
     }
 
     private static MarkdownSyntaxNode BuildParagraphSyntaxNode(InlineSequence paragraph) =>

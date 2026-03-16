@@ -72,5 +72,231 @@ namespace OfficeIMO.Tests.MarkdownSuite {
             Assert.Single(md.Blocks);
             Assert.IsType<HeadingBlock>(md.Blocks[0]);
         }
+
+        [Fact]
+        public void Reader_Exposes_FrontMatter_Entries_As_Structured_Data() {
+            const string markdown = """
+---
+title: Doc
+published: true
+tags: [a, b]
+---
+
+# Heading
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+            var frontMatter = Assert.IsType<FrontMatterBlock>(parsed.DocumentHeader!);
+
+            Assert.Equal(frontMatter.Entries, parsed.FrontMatterEntries);
+
+            Assert.Collection(
+                frontMatter.Entries,
+                entry => {
+                    Assert.Equal("title", entry.Key);
+                    Assert.Equal("Doc", Assert.IsType<string>(entry.Value));
+                },
+                entry => {
+                    Assert.Equal("published", entry.Key);
+                    Assert.True(Assert.IsType<bool>(entry.Value));
+                },
+                entry => {
+                    Assert.Equal("tags", entry.Key);
+                    var tags = Assert.IsAssignableFrom<IEnumerable<string>>(entry.Value);
+                    Assert.Equal(new[] { "a", "b" }, tags.ToArray());
+                });
+
+            var published = frontMatter.FindEntry("published");
+            Assert.NotNull(published);
+            Assert.True(Assert.IsType<bool>(published!.Value));
+
+            Assert.True(frontMatter.TryGetValue<string>("title", out var title));
+            Assert.Equal("Doc", title);
+
+            Assert.True(frontMatter.TryGetValue<bool>("published", out var isPublished));
+            Assert.True(isPublished);
+
+            Assert.True(frontMatter.TryGetValue<IEnumerable<string>>("tags", out var tagValues));
+            Assert.Equal(new[] { "a", "b" }, tagValues!.ToArray());
+
+            Assert.True(frontMatter.HasEntry("published"));
+            Assert.True(frontMatter.HasEntry("Published"));
+            Assert.False(frontMatter.HasEntry("Published", StringComparison.Ordinal));
+            Assert.False(frontMatter.TryGetValue<int>("title", out _));
+            Assert.Null(frontMatter.FindEntry("missing"));
+            Assert.False(frontMatter.HasEntry("missing"));
+
+            Assert.True(parsed.HasDocumentHeader);
+            Assert.True(parsed.HasFrontMatterEntry("published"));
+            Assert.True(parsed.HasFrontMatterEntry("Published"));
+            Assert.False(parsed.HasFrontMatterEntry("Published", StringComparison.Ordinal));
+            Assert.Equal("published", parsed.FindFrontMatterEntry("published")!.Key);
+            Assert.True(parsed.TryGetFrontMatterValue<string>("title", out var documentTitle));
+            Assert.Equal("Doc", documentTitle);
+            Assert.False(parsed.TryGetFrontMatterValue<int>("title", out _));
+            Assert.False(parsed.HasFrontMatterEntry("missing"));
+        }
+
+        [Fact]
+        public void Reader_Exposes_TopLevel_Blocks_In_Document_Order() {
+            const string markdown = """
+---
+title: Doc
+---
+
+# Heading
+
+Paragraph
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+
+            Assert.Collection(
+                parsed.TopLevelBlocks,
+                block => Assert.IsType<FrontMatterBlock>(block),
+                block => Assert.IsType<HeadingBlock>(block),
+                block => Assert.IsType<ParagraphBlock>(block));
+
+            Assert.Collection(
+                parsed.Blocks,
+                block => Assert.IsType<HeadingBlock>(block),
+                block => Assert.IsType<ParagraphBlock>(block));
+
+            Assert.Collection(
+                parsed.TopLevelBlocksOfType<HeadingBlock>(),
+                block => Assert.Equal("Heading", block.Text));
+
+            Assert.Collection(
+                parsed.TopLevelBlocksOfType<FrontMatterBlock>(),
+                block => Assert.Equal("Doc", block.Entries[0].Value));
+
+            var topLevelHeading = parsed.FindFirstTopLevelBlockOfType<HeadingBlock>();
+            Assert.NotNull(topLevelHeading);
+            Assert.Equal("Heading", topLevelHeading!.Text);
+
+            Assert.True(parsed.HasTopLevelBlockOfType<HeadingBlock>());
+            Assert.True(parsed.HasTopLevelBlockOfType<FrontMatterBlock>());
+            Assert.False(parsed.HasTopLevelBlockOfType<QuoteBlock>());
+        }
+
+        [Fact]
+        public void Reader_Enumerates_Blocks_Depth_First() {
+            const string markdown = """
+---
+title: Doc
+---
+
+> Quote
+>
+> - item
+
+Paragraph
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+            var kinds = parsed.DescendantsAndSelf().Select(block => block.GetType()).ToArray();
+
+            Assert.Equal(
+                new[] {
+                    typeof(FrontMatterBlock),
+                    typeof(QuoteBlock),
+                    typeof(ParagraphBlock),
+                    typeof(UnorderedListBlock),
+                    typeof(ParagraphBlock),
+                    typeof(ParagraphBlock)
+                },
+                kinds);
+
+            Assert.Equal(
+                new[] { "Quote", "item", "Paragraph" },
+                parsed.DescendantsOfType<ParagraphBlock>()
+                    .Select(block => block.Inlines.RenderMarkdown())
+                    .ToArray());
+
+            var firstNestedList = parsed.FindFirstDescendantOfType<UnorderedListBlock>();
+            Assert.NotNull(firstNestedList);
+            Assert.Equal("item", firstNestedList!.Items[0].Content.RenderMarkdown());
+
+            Assert.True(parsed.HasDescendantOfType<UnorderedListBlock>());
+            Assert.True(parsed.HasDescendantOfType<ParagraphBlock>());
+            Assert.False(parsed.HasDescendantOfType<TableBlock>());
+        }
+
+        [Fact]
+        public void Reader_Enumerates_List_Items_In_Document_Order() {
+            const string markdown = """
+- outer
+  - inner
+
+> - quoted
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+            var items = parsed.DescendantListItems().ToArray();
+
+            Assert.Equal(3, items.Length);
+            Assert.Equal("outer", items[0].Content.RenderMarkdown());
+            Assert.Equal("inner", items[1].Content.RenderMarkdown());
+            Assert.Equal("quoted", items[2].Content.RenderMarkdown());
+
+            var topList = Assert.IsType<UnorderedListBlock>(parsed.Blocks[0]);
+            Assert.Equal(topList.Items, topList.ListItems);
+
+            var quotedList = Assert.IsType<UnorderedListBlock>(Assert.IsType<QuoteBlock>(parsed.Blocks[1]).ChildBlocks[0]);
+            Assert.Equal(quotedList.Items, quotedList.ListItems);
+        }
+
+        [Fact]
+        public void Reader_Enumerates_Headings_And_Resolved_Anchors() {
+            const string markdown = """
+# Title
+
+## Repeat
+
+## Repeat
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+            var headings = parsed.DescendantHeadings().ToArray();
+
+            Assert.Equal(new[] { "Title", "Repeat", "Repeat" }, headings.Select(h => h.Text).ToArray());
+            Assert.Equal("title", parsed.GetHeadingAnchor(headings[0]));
+            Assert.Equal("repeat", parsed.GetHeadingAnchor(headings[1]));
+            Assert.Equal("repeat-1", parsed.GetHeadingAnchor(headings[2]));
+
+            var infos = parsed.GetHeadingInfos();
+            Assert.Equal(new[] { "Title", "Repeat", "Repeat" }, infos.Select(info => info.Text).ToArray());
+            Assert.Equal(new[] { "title", "repeat", "repeat-1" }, infos.Select(info => info.Anchor).ToArray());
+            Assert.Equal(new[] { 1, 2, 2 }, infos.Select(info => info.Level).ToArray());
+            Assert.Same(headings[1], infos[1].Block);
+
+            var byAnchor = parsed.FindHeadingByAnchor("#repeat-1");
+            Assert.NotNull(byAnchor);
+            Assert.Equal("Repeat", byAnchor!.Text);
+            Assert.Equal("repeat-1", byAnchor.Anchor);
+
+            Assert.True(parsed.HasHeadingAnchor("#repeat"));
+            Assert.True(parsed.HasHeadingAnchor("repeat-1"));
+            Assert.Null(parsed.FindHeadingByAnchor("missing"));
+            Assert.False(parsed.HasHeadingAnchor("missing"));
+
+            var firstByText = parsed.FindHeading("repeat");
+            Assert.NotNull(firstByText);
+            Assert.Equal("repeat", firstByText!.Anchor);
+
+            Assert.True(parsed.HasHeading("repeat"));
+            Assert.True(parsed.HasHeading("Repeat", StringComparison.Ordinal));
+
+            var caseSensitiveMiss = parsed.FindHeading("repeat", StringComparison.Ordinal);
+            Assert.Null(caseSensitiveMiss);
+            Assert.False(parsed.HasHeading("repeat", StringComparison.Ordinal));
+
+            Assert.Null(parsed.FindHeading(string.Empty));
+            Assert.False(parsed.HasHeading(string.Empty));
+
+            var byText = parsed.FindHeadings("repeat");
+            Assert.Equal(2, byText.Count);
+            Assert.Equal(new[] { "repeat", "repeat-1" }, byText.Select(info => info.Anchor).ToArray());
+        }
     }
 }

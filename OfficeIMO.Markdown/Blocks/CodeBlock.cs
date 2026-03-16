@@ -36,10 +36,16 @@ public sealed class CodeBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlo
 
     /// <inheritdoc />
     string IMarkdownBlock.RenderHtml() {
+        var options = HtmlRenderContext.Options;
+        var overridden = options?.CodeBlockHtmlRenderer?.Invoke(this, options);
+        if (overridden != null) {
+            return overridden;
+        }
+
         string lang = string.IsNullOrEmpty(Language) ? string.Empty : $" class=\"language-{System.Net.WebUtility.HtmlEncode(Language)}\"";
         string code = System.Net.WebUtility.HtmlEncode(Content);
         if (code.Length > 0) {
-            // CommonMark/Markdig-style HTML keeps the terminating line break inside <code>
+            // CommonMark-style HTML keeps the terminating line break inside <code>
             // for multi-line block code, even though the stored model content does not.
             code += "\n";
         }

@@ -6,12 +6,12 @@ namespace OfficeIMO.Markdown;
 /// </summary>
 public sealed class MarkdownReaderOptions {
     /// <summary>
-    /// Creates a reader configuration aligned more closely with Markdig's default behavior.
+    /// Creates a reader configuration for portable Markdown behavior across stricter hosts.
     /// Bare <c>http(s)://...</c>, <c>www.*</c>, and plain email tokens remain literal text, and
     /// OfficeIMO-specific extensions such as Docs-style callouts and task-list checkbox parsing are disabled.
     /// Explicit Markdown links, angle-bracket autolinks, and plain unordered lists continue to work.
     /// </summary>
-    public static MarkdownReaderOptions CreateMarkdigCompatible() => new MarkdownReaderOptions {
+    public static MarkdownReaderOptions CreatePortableProfile() => new MarkdownReaderOptions {
         Callouts = false,
         TaskLists = false,
         AutolinkUrls = false,
@@ -151,4 +151,11 @@ public sealed class MarkdownReaderOptions {
     /// Optional markdown input normalization before parsing. Defaults are conservative (no transformations).
     /// </summary>
     public MarkdownInputNormalizationOptions InputNormalization { get; set; } = new MarkdownInputNormalizationOptions();
+
+    /// <summary>
+    /// Optional language-based fenced block factories that can produce specialized AST nodes
+    /// instead of plain <see cref="CodeBlock"/> instances.
+    /// Later registrations win when languages overlap.
+    /// </summary>
+    public List<MarkdownFencedBlockExtension> FencedBlockExtensions { get; } = new();
 }
