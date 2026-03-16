@@ -156,7 +156,7 @@ public static partial class MarkdownReader {
                 }
             }
 
-            // Angle-bracket autolinks: <https://example.com> and <user@example.com>
+            // Angle-bracket autolinks: <https://example.com>, <mailto:user@example.com>, <tel:+123>, <user@example.com>
             if (text[pos] == '<' && TryParseAngleAutolink(text, pos, out int consumedAngle, out var labelAngle, out var hrefAngle)) {
                 var resolved = ResolveUrl(hrefAngle, options);
                 if (string.IsNullOrEmpty(resolved)) {
@@ -240,6 +240,18 @@ public static partial class MarkdownReader {
                 int runLen = 1;
                 while (pos + runLen < text.Length && text[pos + runLen] == marker) runLen++;
 
+                if (ShouldTreatDelimiterRunAsLiteral(text, pos, marker, runLen, stack, out int literalRunLength)) {
+                    Current().Text(new string(marker, literalRunLength));
+                    pos += literalRunLength;
+                    continue;
+                }
+
+                if (ShouldTreatSingleMarkerAsLiteralInsideBold(text, pos, marker, runLen, stack)) {
+                    Current().Text(marker.ToString());
+                    pos++;
+                    continue;
+                }
+
                 // Only "~~" and "==" open/close paired formatting.
                 if ((marker == '~' || marker == '=') && runLen < 2) {
                     Current().Text(marker.ToString());
@@ -250,8 +262,16 @@ public static partial class MarkdownReader {
                 GetDelimiterFlags(text, pos, marker, runLen, out bool canOpen, out bool canClose);
 
                 int remaining = runLen;
-
                 if (canClose) {
+                    while (remaining > 0) {
+                        if (!TryRebalanceLeadingBoldInsideItalic(stack, marker, remaining, out int rebalanced)) break;
+                        remaining -= rebalanced;
+                    }
+                }
+
+                bool preferInnerBold = ShouldPreferInnerBold(stack, marker, remaining, canOpen, canClose);
+
+                if (canClose && !preferInnerBold) {
                     while (remaining > 0) {
                         if (!TryCloseFrame(stack, marker, remaining, out int consumedClose)) break;
                         remaining -= consumedClose;
@@ -259,6 +279,11 @@ public static partial class MarkdownReader {
                 }
 
                 if (canOpen) {
+                    if (preferInnerBold) {
+                        stack.Push(new InlineFrame(FrameKind.Bold, marker, 2, new InlineSequence { AutoSpacing = false }));
+                        remaining -= 2;
+                    }
+
                     while (remaining > 0) {
                         if (marker == '~') {
                             if (remaining >= 2) {
@@ -396,6 +421,87 @@ public static partial class MarkdownReader {
         return false;
     }
 
+    private static bool ShouldTreatSingleMarkerAsLiteralInsideBold(string text, int start, char marker, int runLen, Stack<InlineFrame> stack) {
+        if (runLen != 1) return false;
+        if (marker != '*' && marker != '_') return false;
+        if (string.IsNullOrEmpty(text) || start < 0 || start >= text.Length) return false;
+        if (stack == null || stack.Count <= 1) return false;
+
+        var top = stack.Peek();
+        if (top.Kind != FrameKind.Bold || top.Marker != marker || top.OpenLen != 2) return false;
+
+        int nextRun = FindNextDelimiterRunLength(text, start + 1, marker);
+        return nextRun == 2;
+    }
+
+    private static bool ShouldTreatDelimiterRunAsLiteral(string text, int start, char marker, int runLen, Stack<InlineFrame> stack, out int literalRunLength) {
+        literalRunLength = 0;
+        if (runLen != 2) return false;
+        if (marker != '*' && marker != '_') return false;
+        if (string.IsNullOrEmpty(text) || start < 0 || start >= text.Length) return false;
+        if (stack == null || stack.Count <= 1) return false;
+
+        var top = stack.Peek();
+        if (top.Kind != FrameKind.Italic || top.Marker != marker || top.OpenLen != 1) return false;
+
+        var frames = stack.ToArray();
+        if (frames.Length >= 2) {
+            var parent = frames[1];
+            // Keep the leading triple-delimiter path available for rebalancing into <em><strong>... later.
+            if (parent.Kind == FrameKind.Bold && parent.Marker == marker && parent.OpenLen == 2 && parent.Seq.Items.Count == 0) return false;
+        }
+
+        int nextRun = FindNextDelimiterRunLength(text, start + 2, marker);
+        if (nextRun != 1) return false;
+
+        literalRunLength = 2;
+        return true;
+    }
+
+    private static int FindNextDelimiterRunLength(string text, int start, char marker) {
+        if (string.IsNullOrEmpty(text)) return 0;
+        for (int i = Math.Max(0, start); i < text.Length; i++) {
+            if (text[i] != marker) continue;
+
+            int run = 1;
+            while (i + run < text.Length && text[i + run] == marker) run++;
+            return run;
+        }
+        return 0;
+    }
+
+    private static bool TryRebalanceLeadingBoldInsideItalic(Stack<InlineFrame> stack, char marker, int remaining, out int consumed) {
+        consumed = 0;
+        if (remaining < 2) return false;
+        if (marker != '*' && marker != '_') return false;
+        if (stack == null || stack.Count < 3) return false;
+
+        var frames = stack.ToArray();
+        var top = frames[0];
+        var parent = frames[1];
+        if (top.Kind != FrameKind.Italic || top.Marker != marker || top.OpenLen != 1) return false;
+        if (parent.Kind != FrameKind.Bold || parent.Marker != marker || parent.OpenLen != 2) return false;
+        if (parent.Seq.Items.Count != 0) return false;
+
+        stack.Pop();
+        stack.Pop();
+
+        var italic = new InlineFrame(FrameKind.Italic, marker, 1, new InlineSequence { AutoSpacing = false });
+        italic.Seq.AddRaw(new BoldSequenceInline(top.Seq));
+        stack.Push(italic);
+        consumed = 2;
+        return true;
+    }
+
+    private static bool ShouldPreferInnerBold(Stack<InlineFrame> stack, char marker, int remaining, bool canOpen, bool canClose) {
+        if (!canOpen || !canClose || remaining != 2) return false;
+        if (marker != '*' && marker != '_') return false;
+        if (stack == null || stack.Count <= 1) return false;
+
+        var top = stack.Peek();
+        return top.Marker == marker && top.Kind == FrameKind.Italic;
+    }
+
     private static void GetDelimiterFlags(string text, int start, char marker, int runLen, out bool canOpen, out bool canClose) {
         canOpen = false;
         canClose = false;
@@ -493,6 +599,20 @@ public static partial class MarkdownReader {
             return true;
         }
 
+        if (inner.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase)) {
+            label = inner;
+            href = inner;
+            consumed = gt - start + 1;
+            return true;
+        }
+
+        if (TryGetScheme(inner, out var scheme) && IsUriAngleAutolink(inner, scheme)) {
+            label = inner;
+            href = inner;
+            consumed = gt - start + 1;
+            return true;
+        }
+
         // Email form
         if (LooksLikeEmail(inner)) {
             label = inner;
@@ -502,6 +622,22 @@ public static partial class MarkdownReader {
         }
 
         return false;
+    }
+
+    private static bool IsUriAngleAutolink(string inner, string scheme) {
+        if (string.IsNullOrEmpty(inner) || string.IsNullOrEmpty(scheme)) return false;
+
+        // Match CommonMark-style absolute URI autolinks instead of limiting support to scheme://...
+        // This keeps tel:, urn:, xmpp:, etc. on the same policy-controlled path as http(s)/mailto.
+        if (scheme.Length < 2 || scheme.Length > 32) return false;
+        if (inner.Length <= scheme.Length + 1) return false;
+
+        for (int i = scheme.Length + 1; i < inner.Length; i++) {
+            char c = inner[i];
+            if (char.IsWhiteSpace(c) || char.IsControl(c) || c == '<' || c == '>') return false;
+        }
+
+        return true;
     }
 
     private static bool LooksLikeEmail(string s) {

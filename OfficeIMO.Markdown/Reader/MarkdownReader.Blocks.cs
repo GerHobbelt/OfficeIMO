@@ -236,7 +236,11 @@ public static partial class MarkdownReader {
                 int j = i + 1;
                 while (j < t.Length && t[j] == '`') { run++; j++; }
 
-                if (codeFenceLen == 0) codeFenceLen = run;
+                if (codeFenceLen == 0) {
+                    if (HasClosingBacktickRun(t, j, run)) {
+                        codeFenceLen = run;
+                    }
+                }
                 else if (run == codeFenceLen) codeFenceLen = 0;
 
                 sb.Append(t, i, run);
@@ -280,7 +284,11 @@ public static partial class MarkdownReader {
                 int j = i + 1;
                 while (j < value.Length && value[j] == '`') { run++; j++; }
 
-                if (codeFenceLen == 0) codeFenceLen = run;
+                if (codeFenceLen == 0) {
+                    if (HasClosingBacktickRun(value, j, run)) {
+                        codeFenceLen = run;
+                    }
+                }
                 else if (run == codeFenceLen) codeFenceLen = 0;
 
                 sb.Append(value, i, run);
@@ -302,6 +310,26 @@ public static partial class MarkdownReader {
         }
 
         return sb.ToString();
+    }
+
+    private static bool HasClosingBacktickRun(string text, int start, int runLength) {
+        if (string.IsNullOrEmpty(text) || start >= text.Length) return false;
+
+        for (int i = start; i < text.Length; i++) {
+            if (text[i] != '`') continue;
+
+            int run = 1;
+            int j = i + 1;
+            while (j < text.Length && text[j] == '`') {
+                run++;
+                j++;
+            }
+
+            if (run == runLength) return true;
+            i = j - 1;
+        }
+
+        return false;
     }
 
     private static int CountLeadingSpaces(string line) {
@@ -479,6 +507,8 @@ public static partial class MarkdownReader {
 
         int j = index;
         var collected = new List<string>();
+        bool sawQuotedLine = false;
+        string? lastQuoteContent = null;
         while (j < lines.Length) {
             string raw = lines[j] ?? string.Empty;
             if (string.IsNullOrWhiteSpace(raw)) {
@@ -508,8 +538,19 @@ public static partial class MarkdownReader {
                 continue;
             }
 
-            if (!part.TrimStart().StartsWith(">")) break;
-            collected.Add(part);
+            if (part.TrimStart().StartsWith(">")) {
+                collected.Add(part);
+                sawQuotedLine = true;
+                lastQuoteContent = StripSingleQuoteMarker(part);
+                j++;
+                continue;
+            }
+
+            // Match the top-level quote parser's lazy continuation behavior inside list items too.
+            if (!sawQuotedLine || string.IsNullOrEmpty(lastQuoteContent) || !LooksLikeParagraphLine(lastQuoteContent) || !LooksLikeParagraphLine(part)) break;
+
+            collected.Add("> " + part);
+            lastQuoteContent = part;
             j++;
         }
 
@@ -522,6 +563,13 @@ public static partial class MarkdownReader {
             return true;
         }
         return false;
+    }
+
+    private static string StripSingleQuoteMarker(string line) {
+        if (string.IsNullOrEmpty(line)) return string.Empty;
+        var trimmed = line.TrimStart();
+        if (!trimmed.StartsWith(">")) return trimmed;
+        return trimmed.Length >= 2 && trimmed[1] == ' ' ? trimmed.Substring(2) : trimmed.Substring(1);
     }
 
     private static bool TryParseNestedTableBlock(string[] lines, ref int index, int continuationIndent, MarkdownReaderOptions options, MarkdownReaderState state, out TableBlock? table) {

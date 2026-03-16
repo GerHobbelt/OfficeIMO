@@ -139,7 +139,6 @@ namespace OfficeIMO.PowerPoint {
 
             chartPart.ChartSpace = chartSpace;
         }
-
         private static void AppendChartContent(C.PlotArea plotArea, PowerPointChartData data, PowerPointChartKind chartKind) {
             switch (chartKind) {
                 case PowerPointChartKind.ClusteredColumn:
@@ -183,7 +182,6 @@ namespace OfficeIMO.PowerPoint {
                     throw new NotSupportedException($"Chart kind {chartKind} is not supported for scatter data.");
             }
         }
-
         internal static void UpdateChartData(ChartPart chartPart, PowerPointChartData data) {
             if (chartPart == null) {
                 throw new ArgumentNullException(nameof(chartPart));
@@ -211,6 +209,16 @@ namespace OfficeIMO.PowerPoint {
 
             if (plotArea.GetFirstChild<C.AreaChart>() is C.AreaChart areaChart) {
                 UpdateAreaChartSeries(areaChart, data);
+                return;
+            }
+
+            if (plotArea.GetFirstChild<C.PieChart>() is C.PieChart pieChart) {
+                UpdatePieLikeChartSeries(pieChart, data);
+                return;
+            }
+
+            if (plotArea.GetFirstChild<C.DoughnutChart>() is C.DoughnutChart doughnutChart) {
+                UpdatePieLikeChartSeries(doughnutChart, data);
                 return;
             }
 
@@ -499,7 +507,6 @@ namespace OfficeIMO.PowerPoint {
 
             return seriesElement;
         }
-
         private static C.PieChart CreatePieChart(PowerPointChartData data) {
             C.PieChart pieChart = new(
                 new C.VaryColors { Val = true });
@@ -577,6 +584,7 @@ namespace OfficeIMO.PowerPoint {
                     seriesElement = existingSeries[i];
                 } else {
                     seriesElement = template != null ? (C.BarChartSeries)template.CloneNode(true) : new C.BarChartSeries();
+                    seriesElement.RemoveAllChildren<C.Trendline>();
                     InsertSeries(barChart, seriesElement);
                     existingSeries.Add(seriesElement);
                 }
@@ -603,6 +611,7 @@ namespace OfficeIMO.PowerPoint {
                     seriesElement = existingSeries[i];
                 } else {
                     seriesElement = template != null ? (C.LineChartSeries)template.CloneNode(true) : new C.LineChartSeries();
+                    seriesElement.RemoveAllChildren<C.Trendline>();
                     InsertSeries(lineChart, seriesElement);
                     existingSeries.Add(seriesElement);
                 }
@@ -629,6 +638,7 @@ namespace OfficeIMO.PowerPoint {
                     seriesElement = existingSeries[i];
                 } else {
                     seriesElement = template != null ? (C.AreaChartSeries)template.CloneNode(true) : new C.AreaChartSeries();
+                    seriesElement.RemoveAllChildren<C.Trendline>();
                     InsertSeries(areaChart, seriesElement);
                     existingSeries.Add(seriesElement);
                 }
@@ -655,6 +665,7 @@ namespace OfficeIMO.PowerPoint {
                     seriesElement = existingSeries[i];
                 } else {
                     seriesElement = template != null ? (C.ScatterChartSeries)template.CloneNode(true) : new C.ScatterChartSeries();
+                    seriesElement.RemoveAllChildren<C.Trendline>();
                     InsertSeries(scatterChart, seriesElement);
                     existingSeries.Add(seriesElement);
                 }
@@ -663,6 +674,32 @@ namespace OfficeIMO.PowerPoint {
                 UpdateScatterSeriesText(seriesElement, i, data.Series[i].Name);
                 UpdateXValues(seriesElement, i, data.Series[i].XValues);
                 UpdateYValues(seriesElement, i, data.Series[i].YValues);
+            }
+
+            for (int i = existingSeries.Count - 1; i >= seriesCount; i--) {
+                existingSeries[i].Remove();
+            }
+        }
+
+        private static void UpdatePieLikeChartSeries(OpenXmlCompositeElement chart, PowerPointChartData data) {
+            List<C.PieChartSeries> existingSeries = chart.Elements<C.PieChartSeries>().ToList();
+            C.PieChartSeries? template = existingSeries.LastOrDefault();
+
+            int seriesCount = data.Series.Count;
+            for (int i = 0; i < seriesCount; i++) {
+                C.PieChartSeries seriesElement;
+                if (i < existingSeries.Count) {
+                    seriesElement = existingSeries[i];
+                } else {
+                    seriesElement = template != null ? (C.PieChartSeries)template.CloneNode(true) : new C.PieChartSeries();
+                    InsertSeries(chart, seriesElement);
+                    existingSeries.Add(seriesElement);
+                }
+
+                UpdateSeriesIndexOrder(seriesElement, i);
+                UpdateSeriesText(seriesElement, i, data.Series[i].Name);
+                UpdateCategoryAxisData(seriesElement, data.Categories);
+                UpdateValues(seriesElement, i, data.Series[i].Values);
             }
 
             for (int i = existingSeries.Count - 1; i >= seriesCount; i--) {
@@ -778,6 +815,8 @@ namespace OfficeIMO.PowerPoint {
                 child is C.GapWidth ||
                 child is C.Overlap ||
                 child is C.AxisId ||
+                child is C.FirstSliceAngle ||
+                child is C.HoleSize ||
                 child is C.Marker ||
                 child is C.Smooth ||
                 child is C.SeriesLines);

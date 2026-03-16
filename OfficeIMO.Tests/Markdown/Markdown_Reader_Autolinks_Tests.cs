@@ -75,6 +75,77 @@ public class Markdown_Reader_Autolinks_Tests {
     }
 
     [Fact]
+    public void Angle_Autolinks_Explicit_Mailto_Are_Supported() {
+        var doc = MarkdownReader.Parse("Contact <mailto:user@example.com>.");
+        var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<a href=\"mailto:user@example.com\">mailto:user@example.com</a>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Angle_Autolinks_Explicit_Mailto_Respect_Url_Policy() {
+        var options = new MarkdownReaderOptions {
+            RestrictUrlSchemes = true,
+            AllowedUrlSchemes = new[] { "http", "https" }
+        };
+        var doc = MarkdownReader.Parse("Contact <mailto:user@example.com>.", options);
+        var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.DoesNotContain("href=\"mailto:user@example.com\"", html, StringComparison.Ordinal);
+        Assert.Contains("&lt;mailto:user@example.com&gt;", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Angle_Autolinks_Explicit_Absolute_Uris_Are_Supported() {
+        var doc = MarkdownReader.Parse("Fetch <ftp://example.com/file.txt>.");
+        var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<a href=\"ftp://example.com/file.txt\">ftp://example.com/file.txt</a>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Angle_Autolinks_Explicit_Tel_Uris_Are_Supported() {
+        var doc = MarkdownReader.Parse("Call <tel:+123456789>.");
+        var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<a href=\"tel:+123456789\">tel:+123456789</a>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Angle_Autolinks_Explicit_Urn_Uris_Are_Supported() {
+        var doc = MarkdownReader.Parse("Lookup <urn:isbn:9780143127741>.");
+        var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<a href=\"urn:isbn:9780143127741\">urn:isbn:9780143127741</a>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Angle_Autolinks_Explicit_Absolute_Uris_Respect_Url_Policy() {
+        var options = new MarkdownReaderOptions {
+            RestrictUrlSchemes = true,
+            AllowedUrlSchemes = new[] { "http", "https" }
+        };
+        var doc = MarkdownReader.Parse("Fetch <ftp://example.com/file.txt>.", options);
+        var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.DoesNotContain("href=\"ftp://example.com/file.txt\"", html, StringComparison.Ordinal);
+        Assert.Contains("&lt;ftp://example.com/file.txt&gt;", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Angle_Autolinks_Explicit_NonHierarchical_Uris_Respect_Url_Policy() {
+        var options = new MarkdownReaderOptions {
+            RestrictUrlSchemes = true,
+            AllowedUrlSchemes = new[] { "http", "https" }
+        };
+        var doc = MarkdownReader.Parse("Call <tel:+123456789>.", options);
+        var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.DoesNotContain("href=\"tel:+123456789\"", html, StringComparison.Ordinal);
+        Assert.Contains("&lt;tel:+123456789&gt;", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Autolinks_Work_In_Tables_And_Lists() {
         var md = """
 | Link |

@@ -326,25 +326,77 @@ imported.AddTextBox("Imported content");
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 var chart = slide.AddChart();
+var labelTemplate = new PowerPointChartDataLabelTemplate {
+    ShowValue = true,
+    ShowCategoryName = true,
+    Position = C.DataLabelPositionValues.OutsideEnd,
+    NumberFormat = "0.0",
+    Separator = " - ",
+    TextColor = "1F4E79",
+    FillColor = "FFFFFF",
+    LineColor = "1F4E79",
+    LineWidthPoints = 0.5
+};
+
 chart.SetTitle("Sales Trend")
+     .SetChartAreaStyle(fillColor: "F2F2F2", lineColor: "404040", lineWidthPoints: 1.25)
+     .SetPlotAreaStyle(fillColor: "FFFFFF", lineColor: "00B0F0", lineWidthPoints: 0.5)
      .SetTitleTextStyle(fontSizePoints: 18, bold: true, color: "1F4E79", fontName: "Calibri")
+     .ClearTitleTextStyle()
      .SetLegend(C.LegendPositionValues.Right)
      .SetLegendTextStyle(fontSizePoints: 9, italic: true, color: "404040", fontName: "Calibri")
+     .ClearLegendTextStyle()
      .SetDataLabels(showValue: true)
      .SetDataLabelPosition(C.DataLabelPositionValues.OutsideEnd)
      .SetDataLabelNumberFormat("#,##0.0", sourceLinked: false)
+     .SetDataLabelTextStyle(fontSizePoints: 9, color: "1F4E79")
+     .SetDataLabelShapeStyle(fillColor: "FFFFFF", lineColor: "1F4E79", lineWidthPoints: 0.5)
+     .SetDataLabelLeaderLines(showLeaderLines: true, lineColor: "1F4E79", lineWidthPoints: 0.5)
+     .SetDataLabelSeparator(" | ")
+     .SetDataLabelTemplate(labelTemplate)
+     .SetDataLabelCallouts(enabled: true, lineColor: "1F4E79", lineWidthPoints: 0.5)
+     .SetSeriesDataLabelTemplate(0, labelTemplate)
+     .SetSeriesDataLabelTextStyle(0, bold: true, color: "C00000")
+     .SetSeriesDataLabelSeparator(0, " / ")
+     .SetSeriesDataLabels(0, showValue: true, showCategoryName: true, position: C.DataLabelPositionValues.Top, numberFormat: "0.0")
+     .SetSeriesDataLabelCallouts(0, enabled: true, lineColor: "C00000", lineWidthPoints: 0.75)
+     .SetSeriesDataLabelForPoint(0, 1, showValue: true, showCategoryName: true, position: C.DataLabelPositionValues.OutsideEnd, numberFormat: "0.00")
+     .SetSeriesDataLabelTemplateForPoint(0, 1, labelTemplate)
+     .SetSeriesDataLabelLeaderLines(0, showLeaderLines: true, lineColor: "C00000", lineWidthPoints: 0.75)
+     .SetSeriesDataLabelCalloutsForPoint(0, 1, enabled: true)
+     .SetSeriesDataLabelSeparatorForPoint(0, 1, " | ")
+     .SetSeriesDataLabelTextStyleForPoint(0, 1, fontSizePoints: 11, bold: true, color: "C00000")
+     .SetSeriesDataLabelShapeStyleForPoint(0, 1, fillColor: "FFF2CC", lineColor: "C00000", lineWidthPoints: 0.75)
+     .SetSeriesTrendline(0, C.TrendlineValues.Polynomial, order: 2, lineColor: "ED7D31", lineWidthPoints: 1.5)
      .SetCategoryAxisTitle("Quarter")
      .SetCategoryAxisTitleTextStyle(fontSizePoints: 11, bold: true, color: "1F4E79", fontName: "Calibri")
+     .ClearCategoryAxisTitleTextStyle()
+     .SetCategoryAxisLabelTextStyle(fontSizePoints: 9, color: "404040", fontName: "Calibri")
+     .ClearCategoryAxisLabelTextStyle()
+     .SetCategoryAxisLabelRotation(45)
+     .SetCategoryAxisTickLabelPosition(C.TickLabelPositionValues.High)
+     .SetCategoryAxisGridlines(showMajor: true, lineColor: "D9D9D9", lineWidthPoints: 0.5)
      .SetValueAxisTitle("Revenue")
      .SetValueAxisTitleTextStyle(fontSizePoints: 10, italic: true, color: "C55A11", fontName: "Arial")
+     .ClearValueAxisTitleTextStyle()
+     .SetValueAxisLabelTextStyle(fontSizePoints: 9, italic: true, color: "595959", fontName: "Arial")
+     .ClearValueAxisLabelTextStyle()
+     .SetValueAxisTickLabelPosition(C.TickLabelPositionValues.Low)
+     .SetValueAxisGridlines(showMajor: true, showMinor: true, lineColor: "C0C0C0", lineWidthPoints: 0.75)
      .SetValueAxisNumberFormat("#,##0.00")
      .SetCategoryAxisReverseOrder()
      .SetValueAxisScale(minimum: 0, maximum: 100, majorUnit: 20, minorUnit: 10)
      .SetValueAxisCrossing(C.CrossesValues.Maximum)
+     .SetValueAxisCrossBetween(C.CrossBetweenValues.Between)
+     .SetValueAxisDisplayUnits(C.BuiltInUnitValues.Thousands, "Thousands USD", showLabel: true)
      .SetCategoryAxisCrossing(C.CrossesValues.Minimum)
      .SetSeriesFillColor(0, "4472C4")
      .SetSeriesLineColor("Series 2", "ED7D31", widthPoints: 1)
      .SetSeriesMarker(0, C.MarkerStyleValues.Circle, size: 6, fillColor: "FFFFFF", lineColor: "4472C4");
+
+chart.ClearDataLabels();
+chart.ClearSeriesDataLabels(0);
+chart.ClearSeriesDataLabelForPoint(0, 1);
 ```
 
 ### Pie and doughnut charts
@@ -360,6 +412,39 @@ slide.AddPieChart(chartData)
 slide.AddDoughnutChart(chartData, PowerPointUnits.Cm(10), PowerPointUnits.Cm(2),
     PowerPointUnits.Cm(8), PowerPointUnits.Cm(5))
     .SetTitle("Revenue Mix");
+```
+
+### Scatter chart axes
+```csharp
+var scatterData = new PowerPointScatterChartData(new[] {
+    new PowerPointScatterChartSeries("Revenue", new[] { 1d, 2d, 3d, 4d }, new[] { 10d, 15d, 12d, 18d })
+});
+
+slide.AddScatterChart(scatterData)
+    .SetTitle("Revenue Scatter")
+    .SetScatterXAxisTitle("Month")
+    .SetScatterYAxisTitle("Revenue")
+    .SetScatterXAxisTitleTextStyle(fontSizePoints: 11, bold: true, color: "1F4E79", fontName: "Calibri")
+    .SetScatterYAxisTitleTextStyle(fontSizePoints: 10, italic: true, color: "C55A11", fontName: "Arial")
+    .ClearScatterXAxisTitleTextStyle()
+    .ClearScatterYAxisTitleTextStyle()
+    .SetScatterXAxisLabelTextStyle(fontSizePoints: 9, bold: true, color: "404040", fontName: "Calibri")
+    .SetScatterYAxisLabelTextStyle(fontSizePoints: 10, italic: true, color: "1F4E79", fontName: "Arial")
+    .ClearScatterXAxisLabelTextStyle()
+    .ClearScatterYAxisLabelTextStyle()
+    .SetScatterXAxisLabelRotation(45)
+    .SetScatterYAxisLabelRotation(-30)
+    .SetScatterXAxisTickLabelPosition(C.TickLabelPositionValues.Low)
+    .SetScatterYAxisTickLabelPosition(C.TickLabelPositionValues.High)
+    .SetScatterXAxisGridlines(showMajor: true, lineColor: "D9D9D9", lineWidthPoints: 0.5)
+    .SetScatterYAxisGridlines(showMajor: true, showMinor: true, lineColor: "C0C0C0", lineWidthPoints: 0.75)
+    .SetScatterXAxisNumberFormat("0.0")
+    .SetScatterYAxisNumberFormat("#,##0.00")
+    .SetScatterXAxisDisplayUnits(C.BuiltInUnitValues.Hundreds, "Hundreds X", showLabel: true)
+    .SetScatterYAxisDisplayUnits(1000d, "Thousands Y", showLabel: true)
+    .SetScatterXAxisScale(minimum: 1, maximum: 12, majorUnit: 1)
+    .SetScatterYAxisScale(minimum: 0, maximum: 20, majorUnit: 5)
+    .SetScatterYAxisCrossing(crossesAt: 2d);
 ```
 
 ### Layouts and notes (fluent)
