@@ -267,10 +267,12 @@ namespace OfficeIMO.Visio {
                                 connector.LineWeight = ParseDouble(v);
                                 break;
                             case "LinePattern":
-                                if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cpat)) connector.LinePattern = cpat;
+                                if (TryParseCellIntValue(v, out int connectorLinePattern)) {
+                                    connector.LinePattern = connectorLinePattern;
+                                }
                                 break;
                             case "LineColor":
-                                if (!string.IsNullOrEmpty(v)) connector.LineColor = VisioHelpers.FromVisioColor(v!);
+                                connector.LineColor = ParseColor(v, connector.LineColor);
                                 break;
                         }
                     }
@@ -297,6 +299,11 @@ namespace OfficeIMO.Visio {
         private static double ParseDouble(string? value) {
             string? normalized = NormalizeCellLiteral(value);
             return double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out double result) ? result : 0;
+        }
+
+        private static SixLabors.ImageSharp.Color ParseColor(string? value, SixLabors.ImageSharp.Color fallback) {
+            string? normalized = NormalizeCellLiteral(value);
+            return string.IsNullOrWhiteSpace(normalized) ? fallback : VisioHelpers.FromVisioColor(normalized!);
         }
 
         private static VisioShape ParseShape(XElement shapeElement, XNamespace ns, VisioShape? parent = null, int depth = 0) {
@@ -382,24 +389,20 @@ namespace OfficeIMO.Visio {
                         lineWeightFound = true;
                         break;
                     case "LinePattern":
-                        if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out int lp)) {
-                            shape.LinePattern = lp;
+                        if (TryParseCellIntValue(v, out int linePattern)) {
+                            shape.LinePattern = linePattern;
                         }
                         break;
                     case "FillPattern":
-                        if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fp)) {
-                            shape.FillPattern = fp;
+                        if (TryParseCellIntValue(v, out int fillPattern)) {
+                            shape.FillPattern = fillPattern;
                         }
                         break;
                     case "LineColor":
-                        if (!string.IsNullOrEmpty(v)) {
-                            shape.LineColor = VisioHelpers.FromVisioColor(v!);
-                        }
+                        shape.LineColor = ParseColor(v, shape.LineColor);
                         break;
                     case "FillForegnd":
-                        if (!string.IsNullOrEmpty(v)) {
-                            shape.FillColor = VisioHelpers.FromVisioColor(v!);
-                        }
+                        shape.FillColor = ParseColor(v, shape.FillColor);
                         break;
                 }
             }
@@ -478,6 +481,11 @@ namespace OfficeIMO.Visio {
         private static void ParseShapeProperties(VisioShape shape, XElement shapeElement, XNamespace ns) {
             List<XElement> sectionElements = shapeElement.Elements(ns + "Section").ToList();
 
+            foreach (XElement geometrySection in sectionElements.Where(section =>
+                         string.Equals(section.Attribute("N")?.Value, "Geometry", StringComparison.OrdinalIgnoreCase))) {
+                shape.PreservedGeometrySections.Add(new XElement(geometrySection));
+            }
+
             XElement? connectionSection = sectionElements.FirstOrDefault(e => e.Attribute("N")?.Value == "Connection");
             if (connectionSection != null) {
                 foreach (XElement row in connectionSection.Elements(ns + "Row")) {
@@ -485,6 +493,12 @@ namespace OfficeIMO.Visio {
                     double y = 0;
                     double dirX = 0;
                     double dirY = 0;
+                    int? sectionIndex = null;
+                    if (int.TryParse(row.Attribute("IX")?.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedSectionIndex) &&
+                        parsedSectionIndex >= 0) {
+                        sectionIndex = parsedSectionIndex;
+                    }
+
                     foreach (XElement cell in row.Elements(ns + "Cell")) {
                         string? n = cell.Attribute("N")?.Value;
                         string? v = cell.Attribute("V")?.Value;
@@ -503,7 +517,9 @@ namespace OfficeIMO.Visio {
                                 break;
                         }
                     }
-                    shape.ConnectionPoints.Add(new VisioConnectionPoint(x, y, dirX, dirY));
+                    shape.ConnectionPoints.Add(new VisioConnectionPoint(x, y, dirX, dirY) {
+                        SectionIndex = sectionIndex
+                    });
                 }
             }
 
@@ -798,8 +814,19 @@ namespace OfficeIMO.Visio {
                 return null;
             }
 
-            index -= 1;
-            return index >= 0 && index < shape.ConnectionPoints.Count ? shape.ConnectionPoints[index] : null;
+            int sectionIndex = index - 1;
+            foreach (VisioConnectionPoint point in shape.ConnectionPoints) {
+                if (point.SectionIndex == sectionIndex) {
+                    return point;
+                }
+            }
+
+            bool hasExplicitSectionIndices = shape.ConnectionPoints.Any(point => point.SectionIndex.HasValue);
+            if (hasExplicitSectionIndices) {
+                return null;
+            }
+
+            return sectionIndex >= 0 && sectionIndex < shape.ConnectionPoints.Count ? shape.ConnectionPoints[sectionIndex] : null;
         }
     }
 }

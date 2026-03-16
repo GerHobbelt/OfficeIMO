@@ -277,7 +277,9 @@ namespace OfficeIMO.Excel {
         private SharedStringTablePart? _sharedStringTablePart;
         private Stream? _packageStream;
         private Stream? _sourceStream;
+        private Stream? _ownedOpenStream;
         private bool _copyPackageToSourceOnDispose;
+        private bool _copyPackageToFilePathOnDispose;
         private bool _leaveSourceStreamOpen = true;
 
         private const int StreamCopyBufferSize = 81920;
@@ -552,7 +554,10 @@ namespace OfficeIMO.Excel {
             Stream? packageStream,
             Stream? sourceStream,
             bool copyPackageToSourceOnDispose,
-            bool leaveSourceStreamOpen) {
+            bool leaveSourceStreamOpen,
+            bool copyPackageToFilePathOnDispose = false,
+            Stream? ownedOpenStream = null) {
+            bool keepPackageStream = copyPackageToSourceOnDispose || copyPackageToFilePathOnDispose;
             var document = new ExcelDocument {
                 FilePath = filePath ?? string.Empty,
                 _spreadSheetDocument = spreadSheetDocument
@@ -563,9 +568,11 @@ namespace OfficeIMO.Excel {
             workbookpart.Workbook = new Workbook();
             document._workBookPart = workbookpart;
 
-            document._packageStream = copyPackageToSourceOnDispose ? packageStream : null;
+            document._packageStream = keepPackageStream ? packageStream : null;
             document._sourceStream = copyPackageToSourceOnDispose ? sourceStream : null;
+            document._ownedOpenStream = ownedOpenStream;
             document._copyPackageToSourceOnDispose = copyPackageToSourceOnDispose && sourceStream != null;
+            document._copyPackageToFilePathOnDispose = copyPackageToFilePathOnDispose && packageStream != null && !string.IsNullOrEmpty(filePath);
             document._leaveSourceStreamOpen = leaveSourceStreamOpen;
 
             // Initialize document property helpers
@@ -580,14 +587,19 @@ namespace OfficeIMO.Excel {
             Stream? packageStream = null,
             Stream? sourceStream = null,
             bool copyPackageToSourceOnDispose = false,
-            bool leaveSourceStreamOpen = true) {
+            bool leaveSourceStreamOpen = true,
+            bool copyPackageToFilePathOnDispose = false,
+            Stream? ownedOpenStream = null) {
+            bool keepPackageStream = copyPackageToSourceOnDispose || copyPackageToFilePathOnDispose;
             var document = new ExcelDocument {
                 FilePath = filePath ?? string.Empty,
                 _spreadSheetDocument = spreadSheetDocument,
                 _workBookPart = GetWorkbookPartOrThrow(spreadSheetDocument),
-                _packageStream = copyPackageToSourceOnDispose ? packageStream : null,
+                _packageStream = keepPackageStream ? packageStream : null,
                 _sourceStream = copyPackageToSourceOnDispose ? sourceStream : null,
+                _ownedOpenStream = ownedOpenStream,
                 _copyPackageToSourceOnDispose = copyPackageToSourceOnDispose && sourceStream != null,
+                _copyPackageToFilePathOnDispose = copyPackageToFilePathOnDispose && packageStream != null && !string.IsNullOrEmpty(filePath),
                 _leaveSourceStreamOpen = leaveSourceStreamOpen,
             };
 
@@ -628,11 +640,13 @@ namespace OfficeIMO.Excel {
 
             var effectiveOpenSettings = CreateOpenSettings(openSettings, autoSave);
             bool shouldCopyBack = copyBackToSource && originalStream != null;
+            bool shouldCopyBackToFilePath = !shouldCopyBack && !string.IsNullOrEmpty(filePath) && ShouldCopyBackToSource(readOnly, autoSave, openSettings);
+            bool shouldRetainPackageStream = shouldCopyBack || shouldCopyBackToFilePath;
 
             MemoryStream? normalizedStream = null;
 
             try {
-                normalizedStream = shouldCopyBack
+                normalizedStream = shouldRetainPackageStream
                     ? new NonDisposingMemoryStream(bytes.Length + StreamBufferSize)
                     : new MemoryStream(bytes.Length + StreamBufferSize);
                 normalizedStream.Write(bytes, 0, bytes.Length);
@@ -645,10 +659,11 @@ namespace OfficeIMO.Excel {
                 return CreateDocument(
                     memDoc,
                     filePath,
-                    shouldCopyBack ? normalizedStream : null,
+                    shouldRetainPackageStream ? normalizedStream : null,
                     shouldCopyBack ? originalStream : null,
                     shouldCopyBack,
-                    leaveOriginalStreamOpen);
+                    leaveOriginalStreamOpen,
+                    copyPackageToFilePathOnDispose: shouldCopyBackToFilePath);
             } catch (Exception ex) when (ex is InvalidDataException || ex is OpenXmlPackageException || ex is XmlException) {
                 normalizedStream?.Dispose();
                 var contextMessage = filePath != null
@@ -665,7 +680,7 @@ namespace OfficeIMO.Excel {
                 var spreadSheetDocument = SpreadsheetDocument.Open(safePath, !readOnly, effectiveOpenSettings);
                 return CreateDocument(spreadSheetDocument, filePath);
             } else {
-                var fallbackStream = shouldCopyBack
+                var fallbackStream = shouldRetainPackageStream
                     ? new NonDisposingMemoryStream(bytes.Length + StreamBufferSize)
                     : new MemoryStream(bytes.Length + StreamBufferSize);
                 fallbackStream.Write(bytes, 0, bytes.Length);
@@ -674,10 +689,11 @@ namespace OfficeIMO.Excel {
                 return CreateDocument(
                     spreadSheetDocument,
                     filePath,
-                    shouldCopyBack ? fallbackStream : null,
+                    shouldRetainPackageStream ? fallbackStream : null,
                     shouldCopyBack ? originalStream : null,
                     shouldCopyBack,
-                    leaveOriginalStreamOpen);
+                    leaveOriginalStreamOpen,
+                    copyPackageToFilePathOnDispose: shouldCopyBackToFilePath);
             }
         }
 
@@ -749,17 +765,6 @@ namespace OfficeIMO.Excel {
                 throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
             }
 
-            var effectiveOpenSettings = CreateOpenSettings(openSettings, autoSave);
-
-            // Try direct file streaming first for better memory efficiency and avoid large intermediate buffers.
-            // Packages with content type issues may require normalization, so fall back to buffered reads on failures.
-            try {
-                var spreadSheetDocument = SpreadsheetDocument.Open(filePath, !readOnly, effectiveOpenSettings);
-                return CreateDocument(spreadSheetDocument, filePath);
-            } catch (Exception ex) when (ex is InvalidDataException || ex is OpenXmlPackageException || ex is XmlException) {
-                log?.Invoke($"Failed to open '{filePath}' directly. Falling back to normalized stream. Inner exception: {ex.Message}", ex);
-            }
-
             var bytes = ReadAllBytesCompatAsync(filePath, CancellationToken.None).GetAwaiter().GetResult();
             return LoadFromByteArray(bytes, readOnly, autoSave, filePath, log, openSettings, preferFilePathOnFallback: true);
         }
@@ -815,6 +820,19 @@ namespace OfficeIMO.Excel {
             } catch { }
             var validator = new OpenXmlValidator();
             foreach (var error in validator.Validate(_spreadSheetDocument)) {
+                list.Add($"{error.ErrorType}: {error.Description} at {error.Path}");
+            }
+            return list;
+        }
+
+        private static System.Collections.Generic.IReadOnlyList<string> ValidateOpenXml(byte[] packageBytes) {
+            var list = new System.Collections.Generic.List<string>();
+            if (packageBytes == null || packageBytes.Length == 0) return list;
+
+            using var stream = new MemoryStream(packageBytes, writable: false);
+            using var document = SpreadsheetDocument.Open(stream, false);
+            var validator = new OpenXmlValidator();
+            foreach (var error in validator.Validate(document)) {
                 list.Add($"{error.ErrorType}: {error.Description} at {error.Path}");
             }
             return list;
@@ -897,7 +915,7 @@ namespace OfficeIMO.Excel {
         /// <param name="workSheetName">Worksheet name.</param>
         /// <returns>Created <see cref="ExcelSheet"/> instance.</returns>
         public ExcelSheet AddWorkSheet(string workSheetName = "") {
-            return AddWorkSheet(workSheetName, SheetNameValidationMode.None);
+            return AddWorkSheet(workSheetName, SheetNameValidationMode.Sanitize);
         }
 
         /// <summary>
@@ -909,19 +927,45 @@ namespace OfficeIMO.Excel {
         public ExcelSheet AddWorkSheet(string workSheetName, SheetNameValidationMode validationMode) {
             return Locking.ExecuteWrite(EnsureLock(), () => {
                 EnsureSheetCacheInitialized(_lock);
-                string name = ValidateOrSanitizeSheetName(workSheetName, validationMode);
+                string name = ValidateOrSanitizeSheetName(workSheetName, validationMode, currentSheetName: null);
                 ExcelSheet excelSheet = new ExcelSheet(this, _workBookPart, _spreadSheetDocument, name);
                 MarkSheetCacheDirty();
                 return excelSheet;
             });
         }
 
-        private string ValidateOrSanitizeSheetName(string name, SheetNameValidationMode mode) {
+        internal void RenameWorkSheet(ExcelSheet sheet, string workSheetName, SheetNameValidationMode validationMode) {
+            if (sheet == null) throw new ArgumentNullException(nameof(sheet));
+
+            Locking.ExecuteWrite(EnsureLock(), () => {
+                string currentName = sheet.Name;
+                string validatedName = ValidateOrSanitizeSheetName(workSheetName, validationMode, currentName);
+                if (string.Equals(currentName, validatedName, StringComparison.Ordinal)) {
+                    return;
+                }
+
+                var target = _workBookPart.Workbook.Sheets?
+                    .OfType<DocumentFormat.OpenXml.Spreadsheet.Sheet>()
+                    .FirstOrDefault(s => ReferenceEquals(s, sheet.SheetElement)
+                                         || string.Equals(s.Name?.Value, currentName, StringComparison.Ordinal));
+                if (target == null) {
+                    throw new ArgumentException("Worksheet not found in workbook.", nameof(sheet));
+                }
+
+                target.Name = validatedName;
+                UpdateSheetNameReferences(currentName, validatedName);
+                _workBookPart.Workbook.Save();
+            });
+        }
+
+        private string ValidateOrSanitizeSheetName(string name, SheetNameValidationMode mode, string? currentSheetName) {
             // Collect existing names (case-insensitive)
             var existing = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
             foreach (var s in _workBookPart.Workbook.Sheets?.OfType<DocumentFormat.OpenXml.Spreadsheet.Sheet>() ?? System.Linq.Enumerable.Empty<DocumentFormat.OpenXml.Spreadsheet.Sheet>()) {
                 var existingName = s.Name?.Value;
-                if (!string.IsNullOrEmpty(existingName)) existing.Add(existingName!);
+                if (string.IsNullOrEmpty(existingName)) continue;
+                if (!string.IsNullOrEmpty(currentSheetName) && string.Equals(existingName, currentSheetName, StringComparison.OrdinalIgnoreCase)) continue;
+                existing.Add(existingName!);
             }
 
             if (mode == SheetNameValidationMode.None) {
@@ -960,7 +1004,7 @@ namespace OfficeIMO.Excel {
             // Collapse multiple underscores and trim leading/trailing underscores for nicer names
             cleaned = _multipleUnderscoresRegex.Replace(cleaned, "_");
             cleaned = cleaned.Trim('_');
-            if (cleaned.Length == 0) cleaned = "Sheet";
+            if (cleaned.Length == 0) cleaned = GenerateDefaultSheetName(existing);
             if (cleaned.Length > 31) cleaned = cleaned.Substring(0, 31);
 
             // Ensure uniqueness by appending (2), (3), ...
@@ -973,6 +1017,17 @@ namespace OfficeIMO.Excel {
                 candidate = basePart + suffix;
                 n++;
             }
+            return candidate;
+        }
+
+        private static string GenerateDefaultSheetName(System.Collections.Generic.ISet<string> existing) {
+            int n = 1;
+            string candidate = "Sheet1";
+            while (existing.Contains(candidate)) {
+                n++;
+                candidate = "Sheet" + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+
             return candidate;
         }
 
@@ -1043,7 +1098,17 @@ namespace OfficeIMO.Excel {
         /// <param name="openExcel">When true, opens the saved file in the system's associated app.</param>
         /// <param name="options">Optional save behaviors (safe defined-name repair, post-save Open XML validation).</param>
         public void Save(string filePath, bool openExcel, ExcelSaveOptions? options) {
+            if (string.IsNullOrEmpty(filePath) && string.IsNullOrEmpty(FilePath)) {
+                if (_sourceStream != null) {
+                    Save(_sourceStream, options);
+                    return;
+                }
+
+                throw new InvalidOperationException("This workbook is not associated with a file path. Provide a file path or call Save(Stream).");
+            }
+
             var path = string.IsNullOrEmpty(filePath) ? FilePath : filePath;
+            var originalFilePath = FilePath;
 
             // Ensure target directory is writable
             if (File.Exists(path) && new FileInfo(path).IsReadOnly) {
@@ -1052,28 +1117,20 @@ namespace OfficeIMO.Excel {
             EnsureDirectoryWritable(path);
 
             var payload = PreparePackageForSave(options);
+            try {
+                var finalizedBytes = FinalizePackageBytes(payload);
+                ThrowIfOpenXmlValidationFails(finalizedBytes, options);
+                CommitPreparedPackageToFile(path, finalizedBytes);
+                ReloadFromBytes(finalizedBytes);
+                FilePath = path;
 
-            using (FileStream fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None)) {
-                fs.Write(payload.PackageBytes, 0, payload.PackageBytes.Length);
-                fs.Flush();
-            }
-
-            try { payload.Properties.ApplyTo(path); } catch { }
-            try { ExcelPackageUtilities.NormalizeContentTypes(path); } catch { }
-            FilePath = path;
-
-            var fileBytes = File.ReadAllBytes(path);
-            ReloadFromBytes(fileBytes);
-
-            if (openExcel) {
-                Helpers.Open(path, true);
-            }
-
-            if (options?.ValidateOpenXml == true) {
-                var errors = ValidateOpenXml();
-                if (errors.Count > 0) {
-                    throw new System.InvalidOperationException("OpenXML validation failed:\n" + string.Join("\n", errors));
+                if (openExcel) {
+                    Helpers.Open(path, true);
                 }
+            } catch {
+                TryRestoreDocumentState(payload);
+                FilePath = originalFilePath;
+                throw;
             }
         }
 
@@ -1144,35 +1201,37 @@ namespace OfficeIMO.Excel {
         /// <param name="options">Optional save behaviors (safe defined-name repair, post-save Open XML validation).</param>
         /// <param name="cancellationToken">Cancels the asynchronous save work.</param>
         public async Task SaveAsync(string filePath, bool openExcel, ExcelSaveOptions? options, CancellationToken cancellationToken = default) {
+            if (string.IsNullOrEmpty(filePath) && string.IsNullOrEmpty(FilePath)) {
+                if (_sourceStream != null) {
+                    await SaveAsync(_sourceStream, options, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                throw new InvalidOperationException("This workbook is not associated with a file path. Provide a file path or call Save(Stream).");
+            }
+
             var target = string.IsNullOrEmpty(filePath) ? FilePath : filePath;
+            var originalFilePath = FilePath;
             if (File.Exists(target) && new FileInfo(target).IsReadOnly) {
                 throw new IOException($"Failed to save to '{target}'. The file is read-only.");
             }
             EnsureDirectoryWritable(target);
 
             var payload = PreparePackageForSave(options);
+            try {
+                var finalizedBytes = FinalizePackageBytes(payload);
+                ThrowIfOpenXmlValidationFails(finalizedBytes, options);
+                await CommitPreparedPackageToFileAsync(target, finalizedBytes, cancellationToken).ConfigureAwait(false);
+                ReloadFromBytes(finalizedBytes);
+                FilePath = target;
 
-            using (var fs = new FileStream(target, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 8192, FileOptions.Asynchronous)) {
-                await fs.WriteAsync(payload.PackageBytes, 0, payload.PackageBytes.Length, cancellationToken).ConfigureAwait(false);
-                await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            try { payload.Properties.ApplyTo(target); } catch { }
-            try { ExcelPackageUtilities.NormalizeContentTypes(target); } catch { }
-            FilePath = target;
-
-            var fileBytes = await ReadAllBytesCompatAsync(target, cancellationToken).ConfigureAwait(false);
-            ReloadFromBytes(fileBytes);
-
-            if (openExcel) {
-                Open(filePath, true);
-            }
-
-            if (options?.ValidateOpenXml == true) {
-                var errors = ValidateOpenXml();
-                if (errors.Count > 0) {
-                    throw new System.InvalidOperationException("OpenXML validation failed:\n" + string.Join("\n", errors));
+                if (openExcel) {
+                    Open(target, true);
                 }
+            } catch {
+                TryRestoreDocumentState(payload);
+                FilePath = originalFilePath;
+                throw;
             }
         }
 
@@ -1194,18 +1253,17 @@ namespace OfficeIMO.Excel {
             if (!destination.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(destination));
 
             var payload = PreparePackageForSave(options);
-            var withProperties = payload.Properties.ApplyTo(payload.PackageBytes);
-            var finalizedBytes = NormalizePackageBytes(withProperties);
-            destination.Write(finalizedBytes, 0, finalizedBytes.Length);
-            try { destination.Flush(); } catch (NotSupportedException) { }
+            try {
+                var finalizedBytes = FinalizePackageBytes(payload);
+                ThrowIfOpenXmlValidationFails(finalizedBytes, options);
+                PrepareDestinationStreamForWrite(destination);
+                destination.Write(finalizedBytes, 0, finalizedBytes.Length);
+                try { destination.Flush(); } catch (NotSupportedException) { }
 
-            ReloadFromBytes(finalizedBytes);
-
-            if (options?.ValidateOpenXml == true) {
-                var errors = ValidateOpenXml();
-                if (errors.Count > 0) {
-                    throw new System.InvalidOperationException("OpenXML validation failed:\n" + string.Join("\n", errors));
-                }
+                ReloadFromBytes(finalizedBytes);
+            } catch {
+                TryRestoreDocumentState(payload);
+                throw;
             }
         }
 
@@ -1229,18 +1287,17 @@ namespace OfficeIMO.Excel {
             if (!destination.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(destination));
 
             var payload = PreparePackageForSave(options);
-            var withProperties = payload.Properties.ApplyTo(payload.PackageBytes);
-            var finalizedBytes = NormalizePackageBytes(withProperties);
-            await destination.WriteAsync(finalizedBytes, 0, finalizedBytes.Length, cancellationToken).ConfigureAwait(false);
-            try { await destination.FlushAsync(cancellationToken).ConfigureAwait(false); } catch (NotSupportedException) { }
+            try {
+                var finalizedBytes = FinalizePackageBytes(payload);
+                ThrowIfOpenXmlValidationFails(finalizedBytes, options);
+                PrepareDestinationStreamForWrite(destination);
+                await destination.WriteAsync(finalizedBytes, 0, finalizedBytes.Length, cancellationToken).ConfigureAwait(false);
+                try { await destination.FlushAsync(cancellationToken).ConfigureAwait(false); } catch (NotSupportedException) { }
 
-            ReloadFromBytes(finalizedBytes);
-
-            if (options?.ValidateOpenXml == true) {
-                var errors = ValidateOpenXml();
-                if (errors.Count > 0) {
-                    throw new System.InvalidOperationException("OpenXML validation failed:\n" + string.Join("\n", errors));
-                }
+                ReloadFromBytes(finalizedBytes);
+            } catch {
+                TryRestoreDocumentState(payload);
+                throw;
             }
         }
 
@@ -1296,14 +1353,157 @@ namespace OfficeIMO.Excel {
             return new SavePayload(packageBytes, propertiesSnapshot);
         }
 
+        private static void PrepareDestinationStreamForWrite(Stream destination) {
+            if (!destination.CanSeek) {
+                return;
+            }
+
+            destination.Seek(0, SeekOrigin.Begin);
+            destination.SetLength(0);
+        }
+
+        private static string CreateTemporarySavePath(string targetPath) {
+            var fullTargetPath = Path.GetFullPath(targetPath);
+            var directory = Path.GetDirectoryName(fullTargetPath);
+            if (string.IsNullOrEmpty(directory)) {
+                directory = Directory.GetCurrentDirectory();
+            }
+
+            var fileName = Path.GetFileName(fullTargetPath);
+            if (string.IsNullOrEmpty(fileName)) {
+                fileName = "workbook.xlsx";
+            }
+
+            return Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp");
+        }
+
+        private static string CreateTemporaryBackupPath(string targetPath) {
+            var fullTargetPath = Path.GetFullPath(targetPath);
+            var directory = Path.GetDirectoryName(fullTargetPath);
+            if (string.IsNullOrEmpty(directory)) {
+                directory = Directory.GetCurrentDirectory();
+            }
+
+            var fileName = Path.GetFileName(fullTargetPath);
+            if (string.IsNullOrEmpty(fileName)) {
+                fileName = "workbook.xlsx";
+            }
+
+            return Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.bak");
+        }
+
+        private static void ReplaceTargetFile(string temporaryPath, string targetPath) {
+            if (!File.Exists(targetPath)) {
+                File.Move(temporaryPath, targetPath);
+                return;
+            }
+
+            IOException? lastIOException = null;
+            for (int attempt = 0; attempt < 5; attempt++) {
+                try {
+                    File.Replace(temporaryPath, targetPath, destinationBackupFileName: null);
+                    return;
+                } catch (IOException ex) when (attempt < 4) {
+                    lastIOException = ex;
+                    Thread.Sleep(50 * (attempt + 1));
+                }
+            }
+
+            var backupPath = CreateTemporaryBackupPath(targetPath);
+            try {
+                File.Move(targetPath, backupPath);
+                try {
+                    File.Move(temporaryPath, targetPath);
+                    temporaryPath = string.Empty;
+                    DeleteFileIfExists(backupPath);
+                    return;
+                } catch {
+                    if (!File.Exists(targetPath) && File.Exists(backupPath)) {
+                        File.Move(backupPath, targetPath);
+                    }
+
+                    throw;
+                }
+            } catch when (lastIOException != null) {
+                throw lastIOException;
+            } finally {
+                DeleteFileIfExists(backupPath);
+                DeleteFileIfExists(temporaryPath);
+            }
+        }
+
+        private static void DeleteFileIfExists(string path) {
+            if (string.IsNullOrWhiteSpace(path)) {
+                return;
+            }
+
+            try {
+                if (File.Exists(path)) {
+                    File.Delete(path);
+                }
+            } catch {
+            }
+        }
+
+        private static void CommitPreparedPackageToFile(string targetPath, byte[] finalizedBytes) {
+            var temporaryPath = CreateTemporarySavePath(targetPath);
+            try {
+                using (var fs = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None)) {
+                    fs.Write(finalizedBytes, 0, finalizedBytes.Length);
+                    fs.Flush();
+                }
+                ReplaceTargetFile(temporaryPath, targetPath);
+                temporaryPath = string.Empty;
+            } finally {
+                DeleteFileIfExists(temporaryPath);
+            }
+        }
+
+        private static async Task CommitPreparedPackageToFileAsync(string targetPath, byte[] finalizedBytes, CancellationToken cancellationToken) {
+            var temporaryPath = CreateTemporarySavePath(targetPath);
+            try {
+                using (var fs = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 8192, FileOptions.Asynchronous)) {
+                    await fs.WriteAsync(finalizedBytes, 0, finalizedBytes.Length, cancellationToken).ConfigureAwait(false);
+                    await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                ReplaceTargetFile(temporaryPath, targetPath);
+                temporaryPath = string.Empty;
+            } finally {
+                DeleteFileIfExists(temporaryPath);
+            }
+        }
+
+        private void TryRestoreDocumentState(SavePayload payload) {
+            try {
+                ReloadFromBytes(payload.PackageBytes);
+            } catch {
+                // Best-effort recovery only; preserve the original save exception.
+            }
+        }
+
         private void ReloadFromBytes(byte[] packageBytes) {
-            var mem = new MemoryStream(packageBytes.Length + 8192);
+            var previousDocument = _spreadSheetDocument;
+            var previousPackageStream = _packageStream;
+            bool keepPackageStream = _copyPackageToSourceOnDispose || _copyPackageToFilePathOnDispose;
+
+            Stream mem = keepPackageStream
+                ? new NonDisposingMemoryStream(packageBytes.Length + 8192)
+                : new MemoryStream(packageBytes.Length + 8192);
             mem.Write(packageBytes, 0, packageBytes.Length);
             mem.Position = 0;
             var reopenSettings = new OpenSettings { AutoSave = true };
             _spreadSheetDocument = SpreadsheetDocument.Open(mem, true, reopenSettings);
             _workBookPart = _spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
             _sharedStringTablePart = null;
+            _packageStream = keepPackageStream ? mem : null;
+
+            if (previousPackageStream != null && !ReferenceEquals(previousPackageStream, mem)) {
+                DisposeStream(previousPackageStream);
+            }
+
+            if (previousDocument != null && !ReferenceEquals(previousDocument, _spreadSheetDocument)) {
+                try { previousDocument.Dispose(); } catch { }
+            }
         }
 
         private static byte[] NormalizePackageBytes(byte[] packageBytes) {
@@ -1321,6 +1521,22 @@ namespace OfficeIMO.Excel {
             }
 
             return working.ToArray();
+        }
+
+        private static byte[] FinalizePackageBytes(SavePayload payload) {
+            var withProperties = payload.Properties.ApplyTo(payload.PackageBytes);
+            return NormalizePackageBytes(withProperties);
+        }
+
+        private static void ThrowIfOpenXmlValidationFails(byte[] finalizedBytes, ExcelSaveOptions? options) {
+            if (options?.ValidateOpenXml != true) {
+                return;
+            }
+
+            var errors = ValidateOpenXml(finalizedBytes);
+            if (errors.Count > 0) {
+                throw new InvalidOperationException("OpenXML validation failed:\n" + string.Join("\n", errors));
+            }
         }
 
         private sealed class PackagePropertiesSnapshot {
@@ -1479,6 +1695,15 @@ namespace OfficeIMO.Excel {
                 this._spreadSheetDocument = null!;
             }
 
+            if (_ownedOpenStream != null) {
+                try {
+                    _ownedOpenStream.Dispose();
+                } catch {
+                    // ignored
+                }
+                _ownedOpenStream = null;
+            }
+
             PersistPackageToSourceIfNeeded();
 
             _lock?.Dispose();
@@ -1494,6 +1719,8 @@ namespace OfficeIMO.Excel {
             try {
                 if (_copyPackageToSourceOnDispose && _sourceStream != null) {
                     PersistPackageToSource();
+                } else if (_copyPackageToFilePathOnDispose && !string.IsNullOrEmpty(FilePath)) {
+                    PersistPackageToFilePath();
                 }
             } catch {
                 // ignored
@@ -1519,6 +1746,7 @@ namespace OfficeIMO.Excel {
                 _packageStream = null;
                 _sourceStream = null;
                 _copyPackageToSourceOnDispose = false;
+                _copyPackageToFilePathOnDispose = false;
                 _leaveSourceStreamOpen = true;
             }
         }
@@ -1540,6 +1768,21 @@ namespace OfficeIMO.Excel {
             packageStream.CopyTo(targetStream, StreamCopyBufferSize);
             targetStream.Flush();
             targetStream.Seek(0, SeekOrigin.Begin);
+        }
+
+        private void PersistPackageToFilePath() {
+            var packageStream = _packageStream ?? throw new InvalidOperationException("Package stream is not available.");
+            if (string.IsNullOrEmpty(FilePath)) {
+                throw new InvalidOperationException("File path is not available.");
+            }
+
+            if (packageStream.CanSeek) {
+                packageStream.Seek(0, SeekOrigin.Begin);
+            }
+
+            using var targetStream = new FileStream(FilePath, FileMode.Create, FileAccess.Write, FileShare.None);
+            packageStream.CopyTo(targetStream, StreamCopyBufferSize);
+            targetStream.Flush();
         }
     }
 }

@@ -211,6 +211,113 @@ namespace OfficeIMO.Tests {
             Assert.Equal(EndArrow.Triangle, connector.EndArrow);
         }
 
+        [Fact]
+        public void LoadParsesGuardWrappedStylePatternCells() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".vsdx");
+
+            VisioDocument document = VisioDocument.Create(filePath);
+            VisioPage page = document.AddPage("Page-1");
+            VisioShape start = new("1", 1, 1, 2, 1, "Start");
+            VisioShape end = new("2", 4, 1, 2, 1, "End");
+            page.Shapes.Add(start);
+            page.Shapes.Add(end);
+            page.Connectors.Add(new VisioConnector("3", start, end) { Kind = ConnectorKind.Straight });
+
+            document.Save();
+
+            RewritePage(filePath, pageDoc => {
+                XNamespace ns = "http://schemas.microsoft.com/office/visio/2012/main";
+                XElement shape = pageDoc.Root!.Element(ns + "Shapes")!.Elements(ns + "Shape").First();
+                UpsertCell(shape, ns, "LinePattern", "GUARD(4)");
+                UpsertCell(shape, ns, "FillPattern", "GUARD(6)");
+
+                XElement connectorShape = pageDoc.Root!
+                    .Element(ns + "Shapes")!
+                    .Elements(ns + "Shape")
+                    .Last();
+                UpsertCell(connectorShape, ns, "LinePattern", "GUARD(2)");
+            });
+
+            VisioDocument loaded = VisioDocument.Load(filePath);
+            VisioShape shape = loaded.Pages[0].Shapes[0];
+            VisioConnector connector = Assert.Single(loaded.Pages[0].Connectors);
+
+            Assert.Equal(4, shape.LinePattern);
+            Assert.Equal(6, shape.FillPattern);
+            Assert.Equal(2, connector.LinePattern);
+        }
+
+        [Fact]
+        public void LoadParsesGuardWrappedColorCells() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".vsdx");
+
+            VisioDocument document = VisioDocument.Create(filePath);
+            VisioPage page = document.AddPage("Page-1");
+            VisioShape start = new("1", 1, 1, 2, 1, "Start");
+            VisioShape end = new("2", 4, 1, 2, 1, "End");
+            page.Shapes.Add(start);
+            page.Shapes.Add(end);
+            page.Connectors.Add(new VisioConnector("3", start, end) { Kind = ConnectorKind.Straight });
+
+            document.Save();
+
+            RewritePage(filePath, pageDoc => {
+                XNamespace ns = "http://schemas.microsoft.com/office/visio/2012/main";
+                XElement shape = pageDoc.Root!.Element(ns + "Shapes")!.Elements(ns + "Shape").First();
+                UpsertCell(shape, ns, "LineColor", "GUARD(#112233)");
+                UpsertCell(shape, ns, "FillForegnd", "GUARD(RGB(10,20,30))");
+
+                XElement connectorShape = pageDoc.Root!
+                    .Element(ns + "Shapes")!
+                    .Elements(ns + "Shape")
+                    .Last();
+                UpsertCell(connectorShape, ns, "LineColor", "GUARD(#445566)");
+            });
+
+            VisioDocument loaded = VisioDocument.Load(filePath);
+            VisioShape shape = loaded.Pages[0].Shapes[0];
+            VisioConnector connector = Assert.Single(loaded.Pages[0].Connectors);
+
+            Assert.Equal(SixLabors.ImageSharp.Color.FromRgb(0x11, 0x22, 0x33), shape.LineColor);
+            Assert.Equal(SixLabors.ImageSharp.Color.FromRgb(10, 20, 30), shape.FillColor);
+            Assert.Equal(SixLabors.ImageSharp.Color.FromRgb(0x44, 0x55, 0x66), connector.LineColor);
+        }
+
+        [Fact]
+        public void LoadParsesNumericVisioColorCells() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".vsdx");
+
+            VisioDocument document = VisioDocument.Create(filePath);
+            VisioPage page = document.AddPage("Page-1");
+            VisioShape start = new("1", 1, 1, 2, 1, "Start");
+            VisioShape end = new("2", 4, 1, 2, 1, "End");
+            page.Shapes.Add(start);
+            page.Shapes.Add(end);
+            page.Connectors.Add(new VisioConnector("3", start, end) { Kind = ConnectorKind.Straight });
+
+            document.Save();
+
+            RewritePage(filePath, pageDoc => {
+                XNamespace ns = "http://schemas.microsoft.com/office/visio/2012/main";
+                XElement shape = pageDoc.Root!.Element(ns + "Shapes")!.Elements(ns + "Shape").First();
+                UpsertCell(shape, ns, "LineColor", "0");
+                UpsertCell(shape, ns, "FillForegnd", "1");
+
+                XElement connectorShape = pageDoc.Root!
+                    .Element(ns + "Shapes")!
+                    .Elements(ns + "Shape")
+                    .Last();
+                UpsertCell(connectorShape, ns, "LineColor", "1");
+            });
+
+            VisioDocument loaded = VisioDocument.Load(filePath);
+            VisioShape shape = loaded.Pages[0].Shapes[0];
+            VisioConnector connector = Assert.Single(loaded.Pages[0].Connectors);
+
+            Assert.Equal(SixLabors.ImageSharp.Color.Black, shape.LineColor);
+            Assert.Equal(SixLabors.ImageSharp.Color.White, shape.FillColor);
+            Assert.Equal(SixLabors.ImageSharp.Color.White, connector.LineColor);
+        }
         private static void RewritePage(string vsdxPath, Action<XDocument> transform) {
             using FileStream stream = File.Open(vsdxPath, FileMode.Open, FileAccess.ReadWrite);
             using ZipArchive archive = new(stream, ZipArchiveMode.Update);
