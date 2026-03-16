@@ -62,6 +62,8 @@ public static class MarkdownRenderer {
         var doc = MarkdownReader.Parse(markdown, readerOptions);
         string html = doc.ToHtmlFragment(htmlOptions) ?? string.Empty;
 
+        html = ConvertCustomCodeBlocks(html, options);
+
         if (options.Mermaid?.Enabled == true) {
             html = ConvertMermaidCodeBlocks(html, enableHashCaching: options.Mermaid.EnableHashCaching);
         }
@@ -200,6 +202,8 @@ public static class MarkdownRenderer {
             sb.Append(BuildChartBootstrap(options.Chart, assetMode));
         }
 
+        AppendCustomShellHeadHtml(sb, options, assetMode);
+
         sb.Append("</head><body>");
         sb.Append("<div id=\"omdRoot\"></div>");
         sb.Append("<script>\n").Append(BuildIncrementalUpdateScript(options)).Append("\n</script>");
@@ -270,6 +274,86 @@ public static class MarkdownRenderer {
         });
     }
 
+    private static string ConvertCustomCodeBlocks(string html, MarkdownRendererOptions options) {
+        if (string.IsNullOrEmpty(html)) {
+            return html;
+        }
+
+        var renderers = options.FencedCodeBlockRenderers;
+        if (renderers == null || renderers.Count == 0) {
+            return html;
+        }
+
+        var value = html;
+        for (int i = renderers.Count - 1; i >= 0; i--) {
+            var renderer = renderers[i];
+            if (renderer == null) {
+                continue;
+            }
+
+            value = ConvertCustomCodeBlocks(value, renderer, options);
+        }
+
+        return value;
+    }
+
+    private static string ConvertCustomCodeBlocks(string html, MarkdownFencedCodeBlockRenderer renderer, MarkdownRendererOptions options) {
+        if (string.IsNullOrEmpty(html)) {
+            return html;
+        }
+
+        var languages = renderer.Languages;
+        if (languages == null || languages.Count == 0) {
+            return html;
+        }
+
+        bool mightMatch = false;
+        for (int i = 0; i < languages.Count; i++) {
+            var lang = languages[i];
+            if (string.IsNullOrWhiteSpace(lang)) {
+                continue;
+            }
+
+            if (html.IndexOf("language-" + lang, StringComparison.OrdinalIgnoreCase) >= 0) {
+                mightMatch = true;
+                break;
+            }
+        }
+
+        if (!mightMatch) {
+            return html;
+        }
+
+        var regex = BuildCustomCodeBlockRegex(languages);
+        return regex.Replace(html, m => {
+            var language = m.Groups[2].Value ?? string.Empty;
+            var encoded = m.Groups[3].Value ?? string.Empty;
+            var raw = System.Net.WebUtility.HtmlDecode(encoded) ?? string.Empty;
+            var match = new MarkdownFencedCodeBlockMatch(language, encoded, raw, m.Value);
+            var replacement = renderer.RenderHtml(match, options);
+            return replacement ?? m.Value;
+        });
+    }
+
+    private static Regex BuildCustomCodeBlockRegex(IReadOnlyList<string> languages) {
+        var aliases = new List<string>();
+        for (int i = 0; i < languages.Count; i++) {
+            var lang = (languages[i] ?? string.Empty).Trim();
+            if (lang.Length == 0) {
+                continue;
+            }
+
+            aliases.Add(Regex.Escape(lang));
+        }
+
+        if (aliases.Count == 0) {
+            return new Regex("$a", RegexOptions.CultureInvariant);
+        }
+
+        var pattern = "(<pre[^>]*>)\\s*<code\\s+class=\"language-(" + string.Join("|", aliases) + ")\"[^>]*>([\\s\\S]*?)</code>\\s*</pre>";
+        return new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
     private static string ConvertChartCodeBlocks(string html) {
         if (string.IsNullOrEmpty(html)) return html;
         if (html.IndexOf("language-chart", StringComparison.OrdinalIgnoreCase) < 0) return html;
@@ -279,8 +363,10 @@ public static class MarkdownRenderer {
             var encoded = m.Groups[2].Value ?? string.Empty;
             var rawJson = System.Net.WebUtility.HtmlDecode(encoded);
             var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(rawJson ?? string.Empty));
-            var hash = ComputeShortHash(encoded);
-            return $"<canvas class=\"omd-chart\" data-chart-hash=\"{hash}\" data-chart-config-b64=\"{System.Net.WebUtility.HtmlEncode(b64)}\"></canvas>";
+            var hash = ComputeShortHash(rawJson ?? string.Empty);
+            var encodedHash = System.Net.WebUtility.HtmlEncode(hash);
+            var encodedBase64 = System.Net.WebUtility.HtmlEncode(b64);
+            return $"<canvas class=\"omd-visual omd-chart\" data-omd-visual-contract=\"v1\" data-omd-visual-kind=\"chart\" data-omd-fence-language=\"chart\" data-omd-visual-hash=\"{encodedHash}\" data-omd-config-format=\"json\" data-omd-config-encoding=\"base64-utf8\" data-omd-config-b64=\"{encodedBase64}\" data-chart-hash=\"{encodedHash}\" data-chart-config-b64=\"{encodedBase64}\"></canvas>";
         });
     }
 
@@ -317,7 +403,7 @@ public static class MarkdownRenderer {
         return false;
     }
 
-    private static string ComputeShortHash(string input) {
+    internal static string ComputeShortHash(string input) {
         var data = Encoding.UTF8.GetBytes(input ?? string.Empty);
         byte[] hash;
 #if NET8_0_OR_GREATER
@@ -425,7 +511,56 @@ mermaid.initialize({{ startOnLoad: false, theme: window.matchMedia('(prefers-col
         return $"\n<link rel=\"stylesheet\" href=\"{cssHref}\">\n<script defer src=\"{jsSrc}\"></script>\n<script defer src=\"{arSrc}\"></script>\n";
     }
 
-    private static string BuildBundledScriptSrc(string hrefOrPath, string mime) {
+    private static void AppendCustomShellHeadHtml(StringBuilder sb, MarkdownRendererOptions options, AssetMode assetMode) {
+        var renderers = options.FencedCodeBlockRenderers;
+        if (renderers == null || renderers.Count == 0) {
+            return;
+        }
+
+        for (int i = 0; i < renderers.Count; i++) {
+            var renderer = renderers[i];
+            if (renderer?.BuildShellHeadHtml == null) {
+                continue;
+            }
+
+            var fragment = renderer.BuildShellHeadHtml(options, assetMode);
+            if (!string.IsNullOrWhiteSpace(fragment)) {
+                sb.Append(fragment);
+            }
+        }
+    }
+
+    private static void AppendCustomUpdateScripts(StringBuilder sb, MarkdownRendererOptions options, bool beforeReplace) {
+        var renderers = options.FencedCodeBlockRenderers;
+        if (renderers == null || renderers.Count == 0) {
+            return;
+        }
+
+        for (int i = 0; i < renderers.Count; i++) {
+            var renderer = renderers[i];
+            if (renderer == null) {
+                continue;
+            }
+
+            var builder = beforeReplace
+                ? renderer.BuildBeforeContentReplaceScript
+                : renderer.BuildAfterContentReplaceScript;
+            if (builder == null) {
+                continue;
+            }
+
+            var fragment = builder(options);
+            if (string.IsNullOrWhiteSpace(fragment)) {
+                continue;
+            }
+
+            sb.Append('\n')
+              .Append(ReplaceScriptCloseSequence(fragment ?? string.Empty))
+              .Append('\n');
+        }
+    }
+
+    internal static string BuildBundledScriptSrc(string hrefOrPath, string mime) {
         // Only used by shell building logic. This should never throw.
         try {
             var text = TryLoadTextAsset(hrefOrPath);
@@ -436,7 +571,7 @@ mermaid.initialize({{ startOnLoad: false, theme: window.matchMedia('(prefers-col
         } catch { return string.Empty; }
     }
 
-    private static string BuildBundledCssHref(string hrefOrPath) {
+    internal static string BuildBundledCssHref(string hrefOrPath) {
         try {
             var text = TryLoadTextAsset(hrefOrPath);
             if (string.IsNullOrEmpty(text)) return string.Empty;
@@ -575,6 +710,8 @@ async function updateContent(newBodyHtml) {
   });
 """);
         }
+
+        AppendCustomUpdateScripts(sb, options, beforeReplace: true);
 
         sb.Append("""
   // Replace rendered contents.
@@ -787,6 +924,7 @@ async function updateContent(newBodyHtml) {
           const ctx = c.getContext && c.getContext('2d');
           if (!ctx) return;
           new Chart(ctx, cfg);
+          c.setAttribute('data-omd-visual-rendered', 'true');
           c.setAttribute('data-chart-rendered', 'true');
         } catch(e) { console.warn('Chart render error:', e); }
       });
@@ -794,6 +932,8 @@ async function updateContent(newBodyHtml) {
   } catch(e) { /* ignore */ }
 """);
         }
+
+        AppendCustomUpdateScripts(sb, options, beforeReplace: false);
 
         if (codeCopy || tableCopy) {
             sb.Append("""

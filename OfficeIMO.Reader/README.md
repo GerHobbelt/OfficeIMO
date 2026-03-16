@@ -4,7 +4,7 @@
 - Word (`.docx`, `.docm`) -> Markdown chunks
 - Excel (`.xlsx`, `.xlsm`) -> table chunks + optional Markdown table previews
 - PowerPoint (`.pptx`, `.pptm`) -> slide-aligned Markdown chunks (optionally including notes)
-- Markdown (`.md`, `.markdown`) -> heading-aware text chunks
+- Markdown (`.md`, `.markdown`) -> parser-aware heading chunks with preserved fenced/table blocks
 - PDF (`.pdf`) -> page-aware text chunks
 
 The goal is to make it easy for tools like chat bots to ingest content deterministically.
@@ -136,6 +136,158 @@ var options = new ReaderOptions {
 };
 
 var chunks = DocumentReader.Read(@"C:\Docs\Workbook.xlsx", options).ToList();
+```
+
+When `MarkdownChunkByHeadings` is enabled, markdown inputs are chunked from parsed OfficeIMO markdown blocks instead of raw line heuristics. That means setext headings are recognized, fenced code blocks are not split by `#` inside the fence, oversize markdown blocks stay intact with a warning, and markdown tables are exposed through `ReaderChunk.Tables`. Parser-aware markdown chunks keep `SourceBlockIndex`/`HeadingPath` for stable citations, and can also expose normalized markdown provenance through `NormalizedStartLine`/`NormalizedEndLine`, `HeadingSlug`, `SourceBlockKind`, and `BlockAnchor` without claiming those are exact source offsets. `BlockAnchor` identifies the first logical markdown block in the chunk, so hosts can point at a sub-block inside a heading section when chunk splitting occurs.
+
+## Pluggable Handlers
+
+`DocumentReader` now supports extension-based handler registration for modular packages.
+
+```csharp
+using OfficeIMO.Reader;
+
+DocumentReader.RegisterHandler(new ReaderHandlerRegistration {
+    Id = "sample.custom",
+    DisplayName = "Sample Custom Reader",
+    Kind = ReaderInputKind.Text,
+    Extensions = new[] { ".sample" },
+    DefaultMaxInputBytes = 5 * 1024 * 1024,
+    WarningBehavior = ReaderWarningBehavior.WarningChunksOnly,
+    DeterministicOutput = true,
+    ReadPath = (path, opts, ct) => new[] {
+        new ReaderChunk {
+            Id = "sample-0001",
+            Kind = ReaderInputKind.Text,
+            Location = new ReaderLocation { Path = path, BlockIndex = 0 },
+            Text = "custom output"
+        }
+    }
+});
+
+var capabilities = DocumentReader.GetCapabilities();
+```
+
+Use `DocumentReader.UnregisterHandler("sample.custom")` to remove custom handlers.
+
+`GetCapabilities()` exposes a stable contract surface for hosts:
+- `SchemaId` = `officeimo.reader.capability`
+- `SchemaVersion` = `1`
+- stream/path support flags
+- advertised warning behavior and deterministic output flag
+- optional `DefaultMaxInputBytes` metadata for handler defaults
+
+For one-shot host bootstrap/discovery payloads:
+
+```csharp
+using OfficeIMO.Reader;
+
+var manifest = DocumentReader.GetCapabilityManifest();
+var json = DocumentReader.GetCapabilityManifestJson(indented: false);
+```
+
+## Shared Input Guards For Adapter Authors
+
+Use `ReaderInputLimits` when building modular handlers so `MaxInputBytes` behavior stays consistent across adapters:
+
+```csharp
+using OfficeIMO.Reader;
+
+var parseStream = ReaderInputLimits.EnsureSeekableReadStream(
+    stream,
+    maxInputBytes: readerOptions?.MaxInputBytes,
+    cancellationToken: ct,
+    ownsStream: out var ownsParseStream);
+```
+
+You can also call `ReaderInputLimits.EnforceFileSize(path, maxBytes)` and `ReaderInputLimits.EnforceSeekableStreamSize(stream, maxBytes)` for path/seekable prechecks.
+
+## Modular Adapter Registration (Optional Packages)
+
+Keep dependencies split by registering only adapters you need:
+
+```csharp
+using OfficeIMO.Reader.Epub;
+using OfficeIMO.Reader.Html;
+using OfficeIMO.Reader.Json;
+using OfficeIMO.Reader.Csv;
+using OfficeIMO.Reader.Text;
+using OfficeIMO.Reader.Xml;
+using OfficeIMO.Reader.Zip;
+
+DocumentReaderEpubRegistrationExtensions.RegisterEpubHandler(replaceExisting: true);
+DocumentReaderZipRegistrationExtensions.RegisterZipHandler(replaceExisting: true);
+DocumentReaderHtmlRegistrationExtensions.RegisterHtmlHandler(replaceExisting: true);
+DocumentReaderCsvRegistrationExtensions.RegisterCsvHandler(replaceExisting: true);
+DocumentReaderJsonRegistrationExtensions.RegisterJsonHandler(replaceExisting: true);
+DocumentReaderXmlRegistrationExtensions.RegisterXmlHandler(replaceExisting: true);
+
+// Compatibility path for existing integrations:
+DocumentReaderTextRegistrationExtensions.RegisterStructuredTextHandler(replaceExisting: true);
+```
+
+These adapters support both path and stream dispatch via `DocumentReader.Read(...)`.
+
+For host-driven auto wiring (for example IX loading only present adapter assemblies), use registrar discovery:
+
+```csharp
+using OfficeIMO.Reader;
+using OfficeIMO.Reader.Csv;
+using OfficeIMO.Reader.Epub;
+using OfficeIMO.Reader.Html;
+using OfficeIMO.Reader.Json;
+using OfficeIMO.Reader.Xml;
+using OfficeIMO.Reader.Zip;
+
+var registrars = DocumentReader.DiscoverHandlerRegistrars(
+    typeof(DocumentReaderCsvRegistrationExtensions).Assembly,
+    typeof(DocumentReaderEpubRegistrationExtensions).Assembly,
+    typeof(DocumentReaderZipRegistrationExtensions).Assembly,
+    typeof(DocumentReaderHtmlRegistrationExtensions).Assembly,
+    typeof(DocumentReaderJsonRegistrationExtensions).Assembly,
+    typeof(DocumentReaderXmlRegistrationExtensions).Assembly);
+
+DocumentReader.RegisterHandlersFromAssemblies(
+    replaceExisting: true,
+    typeof(DocumentReaderCsvRegistrationExtensions).Assembly,
+    typeof(DocumentReaderEpubRegistrationExtensions).Assembly,
+    typeof(DocumentReaderZipRegistrationExtensions).Assembly,
+    typeof(DocumentReaderHtmlRegistrationExtensions).Assembly,
+    typeof(DocumentReaderJsonRegistrationExtensions).Assembly,
+    typeof(DocumentReaderXmlRegistrationExtensions).Assembly);
+```
+
+For host bootstrap where adapter assemblies are already loaded, you can avoid hardcoded type lists:
+
+```csharp
+using OfficeIMO.Reader;
+
+var bootstrap = DocumentReader.BootstrapHostFromLoadedAssemblies(
+    options: new ReaderHostBootstrapOptions {
+        ReplaceExistingHandlers = true,
+        IncludeBuiltInCapabilities = true,
+        IncludeCustomCapabilities = true,
+        IndentedManifestJson = false
+    });
+
+// Typed manifest
+var manifest = bootstrap.Manifest;
+
+// Transport-safe JSON payload for host/service boundaries
+var manifestJson = bootstrap.ManifestJson;
+```
+
+For service hosts that prefer preset integration profiles (for example IX startup), use profile overloads:
+
+```csharp
+using OfficeIMO.Reader;
+
+var bootstrap = DocumentReader.BootstrapHostFromLoadedAssemblies(
+    profile: ReaderHostBootstrapProfile.ServiceDefault,
+    assemblyNamePrefix: "OfficeIMO.Reader.",
+    indentedManifestJson: false);
+
+var appliedProfile = bootstrap.Profile;
 ```
 
 ## Notes

@@ -44,11 +44,42 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Updates scatter chart data (series X/Y values).
+        /// </summary>
+        public PowerPointChart UpdateData(PowerPointScatterChartData data) {
+            if (data == null) {
+                throw new ArgumentNullException(nameof(data));
+            }
+
+            ChartPart chartPart = GetChartPart();
+            PowerPointUtils.UpdateChartData(chartPart, data);
+
+            EmbeddedPackagePart? embedded = chartPart.GetPartsOfType<EmbeddedPackagePart>().FirstOrDefault();
+            if (embedded != null) {
+                byte[] workbookBytes = PowerPointUtils.BuildChartWorkbook(data);
+                using var stream = new MemoryStream(workbookBytes);
+                embedded.FeedData(stream);
+            }
+
+            Save();
+            return this;
+        }
+
+        /// <summary>
         ///     Updates the chart data using selectors.
         /// </summary>
         public PowerPointChart UpdateData<T>(IEnumerable<T> items, Func<T, string> categorySelector,
             params PowerPointChartSeriesDefinition<T>[] seriesDefinitions) {
             PowerPointChartData data = PowerPointChartData.From(items, categorySelector, seriesDefinitions);
+            return UpdateData(data);
+        }
+
+        /// <summary>
+        ///     Updates scatter chart data using selectors.
+        /// </summary>
+        public PowerPointChart UpdateData<T>(IEnumerable<T> items, Func<T, double> xSelector,
+            params PowerPointScatterChartSeriesDefinition<T>[] seriesDefinitions) {
+            PowerPointScatterChartData data = PowerPointScatterChartData.From(items, xSelector, seriesDefinitions);
             return UpdateData(data);
         }
 
@@ -76,6 +107,29 @@ namespace OfficeIMO.PowerPoint {
                 chart.InsertAt(chartTitle, 0);
             }
 
+            Save();
+            return this;
+        }
+
+        /// <summary>
+        ///     Sets the chart title text style.
+        /// </summary>
+        public PowerPointChart SetTitleTextStyle(double? fontSizePoints = null, bool? bold = null, bool? italic = null,
+            string? color = null, string? fontName = null) {
+            ValidateTextStyle(fontSizePoints, color, fontName);
+
+            C.Chart chart = GetChart();
+            C.Title? title = chart.GetFirstChild<C.Title>();
+            if (title == null) {
+                return this;
+            }
+
+            C.ChartText? chartText = title.GetFirstChild<C.ChartText>();
+            if (chartText == null) {
+                return this;
+            }
+
+            ApplyTextStyle(EnsureChartTextRunProperties(chartText), fontSizePoints, bold, italic, color, fontName);
             Save();
             return this;
         }
@@ -122,6 +176,24 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Sets the legend text style.
+        /// </summary>
+        public PowerPointChart SetLegendTextStyle(double? fontSizePoints = null, bool? bold = null, bool? italic = null,
+            string? color = null, string? fontName = null) {
+            ValidateTextStyle(fontSizePoints, color, fontName);
+
+            C.Chart chart = GetChart();
+            C.Legend? legend = chart.GetFirstChild<C.Legend>();
+            if (legend == null) {
+                return this;
+            }
+
+            ApplyTextStyle(EnsureTextPropertiesRunProperties(legend), fontSizePoints, bold, italic, color, fontName);
+            Save();
+            return this;
+        }
+
+        /// <summary>
         ///     Hides the chart legend.
         /// </summary>
         public PowerPointChart HideLegend() {
@@ -162,6 +234,108 @@ namespace OfficeIMO.PowerPoint {
                 ApplyDataLabels(doughnutChart, showLegendKey, showValue, showCategoryName, showSeriesName, showPercent);
             }
 
+            foreach (C.ScatterChart scatterChart in plotArea.Elements<C.ScatterChart>()) {
+                ApplyDataLabels(scatterChart, showLegendKey, showValue, showCategoryName, showSeriesName, showPercent);
+            }
+
+            Save();
+            return this;
+        }
+
+        /// <summary>
+        ///     Sets the shared data label position for all supported chart types.
+        /// </summary>
+        public PowerPointChart SetDataLabelPosition(C.DataLabelPositionValues position) {
+            C.Chart chart = GetChart();
+            C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+            if (plotArea == null) {
+                return this;
+            }
+
+            foreach (C.BarChart barChart in plotArea.Elements<C.BarChart>()) {
+                ReplaceChild(EnsureDataLabels(barChart), new C.DataLabelPosition { Val = position });
+            }
+
+            foreach (C.LineChart lineChart in plotArea.Elements<C.LineChart>()) {
+                ReplaceChild(EnsureDataLabels(lineChart), new C.DataLabelPosition { Val = position });
+            }
+
+            foreach (C.AreaChart areaChart in plotArea.Elements<C.AreaChart>()) {
+                ReplaceChild(EnsureDataLabels(areaChart), new C.DataLabelPosition { Val = position });
+            }
+
+            foreach (C.PieChart pieChart in plotArea.Elements<C.PieChart>()) {
+                ReplaceChild(EnsureDataLabels(pieChart), new C.DataLabelPosition { Val = position });
+            }
+
+            foreach (C.DoughnutChart doughnutChart in plotArea.Elements<C.DoughnutChart>()) {
+                ReplaceChild(EnsureDataLabels(doughnutChart), new C.DataLabelPosition { Val = position });
+            }
+
+            foreach (C.ScatterChart scatterChart in plotArea.Elements<C.ScatterChart>()) {
+                ReplaceChild(EnsureDataLabels(scatterChart), new C.DataLabelPosition { Val = position });
+            }
+
+            Save();
+            return this;
+        }
+
+        /// <summary>
+        ///     Sets the shared data label number format for all supported chart types.
+        /// </summary>
+        public PowerPointChart SetDataLabelNumberFormat(string formatCode, bool sourceLinked = false) {
+            if (string.IsNullOrWhiteSpace(formatCode)) {
+                throw new ArgumentException("Format code cannot be null or empty.", nameof(formatCode));
+            }
+
+            C.Chart chart = GetChart();
+            C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+            if (plotArea == null) {
+                return this;
+            }
+
+            foreach (C.BarChart barChart in plotArea.Elements<C.BarChart>()) {
+                ReplaceChild(EnsureDataLabels(barChart), new C.NumberingFormat {
+                    FormatCode = formatCode,
+                    SourceLinked = sourceLinked
+                });
+            }
+
+            foreach (C.LineChart lineChart in plotArea.Elements<C.LineChart>()) {
+                ReplaceChild(EnsureDataLabels(lineChart), new C.NumberingFormat {
+                    FormatCode = formatCode,
+                    SourceLinked = sourceLinked
+                });
+            }
+
+            foreach (C.AreaChart areaChart in plotArea.Elements<C.AreaChart>()) {
+                ReplaceChild(EnsureDataLabels(areaChart), new C.NumberingFormat {
+                    FormatCode = formatCode,
+                    SourceLinked = sourceLinked
+                });
+            }
+
+            foreach (C.PieChart pieChart in plotArea.Elements<C.PieChart>()) {
+                ReplaceChild(EnsureDataLabels(pieChart), new C.NumberingFormat {
+                    FormatCode = formatCode,
+                    SourceLinked = sourceLinked
+                });
+            }
+
+            foreach (C.DoughnutChart doughnutChart in plotArea.Elements<C.DoughnutChart>()) {
+                ReplaceChild(EnsureDataLabels(doughnutChart), new C.NumberingFormat {
+                    FormatCode = formatCode,
+                    SourceLinked = sourceLinked
+                });
+            }
+
+            foreach (C.ScatterChart scatterChart in plotArea.Elements<C.ScatterChart>()) {
+                ReplaceChild(EnsureDataLabels(scatterChart), new C.NumberingFormat {
+                    FormatCode = formatCode,
+                    SourceLinked = sourceLinked
+                });
+            }
+
             Save();
             return this;
         }
@@ -181,6 +355,22 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Sets the category axis title text style.
+        /// </summary>
+        public PowerPointChart SetCategoryAxisTitleTextStyle(double? fontSizePoints = null, bool? bold = null,
+            bool? italic = null, string? color = null, string? fontName = null) {
+            return SetAxisTitleTextStyle<C.CategoryAxis>(fontSizePoints, bold, italic, color, fontName);
+        }
+
+        /// <summary>
+        ///     Sets the value axis title text style.
+        /// </summary>
+        public PowerPointChart SetValueAxisTitleTextStyle(double? fontSizePoints = null, bool? bold = null,
+            bool? italic = null, string? color = null, string? fontName = null) {
+            return SetAxisTitleTextStyle<C.ValueAxis>(fontSizePoints, bold, italic, color, fontName);
+        }
+
+        /// <summary>
         ///     Sets the category axis number format.
         /// </summary>
         public PowerPointChart SetCategoryAxisNumberFormat(string formatCode, bool sourceLinked = false) {
@@ -192,6 +382,102 @@ namespace OfficeIMO.PowerPoint {
         /// </summary>
         public PowerPointChart SetValueAxisNumberFormat(string formatCode, bool sourceLinked = false) {
             return SetAxisNumberFormat<C.ValueAxis>(formatCode, sourceLinked);
+        }
+
+        /// <summary>
+        ///     Sets the category axis orientation (normal or reversed order).
+        /// </summary>
+        public PowerPointChart SetCategoryAxisReverseOrder(bool reverseOrder = true) {
+            C.Chart chart = GetChart();
+            C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+            if (plotArea == null) {
+                return this;
+            }
+
+            C.CategoryAxis? axis = plotArea.Elements<C.CategoryAxis>().FirstOrDefault();
+            if (axis == null) {
+                return this;
+            }
+
+            C.Scaling scaling = EnsureScaling(axis);
+            ReplaceChild(scaling, new C.Orientation {
+                Val = reverseOrder ? C.OrientationValues.MaxMin : C.OrientationValues.MinMax
+            });
+            Save();
+            return this;
+        }
+
+        /// <summary>
+        ///     Sets value axis scale parameters.
+        /// </summary>
+        public PowerPointChart SetValueAxisScale(double? minimum = null, double? maximum = null,
+            double? majorUnit = null, double? minorUnit = null, double? logBase = null,
+            bool? reverseOrder = null, bool? logScale = null) {
+            ValidateAxisScale(minimum, maximum, majorUnit, minorUnit, logScale, logBase);
+
+            C.Chart chart = GetChart();
+            C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+            if (plotArea == null) {
+                return this;
+            }
+
+            C.ValueAxis? axis = plotArea.Elements<C.ValueAxis>().FirstOrDefault();
+            if (axis == null) {
+                return this;
+            }
+
+            ApplyAxisScale(axis, minimum, maximum, majorUnit, minorUnit, reverseOrder, logScale, logBase);
+            Save();
+            return this;
+        }
+
+        /// <summary>
+        ///     Sets where the category axis crosses the value axis.
+        /// </summary>
+        public PowerPointChart SetCategoryAxisCrossing(C.CrossesValues crosses, double? crossesAt = null) {
+            if (crossesAt != null && (double.IsNaN(crossesAt.Value) || double.IsInfinity(crossesAt.Value))) {
+                throw new ArgumentOutOfRangeException(nameof(crossesAt));
+            }
+
+            C.Chart chart = GetChart();
+            C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+            if (plotArea == null) {
+                return this;
+            }
+
+            C.CategoryAxis? axis = plotArea.Elements<C.CategoryAxis>().FirstOrDefault();
+            if (axis == null) {
+                return this;
+            }
+
+            ApplyAxisCrossing(axis, crosses, crossesAt);
+            Save();
+            return this;
+        }
+
+        /// <summary>
+        ///     Sets where the value axis crosses the category axis.
+        /// </summary>
+        public PowerPointChart SetValueAxisCrossing(C.CrossesValues crosses, double? crossesAt = null) {
+            if (crossesAt != null && (double.IsNaN(crossesAt.Value) || double.IsInfinity(crossesAt.Value))) {
+                throw new ArgumentOutOfRangeException(nameof(crossesAt));
+            }
+
+            C.Chart chart = GetChart();
+            C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+            if (plotArea == null) {
+                return this;
+            }
+
+            C.ValueAxis? axis = plotArea.Elements<C.ValueAxis>().FirstOrDefault();
+            if (axis == null) {
+                return this;
+            }
+
+            ValidateCrossesAtForAxis(axis, crossesAt);
+            ApplyAxisCrossing(axis, crosses, crossesAt);
+            Save();
+            return this;
         }
 
         /// <summary>
@@ -370,6 +656,36 @@ namespace OfficeIMO.PowerPoint {
             return this;
         }
 
+        private PowerPointChart SetAxisTitleTextStyle<TAxis>(double? fontSizePoints, bool? bold, bool? italic,
+            string? color, string? fontName) where TAxis : OpenXmlCompositeElement {
+            ValidateTextStyle(fontSizePoints, color, fontName);
+
+            C.Chart chart = GetChart();
+            C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+            if (plotArea == null) {
+                return this;
+            }
+
+            TAxis? axis = plotArea.Elements<TAxis>().FirstOrDefault();
+            if (axis == null) {
+                return this;
+            }
+
+            C.Title? title = axis.GetFirstChild<C.Title>();
+            if (title == null) {
+                return this;
+            }
+
+            C.ChartText? chartText = title.GetFirstChild<C.ChartText>();
+            if (chartText == null) {
+                return this;
+            }
+
+            ApplyTextStyle(EnsureChartTextRunProperties(chartText), fontSizePoints, bold, italic, color, fontName);
+            Save();
+            return this;
+        }
+
         private PowerPointChart SetAxisNumberFormat<TAxis>(string formatCode, bool sourceLinked)
             where TAxis : OpenXmlCompositeElement {
             if (string.IsNullOrWhiteSpace(formatCode)) {
@@ -398,18 +714,292 @@ namespace OfficeIMO.PowerPoint {
             return this;
         }
 
+        private static void ValidateAxisScale(double? minimum, double? maximum, double? majorUnit, double? minorUnit,
+            bool? logScale, double? logBase) {
+            if (minimum != null && double.IsNaN(minimum.Value)) {
+                throw new ArgumentOutOfRangeException(nameof(minimum));
+            }
+            if (maximum != null && double.IsNaN(maximum.Value)) {
+                throw new ArgumentOutOfRangeException(nameof(maximum));
+            }
+            if (minimum != null && maximum != null && minimum.Value >= maximum.Value) {
+                throw new ArgumentException("Minimum must be less than maximum.");
+            }
+            if (majorUnit != null && majorUnit.Value <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(majorUnit));
+            }
+            if (minorUnit != null && minorUnit.Value <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(minorUnit));
+            }
+            if (logScale == false && logBase != null) {
+                throw new ArgumentException("Log base requires logScale to be enabled.", nameof(logBase));
+            }
+
+            bool effectiveLog = logScale == true || logBase != null;
+            if (effectiveLog) {
+                double baseValue = logBase ?? 10d;
+                if (baseValue <= 1d) {
+                    throw new ArgumentOutOfRangeException(nameof(logBase), "Log base must be greater than 1.");
+                }
+                if (minimum != null && minimum.Value <= 0) {
+                    throw new ArgumentException("Minimum must be greater than 0 for log scale.", nameof(minimum));
+                }
+                if (maximum != null && maximum.Value <= 0) {
+                    throw new ArgumentException("Maximum must be greater than 0 for log scale.", nameof(maximum));
+                }
+            }
+        }
+
+        private static void ValidateCrossesAtForAxis(OpenXmlCompositeElement axis, double? crossesAt) {
+            if (crossesAt == null) {
+                return;
+            }
+
+            C.Scaling? scaling = axis.GetFirstChild<C.Scaling>();
+            if (scaling?.GetFirstChild<C.LogBase>() != null && crossesAt.Value <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(crossesAt), "Crosses-at value must be greater than 0 for log scale.");
+            }
+        }
+
+        private static void ApplyAxisScale(OpenXmlCompositeElement axis, double? minimum, double? maximum,
+            double? majorUnit, double? minorUnit, bool? reverseOrder, bool? logScale, double? logBase) {
+            if (reverseOrder != null || minimum != null || maximum != null || logScale != null || logBase != null) {
+                C.Scaling scaling = EnsureScaling(axis);
+                if (reverseOrder != null) {
+                    ReplaceChild(scaling, new C.Orientation {
+                        Val = reverseOrder.Value ? C.OrientationValues.MaxMin : C.OrientationValues.MinMax
+                    });
+                }
+                if (minimum != null) {
+                    ReplaceChild(scaling, new C.MinAxisValue { Val = minimum.Value });
+                }
+                if (maximum != null) {
+                    ReplaceChild(scaling, new C.MaxAxisValue { Val = maximum.Value });
+                }
+
+                bool effectiveLog = logScale == true || logBase != null;
+                if (effectiveLog) {
+                    double baseValue = logBase ?? 10d;
+                    ReplaceChild(scaling, new C.LogBase { Val = baseValue });
+                } else if (logScale == false) {
+                    scaling.GetFirstChild<C.LogBase>()?.Remove();
+                }
+
+                NormalizeScalingOrder(scaling);
+            }
+
+            if (majorUnit != null) {
+                ReplaceChild(axis, new C.MajorUnit { Val = majorUnit.Value });
+            }
+            if (minorUnit != null) {
+                ReplaceChild(axis, new C.MinorUnit { Val = minorUnit.Value });
+            }
+        }
+
+        private static C.Scaling EnsureScaling(OpenXmlCompositeElement axis) {
+            C.Scaling scaling = axis.GetFirstChild<C.Scaling>() ?? new C.Scaling();
+            if (scaling.Parent == null) {
+                C.AxisId? axisId = axis.GetFirstChild<C.AxisId>();
+                if (axisId != null) {
+                    axis.InsertAfter(scaling, axisId);
+                } else {
+                    axis.PrependChild(scaling);
+                }
+            }
+
+            if (scaling.GetFirstChild<C.Orientation>() == null) {
+                scaling.PrependChild(new C.Orientation { Val = C.OrientationValues.MinMax });
+            }
+
+            return scaling;
+        }
+
+        private static void NormalizeScalingOrder(C.Scaling scaling) {
+            C.Orientation? orientation = scaling.GetFirstChild<C.Orientation>();
+            C.MaxAxisValue? maxAxisValue = scaling.GetFirstChild<C.MaxAxisValue>();
+            C.MinAxisValue? minAxisValue = scaling.GetFirstChild<C.MinAxisValue>();
+            C.LogBase? logBase = scaling.GetFirstChild<C.LogBase>();
+
+            orientation?.Remove();
+            maxAxisValue?.Remove();
+            minAxisValue?.Remove();
+            logBase?.Remove();
+
+            if (logBase != null) {
+                scaling.Append(logBase);
+            }
+            if (orientation != null) {
+                scaling.Append(orientation);
+            }
+            if (maxAxisValue != null) {
+                scaling.Append(maxAxisValue);
+            }
+            if (minAxisValue != null) {
+                scaling.Append(minAxisValue);
+            }
+        }
+
+        private static void ApplyAxisCrossing(OpenXmlCompositeElement axis, C.CrossesValues crosses, double? crossesAt) {
+            axis.GetFirstChild<C.Crosses>()?.Remove();
+            axis.GetFirstChild<C.CrossesAt>()?.Remove();
+
+            OpenXmlElement crossing = crossesAt != null
+                ? new C.CrossesAt { Val = crossesAt.Value }
+                : new C.Crosses { Val = crosses };
+
+            C.CrossingAxis? crossAxis = axis.GetFirstChild<C.CrossingAxis>();
+            if (crossAxis != null) {
+                axis.InsertAfter(crossing, crossAxis);
+            } else {
+                axis.Append(crossing);
+            }
+        }
+
         private static void ApplyDataLabels(OpenXmlCompositeElement chartElement, bool showLegendKey, bool showValue,
             bool showCategoryName, bool showSeriesName, bool showPercent) {
-            C.DataLabels labels = chartElement.GetFirstChild<C.DataLabels>() ?? new C.DataLabels();
+            C.DataLabels labels = EnsureDataLabels(chartElement);
             ReplaceChild(labels, new C.ShowLegendKey { Val = showLegendKey });
             ReplaceChild(labels, new C.ShowValue { Val = showValue });
             ReplaceChild(labels, new C.ShowCategoryName { Val = showCategoryName });
             ReplaceChild(labels, new C.ShowSeriesName { Val = showSeriesName });
             ReplaceChild(labels, new C.ShowPercent { Val = showPercent });
             ReplaceChild(labels, new C.ShowBubbleSize { Val = false });
+            NormalizeDataLabelsOrder(labels);
+        }
 
-            if (chartElement.GetFirstChild<C.DataLabels>() == null) {
+        private static C.DataLabels EnsureDataLabels(OpenXmlCompositeElement chartElement) {
+            C.DataLabels labels = chartElement.GetFirstChild<C.DataLabels>() ?? new C.DataLabels();
+            if (labels.Parent == null) {
                 chartElement.Append(labels);
+            }
+
+            return labels;
+        }
+
+        private static void NormalizeDataLabelsOrder(C.DataLabels labels) {
+            List<C.DataLabel> overrides = labels.Elements<C.DataLabel>().ToList();
+            C.Delete? delete = labels.GetFirstChild<C.Delete>();
+            C.NumberingFormat? numFmt = labels.GetFirstChild<C.NumberingFormat>();
+            C.ChartShapeProperties? shapeProps = labels.GetFirstChild<C.ChartShapeProperties>();
+            C.TextProperties? textProps = labels.GetFirstChild<C.TextProperties>();
+            C.DataLabelPosition? position = labels.GetFirstChild<C.DataLabelPosition>();
+            C.ShowLegendKey? showLegendKey = labels.GetFirstChild<C.ShowLegendKey>();
+            C.ShowValue? showValue = labels.GetFirstChild<C.ShowValue>();
+            C.ShowCategoryName? showCategoryName = labels.GetFirstChild<C.ShowCategoryName>();
+            C.ShowSeriesName? showSeriesName = labels.GetFirstChild<C.ShowSeriesName>();
+            C.ShowPercent? showPercent = labels.GetFirstChild<C.ShowPercent>();
+            C.ShowBubbleSize? showBubbleSize = labels.GetFirstChild<C.ShowBubbleSize>();
+            C.Separator? separator = labels.GetFirstChild<C.Separator>();
+            C.ShowLeaderLines? showLeaderLines = labels.GetFirstChild<C.ShowLeaderLines>();
+            C.LeaderLines? leaderLines = labels.GetFirstChild<C.LeaderLines>();
+            C.ExtensionList? extLst = labels.GetFirstChild<C.ExtensionList>();
+
+            List<OpenXmlElement> otherChildren = labels.ChildElements
+                .Where(child => child is not C.DataLabel
+                                && child is not C.Delete
+                                && child is not C.NumberingFormat
+                                && child is not C.ChartShapeProperties
+                                && child is not C.TextProperties
+                                && child is not C.DataLabelPosition
+                                && child is not C.ShowLegendKey
+                                && child is not C.ShowValue
+                                && child is not C.ShowCategoryName
+                                && child is not C.ShowSeriesName
+                                && child is not C.ShowPercent
+                                && child is not C.ShowBubbleSize
+                                && child is not C.Separator
+                                && child is not C.ShowLeaderLines
+                                && child is not C.LeaderLines
+                                && child is not C.ExtensionList)
+                .ToList();
+
+            labels.RemoveAllChildren();
+
+            if (delete != null) {
+                labels.Append(delete);
+            }
+            if (numFmt != null) {
+                labels.Append(numFmt);
+            }
+            if (shapeProps != null) {
+                labels.Append(shapeProps);
+            }
+            if (textProps != null) {
+                labels.Append(textProps);
+            }
+            if (position != null) {
+                labels.Append(position);
+            }
+            if (showLegendKey != null) {
+                labels.Append(showLegendKey);
+            }
+            if (showValue != null) {
+                labels.Append(showValue);
+            }
+            if (showCategoryName != null) {
+                labels.Append(showCategoryName);
+            }
+            if (showSeriesName != null) {
+                labels.Append(showSeriesName);
+            }
+            if (showPercent != null) {
+                labels.Append(showPercent);
+            }
+            if (showBubbleSize != null) {
+                labels.Append(showBubbleSize);
+            }
+            if (separator != null) {
+                labels.Append(separator);
+            }
+            if (showLeaderLines != null) {
+                labels.Append(showLeaderLines);
+            }
+            if (leaderLines != null) {
+                labels.Append(leaderLines);
+            }
+
+            foreach (C.DataLabel dataLabel in overrides) {
+                labels.Append(dataLabel);
+            }
+
+            foreach (OpenXmlElement otherChild in otherChildren) {
+                labels.Append(otherChild);
+            }
+
+            if (extLst != null) {
+                labels.Append(extLst);
+            }
+        }
+
+        private static void ApplyTextStyle(A.TextCharacterPropertiesType runProps, double? fontSizePoints, bool? bold,
+            bool? italic, string? color, string? fontName) {
+            if (fontSizePoints != null) {
+                runProps.FontSize = (int)Math.Round(fontSizePoints.Value * 100);
+            }
+            if (bold != null) {
+                runProps.Bold = bold.Value;
+            }
+            if (italic != null) {
+                runProps.Italic = italic.Value;
+            }
+            if (fontName != null) {
+                runProps.RemoveAllChildren<A.LatinFont>();
+                runProps.Append(new A.LatinFont { Typeface = fontName });
+            }
+            if (color != null) {
+                ApplySolidFill(runProps, color);
+            }
+        }
+
+        private static void ValidateTextStyle(double? fontSizePoints, string? color, string? fontName) {
+            if (fontSizePoints != null && fontSizePoints <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(fontSizePoints));
+            }
+            if (color != null && string.IsNullOrWhiteSpace(color)) {
+                throw new ArgumentException("Color cannot be empty.", nameof(color));
+            }
+            if (fontName != null && string.IsNullOrWhiteSpace(fontName)) {
+                throw new ArgumentException("Font name cannot be empty.", nameof(fontName));
             }
         }
 
@@ -459,6 +1049,70 @@ namespace OfficeIMO.PowerPoint {
             if (outline.Parent == null) {
                 props.Append(outline);
             }
+        }
+
+        private static A.DefaultRunProperties EnsureTextPropertiesRunProperties(OpenXmlCompositeElement parent) {
+            C.TextProperties textProps = parent.GetFirstChild<C.TextProperties>() ?? new C.TextProperties();
+            if (textProps.GetFirstChild<A.BodyProperties>() == null) {
+                textProps.Append(new A.BodyProperties());
+            }
+            if (textProps.GetFirstChild<A.ListStyle>() == null) {
+                textProps.Append(new A.ListStyle());
+            }
+
+            A.Paragraph paragraph = textProps.GetFirstChild<A.Paragraph>() ?? new A.Paragraph();
+            if (paragraph.Parent == null) {
+                textProps.Append(paragraph);
+            }
+
+            A.ParagraphProperties paragraphProps = paragraph.GetFirstChild<A.ParagraphProperties>() ?? new A.ParagraphProperties();
+            if (paragraphProps.Parent == null) {
+                paragraph.Append(paragraphProps);
+            }
+
+            A.DefaultRunProperties runProps = paragraphProps.GetFirstChild<A.DefaultRunProperties>() ?? new A.DefaultRunProperties();
+            if (runProps.Parent == null) {
+                paragraphProps.Append(runProps);
+            }
+
+            if (textProps.Parent == null) {
+                parent.Append(textProps);
+            }
+
+            return runProps;
+        }
+        private static A.RunProperties EnsureChartTextRunProperties(C.ChartText chartText) {
+            C.RichText richText = chartText.GetFirstChild<C.RichText>() ?? new C.RichText();
+            if (richText.GetFirstChild<A.BodyProperties>() == null) {
+                richText.Append(new A.BodyProperties());
+            }
+            if (richText.GetFirstChild<A.ListStyle>() == null) {
+                richText.Append(new A.ListStyle());
+            }
+
+            A.Paragraph paragraph = richText.GetFirstChild<A.Paragraph>() ?? new A.Paragraph();
+            if (paragraph.Parent == null) {
+                richText.Append(paragraph);
+            }
+
+            A.Run run = paragraph.GetFirstChild<A.Run>() ?? new A.Run();
+            if (run.Parent == null) {
+                paragraph.Append(run);
+            }
+
+            A.RunProperties runProps = run.GetFirstChild<A.RunProperties>() ?? new A.RunProperties();
+            if (runProps.Parent == null) {
+                run.InsertAt(runProps, 0);
+            } else if (runProps != run.FirstChild) {
+                runProps.Remove();
+                run.InsertAt(runProps, 0);
+            }
+
+            if (richText.Parent == null) {
+                chartText.Append(richText);
+            }
+
+            return runProps;
         }
 
         private static void ApplyMarker(C.Marker marker, C.MarkerStyleValues style, int? size, string? fillColor, string? lineColor, double? lineWidthPoints) {

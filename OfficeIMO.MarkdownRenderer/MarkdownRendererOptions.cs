@@ -7,6 +7,13 @@ namespace OfficeIMO.MarkdownRenderer;
 /// </summary>
 public sealed class MarkdownRendererOptions {
     /// <summary>
+    /// Creates a new renderer options instance and seeds built-in fenced block renderers.
+    /// </summary>
+    public MarkdownRendererOptions() {
+        MarkdownRendererBuiltInFencedCodeBlocks.RegisterDefaults(this);
+    }
+
+    /// <summary>
     /// Markdown reader options used when parsing Markdown into OfficeIMO.Markdown's typed model.
     /// Defaults are biased for untrusted input (HTML disabled and file URLs blocked).
     /// </summary>
@@ -137,8 +144,21 @@ public sealed class MarkdownRendererOptions {
     /// <summary>Chart.js support options.</summary>
     public ChartOptions Chart { get; } = new ChartOptions();
 
+    /// <summary>vis-network support options.</summary>
+    public NetworkOptions Network { get; } = new NetworkOptions();
+
     /// <summary>Math (KaTeX) support options.</summary>
     public MathOptions Math { get; } = new MathOptions();
+
+    /// <summary>
+    /// Optional custom fenced code block renderers applied before built-in Mermaid/Chart/Math conversions.
+    /// These can replace rendered <c>&lt;pre&gt;&lt;code class="language-..."&gt;</c> blocks with host-specific HTML
+    /// and optionally contribute shell head/update fragments through <see cref="MarkdownFencedCodeBlockRenderer.BuildShellHeadHtml"/>,
+    /// <see cref="MarkdownFencedCodeBlockRenderer.BuildBeforeContentReplaceScript"/>, and
+    /// <see cref="MarkdownFencedCodeBlockRenderer.BuildAfterContentReplaceScript"/>.
+    /// The default collection is seeded with built-in Chart.js / vis-network renderers, and later additions win when aliases overlap.
+    /// </summary>
+    public List<MarkdownFencedCodeBlockRenderer> FencedCodeBlockRenderers { get; } = new List<MarkdownFencedCodeBlockRenderer>();
 
     /// <summary>
     /// Optional post-processors applied to the HTML fragment produced by <see cref="MarkdownRenderer.RenderBodyHtml"/>.

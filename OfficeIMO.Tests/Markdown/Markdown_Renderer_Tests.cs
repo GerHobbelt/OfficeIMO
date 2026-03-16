@@ -1,3 +1,4 @@
+using System.Text;
 using OfficeIMO.Markdown;
 using OfficeIMO.MarkdownRenderer;
 using Xunit;
@@ -104,16 +105,103 @@ public class Markdown_Renderer_Tests {
         Assert.Contains("data-mermaid-hash", html, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void MarkdownRenderer_Converts_Chart_Code_Fences_When_Enabled() {
-        var md = "```chart\n{\"type\":\"bar\",\"data\":{\"labels\":[\"A\"],\"datasets\":[{\"label\":\"Count\",\"data\":[1]}]}}\n```";
+    [Theory]
+    [InlineData("chart")]
+    [InlineData("ix-chart")]
+    public void MarkdownRenderer_Converts_Chart_Code_Fences_When_Enabled(string language) {
+        var configJson = "{\"type\":\"bar\",\"data\":{\"labels\":[\"A\"],\"datasets\":[{\"label\":\"Count\",\"data\":[1]}]}}";
+        var md = $"```{language}\n{configJson}\n```";
         var opts = new MarkdownRendererOptions();
         opts.Chart.Enabled = true;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
         Assert.Contains("canvas", html, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("class=\"omd-chart\"", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"omd-visual omd-chart\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-contract=\"v1\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-kind=\"chart\"", html, StringComparison.Ordinal);
+        Assert.Contains($"data-omd-fence-language=\"{language}\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-hash", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-format=\"json\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-encoding=\"base64-utf8\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-b64", html, StringComparison.Ordinal);
         Assert.Contains("data-chart-config-b64", html, StringComparison.Ordinal);
+        Assert.Equal(configJson, DecodeBase64Attribute(html, "data-omd-config-b64"));
+    }
+
+    [Theory]
+    [InlineData("ix-network")]
+    [InlineData("network")]
+    [InlineData("visnetwork")]
+    public void MarkdownRenderer_Converts_Network_Code_Fences_When_Enabled(string language) {
+        var md = $"```{language}\n{{\"nodes\":[{{\"id\":\"A\",\"label\":\"User\"}},{{\"id\":\"B\",\"label\":\"Group\"}}],\"edges\":[{{\"from\":\"A\",\"to\":\"B\",\"label\":\"memberOf\"}}]}}\n```";
+        var opts = new MarkdownRendererOptions();
+        opts.Network.Enabled = true;
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
+        Assert.Contains("class=\"omd-visual omd-network\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-contract=\"v1\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-kind=\"network\"", html, StringComparison.Ordinal);
+        Assert.Contains($"data-omd-fence-language=\"{language}\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-hash", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-format=\"json\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-encoding=\"base64-utf8\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-b64", html, StringComparison.Ordinal);
+        Assert.Contains("data-network-config-b64", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Chart_Fallback_Uses_Shared_Native_Visual_Metadata() {
+        var configJson = "{\"type\":\"bar\",\"data\":{\"labels\":[\"A\"],\"datasets\":[{\"label\":\"Count\",\"data\":[1]}]}}";
+        var opts = new MarkdownRendererOptions();
+        opts.Chart.Enabled = true;
+        opts.FencedCodeBlockRenderers.Clear();
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml($"```chart\n{configJson}\n```", opts);
+
+        Assert.Contains("class=\"omd-visual omd-chart\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-contract=\"v1\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-kind=\"chart\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-chart-config-b64", html, StringComparison.Ordinal);
+        Assert.Equal(configJson, DecodeBase64Attribute(html, "data-omd-config-b64"));
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Can_Apply_Custom_Fenced_Code_Block_Renderers() {
+        var md = "```ix-note\nhello <world>\n```";
+        var opts = new MarkdownRendererOptions();
+        opts.FencedCodeBlockRenderers.Add(new MarkdownFencedCodeBlockRenderer(
+            "IX note",
+            new[] { "ix-note" },
+            (match, _) => $"<aside class=\"ix-note\" data-lang=\"{match.Language}\">{System.Net.WebUtility.HtmlEncode(match.RawContent)}</aside>") {
+            BuildShellHeadHtml = (_, _) => "<style>.ix-note{border-left:4px solid #0a84ff;padding-left:12px;}</style>",
+            BuildBeforeContentReplaceScript = _ => "window.__ixNoteBefore = (window.__ixNoteBefore || 0) + 1;",
+            BuildAfterContentReplaceScript = _ => "window.__ixNoteAfter = (window.__ixNoteAfter || 0) + 1;"
+        });
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
+        var shell = MarkdownRenderer.MarkdownRenderer.BuildShellHtml("Chat", opts);
+
+        Assert.Contains("class=\"ix-note\"", html, StringComparison.Ordinal);
+        Assert.Contains("hello &lt;world&gt;", html, StringComparison.Ordinal);
+        Assert.Contains(".ix-note", shell, StringComparison.Ordinal);
+        Assert.Contains("__ixNoteBefore", shell, StringComparison.Ordinal);
+        Assert.Contains("__ixNoteAfter", shell, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Custom_Fenced_Code_Block_Renderers_Can_Override_BuiltIn_Aliases() {
+        var md = "```chart\n{\"type\":\"bar\"}\n```";
+        var opts = new MarkdownRendererOptions();
+        opts.Chart.Enabled = true;
+        opts.FencedCodeBlockRenderers.Add(new MarkdownFencedCodeBlockRenderer(
+            "Chart override",
+            new[] { "chart" },
+            (_, _) => "<div class=\"custom-chart\">override</div>"));
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
+
+        Assert.Contains("class=\"custom-chart\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("class=\"omd-chart\"", html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -123,6 +211,21 @@ public class Markdown_Renderer_Tests {
 
         var shell = MarkdownRenderer.MarkdownRenderer.BuildShellHtml("Chat", opts);
         Assert.Contains("chart.umd", shell, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("data-omd-visual-rendered", shell, StringComparison.Ordinal);
+        Assert.Contains("data-chart-rendered", shell, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Shell_Contains_VisNetwork_When_Enabled() {
+        var opts = new MarkdownRendererOptions();
+        opts.Network.Enabled = true;
+
+        var shell = MarkdownRenderer.MarkdownRenderer.BuildShellHtml("Chat", opts);
+        Assert.Contains("vis-network.min.js", shell, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("vis-network.min.css", shell, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".omd-network-canvas", shell, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-rendered", shell, StringComparison.Ordinal);
+        Assert.Contains("data-network-rendered", shell, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -392,5 +495,19 @@ Top-IDs:
         }
 
         return count;
+    }
+
+    private static string DecodeBase64Attribute(string html, string attributeName) {
+        var marker = attributeName + "=\"";
+        var start = html.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Expected attribute {attributeName} in HTML.");
+
+        start += marker.Length;
+        var end = html.IndexOf('"', start);
+        Assert.True(end >= start, $"Expected closing quote for attribute {attributeName}.");
+
+        var encoded = html.Substring(start, end - start);
+        var bytes = Convert.FromBase64String(System.Net.WebUtility.HtmlDecode(encoded));
+        return Encoding.UTF8.GetString(bytes);
     }
 }

@@ -13,7 +13,11 @@ public sealed class LinkInline {
 
     // Optional richer label representation (produced by the reader). When present, RenderHtml/RenderMarkdown
     // uses it instead of the plain Text property.
-    internal InlineSequence? LabelInlines { get; }
+    /// <summary>
+    /// Optional richer inline representation of the link label when the reader parsed nested formatting.
+    /// When present, renderers and converters can preserve label formatting instead of flattening to plain text.
+    /// </summary>
+    public InlineSequence? LabelInlines { get; }
     /// <summary>Creates a hyperlink inline.</summary>
     public LinkInline(string text, string url, string? title) { Text = text ?? string.Empty; Url = url ?? string.Empty; Title = title; }
 
@@ -40,8 +44,10 @@ public sealed class LinkInline {
             else if (node is BoldSequenceInline b) AppendPlainText(sb, b.Inlines);
             else if (node is BoldItalicSequenceInline bi) AppendPlainText(sb, bi.Inlines);
             else if (node is StrikethroughSequenceInline st) AppendPlainText(sb, st.Inlines);
+            else if (node is HighlightSequenceInline hi) AppendPlainText(sb, hi.Inlines);
             else if (node is HardBreakInline) sb.Append(' ');
             else if (node is UnderlineInline u) sb.Append(u.Text);
+            else if (node is HighlightInline h) sb.Append(h.Text);
             else if (node is FootnoteRefInline fn) sb.Append(fn.Label);
             // Links/images inside link labels are not expected when produced by our reader (they're disabled),
             // but if they occur, keep their plain text parts.

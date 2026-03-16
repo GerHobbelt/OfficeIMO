@@ -68,8 +68,30 @@ Options (high level)
 - `MarkdownRendererOptions.HtmlOptions`: HTML + CSS rendering (theme, Prism, link/image hardening, same-origin restrictions).
 - `MarkdownRendererOptions.NormalizeSoftWrappedStrongSpans` / `NormalizeInlineCodeSpanLineBreaks` / `NormalizeEscapedInlineCodeSpans` / `NormalizeTightStrongBoundaries` / `NormalizeLooseStrongDelimiters`: optional markdown text normalization before parsing.
 - `MarkdownRendererOptions.MarkdownPreProcessors`: custom markdown text transforms before parsing.
-- `MarkdownRendererOptions.Mermaid` / `Chart` / `Math`: optional client-side renderers for fenced blocks.
+- `MarkdownRendererOptions.Mermaid` / `Chart` / `Network` / `Math`: optional client-side renderers for fenced blocks.
+- `MarkdownRendererOptions.FencedCodeBlockRenderers`: optional registry for host-specific fenced block conversions plus shell head / update hooks.
 - `MarkdownRendererOptions.HtmlPostProcessors`: last-mile HTML transformations (custom diagram types, host integration).
+
+Built-in visual metadata
+
+When Chart.js / vis-network built-ins convert fenced blocks into native host nodes, they emit both type-specific
+attributes and a small shared metadata contract:
+
+- `data-omd-visual-kind`
+- `data-omd-fence-language`
+- `data-omd-visual-hash`
+- `data-omd-visual-contract`
+- `data-omd-config-format`
+- `data-omd-config-encoding`
+- `data-omd-config-b64`
+
+Native OfficeIMO visuals also carry the shared `omd-visual` class, and rendered shells mark hydrated visuals with
+`data-omd-visual-rendered="true"`.
+
+Treat the shared `data-omd-*` attributes as the canonical host contract. The older `data-chart-*` / `data-network-*`
+attributes remain as compatibility aliases for hosts that still depend on the renderer-specific names.
+
+This makes it easier for hosts to integrate future visual types without hard-coding every renderer-specific attribute name.
 
 Normalization is backed by `OfficeIMO.Markdown.MarkdownInputNormalizer`, so the same behavior is available directly via `MarkdownReaderOptions.InputNormalization` when parsing outside the renderer.
 
@@ -186,11 +208,24 @@ Charts (Chart.js)
 To enable Chart.js rendering:
 - set `opts.Chart.Enabled = true`
 
-Write charts in fenced code blocks named `chart` containing JSON:
+Write charts in fenced code blocks named `chart` or `ix-chart` containing JSON:
 
 ```markdown
 ~~~chart
 {"type":"bar","data":{"labels":["A","B"],"datasets":[{"label":"Count","data":[3,7]}]}}
+~~~
+```
+
+Networks (vis-network)
+
+To enable vis-network rendering:
+- set `opts.Network.Enabled = true`
+
+Write network diagrams in fenced code blocks named `ix-network`, `network`, or `visnetwork` containing JSON:
+
+```markdown
+~~~ix-network
+{"nodes":[{"id":"A","label":"User"},{"id":"B","label":"Group"}],"edges":[{"from":"A","to":"B","label":"memberOf"}]}
 ~~~
 ```
 

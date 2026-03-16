@@ -83,6 +83,19 @@ slide.AddPicture(logoStream, ImagePartType.Png,
     PowerPointUnits.Cm(23), PowerPointUnits.Cm(1.2), PowerPointUnits.Cm(5), PowerPointUnits.Cm(2));
 ```
 
+### Create and edit with streams
+```csharp
+using var stream = new MemoryStream();
+
+using (var ppt = PowerPointPresentation.Create(stream)) {
+    ppt.AddSlide().AddTitle("Created in memory");
+}
+
+using (var ppt = PowerPointPresentation.Open(stream, readOnly: false, autoSave: true)) {
+    ppt.AddSlide().AddTitle("Updated from the same stream");
+}
+```
+
 ### Background image
 ```csharp
 slide.SetBackgroundImage("hero.png");
@@ -314,14 +327,39 @@ using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 var chart = slide.AddChart();
 chart.SetTitle("Sales Trend")
+     .SetTitleTextStyle(fontSizePoints: 18, bold: true, color: "1F4E79", fontName: "Calibri")
      .SetLegend(C.LegendPositionValues.Right)
+     .SetLegendTextStyle(fontSizePoints: 9, italic: true, color: "404040", fontName: "Calibri")
      .SetDataLabels(showValue: true)
+     .SetDataLabelPosition(C.DataLabelPositionValues.OutsideEnd)
+     .SetDataLabelNumberFormat("#,##0.0", sourceLinked: false)
      .SetCategoryAxisTitle("Quarter")
+     .SetCategoryAxisTitleTextStyle(fontSizePoints: 11, bold: true, color: "1F4E79", fontName: "Calibri")
      .SetValueAxisTitle("Revenue")
+     .SetValueAxisTitleTextStyle(fontSizePoints: 10, italic: true, color: "C55A11", fontName: "Arial")
      .SetValueAxisNumberFormat("#,##0.00")
+     .SetCategoryAxisReverseOrder()
+     .SetValueAxisScale(minimum: 0, maximum: 100, majorUnit: 20, minorUnit: 10)
+     .SetValueAxisCrossing(C.CrossesValues.Maximum)
+     .SetCategoryAxisCrossing(C.CrossesValues.Minimum)
      .SetSeriesFillColor(0, "4472C4")
      .SetSeriesLineColor("Series 2", "ED7D31", widthPoints: 1)
      .SetSeriesMarker(0, C.MarkerStyleValues.Circle, size: 6, fillColor: "FFFFFF", lineColor: "4472C4");
+```
+
+### Pie and doughnut charts
+```csharp
+var chartData = new PowerPointChartData(
+    new[] { "North", "South", "West" },
+    new[] { new PowerPointChartSeries("Revenue", new[] { 10d, 20d, 30d }) });
+
+slide.AddPieChart(chartData)
+    .SetTitle("Revenue Share")
+    .SetDataLabels(showValue: true, showPercent: true);
+
+slide.AddDoughnutChart(chartData, PowerPointUnits.Cm(10), PowerPointUnits.Cm(2),
+    PowerPointUnits.Cm(8), PowerPointUnits.Cm(5))
+    .SetTitle("Revenue Mix");
 ```
 
 ### Layouts and notes (fluent)
@@ -464,7 +502,7 @@ var sections = ppt.GetSections();
 - 📋 Tables
   - ⚠️ Basic styling + merged cells
 - 📊 Charts
-  - ✅ Add charts; ✅ title/legend/labels; ✅ axis formatting; ✅ series fill/line/markers
+  - ✅ Add clustered column, pie, and doughnut charts; ✅ title/legend/labels; ✅ axis formatting; ✅ series fill/line/markers
 - ✨ Themes/Transitions
   - ✅ Default theme + full table styles; ✅ slide transitions (fade/wipe/push/etc.)
 

@@ -88,6 +88,212 @@ public sealed class ReaderDocumentReaderTests {
             var chunks = DocumentReader.Read(fs, "Notes.md").ToList();
             Assert.True(chunks.Count >= 2);
             Assert.Contains(chunks, c => c.Kind == ReaderInputKind.Markdown && (c.Location.HeadingPath?.Contains("Top", StringComparison.Ordinal) ?? false));
+            Assert.All(chunks.Where(static c => c.Kind == ReaderInputKind.Markdown), c => Assert.Null(c.Location.StartLine));
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_RecognizesSetextHeadings() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path, "Top\r\n===\r\n\r\nPara 1.\r\n\r\nChild\r\n---\r\n\r\nPara 2.\r\n");
+
+            var chunks = DocumentReader.Read(path).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            Assert.True(chunks.Count >= 2);
+            Assert.Contains(chunks, c => string.Equals(c.Location.HeadingPath, "Top", StringComparison.Ordinal));
+            Assert.Contains(chunks, c => string.Equals(c.Location.HeadingPath, "Top > Child", StringComparison.Ordinal));
+            Assert.Contains(chunks, c => (c.Markdown ?? string.Empty).Contains("# Top", StringComparison.Ordinal));
+            Assert.Contains(chunks, c => (c.Markdown ?? string.Empty).Contains("## Child", StringComparison.Ordinal));
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_DoesNotTreatCodeFenceContentAsHeading() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Top\n\n```text\n# not a heading\nline 2\n```\n\nAfter fence.\n\n## Child\n\nDone.\n");
+
+            var chunks = DocumentReader.Read(path).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            Assert.Equal(2, chunks.Count);
+            Assert.Equal("Top", chunks[0].Location.HeadingPath);
+            Assert.Contains("```text", chunks[0].Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("# not a heading", chunks[0].Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.Equal("Top > Child", chunks[1].Location.HeadingPath);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_PreservesWholeBlocksWhenTheyExceedMaxChars() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            var largePayload = new string('x', 320);
+            File.WriteAllText(path,
+                "# Top\n\nIntro paragraph.\n\n```text\n" + largePayload + "\n```\n\nTail paragraph.\n");
+
+            var chunks = DocumentReader.Read(path, new ReaderOptions { MaxChars = 256 }).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            Assert.True(chunks.Count >= 3);
+            Assert.Contains(chunks, c => (c.Warnings?.Any(w => w.Contains("single markdown block exceeded MaxChars", StringComparison.OrdinalIgnoreCase)) ?? false));
+
+            var codeChunk = chunks.Single(c => (c.Markdown ?? string.Empty).Contains("```text", StringComparison.Ordinal));
+            Assert.Contains(largePayload, codeChunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("```", codeChunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.Equal("Top", codeChunk.Location.HeadingPath);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_ExtractsMarkdownTables() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Data\n\n| Name | Value |\n| --- | ---: |\n| A | 1 |\n| B | 2 |\n");
+
+            var chunk = DocumentReader.Read(path).Single(c => c.Kind == ReaderInputKind.Markdown && (c.Tables?.Count ?? 0) > 0);
+
+            Assert.Equal("Data", chunk.Location.HeadingPath);
+            Assert.NotNull(chunk.Tables);
+            Assert.Single(chunk.Tables!);
+            Assert.Equal(new[] { "Name", "Value" }, chunk.Tables![0].Columns);
+            Assert.Equal(2, chunk.Tables[0].TotalRowCount);
+            Assert.Equal("A", chunk.Tables[0].Rows[0][0]);
+            Assert.Equal("2", chunk.Tables[0].Rows[1][1]);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_RespectsTableRowCapsAndFallbackHeaders() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Data\n\n| A | 1 |\n| B | 2 |\n| C | 3 |\n");
+
+            var chunk = DocumentReader.Read(path, new ReaderOptions { MaxTableRows = 2 })
+                .Single(c => c.Kind == ReaderInputKind.Markdown && (c.Tables?.Count ?? 0) > 0);
+
+            Assert.NotNull(chunk.Tables);
+            Assert.Single(chunk.Tables!);
+            Assert.Equal(new[] { "Column1", "Column2" }, chunk.Tables![0].Columns);
+            Assert.Equal(3, chunk.Tables[0].TotalRowCount);
+            Assert.True(chunk.Tables[0].Truncated);
+            Assert.Equal(2, chunk.Tables[0].Rows.Count);
+            Assert.Equal("A", chunk.Tables[0].Rows[0][0]);
+            Assert.Equal("2", chunk.Tables[0].Rows[1][1]);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_EmitsLineRangesAndBlockKinds() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Top\n\nPara 1.\n\n## Child\n\nPara 2.\n");
+
+            var chunks = DocumentReader.Read(path).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            var topChunk = chunks.Single(c => string.Equals(c.Location.HeadingPath, "Top", StringComparison.Ordinal));
+            Assert.Null(topChunk.Location.StartLine);
+            Assert.Null(topChunk.Location.EndLine);
+            Assert.Equal(1, topChunk.Location.NormalizedStartLine);
+            Assert.Equal(3, topChunk.Location.NormalizedEndLine);
+            Assert.Equal("top", topChunk.Location.HeadingSlug);
+            Assert.Equal("heading", topChunk.Location.SourceBlockKind);
+            Assert.Equal("top", topChunk.Location.BlockAnchor);
+            Assert.Equal(0, topChunk.Location.SourceBlockIndex);
+
+            var childChunk = chunks.Single(c => string.Equals(c.Location.HeadingPath, "Top > Child", StringComparison.Ordinal));
+            Assert.Null(childChunk.Location.StartLine);
+            Assert.Null(childChunk.Location.EndLine);
+            Assert.Equal(5, childChunk.Location.NormalizedStartLine);
+            Assert.Equal(7, childChunk.Location.NormalizedEndLine);
+            Assert.Equal("child", childChunk.Location.HeadingSlug);
+            Assert.Equal("heading", childChunk.Location.SourceBlockKind);
+            Assert.Equal("child", childChunk.Location.BlockAnchor);
+            Assert.Equal(2, childChunk.Location.SourceBlockIndex);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_AssignsSubBlockAnchorsWhenChunksSplitWithinAHeading() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            var largePayload = new string('x', 320);
+            File.WriteAllText(path,
+                "# Top\n\nIntro paragraph.\n\n```text\n" + largePayload + "\n```\n\nTail paragraph.\n");
+
+            var chunks = DocumentReader.Read(path, new ReaderOptions { MaxChars = 256 })
+                .Where(static c => c.Kind == ReaderInputKind.Markdown)
+                .ToList();
+
+            Assert.True(chunks.Count >= 3);
+
+            var headingChunk = chunks.Single(c => string.Equals(c.Location.BlockAnchor, "top", StringComparison.Ordinal));
+            Assert.Contains("# Top", headingChunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+
+            var codeChunk = chunks.Single(c => string.Equals(c.Location.BlockAnchor, "top--code-2", StringComparison.Ordinal));
+            Assert.Equal("code", codeChunk.Location.SourceBlockKind);
+            Assert.Equal("top", codeChunk.Location.HeadingSlug);
+            Assert.Contains("```text", codeChunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+
+            var trailingParagraphChunk = chunks.Single(c => string.Equals(c.Location.BlockAnchor, "top--paragraph-3", StringComparison.Ordinal));
+            Assert.Equal("paragraph", trailingParagraphChunk.Location.SourceBlockKind);
+            Assert.Equal("top", trailingParagraphChunk.Location.HeadingSlug);
+            Assert.Contains("Tail paragraph.", trailingParagraphChunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_AssignsUniqueHeadingSlugsForDuplicateHeadings() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Repeat\n\nOne.\n\n## Child\n\nA.\n\n# Repeat\n\nTwo.\n");
+
+            var chunks = DocumentReader.Read(path).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            Assert.Contains(chunks, c => string.Equals(c.Location.HeadingPath, "Repeat", StringComparison.Ordinal) && string.Equals(c.Location.HeadingSlug, "repeat", StringComparison.Ordinal));
+            Assert.Contains(chunks, c => string.Equals(c.Location.HeadingPath, "Repeat > Child", StringComparison.Ordinal) && string.Equals(c.Location.HeadingSlug, "child", StringComparison.Ordinal));
+            Assert.Contains(chunks, c => string.Equals(c.Location.HeadingPath, "Repeat", StringComparison.Ordinal) && string.Equals(c.Location.HeadingSlug, "repeat-1", StringComparison.Ordinal));
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_AssignsDeterministicSlugsForNonAsciiHeadings() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# !!!\n\nOne.\n\n# !!!\n\nTwo.\n\n# ążźć\n\nThree.\n");
+
+            var chunks = DocumentReader.Read(path).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            var punctuationChunks = chunks.Where(c => string.Equals(c.Location.HeadingPath, "!!!", StringComparison.Ordinal)).ToList();
+            Assert.Equal(2, punctuationChunks.Count);
+            Assert.All(punctuationChunks, c => Assert.StartsWith("heading-", c.Location.HeadingSlug ?? string.Empty, StringComparison.Ordinal));
+            Assert.NotEqual(punctuationChunks[0].Location.HeadingSlug, punctuationChunks[1].Location.HeadingSlug);
+
+            var nonAsciiChunk = chunks.Single(c => string.Equals(c.Location.HeadingPath, "ążźć", StringComparison.Ordinal));
+            Assert.StartsWith("heading-", nonAsciiChunk.Location.HeadingSlug ?? string.Empty, StringComparison.Ordinal);
         } finally {
             if (File.Exists(path)) File.Delete(path);
         }

@@ -12,7 +12,8 @@ public static partial class MarkdownReader {
 
         bool normalizeEscapedInlineCode = options.NormalizeEscapedInlineCodeSpans;
         bool normalizeTightStrongBoundaries = options.NormalizeTightStrongBoundaries;
-        if (!normalizeEscapedInlineCode && !normalizeTightStrongBoundaries) return false;
+        bool normalizeTightColonSpacing = options.NormalizeTightColonSpacing;
+        if (!normalizeEscapedInlineCode && !normalizeTightStrongBoundaries && !normalizeTightColonSpacing) return false;
 
         var items = sequence.Items;
         if (items == null || items.Count == 0) return false;
@@ -36,6 +37,10 @@ public static partial class MarkdownReader {
             changed = true;
         }
 
+        if (normalizeTightColonSpacing && TryInsertMissingColonBoundarySpaces(working)) {
+            changed = true;
+        }
+
         if (changed) {
             sequence.ReplaceItems(CoalesceAdjacentTextRuns(working));
         }
@@ -48,6 +53,7 @@ public static partial class MarkdownReader {
         if (node is ItalicSequenceInline italic) return NormalizeInlineSequenceInPlace(italic.Inlines, options);
         if (node is BoldItalicSequenceInline boldItalic) return NormalizeInlineSequenceInPlace(boldItalic.Inlines, options);
         if (node is StrikethroughSequenceInline strike) return NormalizeInlineSequenceInPlace(strike.Inlines, options);
+        if (node is HighlightSequenceInline highlight) return NormalizeInlineSequenceInPlace(highlight.Inlines, options);
         if (node is LinkInline link && link.LabelInlines != null) return NormalizeInlineSequenceInPlace(link.LabelInlines, options);
         return false;
     }
@@ -113,6 +119,55 @@ public static partial class MarkdownReader {
         }
 
         return changed;
+    }
+
+    private static bool TryInsertMissingColonBoundarySpaces(List<object> nodes) {
+        bool changed = false;
+
+        for (int i = 0; i < nodes.Count; i++) {
+            if (nodes[i] is not TextRun textRun) continue;
+            if (string.IsNullOrEmpty(textRun.Text) || textRun.Text.IndexOf(':') < 0) continue;
+
+            var normalized = NormalizeTightColonSpacing(textRun.Text);
+            if (normalized == textRun.Text) continue;
+
+            nodes[i] = new TextRun(normalized);
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static string NormalizeTightColonSpacing(string text) {
+        if (string.IsNullOrEmpty(text) || text.IndexOf(':') < 0) return text;
+
+        StringBuilder? builder = null;
+        for (int i = 0; i < text.Length; i++) {
+            char current = text[i];
+            builder?.Append(current);
+
+            if (current != ':' || !ShouldInsertSpaceAfterColon(text, i)) continue;
+
+            builder ??= new StringBuilder(text.Length + 8);
+            if (builder.Length == 0) {
+                builder.Append(text, 0, i + 1);
+            }
+            builder.Append(' ');
+        }
+
+        return builder?.ToString() ?? text;
+    }
+
+    private static bool ShouldInsertSpaceAfterColon(string text, int colonIndex) {
+        if (colonIndex <= 0 || colonIndex >= text.Length - 1) return false;
+
+        char previous = text[colonIndex - 1];
+        char next = text[colonIndex + 1];
+
+        if (char.IsWhiteSpace(next)) return false;
+        if (!char.IsLetter(previous) || !char.IsLetter(next)) return false;
+
+        return true;
     }
 
     private static bool IsStrongInlineNode(object node) {
