@@ -7,8 +7,9 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Parses Markdown text into OfficeIMO.Markdown's typed object model (<see cref="MarkdownDoc"/>, blocks, and inlines).
 ///
-/// Scope: intentionally focused on the syntax that <see cref="MarkdownDoc"/> currently emits so we can
-/// round-trip what we generate. Reader behavior is controlled via <see cref="MarkdownReaderOptions"/>.
+/// Scope: profile-driven and extension-aware. The core reader can be shaped into OfficeIMO,
+/// CommonMark-style, GitHub Flavored Markdown-style, or portable behavior via
+/// <see cref="MarkdownReaderOptions"/>, including explicit block parser extension registrations.
 /// </summary>
 public static partial class MarkdownReader {
     /// <summary>
@@ -37,6 +38,16 @@ public static partial class MarkdownReader {
         return Parse(text, options);
     }
 
+    internal static IReadOnlyList<IMarkdownBlock> ParseBlockFragment(
+        string markdown,
+        MarkdownReaderOptions? options = null,
+        MarkdownReaderState? state = null) {
+        options ??= new MarkdownReaderOptions();
+        state ??= new MarkdownReaderState();
+        var (blocks, _) = ParseNestedMarkdownBlocks(markdown ?? string.Empty, options, state, state.SourceLineOffset);
+        return blocks;
+    }
+
     private static MarkdownDoc ParseInternal(string markdown, MarkdownReaderOptions options, MarkdownReaderState state, bool allowFrontMatter, List<MarkdownSyntaxNode>? syntaxNodes = null, int lineOffset = 0) {
         var doc = MarkdownDoc.Create();
         if (string.IsNullOrEmpty(markdown)) return doc;
@@ -48,6 +59,8 @@ public static partial class MarkdownReader {
             if (markdown[0] == '\uFEFF') {
                 markdown = markdown.Substring(1);
             }
+
+            ValidateInputLength(markdown, options.MaxInputCharacters, nameof(markdown));
 
             var preParseNormalization = CreatePreParseNormalizationOptions(options.InputNormalization);
             if (preParseNormalization != null) {
@@ -101,7 +114,7 @@ public static partial class MarkdownReader {
                 if (!matched) i++; // defensive: avoid infinite loop
             }
 
-            return doc;
+            return ApplyDocumentTransforms(doc, options);
         } finally {
             state.SourceLineOffset = previousLineOffset;
         }
@@ -256,6 +269,8 @@ public static partial class MarkdownReader {
             OrderedLists = source.OrderedLists,
             Tables = source.Tables,
             DefinitionLists = source.DefinitionLists,
+            TocPlaceholders = source.TocPlaceholders,
+            Footnotes = source.Footnotes,
             PreferNarrativeSingleLineDefinitions = source.PreferNarrativeSingleLineDefinitions,
             HtmlBlocks = source.HtmlBlocks,
             Paragraphs = source.Paragraphs,
@@ -273,82 +288,122 @@ public static partial class MarkdownReader {
             AllowProtocolRelativeUrls = source.AllowProtocolRelativeUrls,
             RestrictUrlSchemes = source.RestrictUrlSchemes,
             AllowedUrlSchemes = source.AllowedUrlSchemes,
+            MaxInputCharacters = source.MaxInputCharacters,
             InputNormalization = new MarkdownInputNormalizationOptions {
+                NormalizeZeroWidthSpacingArtifacts = source.InputNormalization?.NormalizeZeroWidthSpacingArtifacts ?? false,
+                NormalizeEmojiWordJoins = source.InputNormalization?.NormalizeEmojiWordJoins ?? false,
+                NormalizeCompactNumberedChoiceBoundaries = source.InputNormalization?.NormalizeCompactNumberedChoiceBoundaries ?? false,
+                NormalizeSentenceCollapsedBullets = source.InputNormalization?.NormalizeSentenceCollapsedBullets ?? false,
                 NormalizeSoftWrappedStrongSpans = source.InputNormalization?.NormalizeSoftWrappedStrongSpans ?? false,
                 NormalizeInlineCodeSpanLineBreaks = source.InputNormalization?.NormalizeInlineCodeSpanLineBreaks ?? false,
                 NormalizeEscapedInlineCodeSpans = source.InputNormalization?.NormalizeEscapedInlineCodeSpans ?? false,
                 NormalizeTightStrongBoundaries = source.InputNormalization?.NormalizeTightStrongBoundaries ?? false,
                 NormalizeTightArrowStrongBoundaries = source.InputNormalization?.NormalizeTightArrowStrongBoundaries ?? false,
                 NormalizeBrokenStrongArrowLabels = source.InputNormalization?.NormalizeBrokenStrongArrowLabels ?? false,
+                NormalizeWrappedSignalFlowStrongRuns = source.InputNormalization?.NormalizeWrappedSignalFlowStrongRuns ?? false,
+                NormalizeSignalFlowLabelSpacing = source.InputNormalization?.NormalizeSignalFlowLabelSpacing ?? false,
+                NormalizeCollapsedMetricChains = source.InputNormalization?.NormalizeCollapsedMetricChains ?? false,
+                NormalizeHostLabelBulletArtifacts = source.InputNormalization?.NormalizeHostLabelBulletArtifacts ?? false,
                 NormalizeTightColonSpacing = source.InputNormalization?.NormalizeTightColonSpacing ?? false,
                 NormalizeHeadingListBoundaries = source.InputNormalization?.NormalizeHeadingListBoundaries ?? false,
                 NormalizeCompactStrongLabelListBoundaries = source.InputNormalization?.NormalizeCompactStrongLabelListBoundaries ?? false,
                 NormalizeCompactHeadingBoundaries = source.InputNormalization?.NormalizeCompactHeadingBoundaries ?? false,
+                NormalizeStandaloneHashHeadingSeparators = source.InputNormalization?.NormalizeStandaloneHashHeadingSeparators ?? false,
+                NormalizeBrokenTwoLineStrongLeadIns = source.InputNormalization?.NormalizeBrokenTwoLineStrongLeadIns ?? false,
                 NormalizeColonListBoundaries = source.InputNormalization?.NormalizeColonListBoundaries ?? false,
                 NormalizeCompactFenceBodyBoundaries = source.InputNormalization?.NormalizeCompactFenceBodyBoundaries ?? false,
                 NormalizeLooseStrongDelimiters = source.InputNormalization?.NormalizeLooseStrongDelimiters ?? false,
                 NormalizeOrderedListMarkerSpacing = source.InputNormalization?.NormalizeOrderedListMarkerSpacing ?? false,
                 NormalizeOrderedListParenMarkers = source.InputNormalization?.NormalizeOrderedListParenMarkers ?? false,
                 NormalizeOrderedListCaretArtifacts = source.InputNormalization?.NormalizeOrderedListCaretArtifacts ?? false,
+                NormalizeCollapsedOrderedListBoundaries = source.InputNormalization?.NormalizeCollapsedOrderedListBoundaries ?? false,
+                NormalizeOrderedListStrongDetailClosures = source.InputNormalization?.NormalizeOrderedListStrongDetailClosures ?? false,
                 NormalizeTightParentheticalSpacing = source.InputNormalization?.NormalizeTightParentheticalSpacing ?? false,
-                NormalizeNestedStrongDelimiters = source.InputNormalization?.NormalizeNestedStrongDelimiters ?? false
+                NormalizeNestedStrongDelimiters = source.InputNormalization?.NormalizeNestedStrongDelimiters ?? false,
+                NormalizeDanglingTrailingStrongListClosers = source.InputNormalization?.NormalizeDanglingTrailingStrongListClosers ?? false,
+                NormalizeMetricValueStrongRuns = source.InputNormalization?.NormalizeMetricValueStrongRuns ?? false
             }
         };
 
+        CopyBlockParserExtensions(source, clone);
         CopyFencedBlockExtensions(source, clone);
+        CopyDocumentTransforms(source, clone);
         return clone;
     }
 
     private static MarkdownInputNormalizationOptions? CreatePreParseNormalizationOptions(MarkdownInputNormalizationOptions? source) {
+        bool normalizeZeroWidthSpacingArtifacts = source?.NormalizeZeroWidthSpacingArtifacts ?? false;
+        bool normalizeEmojiWordJoins = source?.NormalizeEmojiWordJoins ?? false;
+        bool normalizeCompactNumberedChoiceBoundaries = source?.NormalizeCompactNumberedChoiceBoundaries ?? false;
+        bool normalizeSentenceCollapsedBullets = source?.NormalizeSentenceCollapsedBullets ?? false;
         bool normalizeSoftWrappedStrong = source?.NormalizeSoftWrappedStrongSpans ?? false;
         bool normalizeInlineCodeLineBreaks = source?.NormalizeInlineCodeSpanLineBreaks ?? false;
         bool normalizeLooseStrongDelimiters = source?.NormalizeLooseStrongDelimiters ?? false;
         bool normalizeTightArrowStrongBoundaries = source?.NormalizeTightArrowStrongBoundaries ?? false;
         bool normalizeBrokenStrongArrowLabels = source?.NormalizeBrokenStrongArrowLabels ?? false;
-        bool normalizeHeadingListBoundaries = source?.NormalizeHeadingListBoundaries ?? false;
-        bool normalizeCompactStrongLabelListBoundaries = source?.NormalizeCompactStrongLabelListBoundaries ?? false;
-        bool normalizeCompactHeadingBoundaries = source?.NormalizeCompactHeadingBoundaries ?? false;
-        bool normalizeColonListBoundaries = source?.NormalizeColonListBoundaries ?? false;
+        // These repairs stay on the text side because malformed input would otherwise parse
+        // into the wrong block/inline structure. Recoverable paragraph/heading/list boundary
+        // cleanup is intentionally excluded here and handled later via built-in document
+        // transforms so the reader can normalize from the AST whenever markdown is already
+        // parseable.
+        bool normalizeWrappedSignalFlowStrongRuns = source?.NormalizeWrappedSignalFlowStrongRuns ?? false;
+        bool normalizeSignalFlowLabelSpacing = source?.NormalizeSignalFlowLabelSpacing ?? false;
+        bool normalizeCollapsedMetricChains = source?.NormalizeCollapsedMetricChains ?? false;
+        bool normalizeHostLabelBulletArtifacts = source?.NormalizeHostLabelBulletArtifacts ?? false;
+        bool normalizeBrokenTwoLineStrongLeadIns = source?.NormalizeBrokenTwoLineStrongLeadIns ?? false;
         bool normalizeCompactFenceBodyBoundaries = source?.NormalizeCompactFenceBodyBoundaries ?? false;
         bool normalizeOrderedListMarkerSpacing = source?.NormalizeOrderedListMarkerSpacing ?? false;
         bool normalizeOrderedListParenMarkers = source?.NormalizeOrderedListParenMarkers ?? false;
         bool normalizeOrderedListCaretArtifacts = source?.NormalizeOrderedListCaretArtifacts ?? false;
-        bool normalizeTightParentheticalSpacing = source?.NormalizeTightParentheticalSpacing ?? false;
+        bool normalizeCollapsedOrderedListBoundaries = source?.NormalizeCollapsedOrderedListBoundaries ?? false;
+        bool normalizeOrderedListStrongDetailClosures = source?.NormalizeOrderedListStrongDetailClosures ?? false;
         bool normalizeNestedStrongDelimiters = source?.NormalizeNestedStrongDelimiters ?? false;
 
-        if (!normalizeSoftWrappedStrong
+        if (!normalizeZeroWidthSpacingArtifacts
+            && !normalizeEmojiWordJoins
+            && !normalizeCompactNumberedChoiceBoundaries
+            && !normalizeSentenceCollapsedBullets
+            && !normalizeSoftWrappedStrong
             && !normalizeInlineCodeLineBreaks
             && !normalizeLooseStrongDelimiters
             && !normalizeTightArrowStrongBoundaries
             && !normalizeBrokenStrongArrowLabels
-            && !normalizeHeadingListBoundaries
-            && !normalizeCompactStrongLabelListBoundaries
-            && !normalizeCompactHeadingBoundaries
-            && !normalizeColonListBoundaries
+            && !normalizeWrappedSignalFlowStrongRuns
+            && !normalizeSignalFlowLabelSpacing
+            && !normalizeCollapsedMetricChains
+            && !normalizeHostLabelBulletArtifacts
+            && !normalizeBrokenTwoLineStrongLeadIns
             && !normalizeCompactFenceBodyBoundaries
             && !normalizeOrderedListMarkerSpacing
             && !normalizeOrderedListParenMarkers
             && !normalizeOrderedListCaretArtifacts
-            && !normalizeTightParentheticalSpacing
+            && !normalizeCollapsedOrderedListBoundaries
+            && !normalizeOrderedListStrongDetailClosures
             && !normalizeNestedStrongDelimiters) {
             return null;
         }
 
         return new MarkdownInputNormalizationOptions {
+            NormalizeZeroWidthSpacingArtifacts = normalizeZeroWidthSpacingArtifacts,
+            NormalizeEmojiWordJoins = normalizeEmojiWordJoins,
+            NormalizeCompactNumberedChoiceBoundaries = normalizeCompactNumberedChoiceBoundaries,
+            NormalizeSentenceCollapsedBullets = normalizeSentenceCollapsedBullets,
             NormalizeSoftWrappedStrongSpans = normalizeSoftWrappedStrong,
             NormalizeInlineCodeSpanLineBreaks = normalizeInlineCodeLineBreaks,
             NormalizeLooseStrongDelimiters = normalizeLooseStrongDelimiters,
             NormalizeTightArrowStrongBoundaries = normalizeTightArrowStrongBoundaries,
             NormalizeBrokenStrongArrowLabels = normalizeBrokenStrongArrowLabels,
-            NormalizeHeadingListBoundaries = normalizeHeadingListBoundaries,
-            NormalizeCompactStrongLabelListBoundaries = normalizeCompactStrongLabelListBoundaries,
-            NormalizeCompactHeadingBoundaries = normalizeCompactHeadingBoundaries,
-            NormalizeColonListBoundaries = normalizeColonListBoundaries,
+            NormalizeWrappedSignalFlowStrongRuns = normalizeWrappedSignalFlowStrongRuns,
+            NormalizeSignalFlowLabelSpacing = normalizeSignalFlowLabelSpacing,
+            NormalizeCollapsedMetricChains = normalizeCollapsedMetricChains,
+            NormalizeHostLabelBulletArtifacts = normalizeHostLabelBulletArtifacts,
+            NormalizeBrokenTwoLineStrongLeadIns = normalizeBrokenTwoLineStrongLeadIns,
             NormalizeCompactFenceBodyBoundaries = normalizeCompactFenceBodyBoundaries,
             NormalizeOrderedListMarkerSpacing = normalizeOrderedListMarkerSpacing,
             NormalizeOrderedListParenMarkers = normalizeOrderedListParenMarkers,
             NormalizeOrderedListCaretArtifacts = normalizeOrderedListCaretArtifacts,
-            NormalizeTightParentheticalSpacing = normalizeTightParentheticalSpacing,
+            NormalizeCollapsedOrderedListBoundaries = normalizeCollapsedOrderedListBoundaries,
+            NormalizeOrderedListStrongDetailClosures = normalizeOrderedListStrongDetailClosures,
             NormalizeNestedStrongDelimiters = normalizeNestedStrongDelimiters
         };
     }
@@ -375,6 +430,168 @@ public static partial class MarkdownReader {
             if (extension != null) {
                 target.FencedBlockExtensions.Add(extension);
             }
+        }
+    }
+
+    private static void CopyBlockParserExtensions(MarkdownReaderOptions source, MarkdownReaderOptions target) {
+        if (source == null || target == null) {
+            return;
+        }
+
+        var extensions = source.BlockParserExtensions;
+        target.BlockParserExtensions.Clear();
+        if (extensions == null || extensions.Count == 0) {
+            return;
+        }
+
+        for (int i = 0; i < extensions.Count; i++) {
+            var extension = extensions[i];
+            if (extension != null) {
+                target.BlockParserExtensions.Add(extension);
+            }
+        }
+    }
+
+    private static void CopyDocumentTransforms(MarkdownReaderOptions source, MarkdownReaderOptions target) {
+        if (source == null || target == null) {
+            return;
+        }
+
+        var transforms = source.DocumentTransforms;
+        if (transforms == null || transforms.Count == 0) {
+            return;
+        }
+
+        for (int i = 0; i < transforms.Count; i++) {
+            var transform = transforms[i];
+            if (transform != null) {
+                target.DocumentTransforms.Add(transform);
+            }
+        }
+    }
+
+    private static MarkdownDoc ApplyDocumentTransforms(MarkdownDoc document, MarkdownReaderOptions options) {
+        var transforms = BuildEffectiveDocumentTransforms(options);
+        return MarkdownDocumentTransformPipeline.Apply(
+            document,
+            transforms,
+            new MarkdownDocumentTransformContext(MarkdownDocumentTransformSource.MarkdownReader, options));
+    }
+
+    private static IReadOnlyList<IMarkdownDocumentTransform> BuildEffectiveDocumentTransforms(MarkdownReaderOptions options) {
+        if (options == null) {
+            return Array.Empty<IMarkdownDocumentTransform>();
+        }
+
+        var normalization = options.InputNormalization;
+        // These flags intentionally map to AST/document transforms rather than pre-parse text
+        // repair because the markdown already parses into recoverable paragraph/heading/list
+        // structures. Keeping them here makes the routing boundary explicit and prevents the
+        // pre-parse normalizer from growing back into a general transcript rewrite pipeline.
+        bool needsStandaloneHashTransform = normalization?.NormalizeStandaloneHashHeadingSeparators == true;
+        bool needsCompactHeadingBoundaryTransform = normalization?.NormalizeCompactHeadingBoundaries == true;
+        bool needsColonListBoundaryTransform = normalization?.NormalizeColonListBoundaries == true;
+        bool needsHeadingListBoundaryTransform = normalization?.NormalizeHeadingListBoundaries == true;
+        bool needsCompactStrongLabelListBoundaryTransform = normalization?.NormalizeCompactStrongLabelListBoundaries == true;
+        bool needsListStrongArtifactTransform =
+            normalization?.NormalizeLooseStrongDelimiters == true
+            || normalization?.NormalizeDanglingTrailingStrongListClosers == true
+            || normalization?.NormalizeMetricValueStrongRuns == true;
+
+        if (!needsStandaloneHashTransform
+            && !needsCompactHeadingBoundaryTransform
+            && !needsColonListBoundaryTransform
+            && !needsHeadingListBoundaryTransform
+            && !needsCompactStrongLabelListBoundaryTransform
+            && !needsListStrongArtifactTransform) {
+            return options.DocumentTransforms;
+        }
+
+        var configured = options.DocumentTransforms;
+        bool hasStandaloneHashTransform = false;
+        bool hasCompactHeadingBoundaryTransform = false;
+        bool hasColonListBoundaryTransform = false;
+        bool hasHeadingListBoundaryTransform = false;
+        bool hasCompactStrongLabelListBoundaryTransform = false;
+        bool hasListStrongArtifactTransform = false;
+
+        for (var i = 0; i < configured.Count; i++) {
+            switch (configured[i]) {
+                case MarkdownStandaloneHashHeadingSeparatorTransform:
+                    hasStandaloneHashTransform = true;
+                    break;
+                case MarkdownCompactHeadingBoundaryTransform:
+                    hasCompactHeadingBoundaryTransform = true;
+                    break;
+                case MarkdownColonListBoundaryTransform:
+                    hasColonListBoundaryTransform = true;
+                    break;
+                case MarkdownHeadingListBoundaryTransform:
+                    hasHeadingListBoundaryTransform = true;
+                    break;
+                case MarkdownCompactStrongLabelListBoundaryTransform:
+                    hasCompactStrongLabelListBoundaryTransform = true;
+                    break;
+                case MarkdownListParagraphStrongArtifactTransform:
+                    hasListStrongArtifactTransform = true;
+                    break;
+            }
+        }
+
+        if ((!needsStandaloneHashTransform || hasStandaloneHashTransform)
+            && (!needsCompactHeadingBoundaryTransform || hasCompactHeadingBoundaryTransform)
+            && (!needsColonListBoundaryTransform || hasColonListBoundaryTransform)
+            && (!needsHeadingListBoundaryTransform || hasHeadingListBoundaryTransform)
+            && (!needsCompactStrongLabelListBoundaryTransform || hasCompactStrongLabelListBoundaryTransform)
+            && (!needsListStrongArtifactTransform || hasListStrongArtifactTransform)) {
+            return configured;
+        }
+
+        var transforms = new List<IMarkdownDocumentTransform>(configured.Count + 6);
+        if (needsListStrongArtifactTransform && !hasListStrongArtifactTransform) {
+            transforms.Add(new MarkdownListParagraphStrongArtifactTransform(normalization!));
+        }
+
+        if (needsHeadingListBoundaryTransform && !hasHeadingListBoundaryTransform) {
+            transforms.Add(new MarkdownHeadingListBoundaryTransform());
+        }
+
+        if (needsCompactStrongLabelListBoundaryTransform && !hasCompactStrongLabelListBoundaryTransform) {
+            transforms.Add(new MarkdownCompactStrongLabelListBoundaryTransform());
+        }
+
+        if (needsCompactHeadingBoundaryTransform && !hasCompactHeadingBoundaryTransform) {
+            transforms.Add(new MarkdownCompactHeadingBoundaryTransform());
+        }
+
+        if (needsColonListBoundaryTransform && !hasColonListBoundaryTransform) {
+            transforms.Add(new MarkdownColonListBoundaryTransform());
+        }
+
+        if (needsStandaloneHashTransform && !hasStandaloneHashTransform) {
+            transforms.Add(new MarkdownStandaloneHashHeadingSeparatorTransform());
+        }
+
+        for (var i = 0; i < configured.Count; i++) {
+            if (configured[i] != null) {
+                transforms.Add(configured[i]);
+            }
+        }
+
+        return transforms;
+    }
+
+    private static void ValidateInputLength(string input, int? maxInputCharacters, string paramName) {
+        if (!maxInputCharacters.HasValue) {
+            return;
+        }
+
+        if (maxInputCharacters.Value <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(maxInputCharacters), maxInputCharacters.Value, "MaxInputCharacters must be greater than zero.");
+        }
+
+        if (input.Length > maxInputCharacters.Value) {
+            throw new ArgumentOutOfRangeException(paramName, input.Length, $"Input exceeds MaxInputCharacters ({maxInputCharacters.Value}).");
         }
     }
 

@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using OfficeIMO.Markdown;
 using OfficeIMO.MarkdownRenderer;
@@ -107,6 +106,26 @@ public class Markdown_Renderer_Tests {
         Assert.Contains("data-mermaid-hash", html, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void MarkdownRenderer_StrictPreset_Preserves_Safe_Underline_Tags() {
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(
+            "<u>hello</u>",
+            MarkdownRendererPresets.CreateStrict());
+
+        Assert.Contains("<u>hello</u>", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("&lt;u&gt;hello&lt;/u&gt;", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_StrictPreset_Still_Encodes_Unsupported_Inline_Html() {
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(
+            "<span>hello</span>",
+            MarkdownRendererPresets.CreateStrict());
+
+        Assert.Contains("&lt;span&gt;hello&lt;/span&gt;", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<span>hello</span>", html, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("chart")]
     public void MarkdownRenderer_Converts_Chart_Code_Fences_When_Enabled(string language) {
@@ -133,7 +152,7 @@ public class Markdown_Renderer_Tests {
     public void MarkdownRenderer_ChatPreset_Converts_IxChart_Code_Fences_When_Enabled() {
         var configJson = "{\"type\":\"bar\",\"data\":{\"labels\":[\"A\"],\"datasets\":[{\"label\":\"Count\",\"data\":[1]}]}}";
         var md = $"```ix-chart\n{configJson}\n```";
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         opts.Chart.Enabled = true;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
@@ -152,7 +171,7 @@ public class Markdown_Renderer_Tests {
   {configJson}
   ```
 """;
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         opts.Chart.Enabled = true;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
@@ -171,7 +190,7 @@ public class Markdown_Renderer_Tests {
 > {configJson}
 > ```
 """;
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         opts.Chart.Enabled = true;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
@@ -192,7 +211,7 @@ public class Markdown_Renderer_Tests {
 > > {configJson}
 > > ```
 """;
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         opts.Chart.Enabled = true;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
@@ -214,7 +233,7 @@ public class Markdown_Renderer_Tests {
   > {configJson}
   > ```
 """;
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         opts.Chart.Enabled = true;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
@@ -279,7 +298,7 @@ public class Markdown_Renderer_Tests {
 {"nodes":[{"id":"A","label":"User"},{"id":"B","label":"Group"}],"edges":[{"from":"A","to":"B","label":"memberOf"}]}
 ```
 """;
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         opts.Network.Enabled = true;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, opts);
@@ -306,7 +325,8 @@ public class Markdown_Renderer_Tests {
 
     [Fact]
     public void MarkdownVisualContract_Can_Build_Shared_Visual_Metadata_For_Hosts() {
-        var payload = MarkdownVisualContract.CreatePayload("{\"type\":\"bar\"}");
+        var raw = "{\"type\":\"bar\"}";
+        var payload = MarkdownVisualContract.CreatePayload(raw);
         var html = MarkdownVisualContract.BuildElementHtml(
             "div",
             "omd-visual omd-custom",
@@ -319,8 +339,34 @@ public class Markdown_Renderer_Tests {
         Assert.Contains($"data-omd-visual-contract=\"{MarkdownVisualContract.ContractVersion}\"", html, StringComparison.Ordinal);
         Assert.Contains("data-omd-visual-kind=\"custom-chart\"", html, StringComparison.Ordinal);
         Assert.Contains("data-omd-fence-language=\"vendor-chart\"", html, StringComparison.Ordinal);
+        Assert.Contains($"data-omd-visual-hash=\"{MarkdownVisualContract.ComputePayloadHash(raw)}\"", html, StringComparison.Ordinal);
         Assert.Contains($"data-custom-hash=\"{payload.Hash}\"", html, StringComparison.Ordinal);
-        Assert.Equal("{\"type\":\"bar\"}", DecodeBase64Attribute(html, "data-omd-config-b64"));
+        Assert.Equal(raw, DecodeBase64Attribute(html, "data-omd-config-b64"));
+    }
+
+    [Fact]
+    public void MarkdownVisualContract_Uses_Stable_Hash_For_Equivalent_Json_Payloads() {
+        var minified = "{\"type\":\"bar\",\"data\":{\"labels\":[\"A\"],\"datasets\":[{\"label\":\"Count\",\"data\":[1]}]}}";
+        var formatted = """
+{
+  "data": {
+    "datasets": [
+      {
+        "data": [ 1 ],
+        "label": "Count"
+      }
+    ],
+    "labels": [ "A" ]
+  },
+  "type": "bar"
+}
+""";
+
+        var minifiedPayload = MarkdownVisualContract.CreatePayload(minified);
+        var formattedPayload = MarkdownVisualContract.CreatePayload(formatted.Replace("\n", "\r\n"));
+
+        Assert.Equal(minifiedPayload.Hash, formattedPayload.Hash);
+        Assert.NotEqual(minifiedPayload.Base64, formattedPayload.Base64);
     }
 
     [Fact]
@@ -376,7 +422,7 @@ public class Markdown_Renderer_Tests {
 """;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateStrictMinimal());
-        var payloadHash = ComputeShortHash(raw);
+        var payloadHash = MarkdownVisualContract.ComputePayloadHash(raw);
 
         Assert.Contains("class=\"omd-visual omd-dataview\"", html, StringComparison.Ordinal);
         Assert.Contains("data-omd-visual-contract=\"v1\"", html, StringComparison.Ordinal);
@@ -406,7 +452,7 @@ public class Markdown_Renderer_Tests {
 """;
 
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateStrictMinimal());
-        var payloadHash = ComputeShortHash(raw);
+        var payloadHash = MarkdownVisualContract.ComputePayloadHash(raw);
 
         Assert.Contains("class=\"omd-visual omd-dataview\"", html, StringComparison.Ordinal);
         Assert.Contains("data-omd-dataview-title=\"Replication Summary\"", html, StringComparison.Ordinal);
@@ -433,8 +479,8 @@ public class Markdown_Renderer_Tests {
 ```
 """;
 
-        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateChatStrictMinimal());
-        var payloadHash = ComputeShortHash(raw);
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal());
+        var payloadHash = MarkdownVisualContract.ComputePayloadHash(raw);
 
         Assert.Contains("class=\"omd-visual omd-dataview\"", html, StringComparison.Ordinal);
         Assert.Contains("data-omd-visual-contract=\"v1\"", html, StringComparison.Ordinal);
@@ -476,7 +522,7 @@ public class Markdown_Renderer_Tests {
 ```
 """;
 
-        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateChatStrictMinimal());
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal());
 
         Assert.Contains("class=\"omd-visual omd-dataview\"", html, StringComparison.Ordinal);
         Assert.Contains("data-omd-visual-kind=\"dataview\"", html, StringComparison.Ordinal);
@@ -511,7 +557,7 @@ public class Markdown_Renderer_Tests {
 ```
 """;
 
-        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateChatStrictMinimal());
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md, MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal());
 
         Assert.DoesNotContain("class=\"omd-dataview\"", html, StringComparison.Ordinal);
         Assert.Contains("<pre><code", html, StringComparison.Ordinal);
@@ -672,6 +718,32 @@ x^2 + 1
     }
 
     [Fact]
+    public void MarkdownRenderer_Normalizes_NestedStrongDelimiters_InsideLabeledBullets_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeNestedStrongDelimiters = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("- Why it matters **Current comparison used **System** log only.**", opts);
+        Assert.Contains("Why it matters <strong>Current comparison used System log only.</strong>", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("used **System** log only.**", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_NestedStrongDelimiters_WithoutTouchingInlineCode_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeNestedStrongDelimiters = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(
+            "- Signal **pattern `a**b` seen, mostly from **Service Control Manager**.**",
+            opts);
+
+        Assert.Contains("<code>a**b</code>", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("mostly from Service Control Manager.", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("from **Service", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MarkdownRenderer_Normalizes_RepeatedStrongDelimiterRuns_When_Enabled() {
         var opts = new MarkdownRendererOptions {
             NormalizeLooseStrongDelimiters = true
@@ -680,6 +752,29 @@ x^2 + 1
         var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("- Overall health ****healthy****", opts);
         Assert.Contains("<strong>healthy</strong>", htmlOut, StringComparison.Ordinal);
         Assert.DoesNotContain("****healthy****", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_List_Strong_Artifacts_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeLooseStrongDelimiters = true,
+            NormalizeDanglingTrailingStrongListClosers = true,
+            NormalizeMetricValueStrongRuns = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("""
+- Overall health ****healthy****
+- Overall health ✅ Healthy****
+- Overall health ******healthy**
+- Overall health **✅****Healthy**
+- LDAP/LDAPS across all DCs **healthy on FQDN endpoints for all 5 servers*
+""", opts);
+
+        Assert.Contains("<strong>healthy</strong>", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Healthy", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("healthy on FQDN endpoints for all 5 servers", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("Healthy****", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("******healthy**", htmlOut, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -692,6 +787,19 @@ x^2 + 1
 
         var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("- Signal **Healthy baseline exists now** ->**Why it matters:**missing coverage", opts);
         Assert.Contains("-&gt; <strong>Why it matters:</strong> missing coverage", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_SignalFlowLabelSpacing_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeSignalFlowLabelSpacing = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(
+            "- Signal -> Why it matters:missing coverage -> Next action:review defaults",
+            opts);
+        Assert.Contains("Why it matters: missing coverage", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Next action: review defaults", htmlOut, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -789,6 +897,17 @@ x^2 + 1
     }
 
     [Fact]
+    public void MarkdownRenderer_Respects_Reader_MaxInputCharacters() {
+        var opts = new MarkdownRendererOptions();
+        opts.ReaderOptions.MaxInputCharacters = 8;
+
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("123456789", opts));
+
+        Assert.Contains("MaxInputCharacters", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MarkdownRenderer_Can_Apply_Markdown_PreProcessors() {
         var opts = new MarkdownRendererOptions();
         opts.MarkdownPreProcessors.Add((markdown, _) => markdown.Replace("{{name}}", "IntelligenceX"));
@@ -814,6 +933,17 @@ x^2 + 1
     }
 
     [Fact]
+    public void MarkdownRendererPreProcessorPipeline_Applies_PreProcessors_In_Order() {
+        var opts = new MarkdownRendererOptions();
+        opts.MarkdownPreProcessors.Add((markdown, _) => markdown.Replace("{{name}}", "IntelligenceX"));
+        opts.MarkdownPreProcessors.Add((markdown, _) => markdown.Replace("hello IntelligenceX", "hello OfficeIMO"));
+
+        var processed = MarkdownRendererPreProcessorPipeline.Apply("hello {{name}}", opts);
+
+        Assert.Equal("hello OfficeIMO", processed);
+    }
+
+    [Fact]
     public void MarkdownRenderer_Preserves_PreParse_Normalization_From_ReaderInputNormalization() {
         var opts = new MarkdownRendererOptions {
             ReaderOptions = new MarkdownReaderOptions {
@@ -832,8 +962,8 @@ x^2 + 1
     }
 
     [Fact]
-    public void MarkdownRenderer_ChatStrictPreset_Enables_Text_Normalization() {
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+    public void MarkdownRenderer_IntelligenceXTranscriptPreset_Enables_Text_Normalization() {
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("**Status\nHEALTHY**\n\n`a\nb`\n\nUse \\`/act act_001\\`.\n\nStatus **Healthy**next\n\ncheck ** LDAP/Kerberos health on all DCs** next\n\n- Signal **Current comparison used **System** log only.**\n- Signal **Healthy baseline exists now** ->**Why it matters:**missing coverage\n- Signal **No current failures -> **Why it matters:** transport/auth issues\n\n## Wynik ogólny- **Replication:** wcześniej zdrowa ✅- **FSMO:** technicznie OK\n\nprevious shutdown was unexpected### Reason\n\nNastępny najlepszy krok:- **`ad_domain_controller_facts`**\n\n1) First check\n2.^ **Delegation risk audit**\n3. **Deleted object remnants**(SID left in ACL path)\n\nCommand: `Get-ADUser(SIDHistory)`", opts);
 
         Assert.Contains("Status HEALTHY", htmlOut, StringComparison.Ordinal);
@@ -861,8 +991,8 @@ x^2 + 1
     }
 
     [Fact]
-    public void MarkdownRenderer_ChatStrictPreset_Normalizes_CompactMermaidFenceBodies() {
-        var opts = MarkdownRendererPresets.CreateChatStrict();
+    public void MarkdownRenderer_IntelligenceXTranscriptPreset_Normalizes_CompactMermaidFenceBodies() {
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscript();
 
         var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("```mermaidflowchart LR A-->B\n```", opts);
 
@@ -871,8 +1001,8 @@ x^2 + 1
     }
 
     [Fact]
-    public void MarkdownRenderer_ChatStrictPreset_Normalizes_OrderedListMarkerSpacing() {
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+    public void MarkdownRenderer_IntelligenceXTranscriptPreset_Normalizes_OrderedListMarkerSpacing() {
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         var markdown = """
 1. **Privilege hygiene sweep**(Domain Admins + other privileged groups)
 2.** Delegation risk audit**(unconstrained / constrained / protocol transition)
@@ -886,8 +1016,21 @@ x^2 + 1
     }
 
     [Fact]
-    public void MarkdownRenderer_ChatStrictPreset_DoesNotCollapse_Adjacent_UnorderedListItems_WithStrongLabels() {
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
+    public void MarkdownRenderer_IntelligenceXTranscriptPreset_Normalizes_CollapsedOrderedListTranscriptArtifacts() {
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
+        var markdown = "1) **Privilege hygiene sweep(Domain Admins + other privileged groups, nested exposure) 2)** Delegation risk audit**(unconstrained / constrained / protocol transition) 3)** Replication + DC health snapshot** (stale links, failing partners, LDAP/Kerberos basics)";
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(markdown, opts);
+
+        Assert.Equal(3, Count(htmlOut, "<li"));
+        Assert.Contains("<strong>Privilege hygiene sweep</strong> (Domain Admins + other privileged groups, nested exposure)", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<strong>Delegation risk audit</strong> (unconstrained / constrained / protocol transition)", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<strong>Replication + DC health snapshot</strong> (stale links, failing partners, LDAP/Kerberos basics)", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_IntelligenceXTranscriptPreset_DoesNotCollapse_Adjacent_UnorderedListItems_WithStrongLabels() {
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
         var markdown = """
 - **AD1:** 875 Events  
 - **AD2:** 353 Events
@@ -904,8 +1047,8 @@ Top-IDs:
     }
 
     [Fact]
-    public void MarkdownRenderer_ChatStrictMinimalPortable_Disables_Callouts_TaskLists_And_LiteralAutolinks() {
-        var opts = MarkdownRendererPresets.CreateChatStrictMinimalPortable();
+    public void MarkdownRenderer_IntelligenceXTranscriptMinimalPortable_Disables_Callouts_TaskLists_And_LiteralAutolinks() {
+        var opts = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimalPortable();
         var markdown = """
 > [!NOTE]
 > body
@@ -1018,6 +1161,29 @@ Next paragraph.
         Assert.Contains("[ ] Todo", html, StringComparison.Ordinal);
         Assert.Contains("[x] Done", html, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void MarkdownRenderer_Preserves_TocPlaceholders_And_Footnotes_Flags_From_ReaderOptions() {
+        var markdown = """
+[TOC]
+
+Lead[^1]
+
+[^1]: Footnote text
+""";
+        var readerOptions = MarkdownReaderOptions.CreateCommonMarkProfile();
+        readerOptions.HtmlBlocks = false;
+        readerOptions.InlineHtml = false;
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(markdown, new MarkdownRendererOptions {
+            ReaderOptions = readerOptions
+        });
+
+        Assert.Contains("<p>[TOC]</p>", html, StringComparison.Ordinal);
+        Assert.Contains("<p>Lead[^1]</p>", html, StringComparison.Ordinal);
+        Assert.Contains("<p>[^1]: Footnote text</p>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("footnotes", html, StringComparison.OrdinalIgnoreCase);
+    }
     private static int Count(string value, string token) {
         if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(token)) return 0;
 
@@ -1045,18 +1211,5 @@ Next paragraph.
         return Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n');
     }
 
-    private static string ComputeShortHash(string input) {
-        var data = Encoding.UTF8.GetBytes(input ?? string.Empty);
-        byte[] hash;
-        using (var sha = SHA256.Create()) {
-            hash = sha.ComputeHash(data);
-        }
-
-        var sb = new StringBuilder(16);
-        for (int i = 0; i < 8 && i < hash.Length; i++) {
-            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-        }
-
-        return sb.ToString();
-    }
 }
+

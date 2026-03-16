@@ -20,6 +20,30 @@ var md = doc.ToMarkdown();            // Word → Markdown
 using var doc2 = "# Title\nBody".LoadFromMarkdown(); // Markdown → Word
 ```
 
+### AST-first Markdown -> Word
+
+```csharp
+using OfficeIMO.Markdown;
+using OfficeIMO.Markdown.Html;
+using OfficeIMO.Word.Markdown;
+
+var markdownDoc = "<table><tr><td><p>Line 1</p><p>Line 2</p></td></tr></table>".LoadFromHtml();
+using var doc3 = markdownDoc.ToWordDocument();
+```
+
+- Use `MarkdownDoc.ToWordDocument()` when you already have a typed AST and want to avoid flattening back to markdown text before Word conversion.
+
+### HTML -> Word via Markdown AST
+
+```csharp
+using OfficeIMO.Word.Markdown;
+
+using var doc4 = "<table><tr><td><p>Line 1</p><p>Line 2</p></td></tr></table>"
+    .LoadFromHtmlViaMarkdown();
+```
+
+- Use `LoadFromHtmlViaMarkdown()` when your source is HTML but you want the AST-first markdown bridge instead of flattening HTML into markdown text first.
+
 ### HTML via Markdown
 
 ```csharp
@@ -53,6 +77,20 @@ using var doc = markdown.LoadFromMarkdown(options);
 - Typed contract is available via `MarkdownToWordOptions.ImageLayout`.
 - `PreferNarrativeSingleLineDefinitions = true` keeps isolated `Label: value` lines as narrative paragraphs while still allowing grouped definition-list blocks.
 - `OnImageLayoutDiagnostic` can be used to inspect final width/height and applied layout constraints.
+
+### Explicit IntelligenceX transcript contract
+
+```csharp
+var options = MarkdownToWordPresets.CreateIntelligenceXTranscript(
+    allowedImageDirectories: new[] { @"C:\Exports\Images" },
+    visualMaxWidthPx: 760);
+
+using var doc = markdown.LoadFromMarkdown(options);
+```
+
+- `MarkdownToWordPresets.CreateIntelligenceXTranscript(...)` is the explicit DOCX preset for IX transcript export.
+- That preset now reuses the shared `MarkdownTranscriptPreparation.CreateIntelligenceXTranscriptReaderOptions(...)` contract, including legacy IX visual JSON upgrades through document transforms.
+- `MarkdownToWordCapabilities.PreservesNarrativeSingleLineDefinitionsAsSeparateParagraphs()` exposes the grouped `Label: value` capability probe as a reusable OfficeIMO contract instead of host-local reflection logic.
 
 ## Supported features (core)
 

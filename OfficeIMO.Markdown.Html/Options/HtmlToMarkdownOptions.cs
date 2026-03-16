@@ -4,6 +4,16 @@ namespace OfficeIMO.Markdown.Html;
 /// Options controlling HTML to Markdown conversion.
 /// </summary>
 public sealed class HtmlToMarkdownOptions {
+    /// <summary>Creates the default OfficeIMO-flavored conversion profile.</summary>
+    public static HtmlToMarkdownOptions CreateOfficeIMOProfile() => new HtmlToMarkdownOptions();
+
+    /// <summary>
+    /// Creates a portable conversion profile that serializes the converted document with portable markdown fallbacks.
+    /// </summary>
+    public static HtmlToMarkdownOptions CreatePortableProfile() => new HtmlToMarkdownOptions {
+        MarkdownWriteOptions = MarkdownWriteOptions.CreatePortableProfile()
+    };
+
     /// <summary>
     /// Optional base URI used to resolve relative links and image sources.
     /// </summary>
@@ -30,16 +40,53 @@ public sealed class HtmlToMarkdownOptions {
     public bool PreserveUnsupportedInlineHtml { get; set; } = true;
 
     /// <summary>
+    /// Optional markdown writer options used when the converter serializes the intermediate
+    /// <see cref="MarkdownDoc"/> back to markdown text.
+    /// </summary>
+    public MarkdownWriteOptions? MarkdownWriteOptions { get; set; }
+
+    /// <summary>
+    /// Optional maximum input length, in characters, accepted by HTML-to-markdown conversion.
+    /// When set and exceeded, conversion fails fast with an <see cref="ArgumentOutOfRangeException"/>.
+    /// </summary>
+    public int? MaxInputCharacters { get; set; }
+
+    /// <summary>
+    /// Optional ordered post-conversion document transforms applied to the intermediate <see cref="MarkdownDoc"/>.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// var options = HtmlToMarkdownOptions.CreatePortableProfile();
+    /// options.DocumentTransforms.Add(
+    ///     new MarkdownJsonVisualCodeBlockTransform(MarkdownVisualFenceLanguageMode.GenericSemanticFence));
+    ///
+    /// var document = html.LoadFromHtml(options);
+    /// </code>
+    /// </example>
+    public List<IMarkdownDocumentTransform> DocumentTransforms { get; } = new();
+
+    /// <summary>
     /// Creates a shallow copy of the current options instance so callers can reuse option templates safely.
     /// </summary>
     /// <returns>A new <see cref="HtmlToMarkdownOptions"/> with the same option values.</returns>
     public HtmlToMarkdownOptions Clone() {
-        return new HtmlToMarkdownOptions {
+        var clone = new HtmlToMarkdownOptions {
             BaseUri = BaseUri,
             UseBodyContentsOnly = UseBodyContentsOnly,
             RemoveScriptsAndStyles = RemoveScriptsAndStyles,
             PreserveUnsupportedBlocks = PreserveUnsupportedBlocks,
-            PreserveUnsupportedInlineHtml = PreserveUnsupportedInlineHtml
+            PreserveUnsupportedInlineHtml = PreserveUnsupportedInlineHtml,
+            MarkdownWriteOptions = MarkdownWriteOptions,
+            MaxInputCharacters = MaxInputCharacters
         };
+
+        for (var i = 0; i < DocumentTransforms.Count; i++) {
+            var transform = DocumentTransforms[i];
+            if (transform != null) {
+                clone.DocumentTransforms.Add(transform);
+            }
+        }
+
+        return clone;
     }
 }

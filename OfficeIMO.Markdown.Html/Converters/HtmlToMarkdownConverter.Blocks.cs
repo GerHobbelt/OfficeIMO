@@ -91,6 +91,18 @@ public sealed partial class HtmlToMarkdownConverter {
     }
 
     private static IEnumerable<IMarkdownBlock> ConvertElementToBlocks(IElement element, ConversionContext context) {
+        if (TryConvertVisualContractElement(element, out var visualBlock)) {
+            return new IMarkdownBlock[] { visualBlock };
+        }
+
+        if (TryConvertMermaidElement(element, out var mermaidBlock)) {
+            return new IMarkdownBlock[] { mermaidBlock };
+        }
+
+        if (TryConvertMathElement(element, out var mathBlock)) {
+            return new IMarkdownBlock[] { mathBlock };
+        }
+
         string tag = element.TagName;
         switch (tag) {
             case "P":
@@ -159,6 +171,86 @@ public sealed partial class HtmlToMarkdownConverter {
 
                 return new IMarkdownBlock[] { new ParagraphBlock(ParseInlines(fallbackInline)) };
         }
+    }
+
+    private static bool TryConvertVisualContractElement(IElement element, out SemanticFencedBlock visualBlock) {
+        visualBlock = null!;
+        if (element == null) {
+            return false;
+        }
+
+        var attributes = new List<KeyValuePair<string, string?>>();
+        foreach (var attribute in element.Attributes) {
+            attributes.Add(new KeyValuePair<string, string?>(attribute.Name, attribute.Value));
+        }
+
+        if (!MarkdownVisualElementContract.TryParse(attributes, out var visualElement)) {
+            return false;
+        }
+
+        var payload = visualElement!.TryDecodePayload();
+        if (payload == null) {
+            return false;
+        }
+
+        visualBlock = new SemanticFencedBlock(visualElement.VisualKind, visualElement.FenceLanguage, payload);
+        return true;
+    }
+
+    private static bool TryConvertMermaidElement(IElement element, out SemanticFencedBlock mermaidBlock) {
+        mermaidBlock = null!;
+        if (element == null
+            || !element.TagName.Equals("PRE", StringComparison.OrdinalIgnoreCase)
+            || !element.ClassList.Contains("mermaid")) {
+            return false;
+        }
+
+        var content = (element.TextContent ?? string.Empty)
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n')
+            .TrimEnd('\n');
+        if (string.IsNullOrWhiteSpace(content)) {
+            return false;
+        }
+
+        mermaidBlock = new SemanticFencedBlock(MarkdownSemanticKinds.Mermaid, "mermaid", content);
+        return true;
+    }
+
+    private static bool TryConvertMathElement(IElement element, out SemanticFencedBlock mathBlock) {
+        mathBlock = null!;
+        if (element == null
+            || !element.TagName.Equals("DIV", StringComparison.OrdinalIgnoreCase)
+            || !element.ClassList.Contains("omd-math")) {
+            return false;
+        }
+
+        var content = (element.TextContent ?? string.Empty)
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n')
+            .Trim();
+        if (!TryExtractDisplayMathContent(content, out var mathContent)) {
+            return false;
+        }
+
+        mathBlock = new SemanticFencedBlock(MarkdownSemanticKinds.Math, "math", mathContent);
+        return true;
+    }
+
+    private static bool TryExtractDisplayMathContent(string content, out string mathContent) {
+        mathContent = string.Empty;
+        if (string.IsNullOrWhiteSpace(content)) {
+            return false;
+        }
+
+        if (content.StartsWith("$$", StringComparison.Ordinal)
+            && content.EndsWith("$$", StringComparison.Ordinal)
+            && content.Length >= 4) {
+            mathContent = content.Substring(2, content.Length - 4).Trim('\r', '\n');
+            return mathContent.Length > 0;
+        }
+
+        return false;
     }
 
     private static IEnumerable<IMarkdownBlock> ConvertParagraphElement(IElement element, ConversionContext context) {
@@ -287,6 +379,8 @@ public sealed partial class HtmlToMarkdownConverter {
     private static TableBlock ConvertTableElement(IElement element, ConversionContext context) {
         var table = new TableBlock();
         bool headerWritten = false;
+        var headerCells = new List<TableCell>();
+        var rowCells = new List<IReadOnlyList<TableCell>>();
 
         foreach (var row in element.QuerySelectorAll("tr")) {
             var cells = row.Children
@@ -298,8 +392,11 @@ public sealed partial class HtmlToMarkdownConverter {
 
             bool isHeaderRow = !headerWritten && cells.All(cell => cell.TagName.Equals("TH", StringComparison.OrdinalIgnoreCase));
             var renderedCells = new List<string>(cells.Count);
+            var structuredCells = new List<TableCell>(cells.Count);
             foreach (var cell in cells) {
-                renderedCells.Add(ConvertTableCellToMarkdown(cell, context));
+                var cellBlocks = ConvertTableCellToBlocks(cell, context);
+                structuredCells.Add(new TableCell(cellBlocks));
+                renderedCells.Add(RenderTableCellBlocksToMarkdown(cellBlocks));
                 if (isHeaderRow) {
                     table.Alignments.Add(ParseAlignment(cell));
                 }
@@ -309,20 +406,27 @@ public sealed partial class HtmlToMarkdownConverter {
                 foreach (var value in renderedCells) {
                     table.Headers.Add(value);
                 }
+                headerCells.AddRange(structuredCells);
                 headerWritten = true;
             } else {
                 table.Rows.Add(renderedCells);
+                rowCells.Add(structuredCells);
             }
         }
 
         if (!headerWritten && table.Rows.Count > 0) {
             var firstRow = table.Rows[0];
             table.Rows.RemoveAt(0);
+            var firstStructuredRow = rowCells[0];
+            rowCells.RemoveAt(0);
             foreach (var value in firstRow) {
                 table.Headers.Add(value);
                 table.Alignments.Add(ColumnAlignment.None);
             }
+            headerCells.AddRange(firstStructuredRow);
         }
+
+        table.SetStructuredCells(headerCells, rowCells, table.ComputeContentSignature());
 
         return table;
     }
@@ -345,16 +449,25 @@ public sealed partial class HtmlToMarkdownConverter {
         }
     }
 
-    private static string ConvertTableCellToMarkdown(IElement cell, ConversionContext context) {
+    private static IReadOnlyList<IMarkdownBlock> ConvertTableCellToBlocks(IElement cell, ConversionContext context) {
         if (HasDirectBlockChildren(cell, context)) {
-            string blockMarkdown = RenderBlocksToMarkdown(ConvertNodesToBlocks(cell.ChildNodes, context));
-            if (blockMarkdown.Length > 0) {
-                return blockMarkdown.Replace("  \n", "<br>");
-            }
+            return ConvertNodesToBlocks(cell.ChildNodes, context);
         }
 
         string inlineMarkdown = ConvertInlineNodesToMarkdown(cell.ChildNodes, context).Trim();
-        return inlineMarkdown.Replace("  \n", "<br>");
+        if (inlineMarkdown.Length == 0) {
+            return Array.Empty<IMarkdownBlock>();
+        }
+
+        return new IMarkdownBlock[] { new ParagraphBlock(ParseInlines(inlineMarkdown)) };
+    }
+
+    private static string RenderTableCellBlocksToMarkdown(IReadOnlyList<IMarkdownBlock> blocks) {
+        if (blocks == null || blocks.Count == 0) {
+            return string.Empty;
+        }
+
+        return new TableCell(blocks).Markdown.Replace("  \n", "<br>");
     }
 
     private static IEnumerable<IMarkdownBlock> ConvertImageElement(IElement element, ConversionContext context) {
@@ -442,9 +555,10 @@ public sealed partial class HtmlToMarkdownConverter {
             }
 
             if (child.TagName.Equals("DD", StringComparison.OrdinalIgnoreCase) && pendingTerms.Count > 0) {
-                string definition = ConvertDefinitionValueToMarkdown(child, context);
                 foreach (string term in pendingTerms) {
-                    list.Items.Add((term, definition));
+                    list.AddEntry(new DefinitionListEntry(
+                        ParseInlines(term),
+                        ConvertDefinitionValueToBlocks(child, context)));
                 }
                 hasDefinitionsForCurrentGroup = true;
             }
@@ -453,14 +567,16 @@ public sealed partial class HtmlToMarkdownConverter {
         return list;
     }
 
-    private static string ConvertDefinitionValueToMarkdown(IElement element, ConversionContext context) {
+    private static IReadOnlyList<IMarkdownBlock> ConvertDefinitionValueToBlocks(IElement element, ConversionContext context) {
         if (HasDirectBlockChildren(element, context)) {
-            string blockMarkdown = RenderBlocksToMarkdown(ConvertNodesToBlocks(element.ChildNodes, context));
-            if (blockMarkdown.Length > 0) {
-                return blockMarkdown;
-            }
+            return ConvertNodesToBlocks(element.ChildNodes, context);
         }
 
-        return ConvertInlineNodesToMarkdown(element.ChildNodes, context).Trim();
+        string inlineMarkdown = ConvertInlineNodesToMarkdown(element.ChildNodes, context).Trim();
+        if (inlineMarkdown.Length == 0) {
+            return Array.Empty<IMarkdownBlock>();
+        }
+
+        return new IMarkdownBlock[] { new ParagraphBlock(ParseInlines(inlineMarkdown)) };
     }
 }

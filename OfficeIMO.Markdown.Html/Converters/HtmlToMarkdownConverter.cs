@@ -25,7 +25,8 @@ public sealed partial class HtmlToMarkdownConverter {
     /// </param>
     /// <returns>Markdown text produced from the supplied HTML.</returns>
     public string Convert(string html, HtmlToMarkdownOptions? options = null) {
-        return ConvertToDocument(html, options).ToMarkdown();
+        var effectiveOptions = options?.Clone() ?? new HtmlToMarkdownOptions();
+        return ConvertToDocument(html, effectiveOptions).ToMarkdown(effectiveOptions.MarkdownWriteOptions);
     }
 
     /// <summary>
@@ -41,6 +42,7 @@ public sealed partial class HtmlToMarkdownConverter {
     public MarkdownDoc ConvertToDocument(string html, HtmlToMarkdownOptions? options = null) {
         if (html == null) throw new ArgumentNullException(nameof(html));
         var effectiveOptions = options?.Clone() ?? new HtmlToMarkdownOptions();
+        ValidateInputLength(html, effectiveOptions.MaxInputCharacters, nameof(html));
 
         var parser = new HtmlParser();
         var document = parser.ParseDocument(html);
@@ -55,7 +57,10 @@ public sealed partial class HtmlToMarkdownConverter {
             markdown.Add(block);
         }
 
-        return markdown;
+        return MarkdownDocumentTransformPipeline.Apply(
+            markdown,
+            effectiveOptions.DocumentTransforms,
+            new MarkdownDocumentTransformContext(MarkdownDocumentTransformSource.HtmlToMarkdown, effectiveOptions));
     }
 
     private static bool ShouldIgnoreElement(IElement element, ConversionContext context) {
@@ -93,6 +98,20 @@ public sealed partial class HtmlToMarkdownConverter {
         }
 
         return CollapseWhitespace(value!).Trim();
+    }
+
+    private static void ValidateInputLength(string input, int? maxInputCharacters, string paramName) {
+        if (!maxInputCharacters.HasValue) {
+            return;
+        }
+
+        if (maxInputCharacters.Value <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(maxInputCharacters), maxInputCharacters.Value, "MaxInputCharacters must be greater than zero.");
+        }
+
+        if (input.Length > maxInputCharacters.Value) {
+            throw new ArgumentOutOfRangeException(paramName, input.Length, $"Input exceeds MaxInputCharacters ({maxInputCharacters.Value}).");
+        }
     }
 
     private static string RenderBlocksToMarkdown(IEnumerable<IMarkdownBlock> blocks) {

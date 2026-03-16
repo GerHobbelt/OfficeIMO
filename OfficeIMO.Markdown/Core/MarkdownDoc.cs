@@ -53,6 +53,23 @@ public class MarkdownDoc {
         return this;
     }
 
+    internal void ReplaceBlocks(IEnumerable<IMarkdownBlock>? blocks) {
+        _blocks.Clear();
+        _lastBlock = null;
+        if (blocks == null) {
+            return;
+        }
+
+        foreach (var block in blocks) {
+            if (block == null) {
+                continue;
+            }
+
+            _blocks.Add(block);
+            _lastBlock = block;
+        }
+    }
+
     /// <summary>Enumerates all document blocks depth-first, including front matter when present.</summary>
     public IEnumerable<IMarkdownBlock> DescendantsAndSelf() {
         foreach (var block in TopLevelBlocks) {
@@ -453,7 +470,13 @@ public class MarkdownDoc {
     }
 
     /// <summary>Renders the document to Markdown string.</summary>
-    public string ToMarkdown() {
+    public string ToMarkdown() => ToMarkdown(options: null);
+
+    /// <summary>
+    /// Renders the document to Markdown string using optional writer extensions or portability fallbacks.
+    /// </summary>
+    public string ToMarkdown(MarkdownWriteOptions? options) {
+        options ??= MarkdownWriteOptions.CreateOfficeIMOProfile();
         // Build a transient block list where TOC placeholders are realized
         var (blocks, _) = GetBlocksAndHeadingSlugs();
         StringBuilder sb = new StringBuilder();
@@ -462,7 +485,7 @@ public class MarkdownDoc {
             sb.AppendLine();
         }
         for (int i = 0; i < blocks.Count; i++) {
-            string rendered = blocks[i].RenderMarkdown();
+            string rendered = RenderMarkdownBlock(blocks[i], options);
             if (!string.IsNullOrEmpty(rendered)) sb.AppendLine(rendered);
             if (i < blocks.Count - 1) sb.AppendLine();
         }
@@ -632,5 +655,24 @@ public class MarkdownDoc {
             }
         }
         return (realized, headingCatalog);
+    }
+
+    private static string RenderMarkdownBlock(IMarkdownBlock block, MarkdownWriteOptions options) {
+        var extensions = options.BlockRenderExtensions;
+        if (extensions != null && extensions.Count > 0) {
+            for (int i = extensions.Count - 1; i >= 0; i--) {
+                var extension = extensions[i];
+                if (extension == null || !extension.Matches(block)) {
+                    continue;
+                }
+
+                var rendered = extension.RenderMarkdown(block, options);
+                if (rendered != null) {
+                    return rendered;
+                }
+            }
+        }
+
+        return block.RenderMarkdown();
     }
 }
