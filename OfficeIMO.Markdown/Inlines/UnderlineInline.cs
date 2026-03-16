@@ -3,7 +3,7 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Underline inline. Not native to CommonMark; we render as &lt;u&gt; in Markdown (HTML passthrough) and HTML.
 /// </summary>
-public sealed class UnderlineInline {
+public sealed class UnderlineInline : IMarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
     /// <summary>Text to underline.</summary>
     public string Text { get; }
     /// <summary>
@@ -13,4 +13,7 @@ public sealed class UnderlineInline {
     public UnderlineInline(string text) { Text = text ?? string.Empty; }
     internal string RenderMarkdown() => $"<u>{System.Net.WebUtility.HtmlEncode(Text)}</u>";
     internal string RenderHtml() => $"<u>{System.Net.WebUtility.HtmlEncode(Text)}</u>";
+    string IRenderableMarkdownInline.RenderMarkdown() => RenderMarkdown();
+    string IRenderableMarkdownInline.RenderHtml() => RenderHtml();
+    void IPlainTextMarkdownInline.AppendPlainText(System.Text.StringBuilder sb) => sb.Append(Text);
 }

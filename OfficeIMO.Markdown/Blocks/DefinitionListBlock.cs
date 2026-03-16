@@ -4,9 +4,11 @@ namespace OfficeIMO.Markdown;
 /// Definition list rendered as term/definition pairs. Markdown output uses
 /// a simple "Term: Definition" fallback; HTML uses &lt;dl&gt;.
 /// </summary>
-public sealed class DefinitionListBlock : IMarkdownBlock {
+public sealed class DefinitionListBlock : IMarkdownBlock, ISyntaxMarkdownBlock {
     /// <summary>List of (term, definition) pairs.</summary>
     public List<(string Term, string Definition)> Items { get; } = new List<(string, string)>();
+    /// <summary>Parsed inline representation of the current definition list items.</summary>
+    public IReadOnlyList<DefinitionListInlineItem> InlineItems => BuildInlineItems();
     internal List<(InlineSequence Term, InlineSequence Definition)>? ParsedItems { get; private set; }
     internal int? ParsedContentSignature { get; private set; }
     internal List<MarkdownSyntaxNode> SyntaxItems { get; } = new List<MarkdownSyntaxNode>();
@@ -42,31 +44,44 @@ public sealed class DefinitionListBlock : IMarkdownBlock {
     string IMarkdownBlock.RenderHtml() {
         StringBuilder sb = new StringBuilder();
         sb.Append("<dl>");
-        var options = ReaderOptions ?? new MarkdownReaderOptions();
-        var state = ReaderState ?? new MarkdownReaderState();
-        bool useParsedItems = ParsedContentSignature.HasValue && ParsedContentSignature.Value == ComputeContentSignature();
+        var inlineItems = BuildInlineItems();
         for (int index = 0; index < Items.Count; index++) {
-            var (term, def) = Items[index];
-            var parsed = useParsedItems && ParsedItems != null && index < ParsedItems.Count
-                ? ParsedItems[index]
-                : default;
+            var parsed = inlineItems[index];
             sb.Append("<dt>");
-            if (useParsedItems && ParsedItems != null && index < ParsedItems.Count) {
-                sb.Append(parsed.Term.RenderHtml());
-            } else if (!string.IsNullOrEmpty(term)) {
-                sb.Append(MarkdownReader.ParseInlineText(term, options, state).RenderHtml());
-            }
+            sb.Append(parsed.Term.RenderHtml());
             sb.Append("</dt>");
             sb.Append("<dd>");
-            if (useParsedItems && ParsedItems != null && index < ParsedItems.Count) {
-                sb.Append(parsed.Definition.RenderHtml());
-            } else if (!string.IsNullOrEmpty(def)) {
-                sb.Append(MarkdownReader.ParseInlineText(def, options, state).RenderHtml());
-            }
+            sb.Append(parsed.Definition.RenderHtml());
             sb.Append("</dd>");
         }
         sb.Append("</dl>");
         return sb.ToString();
+    }
+
+    private IReadOnlyList<DefinitionListInlineItem> BuildInlineItems() {
+        if (Items.Count == 0) {
+            return Array.Empty<DefinitionListInlineItem>();
+        }
+
+        var options = ReaderOptions ?? new MarkdownReaderOptions();
+        var state = ReaderState ?? new MarkdownReaderState();
+        bool useParsedItems = ParsedContentSignature.HasValue && ParsedContentSignature.Value == ComputeContentSignature();
+        var inlineItems = new DefinitionListInlineItem[Items.Count];
+
+        for (int index = 0; index < Items.Count; index++) {
+            if (useParsedItems && ParsedItems != null && index < ParsedItems.Count) {
+                var parsed = ParsedItems[index];
+                inlineItems[index] = new DefinitionListInlineItem(parsed.Term, parsed.Definition);
+                continue;
+            }
+
+            var (term, def) = Items[index];
+            inlineItems[index] = new DefinitionListInlineItem(
+                string.IsNullOrEmpty(term) ? new InlineSequence() : MarkdownReader.ParseInlineText(term, options, state),
+                string.IsNullOrEmpty(def) ? new InlineSequence() : MarkdownReader.ParseInlineText(def, options, state));
+        }
+
+        return inlineItems;
     }
 
     internal int ComputeContentSignature() {
@@ -80,4 +95,31 @@ public sealed class DefinitionListBlock : IMarkdownBlock {
             return hash;
         }
     }
+
+    internal IReadOnlyList<MarkdownSyntaxNode> BuildSyntaxItems() {
+        if (SyntaxItems.Count > 0) {
+            return SyntaxItems;
+        }
+
+        var nodes = new List<MarkdownSyntaxNode>();
+        foreach (var (term, definition) in Items) {
+            nodes.Add(new MarkdownSyntaxNode(
+                MarkdownSyntaxKind.DefinitionItem,
+                literal: term,
+                children: new[] {
+                    new MarkdownSyntaxNode(MarkdownSyntaxKind.DefinitionTerm, literal: term),
+                    new MarkdownSyntaxNode(
+                        MarkdownSyntaxKind.DefinitionValue,
+                        literal: definition,
+                        children: new[] {
+                            new MarkdownSyntaxNode(MarkdownSyntaxKind.Paragraph, literal: definition)
+                        })
+                }));
+        }
+
+        return nodes;
+    }
+
+    MarkdownSyntaxNode ISyntaxMarkdownBlock.BuildSyntaxNode(MarkdownSourceSpan? span) =>
+        new MarkdownSyntaxNode(MarkdownSyntaxKind.DefinitionList, span, children: BuildSyntaxItems());
 }

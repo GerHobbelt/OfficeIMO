@@ -271,6 +271,20 @@ namespace OfficeIMO.Tests.MarkdownSuite {
         }
 
         [Fact]
+        public void Atx_Heading_Plain_Text_Uses_Link_Label_Text_From_Inline_Contracts() {
+            const string md = "## Prefix [Linked `Text`](https://example.com)";
+
+            var doc = MarkdownReader.Parse(md);
+
+            var heading = Assert.IsType<HeadingBlock>(doc.Blocks[0]);
+            Assert.Equal("Prefix Linked Text", heading.Text);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("id=\"prefix-linked-text\"", html, StringComparison.Ordinal);
+            Assert.Contains("<a href=\"https://example.com\">Linked <code>Text</code></a>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void Setext_Heading_Parses_Inline_Markup() {
             const string md = """
                 **Heading** `Text`
@@ -370,11 +384,27 @@ namespace OfficeIMO.Tests.MarkdownSuite {
             string md = "*Term*: Definition\n[Link](https://example.com): Another";
             var doc = MarkdownReader.Parse(md);
             var defList = Assert.IsType<DefinitionListBlock>(doc.Blocks[0]);
-            Assert.NotNull(defList.ParsedItems);
-            Assert.Equal(2, defList.ParsedItems!.Count);
+            Assert.Equal(2, defList.InlineItems.Count);
+            Assert.Equal("*Term*", defList.InlineItems[0].Term.RenderMarkdown());
+            Assert.Equal("[Link](https://example.com)", defList.InlineItems[1].Term.RenderMarkdown());
             var html = ((IMarkdownBlock)defList).RenderHtml();
             Assert.Contains("<em>Term</em>", html);
             Assert.Contains("href=\"https://example.com\"", html);
+        }
+
+        [Fact]
+        public void Paragraph_Exposes_Typed_Inline_Nodes_Alongside_Legacy_Items_View() {
+            const string md = "[link](https://example.com)";
+
+            var doc = MarkdownReader.Parse(md);
+            var paragraph = Assert.IsType<ParagraphBlock>(doc.Blocks[0]);
+
+            var linkNode = Assert.Single(paragraph.Inlines.Nodes);
+            var link = Assert.IsType<LinkInline>(linkNode);
+            Assert.Equal("https://example.com", link.Url);
+
+            var legacyItem = Assert.Single(paragraph.Inlines.Items);
+            Assert.Same(linkNode, legacyItem);
         }
 
         [Fact]
@@ -390,6 +420,20 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
             Assert.Contains("<dt><strong>Changed</strong></dt>", html, StringComparison.Ordinal);
             Assert.Contains("<dd><a href=\"https://example.com\">fresh</a></dd>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Definition_List_InlineItems_Follow_Current_String_Content_After_Mutation() {
+            const string md = "Term: Value";
+
+            var doc = MarkdownReader.Parse(md);
+            var defList = Assert.IsType<DefinitionListBlock>(doc.Blocks[0]);
+
+            defList.Items[0] = ("**Changed**", "[fresh](https://example.com)");
+
+            Assert.Single(defList.InlineItems);
+            Assert.Equal("**Changed**", defList.InlineItems[0].Term.RenderMarkdown());
+            Assert.Equal("[fresh](https://example.com)", defList.InlineItems[0].Definition.RenderMarkdown());
         }
 
         [Fact]

@@ -5,21 +5,17 @@ public static partial class MarkdownReader {
         public bool TryParse(string[] lines, ref int i, MarkdownReaderOptions options, MarkdownDoc doc, MarkdownReaderState state) {
             if (!options.UnorderedLists) return false;
             if (!IsUnorderedListLine(lines[i], out int level0Abs, out var isTask, out var done, out var firstContent)) return false;
+            if (isTask && !options.TaskLists) {
+                isTask = false;
+                done = false;
+                firstContent = GetUnorderedListItemContent(lines[i]);
+            }
             var ul = new UnorderedListBlock();
             int firstContinuationIndent = GetListContinuationIndent(lines[i]);
 
             int j = i + 1;
-            var firstLines = ConsumeListContinuationLines(lines, ref j, firstContinuationIndent, firstContent, options);
-            ListItem first;
-            if (TryParseListItemLeadSetextBlocks(firstLines, options, state, out var firstBlocks)) {
-                first = isTask ? ListItem.TaskInlines(new InlineSequence(), done) : new ListItem(new InlineSequence());
-                for (int p = 0; p < firstBlocks.Count; p++) first.Children.Add(firstBlocks[p]);
-            } else {
-                var firstParas = ParseParagraphsFromLines(firstLines, options, state);
-                var firstInline = firstParas[0];
-                first = isTask ? ListItem.TaskInlines(firstInline, done) : new ListItem(firstInline);
-                for (int p = 1; p < firstParas.Count; p++) first.AdditionalParagraphs.Add(firstParas[p]);
-            }
+            var firstLines = ConsumeListContinuationLines(lines, ref j, firstContinuationIndent, firstContent, options, breakOnAnyOrderedListLine: false);
+            var first = CreateListItemFromLeadLines(firstLines, isTask, done, options, state);
             first.Level = 0;
             AddListItemLeadSyntaxNodes(first, firstLines, i, options, state);
             ul.Items.Add(first);
@@ -28,19 +24,15 @@ public static partial class MarkdownReader {
             ConsumeNestedBlocksForListItem(lines, ref j, level0Abs, firstContinuationIndent, options, state, first, allowNestedOrdered: true, allowNestedUnordered: true);
 
             while (j < lines.Length && IsUnorderedListLine(lines[j], out var lvlAbs, out var isTask2, out var done2, out var content2) && lvlAbs >= level0Abs) {
+                if (isTask2 && !options.TaskLists) {
+                    isTask2 = false;
+                    done2 = false;
+                    content2 = GetUnorderedListItemContent(lines[j]);
+                }
                 int continuationIndent = GetListContinuationIndent(lines[j]);
                 int next = j + 1;
-                var itemLines = ConsumeListContinuationLines(lines, ref next, continuationIndent, content2, options);
-                ListItem li;
-                if (TryParseListItemLeadSetextBlocks(itemLines, options, state, out var itemBlocks)) {
-                    li = isTask2 ? ListItem.TaskInlines(new InlineSequence(), done2) : new ListItem(new InlineSequence());
-                    for (int p = 0; p < itemBlocks.Count; p++) li.Children.Add(itemBlocks[p]);
-                } else {
-                    var paras = ParseParagraphsFromLines(itemLines, options, state);
-                    var inline = paras[0];
-                    li = isTask2 ? ListItem.TaskInlines(inline, done2) : new ListItem(inline);
-                    for (int p = 1; p < paras.Count; p++) li.AdditionalParagraphs.Add(paras[p]);
-                }
+                var itemLines = ConsumeListContinuationLines(lines, ref next, continuationIndent, content2, options, breakOnAnyOrderedListLine: false);
+                var li = CreateListItemFromLeadLines(itemLines, isTask2, done2, options, state);
                 li.Level = lvlAbs - level0Abs;
                 AddListItemLeadSyntaxNodes(li, itemLines, j, options, state);
                 ul.Items.Add(li);

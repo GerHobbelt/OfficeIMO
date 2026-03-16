@@ -3,14 +3,22 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Sequence of inline nodes used in paragraphs and list items.
 /// </summary>
-public sealed class InlineSequence : IMarkdownInline {
-    private readonly List<object> _inlines = new List<object>();
+public sealed class InlineSequence : IMarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
+    private readonly List<IMarkdownInline> _inlines = new List<IMarkdownInline>();
+    private readonly IReadOnlyList<object> _itemsView;
+
+    /// <summary>Creates an empty inline sequence.</summary>
+    public InlineSequence() {
+        _itemsView = new InlineObjectReadOnlyList(_inlines);
+    }
 
     // When composing via the fluent/builder APIs, auto-spacing between adjacent inline nodes is convenient.
     // When parsing Markdown source, spacing is already present in TextRun nodes, so auto-spacing would double spaces.
     internal bool AutoSpacing { get; set; } = true;
     /// <summary>Exposes the inline nodes for safe iteration.</summary>
-    public IReadOnlyList<object> Items => _inlines;
+    public IReadOnlyList<IMarkdownInline> Nodes => _inlines;
+    /// <summary>Legacy object-typed inline view retained for compatibility.</summary>
+    public IReadOnlyList<object> Items => _itemsView;
     /// <summary>Adds plain text.</summary>
     public InlineSequence Text(string text) { _inlines.Add(new TextRun(text)); return this; }
     /// <summary>Adds a hyperlink.</summary>
@@ -39,9 +47,9 @@ public sealed class InlineSequence : IMarkdownInline {
     public InlineSequence HardBreak() { _inlines.Add(new HardBreakInline()); return this; }
 
     // Internal escape hatch for the reader to attach richer inline nodes without expanding the public fluent API.
-    internal InlineSequence AddRaw(object node) { if (node != null) _inlines.Add(node); return this; }
+    internal InlineSequence AddRaw(IMarkdownInline node) { if (node != null) _inlines.Add(node); return this; }
 
-    internal void ReplaceItems(IEnumerable<object> nodes) {
+    internal void ReplaceItems(IEnumerable<IMarkdownInline> nodes) {
         _inlines.Clear();
         if (nodes == null) {
             return;
@@ -62,25 +70,7 @@ public sealed class InlineSequence : IMarkdownInline {
                 var cur = _inlines[i];
                 if (prev is not HardBreakInline && cur is not HardBreakInline) sb.Append(' ');
             }
-            object node = _inlines[i];
-            if (node is TextRun t) sb.Append(t.RenderMarkdown());
-            else if (node is LinkInline l) sb.Append(l.RenderMarkdown());
-            else if (node is BoldInline b) sb.Append(b.RenderMarkdown());
-            else if (node is BoldItalicInline bi) sb.Append(bi.RenderMarkdown());
-            else if (node is ItalicInline it) sb.Append(it.RenderMarkdown());
-            else if (node is CodeSpanInline cs) sb.Append(cs.RenderMarkdown());
-            else if (node is ImageLinkInline il) sb.Append(il.RenderMarkdown());
-            else if (node is ImageInline im) sb.Append(im.RenderMarkdown());
-            else if (node is StrikethroughInline st) sb.Append(st.RenderMarkdown());
-            else if (node is HighlightInline hi) sb.Append(hi.RenderMarkdown());
-            else if (node is UnderlineInline un) sb.Append(un.RenderMarkdown());
-            else if (node is FootnoteRefInline fn) sb.Append(fn.RenderMarkdown());
-            else if (node is HardBreakInline hb) sb.Append(hb.RenderMarkdown());
-            else if (node is BoldSequenceInline bs) sb.Append(bs.RenderMarkdown());
-            else if (node is ItalicSequenceInline es) sb.Append(es.RenderMarkdown());
-            else if (node is BoldItalicSequenceInline bis) sb.Append(bis.RenderMarkdown());
-            else if (node is StrikethroughSequenceInline sts) sb.Append(sts.RenderMarkdown());
-            else if (node is HighlightSequenceInline hs) sb.Append(hs.RenderMarkdown());
+            sb.Append(GetRenderable(_inlines[i]).RenderMarkdown());
         }
         return sb.ToString();
     }
@@ -93,26 +83,37 @@ public sealed class InlineSequence : IMarkdownInline {
                 var cur = _inlines[i];
                 if (prev is not HardBreakInline && cur is not HardBreakInline) sb.Append(' ');
             }
-            object node = _inlines[i];
-            if (node is TextRun t) sb.Append(t.RenderHtml());
-            else if (node is LinkInline l) sb.Append(l.RenderHtml());
-            else if (node is BoldInline b) sb.Append(b.RenderHtml());
-            else if (node is BoldItalicInline bi) sb.Append(bi.RenderHtml());
-            else if (node is ItalicInline it) sb.Append(it.RenderHtml());
-            else if (node is CodeSpanInline cs) sb.Append(cs.RenderHtml());
-            else if (node is ImageLinkInline il) sb.Append(il.RenderHtml());
-            else if (node is ImageInline im) sb.Append(im.RenderHtml());
-            else if (node is StrikethroughInline st) sb.Append(st.RenderHtml());
-            else if (node is HighlightInline hi) sb.Append(hi.RenderHtml());
-            else if (node is UnderlineInline un) sb.Append(un.RenderHtml());
-            else if (node is FootnoteRefInline fn) sb.Append(fn.RenderHtml());
-            else if (node is HardBreakInline hb) sb.Append(hb.RenderHtml());
-            else if (node is BoldSequenceInline bs) sb.Append(bs.RenderHtml());
-            else if (node is ItalicSequenceInline es) sb.Append(es.RenderHtml());
-            else if (node is BoldItalicSequenceInline bis) sb.Append(bis.RenderHtml());
-            else if (node is StrikethroughSequenceInline sts) sb.Append(sts.RenderHtml());
-            else if (node is HighlightSequenceInline hs) sb.Append(hs.RenderHtml());
+            sb.Append(GetRenderable(_inlines[i]).RenderHtml());
         }
         return sb.ToString();
     }
+
+    string IRenderableMarkdownInline.RenderMarkdown() => RenderMarkdown();
+    string IRenderableMarkdownInline.RenderHtml() => RenderHtml();
+    void IPlainTextMarkdownInline.AppendPlainText(System.Text.StringBuilder sb) => InlinePlainText.AppendPlainText(sb, this);
+
+    private static IRenderableMarkdownInline GetRenderable(IMarkdownInline node) {
+        return node as IRenderableMarkdownInline
+            ?? throw new InvalidOperationException($"Inline node of type '{node.GetType().FullName}' does not implement {nameof(IRenderableMarkdownInline)}.");
+    }
+}
+
+internal sealed class InlineObjectReadOnlyList : IReadOnlyList<object> {
+    private readonly IReadOnlyList<IMarkdownInline> _nodes;
+
+    public InlineObjectReadOnlyList(IReadOnlyList<IMarkdownInline> nodes) {
+        _nodes = nodes ?? throw new ArgumentNullException(nameof(nodes));
+    }
+
+    public int Count => _nodes.Count;
+
+    public object this[int index] => _nodes[index];
+
+    public IEnumerator<object> GetEnumerator() {
+        for (int i = 0; i < _nodes.Count; i++) {
+            yield return _nodes[i];
+        }
+    }
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }

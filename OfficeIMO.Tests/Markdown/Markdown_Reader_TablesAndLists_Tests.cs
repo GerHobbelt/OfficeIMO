@@ -82,9 +82,10 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 """;
             var doc = MarkdownReader.Parse(md);
             var table = Assert.IsType<TableBlock>(doc.Blocks[0]);
-            Assert.Equal(2, table.ParsedHeaders?.Count);
-            Assert.NotNull(table.ParsedRows);
-            Assert.Single(table.ParsedRows!);
+            Assert.Equal(2, table.HeaderInlines.Count);
+            Assert.Single(table.RowInlines);
+            Assert.Equal("**H**", table.HeaderInlines[0].RenderMarkdown());
+            Assert.Equal("`C`", table.HeaderInlines[1].RenderMarkdown());
             var html = doc.ToHtmlFragment();
             Assert.Contains("<th><strong>H</strong></th>", html);
             Assert.Contains("<th><code>C</code></th>", html);
@@ -101,8 +102,8 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 """;
             var doc = MarkdownReader.Parse(md);
             var table = Assert.IsType<TableBlock>(doc.Blocks[0]);
-            Assert.NotNull(table.ParsedRows);
-            Assert.Single(table.ParsedRows!);
+            Assert.Single(table.RowInlines);
+            Assert.Equal("[x](https://example.com)", table.RowInlines[0][0].RenderMarkdown());
             var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
             Assert.Contains("<a href=\"https://example.com\">x</a>", html, StringComparison.Ordinal);
         }
@@ -124,6 +125,24 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
             Assert.Contains("<th><strong>Changed</strong></th>", html, StringComparison.Ordinal);
             Assert.Contains("<a href=\"https://example.com\">fresh</a>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Table_InlineCells_Follow_Current_String_Content_After_Mutation() {
+            string md = """
+| Header |
+| --- |
+| value |
+""";
+            var doc = MarkdownReader.Parse(md);
+            var table = Assert.IsType<TableBlock>(doc.Blocks[0]);
+
+            table.Headers[0] = "**Changed**";
+            table.Rows[0] = new[] { "[fresh](https://example.com)" };
+
+            Assert.Equal("**Changed**", table.HeaderInlines[0].RenderMarkdown());
+            Assert.Single(table.RowInlines);
+            Assert.Equal("[fresh](https://example.com)", table.RowInlines[0][0].RenderMarkdown());
         }
 
         [Fact]
@@ -194,6 +213,83 @@ c | d
 
             var html = doc.ToHtmlFragment();
             Assert.Contains("<li><p>first paragraph</p><p>second paragraph</p></li>", html);
+        }
+
+        [Fact]
+        public void Unordered_List_Item_Allows_Lazy_Continuation() {
+            const string md = """
+- item
+continuation
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<ul><li>item continuation</li></ul>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Ordered_List_Item_Allows_Lazy_Continuation() {
+            const string md = """
+1. item
+continuation
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<OrderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<ol><li>item continuation</li></ol>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Unordered_List_Item_Second_Paragraph_Allows_Lazy_Continuation() {
+            const string md = """
+- item
+
+    code
+after
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<ul><li><p>item</p><p>code after</p></li></ul>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Unordered_List_Becomes_Loose_When_Later_Item_Has_Second_Paragraph() {
+            const string md = """
+- a
+- b
+
+  second paragraph
+""";
+
+            var doc = MarkdownReader.Parse(md);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<ul><li><p>a</p></li><li><p>b</p><p>second paragraph</p></li></ul>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Ordered_List_Becomes_Loose_When_Later_Item_Has_Second_Paragraph() {
+            const string md = """
+10. a
+11. b
+
+    second paragraph
+""";
+
+            var doc = MarkdownReader.Parse(md);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<ol start=\"10\"><li><p>a</p></li><li><p>b</p><p>second paragraph</p></li></ol>", html, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -609,6 +705,39 @@ c | d
             Assert.Contains("<li><h2", html, StringComparison.Ordinal);
             Assert.Contains("<blockquote><p>quote</p></blockquote>", html, StringComparison.Ordinal);
             Assert.DoesNotContain("<p></p>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void List_Item_Setext_Heading_Can_Be_Followed_By_Paragraph_In_Same_Group() {
+            const string md = """
+- item
+  heading
+  -------
+  after
+""";
+
+            var doc = MarkdownReader.Parse(md);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<li><h2", html, StringComparison.Ordinal);
+            Assert.Contains(">item heading</h2>after</li>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void List_Item_Blank_Line_Then_Setext_Heading_Starts_A_New_Block() {
+            const string md = """
+- item
+
+  Heading
+  ---
+  text
+""";
+
+            var doc = MarkdownReader.Parse(md);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<ul><li><p>item</p><h2", html, StringComparison.Ordinal);
+            Assert.Contains(">Heading</h2><p>text</p></li></ul>", html, StringComparison.Ordinal);
         }
 
         [Fact]

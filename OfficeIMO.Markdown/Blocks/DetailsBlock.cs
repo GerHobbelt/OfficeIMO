@@ -3,7 +3,7 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Collapsible disclosure block with an optional summary and nested content.
 /// </summary>
-public sealed class DetailsBlock : IMarkdownBlock {
+public sealed class DetailsBlock : IMarkdownBlock, IChildMarkdownBlockContainer, ISyntaxChildrenMarkdownBlock, IOwnedSyntaxChildrenMarkdownBlock, ISyntaxMarkdownBlock {
     /// <summary>Optional summary displayed in the disclosure header.</summary>
     public SummaryBlock? Summary { get; set; }
 
@@ -65,12 +65,40 @@ public sealed class DetailsBlock : IMarkdownBlock {
         sb.Append("</details>");
         return sb.ToString();
     }
+
+    IReadOnlyList<IMarkdownBlock> IChildMarkdownBlockContainer.ChildBlocks => Children;
+    IReadOnlyList<MarkdownSyntaxNode>? ISyntaxChildrenMarkdownBlock.ProvidedSyntaxChildren => SyntaxChildren;
+
+    IReadOnlyList<MarkdownSyntaxNode> IOwnedSyntaxChildrenMarkdownBlock.BuildOwnedSyntaxChildren() {
+        if (SyntaxChildren != null && SyntaxChildren.Count > 0) {
+            var nodesWithSummary = new List<MarkdownSyntaxNode>();
+            if (Summary != null) {
+                nodesWithSummary.Add(MarkdownBlockSyntaxBuilder.BuildBlock(Summary));
+            }
+            for (int i = 0; i < SyntaxChildren.Count; i++) {
+                nodesWithSummary.Add(SyntaxChildren[i]);
+            }
+            return nodesWithSummary;
+        }
+
+        var nodes = new List<MarkdownSyntaxNode>();
+        if (Summary != null) {
+            nodes.Add(MarkdownBlockSyntaxBuilder.BuildBlock(Summary));
+        }
+        for (int i = 0; i < Children.Count; i++) {
+            nodes.Add(MarkdownBlockSyntaxBuilder.BuildBlock(Children[i]));
+        }
+        return nodes;
+    }
+
+    MarkdownSyntaxNode ISyntaxMarkdownBlock.BuildSyntaxNode(MarkdownSourceSpan? span) =>
+        MarkdownBlockSyntaxBuilder.BuildDetailsBlock(this, span);
 }
 
 /// <summary>
 /// Summary header for a <see cref="DetailsBlock"/>.
 /// </summary>
-public sealed class SummaryBlock : IMarkdownBlock {
+public sealed class SummaryBlock : IMarkdownBlock, IInlineSyntaxMarkdownBlock, ISyntaxMarkdownBlock {
     /// <summary>Inline content inside the &lt;summary&gt; element.</summary>
     public InlineSequence Inlines { get; }
     internal MarkdownSourceSpan? SyntaxSpan { get; set; }
@@ -87,4 +115,9 @@ public sealed class SummaryBlock : IMarkdownBlock {
 
     string IMarkdownBlock.RenderMarkdown() => $"<summary>{Inlines.RenderMarkdown()}</summary>";
     string IMarkdownBlock.RenderHtml() => $"<summary>{Inlines.RenderHtml()}</summary>";
+    InlineSequence IInlineSyntaxMarkdownBlock.SyntaxInlines => Inlines;
+    MarkdownSyntaxKind IInlineSyntaxMarkdownBlock.SyntaxKind => MarkdownSyntaxKind.Summary;
+    MarkdownSourceSpan? IInlineSyntaxMarkdownBlock.ProvidedSyntaxSpan => SyntaxSpan;
+    MarkdownSyntaxNode ISyntaxMarkdownBlock.BuildSyntaxNode(MarkdownSourceSpan? span) =>
+        MarkdownBlockSyntaxBuilder.BuildInlineBlock(this, span);
 }

@@ -13,6 +13,10 @@ public class Markdown_Reader_Markdig_Parity_Tests {
         yield return new object[] { "triple-marker-inner-bold-then-outer-italic", "***foo** bar*" };
         yield return new object[] { "single-star-inside-bold-stays-literal", "**foo*bar**" };
         yield return new object[] { "double-star-inside-italic-rebalances", "*a **b* c**" };
+        yield return new object[] { "double-star-opener-degrades-to-literal-and-italic", "**foo*" };
+        yield return new object[] { "quad-star-opener-degrades-to-literal-and-triple", "****foo***" };
+        yield return new object[] { "quad-underscore-opener-degrades-to-literal-and-triple", "____foo___" };
+        yield return new object[] { "sextuple-star-opener-degrades-to-literal-and-triple", "******foo***" };
         yield return new object[] { "blockquote-lazy-continuation", "> Quote line 1\nQuote line 2" };
         yield return new object[] { "blockquote-blank-line", "> Quote\n>\n> Continued line" };
         yield return new object[] { "blockquote-nested-list", "> - List item\n>   - Nested" };
@@ -25,6 +29,8 @@ public class Markdown_Reader_Markdig_Parity_Tests {
         yield return new object[] { "ordered-same-type-nesting", "1. item\n   1. nested" };
         yield return new object[] { "list-quote-then-fence", "- item\n  > quote\n\n    code" };
         yield return new object[] { "loose-list-followed-by-paragraph", "- item\n\n  second paragraph" };
+        yield return new object[] { "unordered-list-becomes-loose-when-later-item-has-second-paragraph", "- a\n- b\n\n  second paragraph" };
+        yield return new object[] { "ordered-list-becomes-loose-when-later-item-has-second-paragraph", "10. a\n11. b\n\n    second paragraph" };
         yield return new object[] { "autolink-trailing-punctuation", "Visit https://example.com/path_(x))." };
         yield return new object[] { "quoted-indented-code", "> para\n>\n>     code" };
         yield return new object[] { "quoted-blank-line-then-list", "> intro\n>\n> - item" };
@@ -49,20 +55,47 @@ public class Markdown_Reader_Markdig_Parity_Tests {
         yield return new object[] { "autolink-after-colon", "Visit foo:https://example.com now" };
         yield return new object[] { "autolink-www-after-colon", "Visit foo:www.example.com now" };
         yield return new object[] { "autolink-after-dot", "Visit foo.https://example.com now" };
+        yield return new object[] { "autolink-after-plus", "Visit foo+https://example.com now" };
+        yield return new object[] { "autolink-www-after-plus", "Visit foo+www.example.com now" };
+        yield return new object[] { "autolink-after-dash", "Visit foo-https://example.com now" };
+        yield return new object[] { "autolink-www-after-dash", "Visit foo-www.example.com now" };
+        yield return new object[] { "autolink-after-equals", "Visit foo=https://example.com now" };
+        yield return new object[] { "autolink-www-after-equals", "Visit foo=www.example.com now" };
+        yield return new object[] { "autolink-after-ampersand", "Visit &https://example.com now" };
+        yield return new object[] { "autolink-www-after-ampersand", "Visit &www.example.com now" };
+        yield return new object[] { "autolink-after-open-paren", "Visit (https://example.com now" };
+        yield return new object[] { "autolink-after-open-paren-with-close", "Visit (https://example.com) now" };
+        yield return new object[] { "autolink-www-after-open-paren", "Visit (www.example.com now" };
+        yield return new object[] { "autolink-www-after-open-paren-with-close", "Visit (www.example.com) now" };
+        yield return new object[] { "autolink-after-apostrophe", "Visit 'https://example.com now" };
+        yield return new object[] { "autolink-www-after-apostrophe", "Visit 'www.example.com now" };
+        yield return new object[] { "autolink-after-open-bracket", "Visit [https://example.com now" };
+        yield return new object[] { "autolink-www-after-open-bracket", "Visit [www.example.com now" };
         yield return new object[] { "angle-autolink-http", "<https://example.com>" };
         yield return new object[] { "plain-mailto-does-not-autolink-email", "Contact mailto:user@example.com now" };
+        yield return new object[] { "plain-email-after-colon", "Contact foo:user@example.com now" };
+        yield return new object[] { "plain-email-after-equals", "Contact foo=user@example.com now" };
+        yield return new object[] { "plain-email-after-ampersand", "Contact &user@example.com now" };
+        yield return new object[] { "plain-email-after-open-paren", "Contact (user@example.com) now" };
+        yield return new object[] { "plain-email-after-apostrophe", "Contact 'user@example.com now" };
+        yield return new object[] { "plain-email-after-open-bracket", "Contact [user@example.com now" };
         yield return new object[] { "plain-email-after-slash", "Contact /user@example.com now" };
         yield return new object[] { "plain-email-after-underscore", "Contact _user@example.com now" };
         yield return new object[] { "plain-email-with-path-suffix", "Contact user@example.com/path now" };
         yield return new object[] { "plain-email-with-fragment-suffix", "Contact user@example.com#frag now" };
         yield return new object[] { "plain-email-with-plus-tag", "Contact user.name+tag@example.com now" };
         yield return new object[] { "quote-blank-paragraph-then-paragraph", "> one\n>\n> \n> two" };
+        yield return new object[] { "unordered-list-lazy-continuation", "- item\ncontinuation" };
+        yield return new object[] { "ordered-list-lazy-continuation", "1. item\ncontinuation" };
+        yield return new object[] { "unordered-list-loose-lazy-continuation-after-indented-paragraph", "- item\n\n    code\nafter" };
         yield return new object[] { "unordered-list-indented-code-then-paragraph", "- item\n\n      code\n\n  after" };
         yield return new object[] { "ordered-list-nested-blockquote-then-code", "1. item\n   > quote\n\n      code" };
         yield return new object[] { "setext-heading-before-list", "Heading\n-------\n- item" };
         yield return new object[] { "blockquote-setext-heading", "> title\n> -----" };
         yield return new object[] { "blockquote-setext-heading-then-paragraph", "> title\n> -----\n>\n> after" };
         yield return new object[] { "list-setext-heading", "- item\n  heading\n  -------" };
+        yield return new object[] { "list-setext-heading-then-paragraph-same-group", "- item\n  heading\n  -------\n  after" };
+        yield return new object[] { "list-blank-line-then-setext-heading", "- item\n\n  Heading\n  ---\n  text" };
         yield return new object[] { "list-setext-heading-then-quote", "- item\n  heading\n  -------\n\n  > quote" };
         yield return new object[] { "paragraph-then-nonone-ordered-marker", "alpha\n10. beta" };
         yield return new object[] { "list-continuation-then-nonone-ordered-marker", "- outer\n  10. item\n      continuation" };
@@ -113,7 +146,30 @@ public class Markdown_Reader_Markdig_Parity_Tests {
         yield return new object[] { "ordered-list-tab-continuation", "1. first line\n\tsecond line\n2. next" };
         yield return new object[] { "blockquote-lazy-after-unordered-list-item", "> - item\ncontinuation" };
         yield return new object[] { "blockquote-lazy-after-ordered-list-item", "> 1. item\ncontinuation" };
+        yield return new object[] { "blockquote-explicit-after-ordered-list-item", "> 1. item\n>   continuation" };
+        yield return new object[] { "blockquote-indented-paragraph-then-lazy-continuation", "> quote\n>     code\ncontinuation" };
         yield return new object[] { "nested-blockquote-lazy-after-list-item", "> Outer\n> > Inner\n> > - a\n> > - b\n> After" };
+    }
+
+    public static IEnumerable<object[]> MarkdigCompatiblePresetCases() {
+        yield return new object[] { "bare-http-default-markdig", "Visit https://example.com now" };
+        yield return new object[] { "bare-www-default-markdig", "Visit www.example.com now" };
+        yield return new object[] { "bare-email-default-markdig", "Contact user@example.com now" };
+        yield return new object[] { "mixed-literal-autolinks-default-markdig", "See https://example.com and www.example.com and user@example.com" };
+        yield return new object[] { "angle-email-still-autolinks", "Email <user@example.com>." };
+        yield return new object[] { "angle-mailto-still-autolinks", "Contact <mailto:user@example.com> now" };
+        yield return new object[] { "literal-http-after-colon", "Visit foo:https://example.com now" };
+        yield return new object[] { "literal-http-after-open-paren", "Visit (https://example.com) now" };
+        yield return new object[] { "literal-http-after-apostrophe", "Visit 'https://example.com now" };
+        yield return new object[] { "literal-http-after-open-bracket", "Visit [https://example.com now" };
+        yield return new object[] { "literal-email-after-colon", "Contact foo:user@example.com now" };
+        yield return new object[] { "literal-email-after-open-paren", "Contact (user@example.com) now" };
+        yield return new object[] { "literal-email-after-apostrophe", "Contact 'user@example.com now" };
+        yield return new object[] { "literal-email-after-open-bracket", "Contact [user@example.com now" };
+        yield return new object[] { "callout-stays-blockquote-text", "> [!NOTE]\n> body\ntext" };
+        yield return new object[] { "callout-with-blank-line-stays-blockquote-text", "> [!NOTE]\n>\n> body\ntext" };
+        yield return new object[] { "unordered-task-stays-plain-list-text", "- [ ] task\n  continuation" };
+        yield return new object[] { "ordered-task-stays-plain-list-text", "1. [x] task\ncontinuation" };
     }
 
     [Theory]
@@ -126,6 +182,21 @@ public class Markdown_Reader_Markdig_Parity_Tests {
         };
 
         var office = MarkdownReader.Parse(markdown).ToHtmlFragment(htmlOptions);
+        var markdig = MarkdigMarkdown.ToHtml(markdown);
+
+        Assert.Equal(NormalizeHtmlForParity(markdig), NormalizeHtmlForParity(office));
+    }
+
+    [Theory]
+    [MemberData(nameof(MarkdigCompatiblePresetCases))]
+    public void MarkdownReader_Matches_Markdig_With_Markdig_Compatible_Preset(string _, string markdown) {
+        var htmlOptions = new HtmlOptions {
+            Style = HtmlStyle.Plain,
+            CssDelivery = CssDelivery.None,
+            BodyClass = null
+        };
+
+        var office = MarkdownReader.Parse(markdown, MarkdownReaderOptions.CreateMarkdigCompatible()).ToHtmlFragment(htmlOptions);
         var markdig = MarkdigMarkdown.ToHtml(markdown);
 
         Assert.Equal(NormalizeHtmlForParity(markdig), NormalizeHtmlForParity(office));
@@ -176,7 +247,10 @@ public class Markdown_Reader_Markdig_Parity_Tests {
             sb.Append(ch);
         }
 
-        var normalized = sb.ToString().Replace("> <", "><");
+        var normalized = sb.ToString()
+            .Replace("> <", "><")
+            .Replace("&#39;", "'")
+            .Replace("&#x27;", "'");
         normalized = Regex.Replace(normalized, "<h([1-6])\\s+id=\"[^\"]*\">", "<h$1>", RegexOptions.CultureInvariant);
         normalized = normalized
             .Replace(" <ul", "<ul")

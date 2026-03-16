@@ -3,7 +3,7 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Fenced code block with optional caption. Fence length adapts to backticks inside the content.
 /// </summary>
-public sealed class CodeBlock : IMarkdownBlock, ICaptionable {
+public sealed class CodeBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlock {
     /// <summary>Optional language hint (e.g., csharp, bash).</summary>
     public string Language { get; }
     /// <summary>Code contents.</summary>
@@ -45,5 +45,39 @@ public sealed class CodeBlock : IMarkdownBlock, ICaptionable {
         }
         string caption = string.IsNullOrWhiteSpace(Caption) ? string.Empty : $"<div class=\"caption\">{System.Net.WebUtility.HtmlEncode(Caption!)}</div>";
         return $"<pre><code{lang}>{code}</code></pre>{caption}";
+    }
+
+    MarkdownSyntaxNode ISyntaxMarkdownBlock.BuildSyntaxNode(MarkdownSourceSpan? span) {
+        var nodes = new List<MarkdownSyntaxNode>();
+        if (span.HasValue && IsFenced && !string.IsNullOrEmpty(Language)) {
+            nodes.Add(new MarkdownSyntaxNode(
+                MarkdownSyntaxKind.CodeFenceInfo,
+                new MarkdownSourceSpan(span.Value.StartLine, span.Value.StartLine),
+                Language));
+        }
+
+        MarkdownSourceSpan? contentSpan;
+        if (span.HasValue) {
+            if (IsFenced) {
+                contentSpan = span.Value.EndLine > span.Value.StartLine + 1
+                    ? new MarkdownSourceSpan(span.Value.StartLine + 1, span.Value.EndLine - 1)
+                    : null;
+            } else {
+                contentSpan = span.Value;
+            }
+        } else {
+            contentSpan = null;
+        }
+
+        nodes.Add(new MarkdownSyntaxNode(
+            MarkdownSyntaxKind.CodeContent,
+            contentSpan,
+            MarkdownBlockSyntaxBuilder.NormalizeSyntaxLiteralLineEndings(Content)));
+
+        return new MarkdownSyntaxNode(
+            MarkdownSyntaxKind.CodeBlock,
+            span,
+            MarkdownBlockSyntaxBuilder.NormalizeSyntaxLiteralLineEndings(Content),
+            nodes);
     }
 }

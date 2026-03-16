@@ -38,7 +38,7 @@ public sealed class ListItem {
     public static ListItem TaskInlines(InlineSequence content, bool done = false) => new ListItem(content ?? new InlineSequence(), true, done);
 
     internal IEnumerable<InlineSequence> Paragraphs() {
-        if (Content.Items.Count > 0 || (AdditionalParagraphs.Count == 0 && Children.Count == 0)) {
+        if (Content.Nodes.Count > 0 || (AdditionalParagraphs.Count == 0 && Children.Count == 0)) {
             yield return Content;
         }
         for (int i = 0; i < AdditionalParagraphs.Count; i++) yield return AdditionalParagraphs[i];
@@ -49,18 +49,25 @@ public sealed class ListItem {
         return string.Join("\n\n", parts);
     }
 
-    internal string RenderHtml() {
+    internal string RenderHtml() => RenderHtml(forceLoose: false);
+
+    internal string RenderHtml(bool forceLoose) {
+        bool renderLoose = forceLoose || ForceLoose;
         string checkbox = IsTask ? "<input class=\"task-list-item-checkbox\" type=\"checkbox\" disabled" + (Checked ? " checked" : string.Empty) + "> " : string.Empty;
-        if (!ForceLoose && AdditionalParagraphs.Count == 0 && Children.Count == 0) {
+        if (!renderLoose && AdditionalParagraphs.Count == 0 && Children.Count == 0) {
             return checkbox + Content.RenderHtml();
         }
 
         // Tight list behavior: when there is exactly one paragraph, keep it inline even if child blocks exist.
-        if (!ForceLoose && AdditionalParagraphs.Count == 0) {
+        if (!renderLoose && AdditionalParagraphs.Count == 0) {
             var sbTight = new StringBuilder();
             sbTight.Append(checkbox).Append(Content.RenderHtml());
             for (int i = 0; i < Children.Count; i++) {
-                if (Children[i] is IMarkdownBlock b) sbTight.Append(b.RenderHtml());
+                if (Children[i] is ITightListItemHtmlMarkdownBlock tightHtmlBlock) {
+                    sbTight.Append(tightHtmlBlock.RenderTightListItemHtml());
+                } else {
+                    sbTight.Append(Children[i].RenderHtml());
+                }
             }
             return sbTight.ToString();
         }
@@ -77,17 +84,70 @@ public sealed class ListItem {
         }
 
         for (int i = 0; i < Children.Count; i++) {
-            if (Children[i] is IMarkdownBlock b) sb.Append(b.RenderHtml());
+            sb.Append(Children[i].RenderHtml());
         }
         return sb.ToString();
     }
-    internal string ToMarkdownListLine() {
-        var indent = new string(' ', Level * 2);
-        if (IsTask) return indent + "- [" + (Checked ? "x" : " ") + "] " + RenderMarkdown();
-        return indent + "- " + RenderMarkdown();
+
+    internal bool TryAbsorbTrailingParagraphBlocks(IReadOnlyList<IMarkdownBlock> trailingBlocks) {
+        if (trailingBlocks == null || trailingBlocks.Count == 0) {
+            return true;
+        }
+
+        for (int i = 0; i < trailingBlocks.Count; i++) {
+            if (trailingBlocks[i] is not IParagraphMarkdownBlock paragraph) {
+                AdditionalParagraphs.Clear();
+                return false;
+            }
+
+            AdditionalParagraphs.Add(paragraph.ParagraphInlines);
+        }
+
+        return true;
     }
-    internal string ToHtmlListItem() {
-        var cls = IsTask ? " class=\"task-list-item\"" : string.Empty;
-        return "<li" + cls + ">" + RenderHtml() + "</li>";
+
+    internal bool RequiresLooseListRendering() => ForceLoose || AdditionalParagraphs.Count > 0;
+
+    internal MarkdownSyntaxNode BuildSyntaxNode(MarkdownSyntaxNode? nestedList) {
+        var children = BuildOwnedSyntaxChildren();
+
+        if (nestedList != null) {
+            children.Add(nestedList);
+        }
+
+        string? literal = IsTask
+            ? (Checked ? "[x]" : "[ ]")
+            : null;
+
+        return new MarkdownSyntaxNode(
+            MarkdownSyntaxKind.ListItem,
+            MarkdownBlockSyntaxBuilder.GetAggregateSpan(children),
+            literal,
+            children);
     }
+
+    private List<MarkdownSyntaxNode> BuildOwnedSyntaxChildren() {
+        var children = new List<MarkdownSyntaxNode>();
+        if (SyntaxChildren.Count > 0) {
+            children.AddRange(SyntaxChildren);
+            return children;
+        }
+
+        if (Content.Nodes.Count > 0 || (AdditionalParagraphs.Count == 0 && Children.Count == 0)) {
+            children.Add(BuildParagraphSyntaxNode(Content));
+        }
+
+        for (int i = 0; i < AdditionalParagraphs.Count; i++) {
+            children.Add(BuildParagraphSyntaxNode(AdditionalParagraphs[i]));
+        }
+
+        for (int i = 0; i < Children.Count; i++) {
+            children.Add(MarkdownBlockSyntaxBuilder.BuildBlock(Children[i]));
+        }
+
+        return children;
+    }
+
+    private static MarkdownSyntaxNode BuildParagraphSyntaxNode(InlineSequence paragraph) =>
+        new MarkdownSyntaxNode(MarkdownSyntaxKind.Paragraph, literal: paragraph.RenderMarkdown());
 }

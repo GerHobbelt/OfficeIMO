@@ -611,6 +611,28 @@ Top-IDs:
     }
 
     [Fact]
+    public void MarkdownRenderer_ChatStrictMinimalMarkdigCompatible_Disables_Callouts_TaskLists_And_LiteralAutolinks() {
+        var opts = MarkdownRendererPresets.CreateChatStrictMinimalMarkdigCompatible();
+        var markdown = """
+> [!NOTE]
+> body
+
+- [ ] task
+
+Visit https://example.com now.
+""";
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(markdown, opts);
+        Assert.DoesNotContain("class=\"callout", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("contains-task-list", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("task-list-item-checkbox", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("href=\"https://example.com\"", htmlOut, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[!NOTE]", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("[ ] task", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Visit https://example.com now.", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MarkdownRenderer_Allows_SameOrigin_Absolute_Http_Images_When_BaseHref_Is_Set() {
         var opts = new MarkdownRendererOptions { BaseHref = "https://example.com/" };
         var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("![alt](https://example.com/a.png)", opts);
@@ -660,6 +682,49 @@ Top-IDs:
         Assert.Contains("task-list-item-checkbox", html, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void MarkdownRenderer_Preserves_PreferNarrativeSingleLineDefinitions_From_ReaderOptions() {
+        var markdown = """
+Status: Healthy
+
+Next paragraph.
+""";
+        var opts = new MarkdownRendererOptions {
+            ReaderOptions = new MarkdownReaderOptions {
+                PreferNarrativeSingleLineDefinitions = true,
+                HtmlBlocks = false,
+                InlineHtml = false
+            }
+        };
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(markdown, opts);
+
+        Assert.DoesNotContain("<dl>", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<p>Status: Healthy</p>", html, StringComparison.Ordinal);
+        Assert.Contains("<p>Next paragraph.</p>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Preserves_TaskLists_Flag_From_ReaderOptions() {
+        var markdown = """
+- [ ] Todo
+- [x] Done
+""";
+        var opts = new MarkdownRendererOptions {
+            ReaderOptions = new MarkdownReaderOptions {
+                TaskLists = false,
+                HtmlBlocks = false,
+                InlineHtml = false
+            }
+        };
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(markdown, opts);
+
+        Assert.DoesNotContain("contains-task-list", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("task-list-item-checkbox", html, StringComparison.Ordinal);
+        Assert.Contains("[ ] Todo", html, StringComparison.Ordinal);
+        Assert.Contains("[x] Done", html, StringComparison.Ordinal);
+    }
     private static int Count(string value, string token) {
         if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(token)) return 0;
 

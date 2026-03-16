@@ -66,7 +66,14 @@ public static partial class MarkdownReader {
                 for (int j = start; j < lines.Length; j++) { if (lines[j].Trim() == "---") { end = j; break; } }
                 if (end > start) {
                     var dict = ParseFrontMatter(lines, start, end - 1);
-                    if (dict.Count > 0) doc.Add(FrontMatterBlock.FromObject(dict));
+                    if (dict.Count > 0) {
+                        var frontMatter = FrontMatterBlock.FromObject(dict);
+                        doc.Add(frontMatter);
+                        if (syntaxNodes != null) {
+                            syntaxNodes.Add(((ISyntaxMarkdownBlock)frontMatter).BuildSyntaxNode(
+                                new MarkdownSourceSpan(lineOffset + i + 1, lineOffset + end + 1)));
+                        }
+                    }
                     i = end + 1;
                     // optional blank line after front matter
                     if (i < lines.Length && string.IsNullOrWhiteSpace(lines[i])) i++;
@@ -245,6 +252,7 @@ public static partial class MarkdownReader {
             IndentedCodeBlocks = source.IndentedCodeBlocks,
             Images = source.Images,
             UnorderedLists = source.UnorderedLists,
+            TaskLists = source.TaskLists,
             OrderedLists = source.OrderedLists,
             Tables = source.Tables,
             DefinitionLists = source.DefinitionLists,
@@ -347,5 +355,18 @@ public static partial class MarkdownReader {
         foreach (var kvp in state.LinkRefs) clone.LinkRefs[kvp.Key] = kvp.Value;
         clone.SourceLineOffset = state.SourceLineOffset;
         return clone;
+    }
+
+    private static (IReadOnlyList<IMarkdownBlock> Blocks, IReadOnlyList<MarkdownSyntaxNode> SyntaxChildren) ParseNestedMarkdownBlocks(
+        string markdown,
+        MarkdownReaderOptions options,
+        MarkdownReaderState state,
+        int lineOffset) {
+
+        var nestedOptions = CloneOptionsWithoutFrontMatter(options);
+        var nestedState = CloneState(state);
+        var syntaxChildren = new List<MarkdownSyntaxNode>();
+        var nestedDoc = ParseInternal(markdown, nestedOptions, nestedState, allowFrontMatter: false, syntaxChildren, lineOffset: lineOffset);
+        return (nestedDoc.Blocks, syntaxChildren);
     }
 }

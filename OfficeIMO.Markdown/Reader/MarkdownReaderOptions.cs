@@ -5,6 +5,20 @@ namespace OfficeIMO.Markdown;
 /// that OfficeIMO.Markdown produces, so generated Markdown can be parsed back predictably.
 /// </summary>
 public sealed class MarkdownReaderOptions {
+    /// <summary>
+    /// Creates a reader configuration aligned more closely with Markdig's default behavior.
+    /// Bare <c>http(s)://...</c>, <c>www.*</c>, and plain email tokens remain literal text, and
+    /// OfficeIMO-specific extensions such as Docs-style callouts and task-list checkbox parsing are disabled.
+    /// Explicit Markdown links, angle-bracket autolinks, and plain unordered lists continue to work.
+    /// </summary>
+    public static MarkdownReaderOptions CreateMarkdigCompatible() => new MarkdownReaderOptions {
+        Callouts = false,
+        TaskLists = false,
+        AutolinkUrls = false,
+        AutolinkWwwUrls = false,
+        AutolinkEmails = false
+    };
+
     /// <summary>Enable YAML front matter parsing at the very top of the file.</summary>
     public bool FrontMatter { get; set; } = true;
     /// <summary>Enable recognition of Docs-style callouts ("> [!KIND] Title" blocks).</summary>
@@ -19,6 +33,8 @@ public sealed class MarkdownReaderOptions {
     public bool Images { get; set; } = true;
     /// <summary>Enable unordered lists and task lists.</summary>
     public bool UnorderedLists { get; set; } = true;
+    /// <summary>Enable task list checkbox parsing inside unordered and ordered list items.</summary>
+    public bool TaskLists { get; set; } = true;
     /// <summary>Enable ordered (numbered) lists.</summary>
     public bool OrderedLists { get; set; } = true;
     /// <summary>Enable pipe tables with optional header + alignment row.</summary>

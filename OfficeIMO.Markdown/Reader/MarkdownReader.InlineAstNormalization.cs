@@ -15,10 +15,10 @@ public static partial class MarkdownReader {
         bool normalizeTightColonSpacing = options.NormalizeTightColonSpacing;
         if (!normalizeEscapedInlineCode && !normalizeTightStrongBoundaries && !normalizeTightColonSpacing) return false;
 
-        var items = sequence.Items;
+        var items = sequence.Nodes;
         if (items == null || items.Count == 0) return false;
 
-        var working = new List<object>(items.Count);
+        var working = new List<IMarkdownInline>(items.Count);
         bool changed = false;
 
         for (int i = 0; i < items.Count; i++) {
@@ -48,18 +48,13 @@ public static partial class MarkdownReader {
         return changed;
     }
 
-    private static bool NormalizeNestedInlineNode(object node, MarkdownInputNormalizationOptions options) {
-        if (node is BoldSequenceInline bold) return NormalizeInlineSequenceInPlace(bold.Inlines, options);
-        if (node is ItalicSequenceInline italic) return NormalizeInlineSequenceInPlace(italic.Inlines, options);
-        if (node is BoldItalicSequenceInline boldItalic) return NormalizeInlineSequenceInPlace(boldItalic.Inlines, options);
-        if (node is StrikethroughSequenceInline strike) return NormalizeInlineSequenceInPlace(strike.Inlines, options);
-        if (node is HighlightSequenceInline highlight) return NormalizeInlineSequenceInPlace(highlight.Inlines, options);
-        if (node is LinkInline link && link.LabelInlines != null) return NormalizeInlineSequenceInPlace(link.LabelInlines, options);
-        return false;
+    private static bool NormalizeNestedInlineNode(IMarkdownInline node, MarkdownInputNormalizationOptions options) {
+        return node is IInlineContainerMarkdownInline container &&
+               NormalizeInlineSequenceInPlace(container.NestedInlines, options);
     }
 
-    private static bool TryRewriteEscapedInlineCodeSpans(List<object> nodes, out List<object> rewritten) {
-        rewritten = new List<object>(nodes.Count);
+    private static bool TryRewriteEscapedInlineCodeSpans(List<IMarkdownInline> nodes, out List<IMarkdownInline> rewritten) {
+        rewritten = new List<IMarkdownInline>(nodes.Count);
         bool changed = false;
 
         int i = 0;
@@ -106,7 +101,7 @@ public static partial class MarkdownReader {
         return changed;
     }
 
-    private static bool TryInsertMissingStrongBoundarySpaces(List<object> nodes) {
+    private static bool TryInsertMissingStrongBoundarySpaces(List<IMarkdownInline> nodes) {
         bool changed = false;
 
         for (int i = 0; i < nodes.Count - 1; i++) {
@@ -121,7 +116,7 @@ public static partial class MarkdownReader {
         return changed;
     }
 
-    private static bool TryInsertMissingColonBoundarySpaces(List<object> nodes) {
+    private static bool TryInsertMissingColonBoundarySpaces(List<IMarkdownInline> nodes) {
         bool changed = false;
 
         for (int i = 0; i < nodes.Count; i++) {
@@ -170,8 +165,8 @@ public static partial class MarkdownReader {
         return true;
     }
 
-    private static bool IsStrongInlineNode(object node) {
-        return node is BoldInline || node is BoldSequenceInline;
+    private static bool IsStrongInlineNode(IMarkdownInline node) {
+        return node is IStrongMarkdownInline;
     }
 
     private static bool NeedsLeadingSpaceAfterStrong(string? text) {
@@ -187,10 +182,10 @@ public static partial class MarkdownReader {
         return true;
     }
 
-    private static List<object> CoalesceAdjacentTextRuns(List<object> nodes) {
+    private static List<IMarkdownInline> CoalesceAdjacentTextRuns(List<IMarkdownInline> nodes) {
         if (nodes.Count <= 1) return nodes;
 
-        var compact = new List<object>(nodes.Count);
+        var compact = new List<IMarkdownInline>(nodes.Count);
         StringBuilder? textBuffer = null;
 
         void FlushTextBuffer() {

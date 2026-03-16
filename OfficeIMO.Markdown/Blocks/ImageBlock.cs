@@ -3,7 +3,7 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Image block with optional title and caption.
 /// </summary>
-public sealed class ImageBlock : IMarkdownBlock, ICaptionable {
+public sealed class ImageBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlock {
     /// <summary>Image source path or URL.</summary>
     public string Path { get; }
     /// <summary>Alternative text.</summary>
@@ -65,5 +65,24 @@ public sealed class ImageBlock : IMarkdownBlock, ICaptionable {
         string img = $"<img src=\"{src}\" alt=\"{alt}\"{title}{size}{extra} />";
         string caption = string.IsNullOrWhiteSpace(Caption) ? string.Empty : $"<div class=\"caption\">{System.Net.WebUtility.HtmlEncode(Caption!)}</div>";
         return img + caption;
+    }
+
+    MarkdownSyntaxNode ISyntaxMarkdownBlock.BuildSyntaxNode(MarkdownSourceSpan? span) {
+        var nodes = new List<MarkdownSyntaxNode>();
+        if (!string.IsNullOrEmpty(Alt)) {
+            nodes.Add(new MarkdownSyntaxNode(MarkdownSyntaxKind.ImageAlt, span, Alt));
+        }
+
+        nodes.Add(new MarkdownSyntaxNode(MarkdownSyntaxKind.ImageSource, span, Path));
+
+        if (!string.IsNullOrEmpty(Title)) {
+            nodes.Add(new MarkdownSyntaxNode(MarkdownSyntaxKind.ImageTitle, span, Title));
+        }
+
+        return new MarkdownSyntaxNode(
+            MarkdownSyntaxKind.Image,
+            span,
+            ((IMarkdownBlock)this).RenderMarkdown(),
+            nodes);
     }
 }

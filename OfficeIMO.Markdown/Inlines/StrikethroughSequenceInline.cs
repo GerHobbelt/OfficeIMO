@@ -4,7 +4,7 @@ namespace OfficeIMO.Markdown;
 /// Strikethrough that contains nested inline nodes.
 /// Used by the reader so nested markup can be represented without changing the fluent builder API.
 /// </summary>
-public sealed class StrikethroughSequenceInline {
+public sealed class StrikethroughSequenceInline : IMarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline, IInlineContainerMarkdownInline {
     /// <summary>Inline content.</summary>
     public InlineSequence Inlines { get; }
 
@@ -15,5 +15,9 @@ public sealed class StrikethroughSequenceInline {
 
     internal string RenderMarkdown() => "~~" + Inlines.RenderMarkdown() + "~~";
     internal string RenderHtml() => "<del>" + Inlines.RenderHtml() + "</del>";
+    string IRenderableMarkdownInline.RenderMarkdown() => RenderMarkdown();
+    string IRenderableMarkdownInline.RenderHtml() => RenderHtml();
+    void IPlainTextMarkdownInline.AppendPlainText(System.Text.StringBuilder sb) => InlinePlainText.AppendPlainText(sb, Inlines);
+    InlineSequence? IInlineContainerMarkdownInline.NestedInlines => Inlines;
 }
 
