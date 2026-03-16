@@ -20,59 +20,84 @@ public static partial class MarkdownReader {
         return ParseInternal(markdown, options, state, allowFrontMatter: true);
     }
 
+    /// <summary>
+    /// Parses Markdown text into both the object model and a lightweight syntax tree with source spans.
+    /// </summary>
+    public static MarkdownParseResult ParseWithSyntaxTree(string markdown, MarkdownReaderOptions? options = null) {
+        options ??= new MarkdownReaderOptions();
+        var state = new MarkdownReaderState();
+        var syntaxNodes = new List<MarkdownSyntaxNode>();
+        var document = ParseInternal(markdown, options, state, allowFrontMatter: true, syntaxNodes, lineOffset: 0);
+        return new MarkdownParseResult(document, BuildDocumentSyntaxTree(syntaxNodes));
+    }
+
     /// <summary>Parses a Markdown file path into a <see cref="MarkdownDoc"/>.</summary>
     public static MarkdownDoc ParseFile(string path, MarkdownReaderOptions? options = null) {
         string text = File.ReadAllText(path, Encoding.UTF8);
         return Parse(text, options);
     }
 
-    private static MarkdownDoc ParseInternal(string markdown, MarkdownReaderOptions options, MarkdownReaderState state, bool allowFrontMatter) {
+    private static MarkdownDoc ParseInternal(string markdown, MarkdownReaderOptions options, MarkdownReaderState state, bool allowFrontMatter, List<MarkdownSyntaxNode>? syntaxNodes = null, int lineOffset = 0) {
         var doc = MarkdownDoc.Create();
         if (string.IsNullOrEmpty(markdown)) return doc;
+        int previousLineOffset = state.SourceLineOffset;
+        state.SourceLineOffset = lineOffset;
 
-        // Normalize BOM (U+FEFF) at the very beginning to avoid blocking heading/html detection
-        if (markdown[0] == '\uFEFF') {
-            markdown = markdown.Substring(1);
-        }
-
-        var preParseNormalization = CreatePreParseNormalizationOptions(options.InputNormalization);
-        if (preParseNormalization != null) {
-            markdown = MarkdownInputNormalizer.Normalize(markdown, preParseNormalization);
-        }
-
-        // Normalize line endings and split. Keep empty lines significant for block boundaries.
-        var text = markdown.Replace("\r\n", "\n").Replace('\r', '\n');
-        var lines = text.Split('\n');
-        int i = 0;
-
-        // Front matter (YAML) only if it's the very first thing in the file
-        if (allowFrontMatter && options.FrontMatter && i < lines.Length && lines[i].Trim() == "---") {
-            int start = i + 1;
-            int end = -1;
-            for (int j = start; j < lines.Length; j++) { if (lines[j].Trim() == "---") { end = j; break; } }
-            if (end > start) {
-                var dict = ParseFrontMatter(lines, start, end - 1);
-                if (dict.Count > 0) doc.Add(FrontMatterBlock.FromObject(dict));
-                i = end + 1;
-                // optional blank line after front matter
-                if (i < lines.Length && string.IsNullOrWhiteSpace(lines[i])) i++;
+        try {
+            // Normalize BOM (U+FEFF) at the very beginning to avoid blocking heading/html detection
+            if (markdown[0] == '\uFEFF') {
+                markdown = markdown.Substring(1);
             }
-        }
 
-        var pipeline = MarkdownReaderPipeline.Default(options);
-        // Pre-scan for reference-style link definitions so inline refs in earlier paragraphs can resolve
-        PreScanReferenceLinkDefinitions(lines, state, options);
-        while (i < lines.Length) {
-            if (string.IsNullOrWhiteSpace(lines[i])) { i++; continue; }
-            bool matched = false;
-            var parsers = pipeline.Parsers;
-            for (int p = 0; p < parsers.Count; p++) {
-                if (parsers[p].TryParse(lines, ref i, options, doc, state)) { matched = true; break; }
+            var preParseNormalization = CreatePreParseNormalizationOptions(options.InputNormalization);
+            if (preParseNormalization != null) {
+                markdown = MarkdownInputNormalizer.Normalize(markdown, preParseNormalization);
             }
-            if (!matched) i++; // defensive: avoid infinite loop
-        }
 
-        return doc;
+            // Normalize line endings and split. Keep empty lines significant for block boundaries.
+            var text = markdown.Replace("\r\n", "\n").Replace('\r', '\n');
+            var lines = text.Split('\n');
+            int i = 0;
+
+            // Front matter (YAML) only if it's the very first thing in the file
+            if (allowFrontMatter && options.FrontMatter && i < lines.Length && lines[i].Trim() == "---") {
+                int start = i + 1;
+                int end = -1;
+                for (int j = start; j < lines.Length; j++) { if (lines[j].Trim() == "---") { end = j; break; } }
+                if (end > start) {
+                    var dict = ParseFrontMatter(lines, start, end - 1);
+                    if (dict.Count > 0) doc.Add(FrontMatterBlock.FromObject(dict));
+                    i = end + 1;
+                    // optional blank line after front matter
+                    if (i < lines.Length && string.IsNullOrWhiteSpace(lines[i])) i++;
+                }
+            }
+
+            var pipeline = MarkdownReaderPipeline.Default(options);
+            // Pre-scan for reference-style link definitions so inline refs in earlier paragraphs can resolve
+            PreScanReferenceLinkDefinitions(lines, state, options);
+            while (i < lines.Length) {
+                if (string.IsNullOrWhiteSpace(lines[i])) { i++; continue; }
+                bool matched = false;
+                var parsers = pipeline.Parsers;
+                int previousBlockCount = doc.Blocks.Count;
+                int startLine = lineOffset + i;
+                for (int p = 0; p < parsers.Count; p++) {
+                    if (parsers[p].TryParse(lines, ref i, options, doc, state)) {
+                        matched = true;
+                        if (syntaxNodes != null && doc.Blocks.Count > previousBlockCount) {
+                            CaptureSyntaxNodes(doc, previousBlockCount, startLine, lineOffset + i, syntaxNodes);
+                        }
+                        break;
+                    }
+                }
+                if (!matched) i++; // defensive: avoid infinite loop
+            }
+
+            return doc;
+        } finally {
+            state.SourceLineOffset = previousLineOffset;
+        }
     }
 
     private static void PreScanReferenceLinkDefinitions(string[] lines, MarkdownReaderState state) {
@@ -223,6 +248,7 @@ public static partial class MarkdownReader {
     private static MarkdownReaderState CloneState(MarkdownReaderState state) {
         var clone = new MarkdownReaderState();
         foreach (var kvp in state.LinkRefs) clone.LinkRefs[kvp.Key] = kvp.Value;
+        clone.SourceLineOffset = state.SourceLineOffset;
         return clone;
     }
 }

@@ -78,5 +78,102 @@ public class Markdown_Reader_Emphasis_Edge_Tests {
         Assert.Contains("<em>foo<strong>bar</strong>baz</em>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("<em>foo</em><em>bar</em><em>baz</em>", html, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Double_Underscore_At_Start_Can_Degrade_To_Literal_Then_Italic() {
+        var md = "__foo_bar_";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("_<em>foo_bar</em>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("__foo_bar_", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Double_Underscore_At_Start_Can_Degrade_When_Only_Single_Closer_Is_Valid() {
+        var md = "__foo__bar_";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("_<em>foo__bar</em>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("__foo__bar_", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Double_Underscore_Still_Forms_Bold_When_A_Valid_Double_Closer_Exists() {
+        var md = "__foo__ bar_";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<strong>foo</strong> bar_", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("_<em>foo__ bar</em>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Single_Underscore_Inside_Star_Italic_Can_Remain_Literal_When_Outer_Closer_Comes_First() {
+        var md = "*a _b* c_";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em>a _b</em> c_", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("*a <em>b* c</em>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Single_Star_Inside_Underscore_Italic_Can_Remain_Literal_When_Outer_Closer_Comes_First() {
+        var md = "_a *b_ c*";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em>a *b</em> c*", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("_a <em>b_ c</em>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Mixed_Markers_Can_Still_Nest_When_Inner_Closer_Comes_First() {
+        var md = "*a _b_ c*";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em>a <em>b</em> c</em>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Mixed_Markers_Can_Still_Nest_In_Reverse_Order_When_Inner_Closer_Comes_First() {
+        var md = "_a *b* c_";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em>a <em>b</em> c</em>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Double_Star_Inside_Italic_Can_Rebalance_Into_Dual_Italic_When_Single_Close_Comes_First() {
+        var md = "*a **b* c**";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em>a <em><em>b</em> c</em></em>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<em>a **b</em> c**", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Double_Underscore_Inside_Italic_Can_Rebalance_Into_Dual_Italic_When_Single_Close_Comes_First() {
+        var md = "_a __b_ c__";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em>a <em><em>b</em> c</em></em>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<em>a __b</em> c__", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Double_Star_Parent_Bold_With_Inner_Italic_Can_Rebalance_Into_Dual_Italic() {
+        var md = "**a *b** c*";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em><em>a <em>b</em></em> c</em>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<strong>a *b</strong> c*", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Double_Underscore_Parent_Bold_With_Inner_Italic_Can_Rebalance_Into_Dual_Italic() {
+        var md = "__a _b__ c_";
+        var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<em><em>a <em>b</em></em> c</em>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<strong>a _b</strong> c_", html, StringComparison.Ordinal);
+    }
 }
 

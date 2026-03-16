@@ -339,13 +339,27 @@ public static partial class MarkdownReader {
         return i;
     }
 
-    private static List<string> ConsumeListContinuationLines(string[] lines, ref int nextIndex, int itemLevel, string initialContent, MarkdownReaderOptions options) {
+    private static bool IsParagraphInterruptingOrderedListLine(string line) {
+        if (!IsOrderedListLine(line, out _, out int number, out _)) return false;
+        return number == 1;
+    }
+
+    private static bool LastCollectedLinePreservesIndentedContinuation(List<string> collected) {
+        if (collected == null || collected.Count == 0) return false;
+
+        for (int i = collected.Count - 1; i >= 0; i--) {
+            var line = collected[i];
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (!IsOrderedListLine(line, out _, out int number, out _)) return false;
+            return number != 1;
+        }
+
+        return false;
+    }
+
+    private static List<string> ConsumeListContinuationLines(string[] lines, ref int nextIndex, int continuationIndent, string initialContent, MarkdownReaderOptions options) {
         if (lines == null) return new List<string> { initialContent ?? string.Empty };
         if (nextIndex < 0) nextIndex = 0;
-
-        // Heuristic: list item content begins after marker; our parsers model indentation levels as 2 spaces per level.
-        int baseIndent = Math.Max(0, itemLevel) * 2;
-        int continuationIndent = baseIndent + 2;
 
         var collected = new List<string> { initialContent ?? string.Empty };
         int k = nextIndex;
@@ -355,7 +369,7 @@ public static partial class MarkdownReader {
 
             // Stop before the next list item (including nested items).
             if (IsUnorderedListLine(line, out _, out _, out _, out _) ||
-                IsOrderedListLine(line, out _, out _, out _)) {
+                IsParagraphInterruptingOrderedListLine(line)) {
                 break;
             }
 
@@ -374,7 +388,7 @@ public static partial class MarkdownReader {
                 // Indented code block inside list item: continuationIndent + 4 spaces.
                 if (options.IndentedCodeBlocks) {
                     int spacesIndent = CountLeadingSpaces(line);
-                    if (spacesIndent >= continuationIndent + 4) break;
+                    if (spacesIndent >= continuationIndent + 4 && !LastCollectedLinePreservesIndentedContinuation(collected)) break;
                 }
 
                 // Table inside list item: a pipe row followed by an alignment/row.
@@ -547,16 +561,19 @@ public static partial class MarkdownReader {
             }
 
             // Match the top-level quote parser's lazy continuation behavior inside list items too.
-            if (!sawQuotedLine || string.IsNullOrEmpty(lastQuoteContent) || !LooksLikeParagraphLine(lastQuoteContent) || !LooksLikeParagraphLine(part)) break;
+            if (!sawQuotedLine) break;
+            var previousQuoteContent = lastQuoteContent;
+            if (previousQuoteContent == null || previousQuoteContent.Length == 0) break;
+            if (!LooksLikeParagraphLine(previousQuoteContent) || !TryNormalizeQuoteLazyContinuationLine(part, out var normalizedLazyLine)) break;
 
-            collected.Add("> " + part);
-            lastQuoteContent = part;
+            collected.Add("> " + normalizedLazyLine);
+            lastQuoteContent = normalizedLazyLine;
             j++;
         }
 
         if (collected.Count == 0) return false;
 
-        var nested = ParseBlocksFromLines(collected.ToArray(), options, state);
+        var nested = ParseBlocksFromLines(collected.ToArray(), options, state, lineOffset: index);
         if (nested.Count > 0 && nested[0] is QuoteBlock qb) {
             quote = qb;
             index = j;
@@ -596,7 +613,7 @@ public static partial class MarkdownReader {
         }
 
         if (collected.Count == 0) return false;
-        var nested = ParseBlocksFromLines(collected.ToArray(), options, state);
+        var nested = ParseBlocksFromLines(collected.ToArray(), options, state, lineOffset: index);
         if (nested.Count > 0 && nested[0] is TableBlock tb) {
             table = tb;
             index = j;
@@ -645,20 +662,34 @@ public static partial class MarkdownReader {
         return true;
     }
 
-    private static List<IMarkdownBlock> ParseBlocksFromLines(string[] lines, MarkdownReaderOptions options, MarkdownReaderState state) {
+    private static List<IMarkdownBlock> ParseBlocksFromLines(string[] lines, MarkdownReaderOptions options, MarkdownReaderState state, List<MarkdownSyntaxNode>? syntaxNodes = null, int lineOffset = 0) {
         var doc = MarkdownDoc.Create();
         var opt = CloneOptionsWithoutFrontMatter(options);
         var pipeline = MarkdownReaderPipeline.Default(opt);
+        int previousLineOffset = state.SourceLineOffset;
+        state.SourceLineOffset = lineOffset;
 
-        int i = 0;
-        while (i < lines.Length) {
-            if (string.IsNullOrWhiteSpace(lines[i])) { i++; continue; }
-            bool matched = false;
-            var parsers = pipeline.Parsers;
-            for (int p = 0; p < parsers.Count; p++) {
-                if (parsers[p].TryParse(lines, ref i, opt, doc, state)) { matched = true; break; }
+        try {
+            int i = 0;
+            while (i < lines.Length) {
+                if (string.IsNullOrWhiteSpace(lines[i])) { i++; continue; }
+                bool matched = false;
+                var parsers = pipeline.Parsers;
+                int previousBlockCount = doc.Blocks.Count;
+                int startLine = lineOffset + i;
+                for (int p = 0; p < parsers.Count; p++) {
+                    if (parsers[p].TryParse(lines, ref i, opt, doc, state)) {
+                        matched = true;
+                        if (syntaxNodes != null && doc.Blocks.Count > previousBlockCount) {
+                            CaptureSyntaxNodes(doc, previousBlockCount, startLine, lineOffset + i, syntaxNodes);
+                        }
+                        break;
+                    }
+                }
+                if (!matched) i++;
             }
-            if (!matched) i++;
+        } finally {
+            state.SourceLineOffset = previousLineOffset;
         }
 
         return doc.Blocks.ToList();
@@ -701,6 +732,127 @@ public static partial class MarkdownReader {
         return paragraphs;
     }
 
+    private static void AddListItemLeadSyntaxNodes(ListItem item, List<string> lines, int lineOffset, MarkdownReaderOptions options, MarkdownReaderState? state) {
+        if (item == null || lines == null || lines.Count == 0) return;
+        int absoluteLineOffset = (state?.SourceLineOffset ?? 0) + lineOffset;
+
+        if (TryParseSetextHeadingParagraphLines(lines, options, out int level, out string headingText)) {
+            item.SyntaxChildren.Add(new MarkdownSyntaxNode(
+                MarkdownSyntaxKind.Heading,
+                new MarkdownSourceSpan(absoluteLineOffset + 1, absoluteLineOffset + lines.Count),
+                headingText));
+            return;
+        }
+
+        int firstBlank = lines.FindIndex(static line => line.Length == 0);
+        int groupLength = firstBlank >= 0 ? firstBlank : lines.Count;
+        if (groupLength >= 2) {
+            var headingLines = lines.GetRange(0, groupLength);
+            if (TryParseSetextHeadingParagraphLines(headingLines, options, out level, out headingText)) {
+                item.SyntaxChildren.Add(new MarkdownSyntaxNode(
+                    MarkdownSyntaxKind.Heading,
+                    new MarkdownSourceSpan(absoluteLineOffset + 1, absoluteLineOffset + groupLength),
+                    headingText));
+
+                if (firstBlank >= 0 && firstBlank + 1 < lines.Count) {
+                    AddParagraphSyntaxNodes(item.SyntaxChildren, lines.GetRange(firstBlank + 1, lines.Count - firstBlank - 1), absoluteLineOffset + firstBlank + 1, options, state);
+                }
+                return;
+            }
+        }
+
+        AddParagraphSyntaxNodes(item.SyntaxChildren, lines, absoluteLineOffset, options, state);
+    }
+
+    private static void AddParagraphSyntaxNodes(List<MarkdownSyntaxNode> nodes, List<string> lines, int lineOffset, MarkdownReaderOptions options, MarkdownReaderState? state) {
+        if (nodes == null || lines == null || lines.Count == 0) return;
+
+        var current = new List<string>();
+        int currentStart = -1;
+
+        for (int i = 0; i < lines.Count; i++) {
+            var line = lines[i] ?? string.Empty;
+            if (line.Length == 0) {
+                FlushParagraphSyntaxNode(nodes, current, currentStart, i - 1, lineOffset, options, state);
+                current.Clear();
+                currentStart = -1;
+                continue;
+            }
+
+            if (currentStart < 0) currentStart = i;
+            current.Add(line);
+        }
+
+        FlushParagraphSyntaxNode(nodes, current, currentStart, lines.Count - 1, lineOffset, options, state);
+    }
+
+    private static void FlushParagraphSyntaxNode(List<MarkdownSyntaxNode> nodes, List<string> lines, int startIndex, int endIndex, int lineOffset, MarkdownReaderOptions options, MarkdownReaderState? state) {
+        if (nodes == null || lines == null || lines.Count == 0 || startIndex < 0 || endIndex < startIndex) return;
+
+        var literal = ParseInlines(JoinParagraphLines(lines, options), options, state).RenderMarkdown();
+        nodes.Add(new MarkdownSyntaxNode(
+            MarkdownSyntaxKind.Paragraph,
+            new MarkdownSourceSpan(lineOffset + startIndex + 1, lineOffset + endIndex + 1),
+            literal));
+    }
+
+    private static void AddListItemChildSyntaxNode(ListItem item, IMarkdownBlock block, int startLineIndex, int endExclusiveLineIndex, MarkdownReaderState? state) {
+        if (item == null || block == null) return;
+        int absoluteStart = (state?.SourceLineOffset ?? 0) + startLineIndex;
+        int absoluteEndExclusive = (state?.SourceLineOffset ?? 0) + endExclusiveLineIndex;
+        item.SyntaxChildren.Add(BuildSyntaxNode(block, new MarkdownSourceSpan(absoluteStart + 1, Math.Max(absoluteStart + 1, absoluteEndExclusive))));
+    }
+
+    private static bool TryParseListItemLeadSetextBlocks(List<string> lines, MarkdownReaderOptions options, MarkdownReaderState? state, out List<IMarkdownBlock> blocks) {
+        blocks = new List<IMarkdownBlock>();
+        if (lines == null || lines.Count == 0 || options == null || !options.Headings) return false;
+
+        int firstBlank = lines.FindIndex(static line => line.Length == 0);
+        int groupLength = firstBlank >= 0 ? firstBlank : lines.Count;
+        if (groupLength < 2) return false;
+
+        var headingLines = lines.GetRange(0, groupLength);
+        if (!TryParseSetextHeadingParagraphLines(headingLines, options, out int level, out string headingText)) return false;
+
+        blocks.Add(new HeadingBlock(level, headingText));
+
+        if (firstBlank < 0) return true;
+
+        var trailingLines = lines.GetRange(firstBlank + 1, lines.Count - firstBlank - 1);
+        if (trailingLines.TrueForAll(string.IsNullOrWhiteSpace)) return true;
+
+        var paragraphs = ParseParagraphsFromLines(trailingLines, options, state);
+        for (int i = 0; i < paragraphs.Count; i++) {
+            blocks.Add(new ParagraphBlock(paragraphs[i]));
+        }
+
+        return true;
+    }
+
+    private static bool TryParseSetextHeadingParagraphLines(List<string> lines, MarkdownReaderOptions options, out int level, out string headingText) {
+        level = 0;
+        headingText = string.Empty;
+        if (lines == null || lines.Count < 2 || options == null || !options.Headings) return false;
+
+        var underline = lines[lines.Count - 1]?.Trim() ?? string.Empty;
+        if (underline.Length < 3) return false;
+
+        char marker = '\0';
+        for (int i = 0; i < underline.Length; i++) {
+            char ch = underline[i];
+            if (ch != '=' && ch != '-') return false;
+            if (marker == '\0') marker = ch;
+            else if (ch != marker) return false;
+        }
+
+        var contentLines = lines.GetRange(0, lines.Count - 1);
+        if (contentLines.Count == 0 || contentLines.TrueForAll(string.IsNullOrWhiteSpace)) return false;
+
+        level = marker == '=' ? 1 : 2;
+        headingText = JoinParagraphLines(contentLines, options).Trim();
+        return headingText.Length > 0;
+    }
+
     private static string JoinParagraphLines(List<string> lines, MarkdownReaderOptions options) {
         var sb = new StringBuilder();
         bool prevHard = false;
@@ -731,6 +883,7 @@ public static partial class MarkdownReader {
         string[] lines,
         ref int index,
         int itemLevelAbs,
+        int continuationIndent,
         MarkdownReaderOptions options,
         MarkdownReaderState state,
         ListItem item,
@@ -739,27 +892,37 @@ public static partial class MarkdownReader {
 
         if (lines == null || item == null) return;
 
-        int baseIndent = Math.Max(0, itemLevelAbs) * 2;
-        int continuationIndent = baseIndent + 2;
-
         while (index < lines.Length) {
             int k = index;
+            bool sawBlankLine = false;
 
             // Skip blank lines only when they are followed by nested content.
             while (k < lines.Length && string.IsNullOrWhiteSpace(lines[k])) {
+                sawBlankLine = true;
                 int peek = k + 1;
                 if (peek >= lines.Length) return;
                 var next = lines[peek] ?? string.Empty;
-                if (!IsListNestedBlockStart(next, continuationIndent, itemLevelAbs, allowNestedOrdered, allowNestedUnordered, options)) return;
-                k++;
+                if (string.IsNullOrWhiteSpace(next)) {
+                    k = peek;
+                    continue;
+                }
+                if (CountLeadingSpaces(next) < continuationIndent) return;
+                if (!IsListNestedBlockStart(next, continuationIndent, itemLevelAbs, allowNestedOrdered, allowNestedUnordered, options)) {
+                    k = peek;
+                    break;
+                }
+                k = peek;
             }
 
             if (k >= lines.Length) { index = k; return; }
+            if (!sawBlankLine && k > 0 && string.IsNullOrWhiteSpace(lines[k - 1])) sawBlankLine = true;
 
             // Nested fenced code block
             int tmp = k;
             if (TryParseNestedFencedCodeBlock(lines, ref tmp, continuationIndent, options, out var code) && code != null) {
                 item.Children.Add(code);
+                AddListItemChildSyntaxNode(item, code, k, tmp, state);
+                if (sawBlankLine) item.ForceLoose = true;
                 index = tmp;
                 continue;
             }
@@ -768,6 +931,8 @@ public static partial class MarkdownReader {
             tmp = k;
             if (TryParseNestedIndentedCodeBlock(lines, ref tmp, continuationIndent, options, out var indented) && indented != null) {
                 item.Children.Add(indented);
+                AddListItemChildSyntaxNode(item, indented, k, tmp, state);
+                if (sawBlankLine) item.ForceLoose = true;
                 index = tmp;
                 continue;
             }
@@ -776,6 +941,8 @@ public static partial class MarkdownReader {
             tmp = k;
             if (TryParseNestedQuoteBlock(lines, ref tmp, continuationIndent, options, state, out var quote) && quote != null) {
                 item.Children.Add(quote);
+                AddListItemChildSyntaxNode(item, quote, k, tmp, state);
+                if (sawBlankLine) item.ForceLoose = true;
                 index = tmp;
                 continue;
             }
@@ -784,6 +951,8 @@ public static partial class MarkdownReader {
             tmp = k;
             if (TryParseNestedTableBlock(lines, ref tmp, continuationIndent, options, state, out var table) && table != null) {
                 item.Children.Add(table);
+                AddListItemChildSyntaxNode(item, table, k, tmp, state);
+                if (sawBlankLine) item.ForceLoose = true;
                 index = tmp;
                 continue;
             }
@@ -792,6 +961,8 @@ public static partial class MarkdownReader {
             tmp = k;
             if (TryParseNestedHtmlBlock(lines, ref tmp, continuationIndent, options, state, out var htmlBlock) && htmlBlock != null) {
                 item.Children.Add(htmlBlock);
+                AddListItemChildSyntaxNode(item, htmlBlock, k, tmp, state);
+                if (sawBlankLine) item.ForceLoose = true;
                 index = tmp;
                 continue;
             }
@@ -803,6 +974,8 @@ public static partial class MarkdownReader {
                 var parser = new OrderedListParser();
                 if (parser.TryParse(lines, ref idx, options, tempDoc, state) && tempDoc.Blocks.Count == 1 && tempDoc.Blocks[0] is OrderedListBlock ol) {
                     item.Children.Add(ol);
+                    AddListItemChildSyntaxNode(item, ol, k, idx, state);
+                    if (sawBlankLine) item.ForceLoose = true;
                     index = idx;
                     continue;
                 }
@@ -815,15 +988,65 @@ public static partial class MarkdownReader {
                 var parser = new UnorderedListParser();
                 if (parser.TryParse(lines, ref idx, options, tempDoc, state) && tempDoc.Blocks.Count == 1 && tempDoc.Blocks[0] is UnorderedListBlock ul) {
                     item.Children.Add(ul);
+                    AddListItemChildSyntaxNode(item, ul, k, idx, state);
+                    if (sawBlankLine) item.ForceLoose = true;
                     index = idx;
                     continue;
                 }
+            }
+
+            tmp = k;
+            if (TryParseTrailingParagraphsForListItem(lines, ref tmp, itemLevelAbs, continuationIndent, options, state, out var trailingParagraphs, out var trailingSyntaxNodes) && trailingParagraphs.Count > 0) {
+                foreach (var paragraph in trailingParagraphs) {
+                    item.Children.Add(paragraph);
+                }
+                for (int p = 0; p < trailingSyntaxNodes.Count; p++) {
+                    item.SyntaxChildren.Add(trailingSyntaxNodes[p]);
+                }
+                if (sawBlankLine || item.Children.Count > 0) item.ForceLoose = true;
+                index = tmp;
+                continue;
             }
 
             // Nothing nested to consume.
             index = k;
             return;
         }
+    }
+
+    private static bool TryParseTrailingParagraphsForListItem(
+        string[] lines,
+        ref int index,
+        int itemLevelAbs,
+        int continuationIndent,
+        MarkdownReaderOptions options,
+        MarkdownReaderState state,
+        out List<ParagraphBlock> paragraphs,
+        out List<MarkdownSyntaxNode> syntaxNodes) {
+
+        paragraphs = new List<ParagraphBlock>();
+        syntaxNodes = new List<MarkdownSyntaxNode>();
+        if (lines == null || index < 0 || index >= lines.Length) return false;
+
+        string line = lines[index] ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(line)) return false;
+        if (CountLeadingSpaces(line) < continuationIndent) return false;
+        if (IsListNestedBlockStart(line, continuationIndent, itemLevelAbs, allowNestedOrdered: true, allowNestedUnordered: true, options)) return false;
+        if (IsUnorderedListLine(line, out _, out _, out _, out _) || IsOrderedListLine(line, out _, out _, out _)) return false;
+
+        string firstContent = line.Length >= continuationIndent ? line.Substring(continuationIndent) : string.Empty;
+        firstContent = firstContent.TrimStart();
+
+        int next = index + 1;
+        var paragraphLines = ConsumeListContinuationLines(lines, ref next, itemLevelAbs, firstContent, options);
+        var paragraphInlines = ParseParagraphsFromLines(paragraphLines, options, state);
+        for (int i = 0; i < paragraphInlines.Count; i++) {
+            paragraphs.Add(new ParagraphBlock(paragraphInlines[i]));
+        }
+        AddParagraphSyntaxNodes(syntaxNodes, paragraphLines, index, options, state);
+
+        index = next;
+        return paragraphs.Count > 0;
     }
 
     private static bool IsListNestedBlockStart(
@@ -884,12 +1107,70 @@ public static partial class MarkdownReader {
             int pos = line.IndexOf(':', start);
             if (pos < 0) return false;
             if (pos > 0 && pos + 1 < line.Length && line[pos + 1] == ' ') {
-                idx = pos;
-                return true;
+                var term = line.Substring(0, pos).Trim();
+                if (LooksLikeDefinitionTerm(term)) {
+                    idx = pos;
+                    return true;
+                }
             }
             start = pos + 1;
         }
         return false;
+    }
+
+    private static bool LooksLikeDefinitionTerm(string term) {
+        if (string.IsNullOrWhiteSpace(term)) return false;
+        return !ContainsLiteralAutolinkLikeToken(term);
+    }
+
+    private static bool ContainsLiteralAutolinkLikeToken(string text) {
+        foreach (var rawToken in text.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries)) {
+            if (LooksLikeMarkdownLinkToken(rawToken)) continue;
+
+            var token = rawToken
+                .TrimStart('(', '[', '{', '"', '\'')
+                .TrimEnd(')', ']', '}', '"', '\'', '.', ',', ';', '!', '?');
+            if (string.IsNullOrWhiteSpace(token)) continue;
+
+            if (token[0] == '<' &&
+                TryParseAngleAutolink(token, 0, out int angleConsumed, out _, out _) &&
+                angleConsumed == token.Length) {
+                return true;
+            }
+
+            if ((token[0] == 'h' || token[0] == 'H') &&
+                StartsWithHttp(token, 0, out int httpEnd) &&
+                httpEnd == token.Length) {
+                return true;
+            }
+
+            if ((token[0] == 'w' || token[0] == 'W') &&
+                StartsWithWww(token, 0, out int wwwEnd) &&
+                wwwEnd == token.Length) {
+                return true;
+            }
+
+            if (IsEmailStartChar(token[0]) &&
+                TryConsumePlainEmail(token, 0, out int emailEnd, out _) &&
+                emailEnd == token.Length) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeMarkdownLinkToken(string token) {
+        if (string.IsNullOrWhiteSpace(token)) return false;
+
+        int start = token[0] == '!' ? 1 : 0;
+        if (start >= token.Length || token[start] != '[') return false;
+
+        int closeLabel = token.IndexOf(']', start + 1);
+        if (closeLabel < 0 || closeLabel + 1 >= token.Length) return false;
+
+        return (token[closeLabel + 1] == '(' && token[token.Length - 1] == ')') ||
+               (token[closeLabel + 1] == '[' && token[token.Length - 1] == ']');
     }
 
     private static bool IsOrderedListLine(string line, out int number, out string content) {
@@ -965,6 +1246,26 @@ public static partial class MarkdownReader {
         title = t.Substring(close + 1).TrimStart();
         // Title is optional: "> [!NOTE]" is valid and should produce a callout with the default title for the kind.
         return true;
+    }
+
+    private static int GetListContinuationIndent(string line) {
+        if (string.IsNullOrEmpty(line)) return 0;
+
+        int spaces = CountLeadingSpaces(line);
+        int i = spaces;
+        while (i < line.Length && char.IsDigit(line[i])) i++;
+        if (i > spaces && i + 1 < line.Length && (line[i] == '.' || line[i] == ')') && line[i + 1] == ' ') {
+            return i + 2;
+        }
+
+        if (spaces + 1 < line.Length) {
+            char marker = line[spaces];
+            if ((marker == '-' || marker == '*' || marker == '+') && line[spaces + 1] == ' ') {
+                return spaces + 2;
+            }
+        }
+
+        return spaces + 2;
     }
 
     private static Dictionary<string, object?> ParseFrontMatter(string[] lines, int start, int end) {

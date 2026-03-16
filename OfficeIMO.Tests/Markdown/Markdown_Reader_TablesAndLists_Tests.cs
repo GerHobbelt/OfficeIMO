@@ -189,6 +189,42 @@ c | d
         }
 
         [Fact]
+        public void List_Item_Can_Contain_Nested_Unordered_List() {
+            string md = """
+- outer
+  - one
+  - two
+- next
+""";
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Equal(2, list.Items.Count);
+            Assert.Single(list.Items[0].Children);
+            Assert.IsType<UnorderedListBlock>(list.Items[0].Children[0]);
+
+            var html = doc.ToHtmlFragment();
+            Assert.Contains("<li>outer<ul><li>one</li><li>two</li></ul></li>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Ordered_List_Item_Can_Contain_Nested_Ordered_List() {
+            string md = """
+1. outer
+   1. one
+   2. two
+2. next
+""";
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<OrderedListBlock>(doc.Blocks[0]);
+            Assert.Equal(2, list.Items.Count);
+            Assert.Single(list.Items[0].Children);
+            Assert.IsType<OrderedListBlock>(list.Items[0].Children[0]);
+
+            var html = doc.ToHtmlFragment();
+            Assert.Contains("<li>outer<ol><li>one</li><li>two</li></ol></li>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void List_Item_Can_Contain_Nested_Fenced_Code_Block() {
             string md = """
 - outer
@@ -263,10 +299,30 @@ c | d
             Assert.Equal(2, list.Items.Count);
             Assert.Single(list.Items[0].Children);
             Assert.IsType<QuoteBlock>(list.Items[0].Children[0]);
+            Assert.True(list.Items[0].ForceLoose);
 
             var html = doc.ToHtmlFragment();
-            Assert.Contains("<li>outer<blockquote>", html);
+            Assert.Contains("<li><p>outer</p><blockquote>", html, StringComparison.Ordinal);
             Assert.Contains("quote 1", html);
+        }
+
+        [Fact]
+        public void List_Item_Can_Contain_Nested_Unordered_List_After_Nested_Blockquote() {
+            string md = """
+- item
+  > quote
+  continuation
+  - nested
+""";
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+            Assert.Contains(list.Items[0].Children, b => b is QuoteBlock);
+            Assert.Contains(list.Items[0].Children, b => b is UnorderedListBlock);
+
+            var html = doc.ToHtmlFragment();
+            Assert.Contains("<blockquote><p>quote continuation</p></blockquote><ul><li>nested</li></ul>", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("<p>- nested</p>", html, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -341,9 +397,10 @@ c | d
             Assert.Single(list.Items[0].Children);
             var table = Assert.IsType<TableBlock>(list.Items[0].Children[0]);
             Assert.Equal(2, table.Headers.Count);
+            Assert.True(list.Items[0].ForceLoose);
 
             var html = doc.ToHtmlFragment();
-            Assert.Contains("<li>outer<table>", html);
+            Assert.Contains("<li><p>outer</p><table>", html, StringComparison.Ordinal);
             Assert.Contains(">A<", html);
         }
 
@@ -362,10 +419,52 @@ c | d
             Assert.Single(list.Items[0].Children);
             var code = Assert.IsType<CodeBlock>(list.Items[0].Children[0]);
             Assert.Contains("line1", code.Content);
+            Assert.True(list.Items[0].ForceLoose);
 
             var html = doc.ToHtmlFragment();
-            Assert.Contains("<li>outer<pre><code>", html);
+            Assert.Contains("<li><p>outer</p><pre><code>", html, StringComparison.Ordinal);
             Assert.Contains("line1", html);
+        }
+
+        [Fact]
+        public void List_Item_Keeps_Trailing_Paragraph_After_Nested_Blockquote() {
+            string md = """
+- item
+  > quote
+
+  trailing
+""";
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+            Assert.Equal(2, list.Items[0].Children.Count);
+            Assert.IsType<QuoteBlock>(list.Items[0].Children[0]);
+            Assert.IsType<ParagraphBlock>(list.Items[0].Children[1]);
+            Assert.True(list.Items[0].ForceLoose);
+
+            var html = doc.ToHtmlFragment();
+            Assert.Contains("<li><p>item</p><blockquote><p>quote</p></blockquote><p>trailing</p></li>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void List_Item_Keeps_Trailing_Paragraph_After_BlankLine_Separated_Nested_Blockquote() {
+            string md = """
+- item
+
+  > quote
+
+  trailing
+""";
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+            Assert.Equal(2, list.Items[0].Children.Count);
+            Assert.IsType<QuoteBlock>(list.Items[0].Children[0]);
+            Assert.IsType<ParagraphBlock>(list.Items[0].Children[1]);
+            Assert.True(list.Items[0].ForceLoose);
+
+            var html = doc.ToHtmlFragment();
+            Assert.Contains("<li><p>item</p><blockquote><p>quote</p></blockquote><p>trailing</p></li>", html, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -418,6 +517,69 @@ c | d
 
             var html = doc.ToHtmlFragment();
             Assert.Contains("first line second line", html);
+        }
+
+        [Theory]
+        [InlineData("- item\n  heading\n  -------", "<ul><li><h2", ">item heading</h2></li></ul>")]
+        [InlineData("1. item\n   heading\n   -------", "<ol><li><h2", ">item heading</h2></li></ol>")]
+        public void List_Item_Can_Render_Setext_Heading(string md, string expectedPrefix, string expectedSuffix) {
+            var doc = MarkdownReader.Parse(md);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains(expectedPrefix, html, StringComparison.Ordinal);
+            Assert.Contains(expectedSuffix, html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void List_Item_Setext_Heading_Does_Not_Emit_Empty_Paragraphs_Before_Nested_Blocks() {
+            string md = """
+- item
+  heading
+  -------
+
+  > quote
+""";
+            var doc = MarkdownReader.Parse(md);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<li><h2", html, StringComparison.Ordinal);
+            Assert.Contains("<blockquote><p>quote</p></blockquote>", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("<p></p>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void NonOne_Ordered_Marker_Does_Not_Interrupt_List_Item_Paragraph() {
+            string md = """
+- outer
+  10. item
+      continuation
+""";
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+            Assert.Empty(list.Items[0].Children);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<ul><li>outer 10. item continuation</li></ul>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void List_Item_Nested_Blockquote_Keeps_Lazy_NonOne_Ordered_Continuation_As_Paragraph() {
+            string md = """
+- outer
+  > alpha
+  10. beta
+      gamma
+""";
+            var doc = MarkdownReader.Parse(md);
+            var list = Assert.IsType<UnorderedListBlock>(doc.Blocks[0]);
+            Assert.Single(list.Items);
+            var quote = Assert.IsType<QuoteBlock>(list.Items[0].Children[0]);
+
+            var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+            Assert.Contains("<blockquote><p>alpha 10. beta gamma</p></blockquote>", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("<pre><code>", html, StringComparison.Ordinal);
+            Assert.Single(quote.Children);
         }
 
         [Fact]
