@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using OfficeIMO.Markdown;
 using OfficeIMO.MarkdownRenderer;
@@ -189,6 +191,75 @@ public class Markdown_Renderer_Tests {
     }
 
     [Fact]
+    public void MarkdownRenderer_Converts_IxDataview_Fences_To_Static_Table_Html() {
+        var raw = "{\"title\":\"Replication Summary\",\"summary\":\"Latest replication posture\",\"kind\":\"ix_tool_dataview_v1\",\"call_id\":\"call_123\",\"rows\":[[\"Server\",\"Fails\"],[\"AD0\",\"0\"],[\"AD1\",\"1\"]]}";
+        var md = """
+```ix-dataview
+{"title":"Replication Summary","summary":"Latest replication posture","kind":"ix_tool_dataview_v1","call_id":"call_123","rows":[["Server","Fails"],["AD0","0"],["AD1","1"]]}
+```
+""";
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md);
+        var payloadHash = ComputeShortHash(raw);
+
+        Assert.Contains("class=\"omd-visual omd-dataview\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-contract=\"v1\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-kind=\"dataview\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-fence-language=\"ix-dataview\"", html, StringComparison.Ordinal);
+        Assert.Contains($"data-omd-visual-hash=\"{payloadHash}\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-format=\"json\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-encoding=\"base64-utf8\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-config-b64=\"", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"omd-dataview-table\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-ix-title=\"Replication Summary\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-ix-summary=\"Latest replication posture\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-ix-kind=\"ix_tool_dataview_v1\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-ix-call-id=\"call_123\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-ix-column-count=\"2\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-ix-row-count=\"2\"", html, StringComparison.Ordinal);
+        Assert.Contains("<caption>Replication Summary</caption>", html, StringComparison.Ordinal);
+        Assert.Contains("<p class=\"omd-dataview-summary\">Latest replication posture</p>", html, StringComparison.Ordinal);
+        Assert.Contains($"data-ix-payload-hash=\"{payloadHash}\"", html, StringComparison.Ordinal);
+        Assert.Contains("<th>Server</th>", html, StringComparison.Ordinal);
+        Assert.Contains("<th>Fails</th>", html, StringComparison.Ordinal);
+        Assert.Contains("<td>AD0</td>", html, StringComparison.Ordinal);
+        Assert.Contains("<td>1</td>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Converts_IxDataview_Columns_And_Object_Records_To_Static_Table_Html() {
+        var md = """
+```ix-dataview
+{"kind":"ix_tool_dataview_v1","columns":["Server","Fails"],"records":[{"Server":"AD0","Fails":0},{"Server":"AD1","Fails":1}]}
+```
+""";
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md);
+
+        Assert.Contains("class=\"omd-visual omd-dataview\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-omd-visual-kind=\"dataview\"", html, StringComparison.Ordinal);
+        Assert.Contains("<th>Server</th>", html, StringComparison.Ordinal);
+        Assert.Contains("<th>Fails</th>", html, StringComparison.Ordinal);
+        Assert.Contains("<td>AD0</td>", html, StringComparison.Ordinal);
+        Assert.Contains("<td>1</td>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Leaves_Invalid_IxDataview_Fences_As_Code_Blocks() {
+        var md = """
+```ix-dataview
+{ not json
+```
+""";
+
+        var html = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(md);
+
+        Assert.DoesNotContain("class=\"omd-dataview\"", html, StringComparison.Ordinal);
+        Assert.Contains("<pre><code", html, StringComparison.Ordinal);
+        Assert.Contains("{ not json", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MarkdownRenderer_Custom_Fenced_Code_Block_Renderers_Can_Override_BuiltIn_Aliases() {
         var md = "```chart\n{\"type\":\"bar\"}\n```";
         var opts = new MarkdownRendererOptions();
@@ -342,6 +413,91 @@ x^2 + 1
     }
 
     [Fact]
+    public void MarkdownRenderer_Normalizes_RepeatedStrongDelimiterRuns_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeLooseStrongDelimiters = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("- Overall health ****healthy****", opts);
+        Assert.Contains("<strong>healthy</strong>", htmlOut, StringComparison.Ordinal);
+        Assert.DoesNotContain("****healthy****", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_TightArrowAndColonSpacing_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeTightStrongBoundaries = true,
+            NormalizeTightArrowStrongBoundaries = true,
+            NormalizeTightColonSpacing = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("- Signal **Healthy baseline exists now** ->**Why it matters:**missing coverage", opts);
+        Assert.Contains("-&gt; <strong>Why it matters:</strong> missing coverage", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_BrokenStrongArrowLabels_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeBrokenStrongArrowLabels = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("- Signal **No current failures -> **Why it matters:** transport/auth issues", opts);
+        Assert.Contains("<strong>No current failures</strong> -&gt; <strong>Why it matters:</strong> transport/auth issues", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_CompactHeadingAndStrongLabelListBoundaries_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeHeadingListBoundaries = true,
+            NormalizeCompactStrongLabelListBoundaries = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("## Wynik ogólny- **Replication:** wcześniej zdrowa ✅- **FSMO:** technicznie OK", opts);
+        Assert.Contains("<h2", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Wynik og", htmlOut, StringComparison.Ordinal);
+        Assert.Equal(2, Count(htmlOut, "<li"));
+        Assert.Contains("<strong>Replication:</strong>", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<strong>FSMO:</strong>", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_CompactHeadingBoundaries_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeCompactHeadingBoundaries = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("previous shutdown was unexpected### Reason", opts);
+        Assert.Contains("<p>previous shutdown was unexpected</p>", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<h3", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Reason", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_ColonListBoundaries_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeColonListBoundaries = true
+        };
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("Następny najlepszy krok:- **`ad_domain_controller_facts`**", opts);
+        Assert.Contains("<p>Następny najlepszy krok:</p>", htmlOut, StringComparison.Ordinal);
+        Assert.Equal(1, Count(htmlOut, "<li"));
+        Assert.Contains("ad_domain_controller_facts", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_Normalizes_CompactMermaidFenceBodyBoundary_When_Enabled() {
+        var opts = new MarkdownRendererOptions {
+            NormalizeCompactFenceBodyBoundaries = true
+        };
+        opts.Mermaid.Enabled = true;
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("```mermaidflowchart LR A-->B\n```", opts);
+
+        Assert.Contains("class=\"mermaid\"", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("flowchart LR A--&gt;B", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MarkdownRenderer_Normalizes_OrderedListParenCaretAndParentheticalSpacing_When_Enabled() {
         var opts = new MarkdownRendererOptions {
             NormalizeOrderedListParenMarkers = true,
@@ -385,7 +541,7 @@ x^2 + 1
     [Fact]
     public void MarkdownRenderer_ChatStrictPreset_Enables_Text_Normalization() {
         var opts = MarkdownRendererPresets.CreateChatStrictMinimal();
-        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("**Status\nHEALTHY**\n\n`a\nb`\n\nUse \\`/act act_001\\`.\n\nStatus **Healthy**next\n\ncheck ** LDAP/Kerberos health on all DCs** next\n\n- Signal **Current comparison used **System** log only.**\n\n1) First check\n2.^ **Delegation risk audit**\n3. **Deleted object remnants**(SID left in ACL path)\n\nCommand: `Get-ADUser(SIDHistory)`", opts);
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("**Status\nHEALTHY**\n\n`a\nb`\n\nUse \\`/act act_001\\`.\n\nStatus **Healthy**next\n\ncheck ** LDAP/Kerberos health on all DCs** next\n\n- Signal **Current comparison used **System** log only.**\n- Signal **Healthy baseline exists now** ->**Why it matters:**missing coverage\n- Signal **No current failures -> **Why it matters:** transport/auth issues\n\n## Wynik ogólny- **Replication:** wcześniej zdrowa ✅- **FSMO:** technicznie OK\n\nprevious shutdown was unexpected### Reason\n\nNastępny najlepszy krok:- **`ad_domain_controller_facts`**\n\n1) First check\n2.^ **Delegation risk audit**\n3. **Deleted object remnants**(SID left in ACL path)\n\nCommand: `Get-ADUser(SIDHistory)`", opts);
 
         Assert.Contains("Status HEALTHY", htmlOut, StringComparison.Ordinal);
         Assert.Contains("a b", htmlOut, StringComparison.Ordinal);
@@ -393,12 +549,32 @@ x^2 + 1
         Assert.Contains("<strong>Healthy</strong> next", htmlOut, StringComparison.Ordinal);
         Assert.Contains("<strong>LDAP/Kerberos health on all DCs</strong> next", htmlOut, StringComparison.Ordinal);
         Assert.Contains("Current comparison used System log only.", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("-&gt; <strong>Why it matters:</strong> missing coverage", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<strong>No current failures</strong> -&gt; <strong>Why it matters:</strong> transport/auth issues", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<h2", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Wynik og", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<strong>Replication:</strong>", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<strong>FSMO:</strong>", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("<h3", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Reason", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("Następny najlepszy krok:", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("ad_domain_controller_facts", htmlOut, StringComparison.Ordinal);
         Assert.Contains("<li>First check</li>", htmlOut, StringComparison.Ordinal);
         Assert.Contains("<strong>Delegation risk audit</strong>", htmlOut, StringComparison.Ordinal);
         Assert.Contains("<strong>Deleted object remnants</strong> (SID left in ACL path)", htmlOut, StringComparison.Ordinal);
         Assert.Contains("<code>Get-ADUser(SIDHistory)</code>", htmlOut, StringComparison.Ordinal);
         Assert.DoesNotContain("<code>Get-ADUser (SIDHistory)</code>", htmlOut, StringComparison.Ordinal);
         Assert.DoesNotContain("used **System** log only.**", htmlOut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_ChatStrictPreset_Normalizes_CompactMermaidFenceBodies() {
+        var opts = MarkdownRendererPresets.CreateChatStrict();
+
+        var htmlOut = MarkdownRenderer.MarkdownRenderer.RenderBodyHtml("```mermaidflowchart LR A-->B\n```", opts);
+
+        Assert.Contains("class=\"mermaid\"", htmlOut, StringComparison.Ordinal);
+        Assert.Contains("flowchart LR", htmlOut, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -509,5 +685,20 @@ Top-IDs:
         var encoded = html.Substring(start, end - start);
         var bytes = Convert.FromBase64String(System.Net.WebUtility.HtmlDecode(encoded));
         return Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n');
+    }
+
+    private static string ComputeShortHash(string input) {
+        var data = Encoding.UTF8.GetBytes(input ?? string.Empty);
+        byte[] hash;
+        using (var sha = SHA256.Create()) {
+            hash = sha.ComputeHash(data);
+        }
+
+        var sb = new StringBuilder(16);
+        for (int i = 0; i < 8 && i < hash.Length; i++) {
+            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+        }
+
+        return sb.ToString();
     }
 }

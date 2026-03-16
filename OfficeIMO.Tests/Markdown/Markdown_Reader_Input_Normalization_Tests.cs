@@ -75,6 +75,20 @@ public class Markdown_Reader_Input_Normalization_Tests {
     }
 
     [Fact]
+    public void Reader_Can_Normalize_BrokenStrongArrowLabels_BeforeParsing() {
+        var options = new MarkdownReaderOptions {
+            InputNormalization = new MarkdownInputNormalizationOptions {
+                NormalizeBrokenStrongArrowLabels = true
+            }
+        };
+
+        var html = MarkdownReader.Parse("- Signal **No current failures -> **Why it matters:** transport/auth issues", options)
+            .ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<strong>No current failures</strong> -&gt; <strong>Why it matters:</strong> transport/auth issues", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Reader_Can_Normalize_TightColonSpacing_Via_Ast() {
         var options = new MarkdownReaderOptions {
             InputNormalization = new MarkdownInputNormalizationOptions {
@@ -86,6 +100,72 @@ public class Markdown_Reader_Input_Normalization_Tests {
             .ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
 
         Assert.Contains("Why it matters: missing evidence", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reader_Can_Normalize_CompactHeadingAndStrongLabelListBoundaries_BeforeParsing() {
+        var options = new MarkdownReaderOptions {
+            InputNormalization = new MarkdownInputNormalizationOptions {
+                NormalizeHeadingListBoundaries = true,
+                NormalizeCompactStrongLabelListBoundaries = true
+            }
+        };
+
+        var html = MarkdownReader.Parse("## Wynik ogólny- **Replication:** wcześniej zdrowa ✅- **FSMO:** technicznie OK", options)
+            .ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<h2", html, StringComparison.Ordinal);
+        Assert.Contains("Wynik og", html, StringComparison.Ordinal);
+        Assert.Equal(2, Count(html, "<li"));
+        Assert.Contains("<strong>Replication:</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>FSMO:</strong>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reader_Can_Normalize_CompactHeadingBoundaries_BeforeParsing() {
+        var options = new MarkdownReaderOptions {
+            InputNormalization = new MarkdownInputNormalizationOptions {
+                NormalizeCompactHeadingBoundaries = true
+            }
+        };
+
+        var html = MarkdownReader.Parse("previous shutdown was unexpected### Reason", options)
+            .ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<p>previous shutdown was unexpected</p>", html, StringComparison.Ordinal);
+        Assert.Contains("<h3", html, StringComparison.Ordinal);
+        Assert.Contains("Reason", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reader_Can_Normalize_ColonListBoundaries_BeforeParsing() {
+        var options = new MarkdownReaderOptions {
+            InputNormalization = new MarkdownInputNormalizationOptions {
+                NormalizeColonListBoundaries = true
+            }
+        };
+
+        var html = MarkdownReader.Parse("Następny najlepszy krok:- **`ad_domain_controller_facts`**", options)
+            .ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<p>Następny najlepszy krok:</p>", html, StringComparison.Ordinal);
+        Assert.Equal(1, Count(html, "<li"));
+        Assert.Contains("ad_domain_controller_facts", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reader_Can_Normalize_CompactMermaidFenceBodyBoundary_BeforeParsing() {
+        var options = new MarkdownReaderOptions {
+            InputNormalization = new MarkdownInputNormalizationOptions {
+                NormalizeCompactFenceBodyBoundaries = true
+            }
+        };
+
+        var markdown = MarkdownReader.Parse("```mermaidflowchart LR A-->B\n```", options)
+            .ToMarkdown()
+            .Replace("\r\n", "\n");
+
+        Assert.Contains("```mermaid\nflowchart LR A-->B\n```", markdown, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -115,6 +195,21 @@ public class Markdown_Reader_Input_Normalization_Tests {
 
         Assert.Contains("<strong>LDAP/Kerberos health on all DCs</strong> next", html, StringComparison.Ordinal);
         Assert.DoesNotContain("** LDAP/Kerberos health on all DCs**", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reader_Can_Normalize_RepeatedStrongDelimiterRuns_BeforeParsing() {
+        var options = new MarkdownReaderOptions {
+            InputNormalization = new MarkdownInputNormalizationOptions {
+                NormalizeLooseStrongDelimiters = true
+            }
+        };
+
+        var html = MarkdownReader.Parse("- Overall health ****healthy****", options)
+            .ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
+
+        Assert.Contains("<strong>healthy</strong>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("****healthy****", html, StringComparison.Ordinal);
     }
 
     [Fact]

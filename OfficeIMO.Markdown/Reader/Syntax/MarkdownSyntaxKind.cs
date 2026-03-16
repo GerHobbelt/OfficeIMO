@@ -8,6 +8,10 @@ public enum MarkdownSyntaxKind {
     Document,
     /// <summary>ATX or Setext heading block.</summary>
     Heading,
+    /// <summary>Heading level metadata.</summary>
+    HeadingLevel,
+    /// <summary>Heading text payload.</summary>
+    HeadingText,
     /// <summary>Paragraph block.</summary>
     Paragraph,
     /// <summary>Blockquote block.</summary>
@@ -20,18 +24,36 @@ public enum MarkdownSyntaxKind {
     ListItem,
     /// <summary>Fenced or indented code block.</summary>
     CodeBlock,
+    /// <summary>Fenced code block info string / language hint.</summary>
+    CodeFenceInfo,
+    /// <summary>Code block content payload.</summary>
+    CodeContent,
     /// <summary>Markdown table block.</summary>
     Table,
+    /// <summary>Header row inside a markdown table.</summary>
+    TableHeader,
+    /// <summary>Body row inside a markdown table.</summary>
+    TableRow,
     /// <summary>Horizontal rule block.</summary>
     HorizontalRule,
     /// <summary>Image block.</summary>
     Image,
+    /// <summary>Image alternative text.</summary>
+    ImageAlt,
+    /// <summary>Image source path or URL.</summary>
+    ImageSource,
+    /// <summary>Image title attribute.</summary>
+    ImageTitle,
     /// <summary>Callout or admonition block.</summary>
     Callout,
     /// <summary>Definition list block.</summary>
     DefinitionList,
     /// <summary>Single definition list item.</summary>
     DefinitionItem,
+    /// <summary>Definition list term node.</summary>
+    DefinitionTerm,
+    /// <summary>Definition list definition/content node.</summary>
+    DefinitionValue,
     /// <summary>Footnote definition block.</summary>
     FootnoteDefinition,
     /// <summary>Details/disclosure block.</summary>

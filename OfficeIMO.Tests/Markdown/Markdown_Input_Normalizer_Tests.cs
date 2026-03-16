@@ -63,6 +63,73 @@ public class Markdown_Input_Normalizer_Tests {
     }
 
     [Fact]
+    public void Normalize_BrokenStrongArrowLabels_WhenEnabled() {
+        var options = new MarkdownInputNormalizationOptions {
+            NormalizeBrokenStrongArrowLabels = true
+        };
+
+        var normalized = MarkdownInputNormalizer.Normalize("- Signal **No current failures -> **Why it matters:** transport/auth issues", options);
+        Assert.Equal("- Signal **No current failures** -> **Why it matters:** transport/auth issues", normalized);
+    }
+
+    [Fact]
+    public void Normalize_CompactHeadingAndStrongLabelListBoundaries_WhenEnabled() {
+        var options = new MarkdownInputNormalizationOptions {
+            NormalizeHeadingListBoundaries = true,
+            NormalizeCompactStrongLabelListBoundaries = true
+        };
+
+        var markdown = "## Wynik ogólny- **Replication:** wcześniej zdrowa ✅- **FSMO:** technicznie OK";
+        var normalized = MarkdownInputNormalizer.Normalize(markdown, options);
+
+        Assert.Equal("## Wynik ogólny\n- **Replication:** wcześniej zdrowa ✅\n- **FSMO:** technicznie OK", normalized);
+    }
+
+    [Fact]
+    public void Normalize_CompactHeadingBoundaries_WhenEnabled() {
+        var options = new MarkdownInputNormalizationOptions {
+            NormalizeCompactHeadingBoundaries = true
+        };
+
+        var normalized = MarkdownInputNormalizer.Normalize("previous shutdown was unexpected### Reason", options);
+        Assert.Equal("previous shutdown was unexpected\n### Reason", normalized);
+    }
+
+    [Fact]
+    public void Normalize_ColonListBoundaries_WhenEnabled() {
+        var options = new MarkdownInputNormalizationOptions {
+            NormalizeColonListBoundaries = true
+        };
+
+        var normalized = MarkdownInputNormalizer.Normalize("Następny najlepszy krok:- **`ad_domain_controller_facts`**", options);
+        Assert.Equal("Następny najlepszy krok:\n- **`ad_domain_controller_facts`**", normalized);
+    }
+
+    [Fact]
+    public void Normalize_CompactJsonFenceBodyBoundary_WhenEnabled() {
+        var options = new MarkdownInputNormalizationOptions {
+            NormalizeCompactFenceBodyBoundaries = true
+        };
+
+        var markdown = "```json{\"log_name\":\"System\"}\n```";
+        var normalized = MarkdownInputNormalizer.Normalize(markdown, options);
+
+        Assert.Equal("```json\n{\"log_name\":\"System\"}\n```", normalized);
+    }
+
+    [Fact]
+    public void Normalize_CompactMermaidFenceBodyBoundary_WhenEnabled() {
+        var options = new MarkdownInputNormalizationOptions {
+            NormalizeCompactFenceBodyBoundaries = true
+        };
+
+        var markdown = "```mermaidflowchart LR A-->B\n```";
+        var normalized = MarkdownInputNormalizer.Normalize(markdown, options);
+
+        Assert.Equal("```mermaid\nflowchart LR A-->B\n```", normalized);
+    }
+
+    [Fact]
     public void Normalize_LooseStrongDelimiters_WhenEnabled() {
         var options = new MarkdownInputNormalizationOptions {
             NormalizeLooseStrongDelimiters = true
@@ -70,6 +137,16 @@ public class Markdown_Input_Normalizer_Tests {
 
         var normalized = MarkdownInputNormalizer.Normalize("check ** LDAP/Kerberos health on all DCs** and **unresolved privileged SID targets ** now", options);
         Assert.Equal("check **LDAP/Kerberos health on all DCs** and **unresolved privileged SID targets** now", normalized);
+    }
+
+    [Fact]
+    public void Normalize_RepeatedStrongDelimiterRuns_WhenEnabled() {
+        var options = new MarkdownInputNormalizationOptions {
+            NormalizeLooseStrongDelimiters = true
+        };
+
+        var normalized = MarkdownInputNormalizer.Normalize("- Overall health ****healthy****", options);
+        Assert.Equal("- Overall health **healthy**", normalized);
     }
 
     [Fact]
@@ -89,7 +166,13 @@ public class Markdown_Input_Normalizer_Tests {
         var options = new MarkdownInputNormalizationOptions {
             NormalizeEscapedInlineCodeSpans = true,
             NormalizeTightStrongBoundaries = true,
-            NormalizeTightArrowStrongBoundaries = true
+            NormalizeTightArrowStrongBoundaries = true,
+            NormalizeBrokenStrongArrowLabels = true,
+            NormalizeHeadingListBoundaries = true,
+            NormalizeCompactStrongLabelListBoundaries = true,
+            NormalizeCompactHeadingBoundaries = true,
+            NormalizeColonListBoundaries = true,
+            NormalizeCompactFenceBodyBoundaries = true
         };
 
         var markdown = """
@@ -97,6 +180,10 @@ public class Markdown_Input_Normalizer_Tests {
 Use \`/act act_001\`
 Status **Healthy**next
 Signal ->**Why it matters:**coverage
+- Signal **No current failures -> **Why it matters:** transport/auth issues
+## Wynik ogólny- **Replication:** wcześniej zdrowa ✅- **FSMO:** technicznie OK
+unexpected### Reason
+Następny najlepszy krok:- **`ad_domain_controller_facts`**
 ```
 """;
 

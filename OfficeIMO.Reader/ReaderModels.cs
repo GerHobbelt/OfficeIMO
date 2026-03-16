@@ -1,3 +1,4 @@
+using OfficeIMO.Markdown;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -129,6 +130,11 @@ public sealed class ReaderChunk {
     public IReadOnlyList<ReaderTable>? Tables { get; set; }
 
     /// <summary>
+    /// Optional structured visual fence metadata extracted from this chunk.
+    /// </summary>
+    public IReadOnlyList<ReaderVisual>? Visuals { get; set; }
+
+    /// <summary>
     /// Optional warnings about truncation or unsupported content.
     /// </summary>
     public IReadOnlyList<string>? Warnings { get; set; }
@@ -226,6 +232,26 @@ public sealed class ReaderTable {
     public string? Title { get; set; }
 
     /// <summary>
+    /// Optional source-specific table kind/classification.
+    /// </summary>
+    public string? Kind { get; set; }
+
+    /// <summary>
+    /// Optional source-specific call or correlation identifier.
+    /// </summary>
+    public string? CallId { get; set; }
+
+    /// <summary>
+    /// Optional short descriptive summary.
+    /// </summary>
+    public string? Summary { get; set; }
+
+    /// <summary>
+    /// Optional stable short hash derived from the source payload.
+    /// </summary>
+    public string? PayloadHash { get; set; }
+
+    /// <summary>
     /// Column headers.
     /// </summary>
     public IReadOnlyList<string> Columns { get; set; } = Array.Empty<string>();
@@ -244,6 +270,31 @@ public sealed class ReaderTable {
     /// True when <see cref="Rows"/> was truncated compared to <see cref="TotalRowCount"/>.
     /// </summary>
     public bool Truncated { get; set; }
+}
+
+/// <summary>
+/// Minimal visual fence model for ingestion (kind + original language + payload).
+/// </summary>
+public sealed class ReaderVisual {
+    /// <summary>
+    /// Normalized visual kind (for example: "mermaid", "chart", or "network").
+    /// </summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Original fenced-code language label from markdown (for example: "ix-chart").
+    /// </summary>
+    public string Language { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Raw visual payload/content from inside the fenced block.
+    /// </summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional stable short hash derived from <see cref="Content"/>.
+    /// </summary>
+    public string? PayloadHash { get; set; }
 }
 
 /// <summary>
@@ -612,6 +663,12 @@ public sealed class ReaderOptions {
     /// Markdown: when true, chunk by headings where possible. Default: true.
     /// </summary>
     public bool MarkdownChunkByHeadings { get; set; } = true;
+
+    /// <summary>
+    /// Markdown: optional input normalization applied before parser-aware chunking.
+    /// This is intended for compact AI/chat markdown fixes while preserving default strict behavior when null.
+    /// </summary>
+    public MarkdownInputNormalizationOptions? MarkdownInputNormalization { get; set; }
 
     /// <summary>
     /// When true, computes source/chunk hashes for incremental indexing workflows. Default: true.

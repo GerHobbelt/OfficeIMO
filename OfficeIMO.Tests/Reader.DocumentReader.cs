@@ -1,11 +1,15 @@
 using OfficeIMO.Excel;
+using OfficeIMO.Markdown;
 using OfficeIMO.Pdf;
 using OfficeIMO.PowerPoint;
 using OfficeIMO.Reader;
 using OfficeIMO.Word;
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Xunit;
 
 namespace OfficeIMO.Tests;
@@ -88,7 +92,15 @@ public sealed class ReaderDocumentReaderTests {
             var chunks = DocumentReader.Read(fs, "Notes.md").ToList();
             Assert.True(chunks.Count >= 2);
             Assert.Contains(chunks, c => c.Kind == ReaderInputKind.Markdown && (c.Location.HeadingPath?.Contains("Top", StringComparison.Ordinal) ?? false));
-            Assert.All(chunks.Where(static c => c.Kind == ReaderInputKind.Markdown), c => Assert.Null(c.Location.StartLine));
+            var markdownChunks = chunks.Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+            Assert.Collection(
+                markdownChunks.Select(c => c.Location.StartLine),
+                line => Assert.Equal(1, line),
+                line => Assert.Equal(5, line));
+            Assert.Collection(
+                markdownChunks.Select(c => c.Location.EndLine),
+                line => Assert.Equal(3, line),
+                line => Assert.Equal(7, line));
         } finally {
             if (File.Exists(path)) File.Delete(path);
         }
@@ -198,6 +210,170 @@ public sealed class ReaderDocumentReaderTests {
     }
 
     [Fact]
+    public void DocumentReader_MarkdownChunking_ExtractsIxDataViewTables() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        var raw = "{\"title\":\"Replication Summary\",\"summary\":\"Latest replication posture\",\"kind\":\"ix_tool_dataview_v1\",\"call_id\":\"call_123\",\"rows\":[[\"Server\",\"Fails\"],[\"AD0\",\"0\"],[\"AD1\",\"1\"]]}";
+        try {
+            File.WriteAllText(path,
+                "# Visual\n\n```ix-dataview\n" + raw + "\n```\n");
+
+            var chunk = DocumentReader.Read(path).Single(c => c.Kind == ReaderInputKind.Markdown && (c.Tables?.Count ?? 0) > 0);
+
+            Assert.Equal("Visual", chunk.Location.HeadingPath);
+            Assert.NotNull(chunk.Tables);
+            Assert.Single(chunk.Tables!);
+            Assert.Equal("Replication Summary", chunk.Tables![0].Title);
+            Assert.Equal("ix_tool_dataview_v1", chunk.Tables[0].Kind);
+            Assert.Equal("call_123", chunk.Tables[0].CallId);
+            Assert.Equal("Latest replication posture", chunk.Tables[0].Summary);
+            Assert.Equal(ComputeShortHash(raw), chunk.Tables[0].PayloadHash);
+            Assert.Equal(new[] { "Server", "Fails" }, chunk.Tables[0].Columns);
+            Assert.Equal(2, chunk.Tables[0].TotalRowCount);
+            Assert.Equal("AD0", chunk.Tables[0].Rows[0][0]);
+            Assert.Equal("1", chunk.Tables[0].Rows[1][1]);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_ExtractsVisualFenceMetadata() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        var mermaid = "graph TD\nA --> B";
+        var chart = "{\"type\":\"bar\",\"data\":{\"labels\":[\"A\"],\"datasets\":[{\"data\":[1]}]}}";
+        var network = "{\"nodes\":[{\"id\":1,\"label\":\"AD0\"}],\"edges\":[]}";
+        try {
+            File.WriteAllText(path,
+                "# Visuals\n\n```mermaid\n" + mermaid + "\n```\n\n```ix-chart\n" + chart + "\n```\n\n```ix-network\n" + network + "\n```\n");
+
+            var chunk = DocumentReader.Read(path)
+                .Single(c => c.Kind == ReaderInputKind.Markdown && (c.Visuals?.Count ?? 0) > 0);
+
+            Assert.Equal("Visuals", chunk.Location.HeadingPath);
+            Assert.NotNull(chunk.Visuals);
+            Assert.Equal(3, chunk.Visuals!.Count);
+
+            Assert.Equal("mermaid", chunk.Visuals[0].Kind);
+            Assert.Equal("mermaid", chunk.Visuals[0].Language);
+            Assert.Equal(ComputeShortHash(chunk.Visuals[0].Content), chunk.Visuals[0].PayloadHash);
+            Assert.Contains("graph TD", chunk.Visuals[0].Content, StringComparison.Ordinal);
+            Assert.Contains("A --> B", chunk.Visuals[0].Content, StringComparison.Ordinal);
+
+            Assert.Equal("chart", chunk.Visuals[1].Kind);
+            Assert.Equal("ix-chart", chunk.Visuals[1].Language);
+            Assert.Equal(ComputeShortHash(chunk.Visuals[1].Content), chunk.Visuals[1].PayloadHash);
+            Assert.Contains("\"type\":\"bar\"", chunk.Visuals[1].Content, StringComparison.Ordinal);
+
+            Assert.Equal("network", chunk.Visuals[2].Kind);
+            Assert.Equal("ix-network", chunk.Visuals[2].Language);
+            Assert.Equal(ComputeShortHash(chunk.Visuals[2].Content), chunk.Visuals[2].PayloadHash);
+            Assert.Contains("\"label\":\"AD0\"", chunk.Visuals[2].Content, StringComparison.Ordinal);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_DoesNotDuplicateIxDataViewAsVisualMetadata() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Visual\n\n```ix-dataview\n{\"rows\":[[\"Server\",\"Fails\"],[\"AD0\",\"0\"]]}\n```\n");
+
+            var chunk = DocumentReader.Read(path)
+                .Single(c => c.Kind == ReaderInputKind.Markdown && (c.Tables?.Count ?? 0) > 0);
+
+            Assert.NotNull(chunk.Tables);
+            Assert.Null(chunk.Visuals);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    private static string ComputeShortHash(string input) {
+        var normalized = (input ?? string.Empty).TrimEnd('\r', '\n');
+        var data = Encoding.UTF8.GetBytes(normalized);
+        byte[] hash;
+        using (var sha = SHA256.Create()) {
+            hash = sha.ComputeHash(data);
+        }
+
+        var sb = new StringBuilder(16);
+        for (int i = 0; i < 8 && i < hash.Length; i++) {
+            sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+        }
+
+        return sb.ToString();
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_ExtractsIxDataViewColumnsAndObjectRecords() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Visual\n\n```ix-dataview\n{\"kind\":\"ix_tool_dataview_v1\",\"columns\":[\"Server\",\"Fails\"],\"records\":[{\"Server\":\"AD0\",\"Fails\":0},{\"Server\":\"AD1\",\"Fails\":1}]}\n```\n");
+
+            var chunk = DocumentReader.Read(path).Single(c => c.Kind == ReaderInputKind.Markdown && (c.Tables?.Count ?? 0) > 0);
+
+            Assert.NotNull(chunk.Tables);
+            Assert.Single(chunk.Tables!);
+            Assert.Equal("ix_tool_dataview_v1", chunk.Tables![0].Title);
+            Assert.Equal(new[] { "Server", "Fails" }, chunk.Tables[0].Columns);
+            Assert.Equal(2, chunk.Tables[0].TotalRowCount);
+            Assert.Equal("AD0", chunk.Tables[0].Rows[0][0]);
+            Assert.Equal("1", chunk.Tables[0].Rows[1][1]);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_RespectsIxDataViewRowCaps() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Visual\n\n```ix-dataview\n{\"rows\":[[\"Server\",\"Fails\"],[\"AD0\",\"0\"],[\"AD1\",\"1\"],[\"AD2\",\"2\"]]}\n```\n");
+
+            var chunk = DocumentReader.Read(path, new ReaderOptions { MaxTableRows = 2 })
+                .Single(c => c.Kind == ReaderInputKind.Markdown && (c.Tables?.Count ?? 0) > 0);
+
+            Assert.NotNull(chunk.Tables);
+            Assert.Single(chunk.Tables!);
+            Assert.Equal(new[] { "Server", "Fails" }, chunk.Tables![0].Columns);
+            Assert.Equal(3, chunk.Tables[0].TotalRowCount);
+            Assert.True(chunk.Tables[0].Truncated);
+            Assert.Equal(2, chunk.Tables[0].Rows.Count);
+            Assert.Equal("AD0", chunk.Tables[0].Rows[0][0]);
+            Assert.Equal("1", chunk.Tables[0].Rows[1][1]);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_CanNormalize_CompactIxDataViewFenceBodies() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path,
+                "# Visual\n\n```ix-dataview{\"kind\":\"ix_tool_dataview_v1\",\"rows\":[[\"Server\",\"Fails\"],[\"AD0\",\"0\"]]}\n```\n");
+
+            var chunk = DocumentReader.Read(path, new ReaderOptions {
+                MarkdownInputNormalization = new MarkdownInputNormalizationOptions {
+                    NormalizeCompactFenceBodyBoundaries = true
+                }
+            }).Single(c => c.Kind == ReaderInputKind.Markdown && (c.Tables?.Count ?? 0) > 0);
+
+            Assert.NotNull(chunk.Tables);
+            Assert.Single(chunk.Tables!);
+            Assert.Equal("ix_tool_dataview_v1", chunk.Tables![0].Title);
+            Assert.Equal(new[] { "Server", "Fails" }, chunk.Tables[0].Columns);
+            Assert.Equal("AD0", chunk.Tables[0].Rows[0][0]);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void DocumentReader_MarkdownChunking_EmitsLineRangesAndBlockKinds() {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
         try {
@@ -207,8 +383,8 @@ public sealed class ReaderDocumentReaderTests {
             var chunks = DocumentReader.Read(path).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
 
             var topChunk = chunks.Single(c => string.Equals(c.Location.HeadingPath, "Top", StringComparison.Ordinal));
-            Assert.Null(topChunk.Location.StartLine);
-            Assert.Null(topChunk.Location.EndLine);
+            Assert.Equal(1, topChunk.Location.StartLine);
+            Assert.Equal(3, topChunk.Location.EndLine);
             Assert.Equal(1, topChunk.Location.NormalizedStartLine);
             Assert.Equal(3, topChunk.Location.NormalizedEndLine);
             Assert.Equal("top", topChunk.Location.HeadingSlug);
@@ -217,14 +393,97 @@ public sealed class ReaderDocumentReaderTests {
             Assert.Equal(0, topChunk.Location.SourceBlockIndex);
 
             var childChunk = chunks.Single(c => string.Equals(c.Location.HeadingPath, "Top > Child", StringComparison.Ordinal));
-            Assert.Null(childChunk.Location.StartLine);
-            Assert.Null(childChunk.Location.EndLine);
+            Assert.Equal(5, childChunk.Location.StartLine);
+            Assert.Equal(7, childChunk.Location.EndLine);
             Assert.Equal(5, childChunk.Location.NormalizedStartLine);
             Assert.Equal(7, childChunk.Location.NormalizedEndLine);
             Assert.Equal("child", childChunk.Location.HeadingSlug);
             Assert.Equal("heading", childChunk.Location.SourceBlockKind);
             Assert.Equal("child", childChunk.Location.BlockAnchor);
             Assert.Equal(2, childChunk.Location.SourceBlockIndex);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_CanApply_InputNormalization() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path, "## Wynik ogólny- **Replication:** wcześniej zdrowa ✅- **FSMO:** technicznie OK");
+
+            var chunks = DocumentReader.Read(path, new ReaderOptions {
+                MarkdownInputNormalization = new MarkdownInputNormalizationOptions {
+                    NormalizeHeadingListBoundaries = true,
+                    NormalizeCompactStrongLabelListBoundaries = true
+                }
+            }).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            var chunk = Assert.Single(chunks);
+            Assert.Equal("Wynik ogólny", chunk.Location.HeadingPath);
+            Assert.Contains("## Wynik ogólny", chunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("- **Replication:**", chunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("- **FSMO:**", chunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_CanRepair_BrokenStrongArrowLabels() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path, "# Summary\n\n- Signal **No current failures -> **Why it matters:** transport/auth issues");
+
+            var chunk = DocumentReader.Read(path, new ReaderOptions {
+                MarkdownInputNormalization = new MarkdownInputNormalizationOptions {
+                    NormalizeBrokenStrongArrowLabels = true
+                }
+            }).Single(c => c.Kind == ReaderInputKind.Markdown);
+
+            Assert.Contains("**No current failures** -> **Why it matters:**", chunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_CanNormalize_RepeatedStrongDelimiterRuns() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path, "# Summary\n\n- Overall health ****healthy****");
+
+            var chunk = DocumentReader.Read(path, new ReaderOptions {
+                MarkdownInputNormalization = new MarkdownInputNormalizationOptions {
+                    NormalizeLooseStrongDelimiters = true
+                }
+            }).Single(c => c.Kind == ReaderInputKind.Markdown);
+
+            Assert.Contains("**healthy**", chunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("****healthy****", chunk.Markdown ?? string.Empty, StringComparison.Ordinal);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DocumentReader_MarkdownChunking_CanApply_BlockBoundaryNormalization() {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".md");
+        try {
+            File.WriteAllText(path, "previous shutdown was unexpected### Reason- **Unplanned / unexpected reboot**");
+
+            var chunks = DocumentReader.Read(path, new ReaderOptions {
+                MarkdownInputNormalization = new MarkdownInputNormalizationOptions {
+                    NormalizeCompactHeadingBoundaries = true,
+                    NormalizeHeadingListBoundaries = true,
+                    NormalizeCompactStrongLabelListBoundaries = true
+                }
+            }).Where(static c => c.Kind == ReaderInputKind.Markdown).ToList();
+
+            Assert.Equal(2, chunks.Count);
+            Assert.Equal("Reason", chunks[1].Location.HeadingPath);
+            Assert.Contains("### Reason", chunks[1].Markdown ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("- **Unplanned / unexpected reboot**", chunks[1].Markdown ?? string.Empty, StringComparison.Ordinal);
         } finally {
             if (File.Exists(path)) File.Delete(path);
         }

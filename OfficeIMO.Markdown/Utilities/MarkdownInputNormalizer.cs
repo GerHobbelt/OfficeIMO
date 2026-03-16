@@ -41,12 +41,60 @@ public sealed class MarkdownInputNormalizationOptions {
     public bool NormalizeTightArrowStrongBoundaries { get; set; } = false;
 
     /// <summary>
+    /// When true, repairs malformed strong spans that are missing the closing delimiter
+    /// immediately before an arrow-led strong label
+    /// (for example, <c>**No current failures -&gt; **Why it matters:**</c> becomes
+    /// <c>**No current failures** -&gt; **Why it matters:**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeBrokenStrongArrowLabels { get; set; } = false;
+
+    /// <summary>
     /// When true, inserts a missing space after a colon in prose labels
     /// (for example, <c>Why it matters:missing coverage</c> becomes <c>Why it matters: missing coverage</c>).
     /// This is applied by AST-level inline normalization and intentionally skips inline code spans.
     /// Default: false.
     /// </summary>
     public bool NormalizeTightColonSpacing { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline between an ATX heading and an immediately-following
+    /// unordered strong-label list marker on the same line
+    /// (for example, <c>## Summary- **Item:** value</c> becomes <c>## Summary\n- **Item:** value</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeHeadingListBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline before compact unordered strong-label list markers
+    /// that were emitted inline after punctuation or symbol characters
+    /// (for example, <c>✅- **FSMO:** ok</c> becomes <c>✅\n- **FSMO:** ok</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeCompactStrongLabelListBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline before compact ATX headings emitted directly after prose or symbols
+    /// on the same line (for example, <c>unexpected### Reason</c> becomes <c>unexpected\n### Reason</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeCompactHeadingBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline between a colon and an immediately-following unordered list marker
+    /// on the same line (for example, <c>Next step:- **Item**</c> becomes <c>Next step:\n- **Item**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeColonListBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline between a fenced code block language token and inline body content
+    /// for common compact model-output mistakes
+    /// (for example, <c>```json{"x":1}</c> becomes <c>```json\n{"x":1}</c>,
+    /// and <c>```mermaidflowchart LR A--&gt;B</c> becomes <c>```mermaid\nflowchart LR A--&gt;B</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeCompactFenceBodyBoundaries { get; set; } = false;
 
     /// <summary>
     /// When true, trims accidental whitespace immediately inside strong delimiters
@@ -114,8 +162,70 @@ public static class MarkdownInputNormalizer {
         @"->\s*(?=\*\*)",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly Regex BrokenStrongArrowLabelRegex = new Regex(
+        @"\*\*(?<left>[^*\r\n]{1,200}?)\s*->\s*\*\*(?<label>[^*\r\n]{1,120}?):\*\*",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex HeadingListBoundaryRegex = new Regex(
+        @"^(?<heading>[ \t]{0,3}#{1,6}[ \t]+[^\r\n]+?)(?<!\s)(?<marker>[-+*])\s+(?=\*\*)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex CompactStrongLabelListBoundaryRegex = new Regex(
+        @"(?<=[\p{P}\p{S}\)])(?<marker>[-+*])\s+(?=\*\*)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex CompactHeadingBoundaryRegex = new Regex(
+        @"(?<=[^\s\r\n])(?<marker>#{2,6})\s+(?=\S)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex ColonListBoundaryRegex = new Regex(
+        @":\s*(?<marker>[-+*])\s+(?=(\*\*|`|\[|\p{L}|\p{N}))",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly string[] CompactFenceLanguages = {
+        "ix-dataview",
+        "ix-network",
+        "visnetwork",
+        "ix-chart",
+        "mermaid",
+        "network",
+        "chart",
+        "jsonc",
+        "json5",
+        "json"
+    };
+
+    private static readonly string[] MermaidBodyPrefixes = {
+        "flowchart",
+        "graph",
+        "sequencediagram",
+        "classdiagram",
+        "statediagram-v2",
+        "statediagram",
+        "erdiagram",
+        "journey",
+        "gantt",
+        "pie",
+        "mindmap",
+        "timeline",
+        "quadrantchart",
+        "xychart",
+        "sankey-beta",
+        "requirement",
+        "gitgraph",
+        "c4context",
+        "c4container",
+        "c4component",
+        "c4dynamic",
+        "c4deployment"
+    };
+
     private static readonly Regex LooseStrongDelimiterWhitespaceRegex = new Regex(
         @"\*\*(?<inner>[^*\r\n]+)\*\*",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex RepeatedStrongDelimiterRunRegex = new Regex(
+        @"(?<!\*)(?<left>\*{4,})(?<inner>[^*\r\n]+?)(?<right>\*{4,})(?!\*)",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly Regex OrderedListMarkerMissingSpaceRegex = new Regex(
@@ -176,6 +286,22 @@ public static class MarkdownInputNormalizer {
         }
 
         if (options.NormalizeLooseStrongDelimiters) {
+            value = ApplyRegexOutsideFencedCodeBlocks(value, RepeatedStrongDelimiterRunRegex, static match => {
+                var leftLength = match.Groups["left"].Value.Length;
+                var rightLength = match.Groups["right"].Value.Length;
+                if (leftLength != rightLength || leftLength % 2 != 0) {
+                    return match.Value;
+                }
+
+                var inner = match.Groups["inner"].Value;
+                var trimmed = inner.Trim();
+                if (trimmed.Length == 0) {
+                    return match.Value;
+                }
+
+                return "**" + trimmed + "**";
+            });
+
             value = ApplyRegexOutsideFencedCodeBlocks(value, LooseStrongDelimiterWhitespaceRegex, static match => {
                 var inner = match.Groups["inner"].Value;
                 var trimmed = inner.Trim();
@@ -197,6 +323,58 @@ public static class MarkdownInputNormalizer {
                 TightArrowStrongBoundaryRegex,
                 static _ => "-> ",
                 preserveInlineCodeSpans: true);
+        }
+
+        if (options.NormalizeBrokenStrongArrowLabels) {
+            value = ApplyRegexOutsideFencedCodeBlocks(
+                value,
+                BrokenStrongArrowLabelRegex,
+                static match => {
+                    var left = match.Groups["left"].Value.Trim();
+                    var label = match.Groups["label"].Value.Trim();
+                    if (left.Length == 0 || label.Length == 0) {
+                        return match.Value;
+                    }
+
+                    return "**" + left + "** -> **" + label + ":**";
+                },
+                preserveInlineCodeSpans: true);
+        }
+
+        if (options.NormalizeCompactHeadingBoundaries) {
+            value = ApplyRegexOutsideFencedCodeBlocks(
+                value,
+                CompactHeadingBoundaryRegex,
+                static match => "\n" + match.Groups["marker"].Value + " ",
+                preserveInlineCodeSpans: true);
+        }
+
+        if (options.NormalizeHeadingListBoundaries) {
+            value = ApplyRegexOutsideFencedCodeBlocks(
+                value,
+                HeadingListBoundaryRegex,
+                static match => match.Groups["heading"].Value.TrimEnd() + "\n" + match.Groups["marker"].Value + " ",
+                preserveInlineCodeSpans: true);
+        }
+
+        if (options.NormalizeCompactStrongLabelListBoundaries) {
+            value = ApplyRegexOutsideFencedCodeBlocks(
+                value,
+                CompactStrongLabelListBoundaryRegex,
+                static match => "\n" + match.Groups["marker"].Value + " ",
+                preserveInlineCodeSpans: true);
+        }
+
+        if (options.NormalizeColonListBoundaries) {
+            value = ApplyRegexOutsideFencedCodeBlocks(
+                value,
+                ColonListBoundaryRegex,
+                static match => ":\n" + match.Groups["marker"].Value + " ",
+                preserveInlineCodeSpans: true);
+        }
+
+        if (options.NormalizeCompactFenceBodyBoundaries) {
+            value = NormalizeCompactFenceBodyBoundaries(value);
         }
 
         if (options.NormalizeOrderedListMarkerSpacing) {
@@ -303,6 +481,155 @@ public static class MarkdownInputNormalizer {
         }
 
         return trimmed[index] == '.' || trimmed[index] == ')';
+    }
+
+    private static string NormalizeCompactFenceBodyBoundaries(string input) {
+        if (string.IsNullOrEmpty(input)) {
+            return input ?? string.Empty;
+        }
+
+        var output = new StringBuilder(input.Length + 64);
+        var inFence = false;
+        char fenceMarker = '\0';
+        var fenceRunLength = 0;
+
+        var index = 0;
+        while (index < input.Length) {
+            var lineStart = index;
+            while (index < input.Length && input[index] != '\r' && input[index] != '\n') {
+                index++;
+            }
+
+            var lineEnd = index;
+            if (index < input.Length && input[index] == '\r') {
+                index++;
+                if (index < input.Length && input[index] == '\n') {
+                    index++;
+                }
+            } else if (index < input.Length && input[index] == '\n') {
+                index++;
+            }
+
+            var line = input.Substring(lineStart, lineEnd - lineStart);
+            var newline = input.Substring(lineEnd, index - lineEnd);
+
+            if (!inFence && TryNormalizeCompactFenceOpeningLine(line, out var normalizedLine, out var normalizedMarker, out var normalizedRunLength)) {
+                inFence = true;
+                fenceMarker = normalizedMarker;
+                fenceRunLength = normalizedRunLength;
+                output.Append(normalizedLine);
+                output.Append(newline);
+                continue;
+            }
+
+            if (MarkdownFence.TryReadFenceRun(line, out var runMarker, out var runLength, out var runSuffix)) {
+                if (!inFence) {
+                    inFence = true;
+                    fenceMarker = runMarker;
+                    fenceRunLength = runLength;
+                } else if (runMarker == fenceMarker && runLength >= fenceRunLength && string.IsNullOrWhiteSpace(runSuffix)) {
+                    inFence = false;
+                    fenceMarker = '\0';
+                    fenceRunLength = 0;
+                }
+            }
+
+            output.Append(line);
+            output.Append(newline);
+        }
+
+        return output.ToString();
+    }
+
+    private static bool TryNormalizeCompactFenceOpeningLine(string line, out string normalizedLine, out char fenceMarker, out int fenceRunLength) {
+        normalizedLine = line ?? string.Empty;
+        fenceMarker = '\0';
+        fenceRunLength = 0;
+
+        if (string.IsNullOrEmpty(line)) {
+            return false;
+        }
+
+        if (!MarkdownFence.TryReadFenceRun(line, out fenceMarker, out fenceRunLength, out var runSuffix)) {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(runSuffix)) {
+            return false;
+        }
+
+        var suffix = runSuffix.TrimStart();
+        if (suffix.Length == 0) {
+            return false;
+        }
+
+        if (!TrySplitCompactFenceSuffix(suffix, out var language, out var body)) {
+            return false;
+        }
+
+        normalizedLine = new string(fenceMarker, fenceRunLength) + language + "\n" + body;
+        return true;
+    }
+
+    private static bool TrySplitCompactFenceSuffix(string suffix, out string language, out string body) {
+        language = string.Empty;
+        body = string.Empty;
+
+        foreach (var candidate in CompactFenceLanguages) {
+            if (!suffix.StartsWith(candidate, StringComparison.OrdinalIgnoreCase)) {
+                continue;
+            }
+
+            var remainder = suffix.Substring(candidate.Length);
+            if (string.IsNullOrWhiteSpace(remainder)) {
+                continue;
+            }
+
+            if (!LooksLikeCompactFenceBody(candidate, remainder)) {
+                continue;
+            }
+
+            language = candidate;
+            body = remainder;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeCompactFenceBody(string language, string remainder) {
+        if (string.IsNullOrWhiteSpace(remainder)) {
+            return false;
+        }
+
+        var trimmed = remainder.TrimStart();
+        if (trimmed.Length == 0) {
+            return false;
+        }
+
+        if (string.Equals(language, "mermaid", StringComparison.OrdinalIgnoreCase)) {
+            foreach (var prefix in MermaidBodyPrefixes) {
+                if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (string.Equals(language, "json", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "jsonc", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "json5", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "chart", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "ix-chart", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "network", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "visnetwork", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "ix-network", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(language, "ix-dataview", StringComparison.OrdinalIgnoreCase)) {
+            return trimmed[0] == '{' || trimmed[0] == '[';
+        }
+
+        return false;
     }
 
     private static string ApplyRegexOutsideFencedCodeBlocks(

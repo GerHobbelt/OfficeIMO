@@ -91,6 +91,67 @@ public sealed class MarkdownRendererOptions {
     public bool NormalizeTightStrongBoundaries { get; set; } = false;
 
     /// <summary>
+    /// When true, normalizes compact arrow-to-strong boundaries
+    /// (for example, <c>->**Why it matters:**</c> becomes <c>-> **Why it matters:**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeTightArrowStrongBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, repairs malformed strong spans that are missing the closing delimiter
+    /// immediately before an arrow-led strong label
+    /// (for example, <c>**No current failures -&gt; **Why it matters:**</c> becomes
+    /// <c>**No current failures** -&gt; **Why it matters:**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeBrokenStrongArrowLabels { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing space after a colon in prose labels
+    /// (for example, <c>Why it matters:missing coverage</c> becomes <c>Why it matters: missing coverage</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeTightColonSpacing { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline between an ATX heading and an immediately-following
+    /// unordered strong-label list marker on the same line
+    /// (for example, <c>## Summary- **Item:** value</c> becomes <c>## Summary\n- **Item:** value</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeHeadingListBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline before compact unordered strong-label list markers
+    /// that were emitted inline after punctuation or symbol characters
+    /// (for example, <c>✅- **FSMO:** ok</c> becomes <c>✅\n- **FSMO:** ok</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeCompactStrongLabelListBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline before compact ATX headings emitted directly after prose or symbols
+    /// on the same line (for example, <c>unexpected### Reason</c> becomes <c>unexpected\n### Reason</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeCompactHeadingBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline between a colon and an immediately-following unordered list marker
+    /// on the same line (for example, <c>Next step:- **Item**</c> becomes <c>Next step:\n- **Item**</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeColonListBoundaries { get; set; } = false;
+
+    /// <summary>
+    /// When true, inserts a missing newline between a fenced code block language token and inline body content
+    /// for compact malformed transcript output
+    /// (for example, <c>```json{"x":1}</c> or <c>```mermaidflowchart LR A--&gt;B</c>).
+    /// Default: false.
+    /// </summary>
+    public bool NormalizeCompactFenceBodyBoundaries { get; set; } = false;
+
+    /// <summary>
     /// When true, trims accidental whitespace immediately inside strong delimiters
     /// (for example, <c>** Healthy**</c> or <c>**Healthy **</c> become <c>**Healthy**</c>).
     /// Default: false.
