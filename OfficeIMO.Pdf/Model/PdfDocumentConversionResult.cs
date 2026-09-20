@@ -40,11 +40,20 @@ public sealed partial class PdfDocumentConversionResult {
     /// <summary>True when conversion produced at least one warning.</summary>
     public bool HasWarnings => Report.HasWarnings;
 
+    /// <summary>True when conversion reported an approximation, omission, or error.</summary>
+    public bool HasLoss => Report.HasLoss;
+
     /// <summary>Counts grouped conversion diagnostics captured with this result.</summary>
     public PdfConversionReportSummary Summary => Report.Summarize();
 
     /// <summary>Returns the generated PDF document.</summary>
     public PdfDocument RequireValue() => Value;
+
+    /// <summary>Returns the generated PDF document only when conversion reported no possible content loss.</summary>
+    public PdfDocument RequireNoLoss() {
+        Report.RequireNoLoss();
+        return Value;
+    }
 
     /// <summary>
     /// Returns a new conversion result with the supplied PDF document while preserving the captured conversion diagnostics.
@@ -236,22 +245,26 @@ public sealed partial class PdfDocumentConversionResult {
     /// Attempts to write the generated PDF document to the supplied stream and returns output diagnostics instead of throwing.
     /// </summary>
     public PdfSaveResult TrySave(Stream stream) {
+        PdfSaveResult result;
         try {
-            return Value.TrySave(stream);
+            result = Value.TrySave(stream);
         } finally {
             RefreshConversionReport();
         }
+        return result.WithReport(Report);
     }
 
     /// <summary>
     /// Attempts to write the generated PDF document to the supplied file path and returns output diagnostics instead of throwing.
     /// </summary>
     public PdfSaveResult TrySave(string path) {
+        PdfSaveResult result;
         try {
-            return Value.TrySave(path);
+            result = Value.TrySave(path);
         } finally {
             RefreshConversionReport();
         }
+        return result.WithReport(Report);
     }
 
     /// <summary>
@@ -293,19 +306,23 @@ public sealed partial class PdfDocumentConversionResult {
     }
 
     private async System.Threading.Tasks.Task<PdfSaveResult> TrySaveAsyncCore(Stream stream, System.Threading.CancellationToken cancellationToken) {
+        PdfSaveResult result;
         try {
-            return await Value.TrySaveAsync(stream, cancellationToken).ConfigureAwait(false);
+            result = await Value.TrySaveAsync(stream, cancellationToken).ConfigureAwait(false);
         } finally {
             RefreshConversionReport();
         }
+        return result.WithReport(Report);
     }
 
     private async System.Threading.Tasks.Task<PdfSaveResult> TrySaveAsyncCore(string path, System.Threading.CancellationToken cancellationToken) {
+        PdfSaveResult result;
         try {
-            return await Value.TrySaveAsync(path, cancellationToken).ConfigureAwait(false);
+            result = await Value.TrySaveAsync(path, cancellationToken).ConfigureAwait(false);
         } finally {
             RefreshConversionReport();
         }
+        return result.WithReport(Report);
     }
 
     private static PdfConversionReport SnapshotReport(PdfConversionReport conversionReport) {

@@ -1,7 +1,6 @@
 using OfficeIMO.OpenDocument;
+using OfficeIMO.OpenDocument.Testing;
 using OfficeIMO.Reader.OpenDocument;
-using System.IO;
-using System.IO.Compression;
 using System.Text;
 using System.Xml.Linq;
 using Xunit;
@@ -11,7 +10,7 @@ namespace OfficeIMO.Reader.Tests;
 public class ReaderOpenDocumentModularTests {
     [Fact]
     public void RegisteredAdapterClampsImportedHeadingLevels() {
-        using OdtDocument document = OdtDocument.Create();
+        OdtDocument document = OdtDocument.Create();
         document.AddHeading("Imported heading", 1);
         byte[] package = RewriteHeadingLevel(document.ToBytes(), "11");
 
@@ -26,7 +25,7 @@ public class ReaderOpenDocumentModularTests {
 
     [Fact]
     public void RegisteredAdapterHonorsRequestedOdsRange() {
-        using OdsDocument document = OdsDocument.Create();
+        OdsDocument document = OdsDocument.Create();
         OdsSheet sheet = document.AddSheet("Data");
         sheet.Cell(0, 0).SetString("A");
         sheet.Cell(0, 1).SetString("B");
@@ -51,7 +50,7 @@ public class ReaderOpenDocumentModularTests {
 
     [Fact]
     public void RegisteredAdapterEmitsSlideAlignedOdpChunkWithNotesAndTable() {
-        using OdpPresentation document = OdpPresentation.Create();
+        OdpPresentation document = OdpPresentation.Create();
         OdpSlide slide = document.AddSlide("Summary");
         slide.AddTextBox(OdfRect.FromCentimeters(1, 1, 20, 3), "Native presentation");
         OdpTable table = slide.AddTable(OdfRect.FromCentimeters(1, 5, 12, 4), 2, 2, "Metrics");
@@ -74,7 +73,7 @@ public class ReaderOpenDocumentModularTests {
 
     [Fact]
     public void RegisteredAdapterEmitsBoundedOdsSheetTableChunk() {
-        using OdsDocument document = OdsDocument.Create();
+        OdsDocument document = OdsDocument.Create();
         OdsSheet sheet = document.AddSheet("Metrics");
         sheet.Cell(0, 0).SetString("Name");
         sheet.Cell(0, 1).SetString("Value");
@@ -95,7 +94,7 @@ public class ReaderOpenDocumentModularTests {
 
     [Fact]
     public void RegisteredAdapterEmitsOdtHeadingParagraphAndTableChunks() {
-        using OdtDocument document = OdtDocument.Create();
+        OdtDocument document = OdtDocument.Create();
         document.AddHeading("Policy", 1);
         document.AddParagraph("Native OpenDocument text.");
         OdtTable table = document.AddTable(2, 2, "Approvals");
@@ -123,28 +122,14 @@ public class ReaderOpenDocumentModularTests {
     }
 
     private static byte[] RewriteHeadingLevel(byte[] package, string level) {
-        using var output = new MemoryStream();
-        using (var sourceStream = new MemoryStream(package, writable: false))
-        using (var source = new ZipArchive(sourceStream, ZipArchiveMode.Read))
-        using (var target = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true)) {
-            foreach (ZipArchiveEntry sourceEntry in source.Entries) {
-                ZipArchiveEntry targetEntry = target.CreateEntry(sourceEntry.FullName,
-                    sourceEntry.FullName == "mimetype" ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
-                using Stream targetStream = targetEntry.Open();
-                if (sourceEntry.FullName == "content.xml") {
-                    XDocument content;
-                    using (Stream sourceXml = sourceEntry.Open()) content = XDocument.Load(sourceXml);
-                    XNamespace text = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
-                    content.Descendants(text + "h").Single().SetAttributeValue(text + "outline-level", level);
-                    using var writer = new StreamWriter(targetStream, new UTF8Encoding(false), 1024, leaveOpen: true);
-                    content.Save(writer);
-                    writer.Flush();
-                } else {
-                    using Stream sourceData = sourceEntry.Open();
-                    sourceData.CopyTo(targetStream);
-                }
+        return OdfTestPackageRewriter.Rewrite(package, (name, bytes) => {
+            if (name == "content.xml") {
+                XDocument content = XDocument.Parse(Encoding.UTF8.GetString(bytes));
+                XNamespace text = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+                content.Descendants(text + "h").Single().SetAttributeValue(text + "outline-level", level);
+                return Encoding.UTF8.GetBytes(content.ToString(SaveOptions.DisableFormatting));
             }
-        }
-        return output.ToArray();
+            return bytes;
+        });
     }
 }

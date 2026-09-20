@@ -11,13 +11,14 @@ namespace OfficeIMO.Examples.Word {
             using (WordDocument document = WordDocument.Create(documentPath)) {
                 document.AddParagraph("Signed package metadata preflight").Style = WordParagraphStyles.Heading1;
                 document.AddParagraph("OfficeIMO can inspect signature package metadata and block accidental saves by default.");
-                document.Save(new WordSaveOptions { OpenAfterSave = openWord });
+                document.Save();
+                if (openWord) document.OpenInApplication();
             }
 
             PremiumWorkflowExampleUtilities.AddSyntheticSignatureMetadata(documentPath);
 
             WordSignatureValidationReport validationReport;
-            using (WordDocument document = WordDocument.Load(documentPath, new WordLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(documentPath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 validationReport = document.ValidateSignatures();
             }
 

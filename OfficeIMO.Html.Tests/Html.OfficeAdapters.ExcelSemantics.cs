@@ -9,7 +9,7 @@ public class HtmlOfficeAdaptersExcelSemantics {
     [Fact]
     public void ExcelHtml_HeaderModeMakesHeaderIntentExplicit() {
         using ExcelDocument workbook = ExcelDocument.Create(new MemoryStream());
-        ExcelSheet sheet = workbook.AddWorkSheet("Data");
+        ExcelSheet sheet = workbook.AddWorksheet("Data");
         sheet.CellValue(1, 1, "Not a header");
         sheet.CellValue(2, 1, "Second row");
 
@@ -27,12 +27,12 @@ public class HtmlOfficeAdaptersExcelSemantics {
     public void ExcelHtml_RoundTripsDateFormattedSerialAsDateTime() {
         DateTime expected = new(2026, 7, 11, 14, 15, 16, DateTimeKind.Unspecified);
         using ExcelDocument workbook = ExcelDocument.Create(new MemoryStream());
-        ExcelSheet sheet = workbook.AddWorkSheet("Dates");
+        ExcelSheet sheet = workbook.AddWorksheet("Dates");
         sheet.CellValue(1, 1, "When");
         sheet.CellValue(2, 1, expected);
 
         string html = workbook.ToHtml();
-        HtmlToExcelResult result = html.ToExcelDocumentResult();
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult();
         using ExcelDocument imported = result.Value;
         ExcelSheet importedSheet = Assert.Single(imported.Sheets);
 
@@ -41,7 +41,7 @@ public class HtmlOfficeAdaptersExcelSemantics {
         Assert.Equal(ExcelCellValueKind.DateTime, snapshot!.Kind);
         Assert.Equal(expected, snapshot.DateTimeValue);
         Assert.True(importedSheet.GetCellStyle(2, 1).IsDateLike);
-        Assert.Empty(result.Diagnostics);
+        Assert.Empty(result.Report.Diagnostics);
     }
 
     [Fact]
@@ -52,10 +52,10 @@ public class HtmlOfficeAdaptersExcelSemantics {
             </section>
             """;
 
-        HtmlToExcelResult result = html.ToExcelDocumentResult(new HtmlToExcelOptions { MaxTableCells = 4 });
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult(new HtmlToExcelOptions { MaxTableCells = 4 });
         using ExcelDocument workbook = result.Value;
 
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == HtmlConversionDiagnosticCodes.TargetLimitExceeded);
+        Assert.Contains(result.Report.Diagnostics, diagnostic => diagnostic.Code == HtmlConversionDiagnosticCodes.TargetLimitExceeded);
         Assert.Empty(Assert.Single(workbook.Sheets).GetMergedRanges());
     }
 }

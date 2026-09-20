@@ -6,6 +6,9 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using WordDrawing = DocumentFormat.OpenXml.Wordprocessing.Drawing;
 using Anchor = DocumentFormat.OpenXml.Drawing.Wordprocessing.Anchor;
 using ShapeProperties = DocumentFormat.OpenXml.Drawing.Pictures.ShapeProperties;
+using OfficeIMO.Drawing.Internal;
+using System.Threading;
+using System.Threading.Tasks;
 using V = DocumentFormat.OpenXml.Vml;
 
 #nullable enable annotations
@@ -127,7 +130,7 @@ namespace OfficeIMO.Word {
         /// Extract image from Word Document and save it to file
         /// </summary>
         /// <param name="fileToSave"></param>
-        public void SaveToFile(string fileToSave) {
+        public void Save(string fileToSave) {
             if (_imagePart == null) {
                 throw new InvalidOperationException("Image is linked externally and cannot be saved.");
             }
@@ -145,20 +148,35 @@ namespace OfficeIMO.Word {
             }
 
             try {
-                using (FileStream outputFileStream = new FileStream(fileToSave, FileMode.Create, FileAccess.Write, FileShare.None)) {
-                    using var stream = _imagePart.GetStream(FileMode.Open, FileAccess.Read);
-                    stream.CopyTo(outputFileStream);
-                }
+                OfficeFileCommit.WriteAllBytes(fileToSave, ToBytes());
             } catch (UnauthorizedAccessException ex) {
                 throw new IOException($"Failed to save to '{fileToSave}'. Access denied or path is read-only.", ex);
             }
+        }
+
+        /// <summary>Saves the image to a caller-owned stream.</summary>
+        public void Save(Stream stream) => OfficeStreamWriter.WriteAllBytes(stream, ToBytes());
+
+        /// <summary>Saves the image to a file asynchronously.</summary>
+        public async Task SaveAsync(string path, CancellationToken cancellationToken = default) {
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Output path cannot be null or whitespace.", nameof(path));
+            using Stream source = OpenRead();
+            byte[] bytes = await OfficeStreamReader.ReadAllBytesAsync(source, cancellationToken).ConfigureAwait(false);
+            await OfficeFileCommit.WriteAllBytesAsync(path, bytes, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>Saves the image to a caller-owned stream asynchronously.</summary>
+        public async Task SaveAsync(Stream stream, CancellationToken cancellationToken = default) {
+            using Stream source = OpenRead();
+            byte[] bytes = await OfficeStreamReader.ReadAllBytesAsync(source, cancellationToken).ConfigureAwait(false);
+            await OfficeStreamWriter.WriteAllBytesAsync(stream, bytes, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
         /// Retrieves the image data as a stream without loading the entire image into memory.
         /// </summary>
         /// <returns>A <see cref="Stream"/> for reading the image bytes.</returns>
-        public Stream GetStream() {
+        public Stream OpenRead() {
             if (_imagePart == null) {
                 throw new InvalidOperationException("Image is linked externally and cannot be extracted.");
             }
@@ -170,12 +188,15 @@ namespace OfficeIMO.Word {
         /// Retrieves the image data as a byte array.
         /// </summary>
         /// <returns>Bytes representing the image.</returns>
-        public byte[] GetBytes() {
-            using var stream = GetStream();
+        public byte[] ToBytes() {
+            using var stream = OpenRead();
             using var ms = new MemoryStream();
             stream.CopyTo(ms);
             return ms.ToArray();
         }
+
+        /// <summary>Returns the image bytes in a new stream positioned at the beginning.</summary>
+        public MemoryStream ToStream() => new MemoryStream(ToBytes());
 
         /// <summary>
         /// Remove image from a Word Document

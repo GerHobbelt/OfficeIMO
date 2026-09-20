@@ -803,14 +803,14 @@ namespace OfficeIMO.Tests {
                 wordTable.Rows[1].FirstCell.ShadingFillColorHex = "#0000FF";
 
                 Assert.True(wordTable.Rows[1].FirstCell.ShadingFillColor == Color.Blue);
-                Assert.True(wordTable.Rows[1].FirstCell.ShadingFillColorHex == "0000ff");
+                Assert.True(wordTable.Rows[1].FirstCell.ShadingFillColorHex == "0000FF");
                 document.Save();
             }
 
             using (WordDocument document = WordDocument.Load(Path.Combine(_directoryWithFiles, "CreatedDocumentWithTablesAndOptions.docx"))) {
 
                 Assert.True(document.Tables[0].Rows[1].FirstCell.ShadingFillColor == Color.Blue);
-                Assert.True(document.Tables[0].Rows[1].FirstCell.ShadingFillColorHex == "0000ff");
+                Assert.True(document.Tables[0].Rows[1].FirstCell.ShadingFillColorHex == "0000FF");
 
                 document.Save();
             }
@@ -1426,21 +1426,21 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "TableAutoFitProperty.docx");
             using (WordDocument document = WordDocument.Create(filePath)) {
                 WordTable table = document.AddTable(1, 1);
-                table.AutoFit = WordTableLayoutType.AutoFitToContents;
-                Assert.Equal(WordTableLayoutType.AutoFitToContents, table.AutoFit);
+                table.LayoutMode = WordTableLayoutType.AutoFitToContents;
+                Assert.Equal(WordTableLayoutType.AutoFitToContents, table.LayoutMode);
 
-                table.AutoFit = WordTableLayoutType.AutoFitToWindow;
-                Assert.Equal(WordTableLayoutType.AutoFitToWindow, table.AutoFit);
+                table.LayoutMode = WordTableLayoutType.AutoFitToWindow;
+                Assert.Equal(WordTableLayoutType.AutoFitToWindow, table.LayoutMode);
 
-                table.AutoFit = WordTableLayoutType.FixedWidth;
-                Assert.Equal(WordTableLayoutType.AutoFitToWindow, table.AutoFit);
+                table.LayoutMode = WordTableLayoutType.FixedWidth;
+                Assert.Equal(WordTableLayoutType.AutoFitToWindow, table.LayoutMode);
 
                 document.Save();
             }
 
             using (WordDocument document = WordDocument.Load(filePath)) {
                 WordTable table = document.Tables[0];
-                Assert.Equal(WordTableLayoutType.AutoFitToWindow, table.AutoFit);
+                Assert.Equal(WordTableLayoutType.AutoFitToWindow, table.LayoutMode);
             }
         }
 

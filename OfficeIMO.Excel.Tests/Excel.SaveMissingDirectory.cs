@@ -18,7 +18,7 @@ namespace OfficeIMO.Tests {
             using (var document = ExcelDocument.Create(sourcePath)) {
                 const string expectedSheetName = "Sheet1";
                 const string expectedCellValue = "Directory save";
-                var sheet = document.AddWorkSheet(expectedSheetName);
+                var sheet = document.AddWorksheet(expectedSheetName);
                 sheet.CellValue(1, 1, expectedCellValue);
 
                 document.Save(destinationPath);
@@ -26,7 +26,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(Directory.Exists(destinationDirectory));
                 Assert.True(File.Exists(destinationPath));
 
-                using (var reloaded = ExcelDocument.Load(destinationPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+                using (var reloaded = ExcelDocument.Load(destinationPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                     Assert.Equal(expectedSheetName, reloaded.Sheets[0].Name);
                     Assert.True(reloaded.Sheets[0].TryGetCellText(1, 1, out var actualValue));
                     Assert.Equal(expectedCellValue, actualValue);
@@ -50,7 +50,7 @@ namespace OfficeIMO.Tests {
             await using (var document = ExcelDocument.Create(sourcePath)) {
                 const string expectedSheetName = "AsyncSheet";
                 const string expectedCellValue = "Async directory save";
-                var sheet = document.AddWorkSheet(expectedSheetName);
+                var sheet = document.AddWorksheet(expectedSheetName);
                 sheet.CellValue(1, 1, expectedCellValue);
 
                 await document.SaveAsync(destinationPath);
@@ -58,7 +58,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(Directory.Exists(destinationDirectory));
                 Assert.True(File.Exists(destinationPath));
 
-                using (var reloaded = ExcelDocument.Load(destinationPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+                using (var reloaded = ExcelDocument.Load(destinationPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                     Assert.Equal(expectedSheetName, reloaded.Sheets[0].Name);
                     Assert.True(reloaded.Sheets[0].TryGetCellText(1, 1, out var actualValue));
                     Assert.Equal(expectedCellValue, actualValue);
@@ -78,9 +78,10 @@ namespace OfficeIMO.Tests {
 
             try {
                 using ExcelDocument document = ExcelDocument.Create(sourcePath);
-                document.AddWorkSheet("CopyData").CellValue(1, 1, "Directory copy");
+                document.AddWorksheet("CopyData").CellValue(1, 1, "Directory copy");
 
-                using ExcelDocument copy = document.SaveCopy(destinationPath);
+                document.SaveCopy(destinationPath);
+                using ExcelDocument copy = ExcelDocument.Load(destinationPath);
 
                 Assert.True(Directory.Exists(destinationDirectory));
                 Assert.True(File.Exists(destinationPath));
@@ -94,6 +95,27 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public async Task Test_SaveCopyAsync_PreservesAssociatedPath() {
+            string sourcePath = Path.Combine(_directoryWithFiles, $"AsyncCopySource_{Guid.NewGuid():N}.xlsx");
+            string destinationPath = Path.Combine(_directoryWithFiles, $"AsyncCopy_{Guid.NewGuid():N}.xlsx");
+            try {
+                await using ExcelDocument document = ExcelDocument.Create(sourcePath);
+                document.AddWorksheet("CopyData").CellValue(1, 1, "Async copy");
+                document.Save();
+
+                await document.SaveCopyAsync(destinationPath);
+
+                Assert.Equal(sourcePath, document.FilePath);
+                using ExcelDocument copy = ExcelDocument.Load(destinationPath);
+                Assert.True(copy.Sheets[0].TryGetCellText(1, 1, out string? value));
+                Assert.Equal("Async copy", value);
+            } finally {
+                if (File.Exists(sourcePath)) File.Delete(sourcePath);
+                if (File.Exists(destinationPath)) File.Delete(destinationPath);
+            }
+        }
+
+        [Fact]
         public void Test_SaveCopy_PreservesReadOnlyDestination() {
             string sourcePath = Path.Combine(_directoryWithFiles, $"ReadOnlyCopySource_{Guid.NewGuid():N}.xlsx");
             string destinationPath = Path.Combine(_directoryWithFiles, $"ReadOnlyCopy_{Guid.NewGuid():N}.xlsx");
@@ -103,7 +125,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using ExcelDocument document = ExcelDocument.Create(sourcePath);
-                document.AddWorkSheet("Data").CellValue(1, 1, "Must not overwrite");
+                document.AddWorksheet("Data").CellValue(1, 1, "Must not overwrite");
 
                 Assert.Throws<IOException>(() => document.SaveCopy(destinationPath));
 

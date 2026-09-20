@@ -105,7 +105,7 @@ public class RtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfRun rtfRun = Assert.Single(Assert.Single(rtfDocument.Paragraphs).Runs, run => run.Text == "Styled");
         Assert.Equal(RtfUnderlineStyle.DoubleWave, rtfRun.UnderlineStyle);
@@ -114,7 +114,7 @@ public class RtfCharacterFormattingTests {
         Assert.Contains(@"\ulc1", rtf, StringComparison.Ordinal);
         WordParagraph roundTripRun = Assert.Single(roundTrip.Paragraphs, run => run.Text == "Styled");
         Assert.Equal(UnderlineValues.WavyDouble, roundTripRun.Underline);
-        Assert.Equal("4472c4", roundTripRun._run?.RunProperties?.Underline?.Color?.Value);
+        Assert.Equal("4472C4", roundTripRun._run?.RunProperties?.Underline?.Color?.Value);
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public class RtfCharacterFormattingTests {
 
         WordParagraph styled = Assert.Single(word.Paragraphs, run => run.Text == "Styled");
         Assert.Equal(UnderlineValues.DashDotDotHeavy, styled.Underline);
-        Assert.Equal("4472c4", styled._run?.RunProperties?.Underline?.Color?.Value);
+        Assert.Equal("4472C4", styled._run?.RunProperties?.Underline?.Color?.Value);
         WordParagraph plain = Assert.Single(word.Paragraphs, run => run.Text == "Plain");
         Assert.Null(plain.Underline);
         Assert.Null(plain._run?.RunProperties?.Underline?.Color?.Value);
@@ -274,7 +274,7 @@ public class RtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfRun rtfRun = Assert.Single(Assert.Single(rtfDocument.Paragraphs).Runs, run => run.Text == "Styled");
         Assert.Equal(40, rtfRun.CharacterSpacingTwips);
@@ -385,7 +385,7 @@ public class RtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         Assert.Equal(1033, rtfDocument.Settings.DefaultLanguageId);
         RtfRun rtfRun = Assert.Single(Assert.Single(rtfDocument.Paragraphs).Runs, run => run.Text == "Polish");
@@ -458,7 +458,7 @@ public class RtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfParagraph rtfParagraph = Assert.Single(rtfDocument.Paragraphs);
         Assert.Equal(RtfTextDirection.RightToLeft, rtfParagraph.Runs.Single(run => run.Text == "RTL").Direction);

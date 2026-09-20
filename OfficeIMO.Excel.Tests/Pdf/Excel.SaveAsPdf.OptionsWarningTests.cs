@@ -34,6 +34,7 @@ public partial class Excel {
 
         byte[] bytes;
         PdfCore.PdfDocumentConversionResult result;
+        PdfCore.PdfSaveResult saveResult;
         using (ExcelDocument document = ExcelDocument.Create(workbookPath, "Warnings")) {
             ExcelSheet sheet = document.Sheets[0];
             sheet.Cell(1, 1, "Name");
@@ -53,8 +54,10 @@ public partial class Excel {
 
             document.Save();
 
-            result = document.ToPdfResult(options);
+            result = document.ToPdfDocumentResult(options);
             bytes = result.ToBytes();
+            using var output = new MemoryStream();
+            saveResult = document.TrySaveAsPdf(output, options);
         }
 
         using (PdfPigDocument pdf = PdfPigDocument.Open(new MemoryStream(bytes))) {
@@ -72,5 +75,9 @@ public partial class Excel {
         Assert.Contains(result.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetRows");
         Assert.Contains(result.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetChart" && warning.Message.Contains("Surface", StringComparison.Ordinal));
         Assert.All(result.Warnings, warning => Assert.Equal("Warnings", warning.Source));
+        Assert.True(saveResult.Succeeded);
+        Assert.Contains(saveResult.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetHeaderFooterFormatting");
+        Assert.Contains(saveResult.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetRows");
+        Assert.Contains(saveResult.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetChart");
     }
 }

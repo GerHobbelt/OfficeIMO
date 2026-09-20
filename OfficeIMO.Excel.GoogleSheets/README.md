@@ -19,7 +19,7 @@ using OfficeIMO.Excel.GoogleSheets;
 using OfficeIMO.GoogleWorkspace;
 
 using var workbook = ExcelDocument.Create("report.xlsx");
-var sheet = workbook.AddWorkSheet("Summary");
+var sheet = workbook.AddWorksheet("Summary");
 sheet.CellValue(1, 1, "Quarter");
 sheet.CellValue(1, 2, "Revenue");
 sheet.CellValue(2, 1, "Q1");
@@ -37,7 +37,7 @@ var options = new GoogleSheetsSaveOptions {
     Title = "Quarterly revenue"
 };
 
-var plan = workbook.CreateGoogleSheetsTranslationPlan(options);
+var plan = workbook.BuildGoogleSheetsPlan(options);
 var result = await workbook.ExportToGoogleSheetsAsync(session, options);
 
 Console.WriteLine(result.SpreadsheetId);

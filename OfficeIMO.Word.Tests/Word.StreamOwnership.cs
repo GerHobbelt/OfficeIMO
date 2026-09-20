@@ -1,4 +1,5 @@
 using OfficeIMO.Word;
+using System.Reflection;
 using Xunit;
 
 namespace OfficeIMO.Tests {
@@ -13,7 +14,7 @@ namespace OfficeIMO.Tests {
 
             Assert.True(source.CanRead);
             source.Position = 0;
-            using WordDocument reopened = WordDocument.Load(source, new WordLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
+            using WordDocument reopened = WordDocument.Load(source, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
             Assert.Equal("Explicit async save", Assert.Single(reopened.Paragraphs).Text);
         }
 
@@ -27,15 +28,44 @@ namespace OfficeIMO.Tests {
 
             source.Position = 0;
             await using (WordDocument loaded = await WordDocument.LoadAsync(source, new WordLoadOptions {
-                PersistenceMode = OfficeIMO.Core.DocumentPersistenceMode.SaveOnDispose
+                PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose
             })) {
                 Assert.Single(loaded.Paragraphs).SetText("After");
             }
 
             Assert.True(source.CanRead);
             source.Position = 0;
-            using WordDocument reopened = WordDocument.Load(source, new WordLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
+            using WordDocument reopened = WordDocument.Load(source, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
             Assert.Equal("After", Assert.Single(reopened.Paragraphs).Text);
+        }
+
+        [Fact]
+        public async Task LoadAsync_DisposeOwnsTheActualOpenXmlPackageStream() {
+            byte[] sourceBytes;
+            using (WordDocument created = WordDocument.Create()) {
+                created.AddParagraph("Before");
+                sourceBytes = created.ToBytes();
+            }
+
+            using var source = new MemoryStream(sourceBytes);
+            using WordDocument loaded = await WordDocument.LoadAsync(source);
+            FieldInfo ownedStreamField = typeof(WordDocument).GetField(
+                "_ownedPackageStream",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MemoryStream ownedPackageStream = Assert.IsType<MemoryStream>(ownedStreamField.GetValue(loaded));
+            Assert.Single(loaded.Paragraphs).SetText("After");
+
+            using var output = new MemoryStream();
+            await loaded.SaveAsync(output);
+
+            using (WordDocument packageCopy = WordDocument.Load(
+                       new MemoryStream(ownedPackageStream.ToArray(), writable: false),
+                       new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                Assert.Equal("After", Assert.Single(packageCopy.Paragraphs).Text);
+            }
+
+            loaded.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => ownedPackageStream.ReadByte());
         }
 
         [Fact]
@@ -67,7 +97,7 @@ namespace OfficeIMO.Tests {
             }
 
             using (WordDocument loaded = WordDocument.Load(source, new WordLoadOptions {
-                PersistenceMode = OfficeIMO.Core.DocumentPersistenceMode.SaveOnDispose
+                PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose
             })) {
                 Assert.Single(loaded.Paragraphs).SetText("After");
             }
@@ -75,7 +105,7 @@ namespace OfficeIMO.Tests {
             Assert.True(source.CanRead);
             source.Position = 0;
             using WordDocument reopened = WordDocument.Load(source, new WordLoadOptions {
-                AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly
+                AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly
             });
             Assert.Equal("After", Assert.Single(reopened.Paragraphs).Text);
         }
@@ -100,28 +130,53 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void SaveCopy_StreamDoesNotRedirectLaterSourceSavesToTheCopy() {
-            using var source = new MemoryStream();
-            using var document = WordDocument.Create(source);
-            document.AddParagraph("Shared");
-            document.Save();
-
-            using var copyStream = new MemoryStream();
-            using (WordDocument copy = document.SaveCopy(copyStream)) {
-                Assert.Equal("Shared", Assert.Single(copy.Paragraphs).Text);
+        public async Task Load_NonSeekableWritableStreamDoesNotBecomePathlessSaveTarget() {
+            byte[] sourceBytes;
+            using (WordDocument created = WordDocument.Create()) {
+                created.AddParagraph("Buffered source");
+                sourceBytes = created.ToBytes();
             }
 
+            using var source = new NonSeekableReadWriteBuffer(sourceBytes);
+            using WordDocument loaded = WordDocument.Load(source);
+            loaded.AddParagraph("Unsaved edit");
+
+            Assert.Throws<InvalidOperationException>(() => loaded.Save());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => loaded.SaveAsync());
+            Assert.Equal(sourceBytes, source.ToArray());
+        }
+
+        [Fact]
+        public void Create_NonSeekableAssociatedStreamIsRejected() {
+            using var stream = new NonSeekableReadWriteBuffer(Array.Empty<byte>());
+
+            ArgumentException exception = Assert.Throws<ArgumentException>(() => WordDocument.Create(stream));
+
+            Assert.Equal("stream", exception.ParamName);
+            Assert.Contains("support seeking", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Save_StreamIsOneTimeAndDoesNotRedirectLaterParameterlessSave() {
+            using var source = new MemoryStream();
+            using var document = WordDocument.Create(source);
+            document.AddParagraph("Original destination");
+            document.Save();
+
+            using var oneTimeDestination = new MemoryStream();
+            document.Save(oneTimeDestination);
             document.AddParagraph("Source only");
             document.Save();
 
-            copyStream.Position = 0;
-            using WordDocument reopenedCopy = WordDocument.Load(copyStream, new WordLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
-            Assert.Single(reopenedCopy.Paragraphs);
-            Assert.Equal("Shared", reopenedCopy.Paragraphs[0].Text);
+            using WordDocument oneTimeCopy = WordDocument.Load(oneTimeDestination,
+                new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+            Assert.Single(oneTimeCopy.Paragraphs);
 
-            source.Position = 0;
-            using WordDocument reopenedSource = WordDocument.Load(source, new WordLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
-            Assert.Equal(new[] { "Shared", "Source only" }, reopenedSource.Paragraphs.Select(paragraph => paragraph.Text).ToArray());
+            using WordDocument sourceCopy = WordDocument.Load(source,
+                new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+            Assert.Equal(new[] { "Original destination", "Source only" },
+                sourceCopy.Paragraphs.Select(paragraph => paragraph.Text).ToArray());
         }
+
     }
 }

@@ -54,16 +54,18 @@ namespace OfficeIMO.Shared.Tests {
 
             using (var loaded = WordDocument.LoadEncrypted(path, Password)) {
                 Assert.True(string.IsNullOrEmpty(loaded.FilePath));
+                loaded.AddParagraph("Explicit encrypted edit");
+                Assert.Throws<InvalidOperationException>(() => loaded.Save());
             }
 
             Assert.Throws<NotSupportedException>(() => WordDocument.LoadEncrypted(path, Password, new WordLoadOptions {
-                PersistenceMode = OfficeIMO.Core.DocumentPersistenceMode.SaveOnDispose
+                PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose
             }));
 
             using var explicitLoad = WordDocument.LoadEncrypted(path, Password, new WordLoadOptions {
                 OpenSettings = new OpenSettings { AutoSave = true }
             });
-            Assert.Equal(OfficeIMO.Core.DocumentPersistenceMode.Explicit, explicitLoad.PersistenceMode);
+            Assert.Equal(OfficeIMO.Drawing.DocumentPersistenceMode.Explicit, explicitLoad.PersistenceMode);
         }
 
         [Fact]
@@ -71,7 +73,7 @@ namespace OfficeIMO.Shared.Tests {
             string path = CreateTempPath(".xlsx");
 
             using (var document = ExcelDocument.Create(new MemoryStream())) {
-                var sheet = document.AddWorkSheet("Encrypted");
+                var sheet = document.AddWorksheet("Encrypted");
                 sheet.CellValue(1, 1, "Encrypted Excel content");
                 document.SaveEncrypted(path, Password);
             }
@@ -90,7 +92,7 @@ namespace OfficeIMO.Shared.Tests {
             using var encrypted = new MemoryStream();
 
             using (var document = ExcelDocument.Create(new MemoryStream())) {
-                var sheet = document.AddWorkSheet("EncryptedStream");
+                var sheet = document.AddWorksheet("EncryptedStream");
                 sheet.CellValue(1, 1, "Encrypted Excel stream content");
                 document.SaveEncrypted(encrypted, Password);
             }
@@ -109,7 +111,7 @@ namespace OfficeIMO.Shared.Tests {
             string path = CreateTempPath(".xlsx");
 
             using (var document = ExcelDocument.Create(new MemoryStream())) {
-                var sheet = document.AddWorkSheet("Encrypted");
+                var sheet = document.AddWorksheet("Encrypted");
                 sheet.CellValue(1, 1, "Encrypted Excel content");
                 document.SaveEncrypted(path, Password);
             }
@@ -119,13 +121,13 @@ namespace OfficeIMO.Shared.Tests {
             }
 
             Assert.Throws<NotSupportedException>(() => ExcelDocument.LoadEncrypted(path, Password, new ExcelLoadOptions {
-                PersistenceMode = OfficeIMO.Core.DocumentPersistenceMode.SaveOnDispose
+                PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose
             }));
 
             using var explicitLoad = ExcelDocument.LoadEncrypted(path, Password, new ExcelLoadOptions {
                 OpenSettings = new OpenSettings { AutoSave = true }
             });
-            Assert.Equal(OfficeIMO.Core.DocumentPersistenceMode.Explicit, explicitLoad.PersistenceMode);
+            Assert.Equal(OfficeIMO.Drawing.DocumentPersistenceMode.Explicit, explicitLoad.PersistenceMode);
         }
 
         [Fact]
@@ -167,7 +169,7 @@ namespace OfficeIMO.Shared.Tests {
             string path = CreateTempPath(".xlsx");
 
             using (var document = ExcelDocument.Create(new MemoryStream())) {
-                document.AddWorkSheet("Encrypted");
+                document.AddWorksheet("Encrypted");
                 document.SaveEncrypted(path, Password);
             }
 
@@ -179,7 +181,7 @@ namespace OfficeIMO.Shared.Tests {
             string path = CreateTempPath(".xlsx");
 
             using (var document = ExcelDocument.Create(new MemoryStream())) {
-                var sheet = document.AddWorkSheet("Encrypted");
+                var sheet = document.AddWorksheet("Encrypted");
                 sheet.CellValue(1, 1, "Tamper target");
                 document.SaveEncrypted(path, Password);
             }

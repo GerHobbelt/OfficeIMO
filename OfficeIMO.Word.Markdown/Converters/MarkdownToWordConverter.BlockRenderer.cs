@@ -291,7 +291,7 @@ namespace OfficeIMO.Word.Markdown {
             }
 
             protected override void VisitQuoteBlock(Omd.QuoteBlock block) {
-                foreach (var child in block.Children) {
+                foreach (var child in block.ChildBlocks) {
                     RenderNested(child, quoteDepth: _quoteDepth + 1);
                 }
             }
@@ -367,7 +367,7 @@ namespace OfficeIMO.Word.Markdown {
                 foreach (var item in items) {
                     var effectiveLevel = _listLevel + item.Level;
                     var firstParagraph = true;
-                    var blockChildren = item.BlockChildren;
+                    var blockChildren = item.ChildBlocks;
 
                     for (int i = 0; i < blockChildren.Count; i++) {
                         if (blockChildren[i] is Omd.ParagraphBlock paragraph) {

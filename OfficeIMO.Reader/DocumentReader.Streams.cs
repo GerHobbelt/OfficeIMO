@@ -20,7 +20,7 @@ using System.Threading;
 
 namespace OfficeIMO.Reader;
 
-public static partial class DocumentReader {
+internal static partial class DocumentReaderEngine {
     /// <summary>
     /// Reads a supported document from a stream and emits normalized extraction chunks.
     /// </summary>
@@ -35,17 +35,21 @@ public static partial class DocumentReader {
         if (stream == null) throw new ArgumentNullException(nameof(stream));
         if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
 
-        var opt = NormalizeOptions(options);
-        Stream readStream = ReaderInputLimits.EnsureSeekableReadStream(stream, opt.MaxInputBytes, cancellationToken, out bool ownsReadStream);
         string? logicalSourceName = null;
-        try {
-            if (sourceName != null) {
-                var trimmedSourceName = sourceName.Trim();
-                if (trimmedSourceName.Length > 0) {
-                    logicalSourceName = trimmedSourceName;
-                }
+        var opt = NormalizeOptions(options);
+        if (sourceName != null) {
+            var trimmedSourceName = sourceName.Trim();
+            if (trimmedSourceName.Length > 0) {
+                logicalSourceName = trimmedSourceName;
             }
+        }
 
+        Stream readStream = ReaderInputLimits.EnsureSeekableReadStream(
+            stream,
+            ResolveInitialMaxInputBytes(logicalSourceName, opt),
+            cancellationToken,
+            out bool ownsReadStream);
+        try {
             var source = BuildSourceInfoFromStream(readStream, logicalSourceName, opt.ComputeHashes);
 
             IEnumerable<ReaderChunk> raw;
@@ -121,7 +125,7 @@ public static partial class DocumentReader {
 
     private static IEnumerable<ReaderChunk> ReadWord(string path, ReaderOptions opt, CancellationToken ct) {
         using var doc = WordDocument.Load(path, new WordLoadOptions {
-            AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+            AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
             OpenSettings = CreateOpenSettings(opt)
         });
         IReadOnlyList<string>? legacyWarnings = BuildLegacyWordWarnings(doc);
@@ -155,7 +159,7 @@ public static partial class DocumentReader {
         // Copy input so we can open read-only without affecting caller's stream.
         using var ms = CopyToMemory(stream, ct);
         using var doc = WordDocument.Load(ms, new WordLoadOptions {
-            AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+            AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
             OpenSettings = CreateOpenSettings(opt)
         });
         IReadOnlyList<string>? legacyWarnings = BuildLegacyWordWarnings(doc);
@@ -314,7 +318,7 @@ public static partial class DocumentReader {
         }
 
         return ExcelDocument.Load(path, new ExcelLoadOptions {
-            AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+            AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
             OpenSettings = openSettings
         });
     }
@@ -331,7 +335,7 @@ public static partial class DocumentReader {
 
         stream.Position = 0;
         return ExcelDocument.Load(stream, new ExcelLoadOptions {
-            AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+            AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
             OpenSettings = openSettings
         });
     }
@@ -340,13 +344,13 @@ public static partial class DocumentReader {
         OpenSettings? openSettings = CreateOpenSettings(opt);
         try {
             return ExcelDocument.Load(path, new ExcelLoadOptions {
-                AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+                AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
                 OpenSettings = openSettings
             });
         } catch (Exception ex) when (ShouldRetryEncryptedExcelOpen(ex, opt)) {
             try {
                 return ExcelDocument.LoadEncrypted(path, opt.OpenPassword!, new ExcelLoadOptions {
-                    AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+                    AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
                     OpenSettings = openSettings
                 });
             } catch {
@@ -361,14 +365,14 @@ public static partial class DocumentReader {
         stream.Position = 0;
         try {
             return ExcelDocument.Load(stream, new ExcelLoadOptions {
-                AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+                AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
                 OpenSettings = openSettings
             });
         } catch (Exception ex) when (ShouldRetryEncryptedExcelOpen(ex, opt)) {
             stream.Position = 0;
             try {
                 return ExcelDocument.LoadEncrypted(stream, opt.OpenPassword!, new ExcelLoadOptions {
-                    AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly,
+                    AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
                     OpenSettings = openSettings
                 });
             } catch {
@@ -492,7 +496,7 @@ public static partial class DocumentReader {
     }
 
     private static IEnumerable<ReaderChunk> ReadPowerPoint(string path, ReaderOptions opt, CancellationToken ct) {
-        using var presentation = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
+        using var presentation = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
         var chunks = presentation.ExtractMarkdownChunks(
             extract: new PowerPointExtractionExtensions.PowerPointExtractOptions { IncludeNotes = opt.IncludePowerPointNotes },
             chunking: new PowerPointExtractChunkingOptions { MaxChars = opt.MaxChars },
@@ -521,7 +525,7 @@ public static partial class DocumentReader {
 
     private static IEnumerable<ReaderChunk> ReadPowerPoint(Stream stream, string? sourceName, ReaderOptions opt, CancellationToken ct) {
         // Read-only stream opening already copies to an internal stream for safety.
-        using var presentation = PowerPointPresentation.Load(stream, new PowerPointLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
+        using var presentation = PowerPointPresentation.Load(stream, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
         var chunks = presentation.ExtractMarkdownChunks(
             extract: new PowerPointExtractionExtensions.PowerPointExtractOptions { IncludeNotes = opt.IncludePowerPointNotes },
             chunking: new PowerPointExtractChunkingOptions { MaxChars = opt.MaxChars },

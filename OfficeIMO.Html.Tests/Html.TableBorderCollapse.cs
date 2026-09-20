@@ -9,12 +9,12 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void HtmlToWord_TableBorderCollapse_Collapse() {
             string html = "<table style=\"border-collapse:collapse;border:2px solid #ff0000\"><tr><td>A1</td><td>B1</td></tr></table>";
-            using var doc = html.ToWordDocument(new HtmlToWordOptions());
+            using var doc = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToWordDocument(new HtmlToWordOptions());
             var table = doc.Tables[0];
             var insideH = table.StyleDetails!.GetBorderProperties(WordTableBorderSide.InsideHorizontal);
             Assert.Equal(BorderValues.Single, insideH.Style);
             Assert.Equal((UInt32Value)12U, insideH.Size);
-            Assert.Equal("ff0000", insideH.ColorHex);
+            Assert.Equal("FF0000", insideH.ColorHex);
             var cell = table.Rows[0].Cells[0];
             Assert.Null(cell.Borders.TopStyle);
         }
@@ -22,15 +22,14 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void HtmlToWord_TableBorderCollapse_Separate() {
             string html = "<table style=\"border-collapse:separate;border:2px solid #ff0000\"><tr><td>A1</td><td>B1</td></tr></table>";
-            using var doc = html.ToWordDocument(new HtmlToWordOptions());
+            using var doc = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToWordDocument(new HtmlToWordOptions());
             var table = doc.Tables[0];
             var insideH = table.StyleDetails!.GetBorderProperties(WordTableBorderSide.InsideHorizontal);
             Assert.Null(insideH.Style);
             var cell = table.Rows[0].Cells[0];
             Assert.Equal(BorderValues.Single, cell.Borders.TopStyle);
             Assert.Equal((UInt32Value)12U, cell.Borders.TopSize);
-            Assert.Equal("ff0000", cell.Borders.TopColorHex);
+            Assert.Equal("FF0000", cell.Borders.TopColorHex);
         }
     }
 }
-

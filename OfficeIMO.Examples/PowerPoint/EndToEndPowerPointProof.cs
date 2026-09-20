@@ -1,3 +1,4 @@
+using OfficeIMO.Drawing.Internal;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -133,7 +134,7 @@ namespace OfficeIMO.Examples.PowerPoint {
                 presentation.Slides[slideIndex].SaveAsSvg(Path.Combine(outputFolder, stem + ".svg"));
             }
             var pdfOptions = new PowerPointPdfSaveOptions().UseProfile(PdfExportProfile.Faithful);
-            PdfDocumentConversionResult pdfResult = presentation.ToPdfResult(pdfOptions);
+            PdfDocumentConversionResult pdfResult = presentation.ToPdfDocumentResult(pdfOptions);
             pdfResult.Save(pdfPath);
             presentation.SaveAsPdf(handoutPath, new PowerPointPdfSaveOptions {
                 PageLayout = PowerPointPdfPageLayout.Handouts,
@@ -170,7 +171,7 @@ namespace OfficeIMO.Examples.PowerPoint {
                               accessibility.WarningCount + " warnings");
             Console.WriteLine("    Rhythm: " + rhythm.Score + "/100, " + rhythm.Findings.Count + " finding(s)");
             Console.WriteLine("    Proof: PPTX, PNG, SVG, PDF, handout PDF, HTML, JSON, and Open XML validation");
-            if (openPowerPoint) OfficeIMO.Core.OfficeFileLauncher.Open(presentationPath);
+            if (openPowerPoint) OfficeFileLauncher.Open(presentationPath);
         }
     }
 }

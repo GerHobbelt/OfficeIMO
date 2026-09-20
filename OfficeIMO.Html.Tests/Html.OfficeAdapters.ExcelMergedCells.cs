@@ -9,7 +9,7 @@ public class HtmlOfficeAdaptersExcelMergedCells {
     [Fact]
     public void ExcelHtml_RoundTripsMergedCellsWithoutDuplicatingCoveredCells() {
         using ExcelDocument workbook = ExcelDocument.Create(new MemoryStream());
-        ExcelSheet sheet = workbook.AddWorkSheet("Merged");
+        ExcelSheet sheet = workbook.AddWorksheet("Merged");
         sheet.CellValue(1, 1, "Quarterly result");
         sheet.CellValue(1, 4, "Status");
         sheet.CellValue(4, 2, "Approved");
@@ -25,7 +25,7 @@ public class HtmlOfficeAdaptersExcelMergedCells {
         Assert.DoesNotContain("data-officeimo-cell=\"B1\"", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-officeimo-cell=\"A2\"", html, StringComparison.Ordinal);
 
-        HtmlToExcelResult result = html.ToExcelDocumentResult();
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult();
         using ExcelDocument imported = result.Value;
         ExcelSheet importedSheet = Assert.Single(imported.Sheets);
         string[] mergedRanges = importedSheet.GetMergedRanges().Select(merge => merge.A1Range).OrderBy(range => range).ToArray();
@@ -52,7 +52,7 @@ public class HtmlOfficeAdaptersExcelMergedCells {
             </main>
             """;
 
-        HtmlToExcelResult result = html.ToExcelDocumentResult();
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult();
         using ExcelDocument workbook = result.Value;
         ExcelSheet sheet = Assert.Single(workbook.Sheets);
 
@@ -67,7 +67,7 @@ public class HtmlOfficeAdaptersExcelMergedCells {
     [Fact]
     public void ExcelHtml_TruncationClipsMergedRangeToExportedRows() {
         using ExcelDocument workbook = ExcelDocument.Create(new MemoryStream());
-        ExcelSheet sheet = workbook.AddWorkSheet("Clipped");
+        ExcelSheet sheet = workbook.AddWorksheet("Clipped");
         sheet.CellValue(1, 1, "Visible");
         sheet.MergeRange("A1:B3");
 
@@ -75,7 +75,7 @@ public class HtmlOfficeAdaptersExcelMergedCells {
             Profile = OfficeHtmlConversionProfile.ExcelSemanticTables,
             MaxRowsPerSheet = 2
         });
-        HtmlToExcelResult result = html.ToExcelDocumentResult();
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult();
         using ExcelDocument imported = result.Value;
 
         Assert.Contains("data-officeimo-merge=\"A1:B2\"", html, StringComparison.Ordinal);

@@ -75,7 +75,7 @@ namespace OfficeIMO.Tests {
 
                     var pdfOptions = new PowerPointPdfSaveOptions().UseProfile(PdfExportProfile.Faithful);
                     Assert.True(pdfOptions.UseSharedVisualSnapshot);
-                    PdfDocumentConversionResult pdfResult = presentation.ToPdfResult(pdfOptions);
+                    PdfDocumentConversionResult pdfResult = presentation.ToPdfDocumentResult(pdfOptions);
                     byte[] pdf = pdfResult.ToBytes();
                     Assert.True(pdf.Length > 100);
                     Assert.DoesNotContain(pdfResult.Warnings,
@@ -128,7 +128,7 @@ namespace OfficeIMO.Tests {
                 "PowerPointWithTablesAndCharts.pptx");
             Assert.True(File.Exists(fixture), "Expected sanitized PowerPoint-authored fixture was not found.");
 
-            using PowerPointPresentation presentation = PowerPointPresentation.Load(fixture, new PowerPointLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
+            using PowerPointPresentation presentation = PowerPointPresentation.Load(fixture, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
             PowerPointVisualProofReport report = presentation.CreateVisualProofReport("powerpoint-authored-import");
 
             Assert.NotEmpty(report.Slides);

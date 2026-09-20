@@ -43,7 +43,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
                 .H1("Title")
                 .P("Hello")
                 .ToHtmlDocument(new HtmlOptions {
-                    ApplyDefaultVisualTheme = false
+                    ApplyDefaultTheme = false
                 });
 
             Assert.DoesNotContain("article.markdown-body { color: #1f2937; background: #ffffff; }", html, StringComparison.OrdinalIgnoreCase);
@@ -63,6 +63,53 @@ namespace OfficeIMO.Tests.MarkdownSuite {
         }
 
         [Fact]
+        public void Html_Rendering_Does_Not_Mutate_Reusable_Options() {
+            var options = new HtmlOptions {
+                Kind = HtmlKind.Document,
+                Theme = MarkdownVisualTheme.Report(),
+                Prism = new PrismOptions { Enabled = true }
+            };
+            options.AdditionalCssHrefs.Add("https://example.com/site.css");
+
+            string fragment = MarkdownDoc.Create().H1("Title").ToHtmlFragment(options);
+
+            Assert.DoesNotContain("<html", fragment, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(HtmlKind.Document, options.Kind);
+            Assert.Single(options.AdditionalCssHrefs);
+            Assert.NotNull(options.Theme);
+            Assert.True(options.Prism.Enabled);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task External_Css_Async_Saves_Are_Operation_Scoped_And_Cancellable() {
+            string temp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(temp);
+            var options = new HtmlOptions {
+                Kind = HtmlKind.Document,
+                Style = HtmlStyle.Clean,
+                CssDelivery = CssDelivery.ExternalFile
+            };
+            MarkdownDoc doc = MarkdownDoc.Create().H1("Title");
+            string first = Path.Combine(temp, "first.html");
+            string second = Path.Combine(temp, "second.html");
+
+            await System.Threading.Tasks.Task.WhenAll(
+                doc.SaveAsHtmlAsync(first, options),
+                doc.SaveAsHtmlAsync(second, options));
+
+            Assert.True(File.Exists(first));
+            Assert.True(File.Exists(Path.ChangeExtension(first, ".css")));
+            Assert.True(File.Exists(second));
+            Assert.True(File.Exists(Path.ChangeExtension(second, ".css")));
+            Assert.Equal(HtmlKind.Document, options.Kind);
+
+            string cancelled = Path.Combine(temp, "cancelled.html");
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                doc.SaveAsHtmlAsync(cancelled, options, new System.Threading.CancellationToken(canceled: true)));
+            Assert.False(File.Exists(cancelled));
+        }
+
+        [Fact]
         public void Shared_VisualTheme_Emits_Consistent_Html_Css() {
             MarkdownVisualTheme theme = MarkdownVisualTheme.Report()
                 .WithColorScheme(MarkdownColorSchemeKind.Emerald)
@@ -77,7 +124,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
                 .Table(t => t.Headers("Name", "Value").Row("Accent", "Emerald"))
                 .ToHtmlDocument(new HtmlOptions {
                     Title = "Shared Theme",
-                    VisualTheme = theme,
+                    Theme = theme,
                     Kind = HtmlKind.Document
                 });
 
@@ -95,25 +142,12 @@ namespace OfficeIMO.Tests.MarkdownSuite {
         }
 
         [Fact]
-        public void SaveHtml_Remains_Compatibility_Alias_For_SaveAsHtml() {
-            var temp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(temp);
-            var path = Path.Combine(temp, "compat.html");
-            var doc = MarkdownDoc.Create().H1("Title");
-
-            doc.SaveHtml(path, new HtmlOptions { Title = "Compat", Style = HtmlStyle.Clean });
-
-            Assert.True(File.Exists(path));
-            Assert.Contains("Title", File.ReadAllText(path), StringComparison.Ordinal);
-        }
-
-        [Fact]
-        public void ThemeColors_Property_Remains_Html_Color_Override_Api() {
+        public void ColorOverridesApplyToHtmlThemeVariables() {
             string html = MarkdownDoc.Create()
                 .H1("Legacy colors")
                 .ToHtmlDocument(new HtmlOptions {
-                    Title = "Legacy",
-                    Theme = new ThemeColors {
+                    Title = "Custom colors",
+                    ColorOverrides = new MarkdownHtmlColorOverrides {
                         HeadingLight = "SeaGreen",
                         AccentLight = "#123456"
                     },
@@ -203,7 +237,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 
         [Fact]
         public void HtmlOptions_Can_Disable_Automatic_Heading_Identifiers() {
-            var doc = MarkdownReader.Parse("# Alpha");
+            var doc = OfficeIMO.Markdown.MarkdownReader.Parse("# Alpha");
 
             string html = doc.ToHtmlFragment(new HtmlOptions {
                 Style = HtmlStyle.Plain,
@@ -226,7 +260,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 # a_b c.d
 """;
 
-            string html = MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
+            string html = OfficeIMO.Markdown.MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
                 Style = HtmlStyle.Plain,
                 CssDelivery = CssDelivery.None,
                 BodyClass = null,
@@ -242,7 +276,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
         public void HtmlOptions_Applies_Heading_Identifier_Style_To_Nested_Headings() {
             const string markdown = "- # a_b c.d";
 
-            string html = MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
+            string html = OfficeIMO.Markdown.MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
                 Style = HtmlStyle.Plain,
                 CssDelivery = CssDelivery.None,
                 BodyClass = null,
@@ -265,12 +299,12 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 ```
 """;
 
-            var defaultHtml = MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
+            var defaultHtml = OfficeIMO.Markdown.MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
                 Style = HtmlStyle.Plain,
                 CssDelivery = CssDelivery.None,
                 BodyClass = null
             });
-            var markdigStyleHtml = MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
+            var markdigStyleHtml = OfficeIMO.Markdown.MarkdownReader.Parse(markdown).ToHtmlFragment(new HtmlOptions {
                 Style = HtmlStyle.Plain,
                 CssDelivery = CssDelivery.None,
                 BodyClass = null,
@@ -331,7 +365,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
             });
             Assert.Contains("<title>åDocument</title>", documentHtml, StringComparison.Ordinal);
 
-            string blockedLinkedImage = MarkdownReader.Parse("[![åBadge](https://img.example/badge.svg)](https://example.com)")
+            string blockedLinkedImage = OfficeIMO.Markdown.MarkdownReader.Parse("[![åBadge](https://img.example/badge.svg)](https://example.com)")
                 .ToHtmlFragment(new HtmlOptions {
                     Style = HtmlStyle.Plain,
                     CssDelivery = CssDelivery.None,
@@ -468,7 +502,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
         public void Link_Html_Preserves_Ipv6_Authority_Brackets() {
             const string markdown = "[loopback](http://[::1]/)";
 
-            string html = MarkdownReader.Parse(markdown)
+            string html = OfficeIMO.Markdown.MarkdownReader.Parse(markdown)
                 .ToHtmlFragment(new HtmlOptions {
                     Style = HtmlStyle.Plain,
                     CssDelivery = CssDelivery.None,
@@ -492,7 +526,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
 """;
 
             var options = HtmlOptions.CreateGitHubFlavoredMarkdownProfile();
-            string html = MarkdownReader.Parse(markdown, MarkdownReaderOptions.CreateGitHubFlavoredMarkdownProfile())
+            string html = OfficeIMO.Markdown.MarkdownReader.Parse(markdown, MarkdownReaderOptions.CreateGitHubFlavoredMarkdownProfile())
                 .ToHtmlFragment(options);
 
             Assert.True(options.AutoHeadingIdentifiers);
@@ -651,7 +685,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
   hello from list
   ```
 """;
-            var doc = MarkdownReader.Parse(markdown);
+            var doc = OfficeIMO.Markdown.MarkdownReader.Parse(markdown);
             var html = doc.ToHtmlFragment(new HtmlOptions {
                 Style = HtmlStyle.Plain,
                 CssDelivery = CssDelivery.None,

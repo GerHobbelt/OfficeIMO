@@ -16,7 +16,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableBasic.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -68,7 +68,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("Total Sales", dataField.DisplayName);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -78,7 +78,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableConditionalFormatting.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -119,7 +119,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableFluent.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -172,7 +172,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(dataField.NumberFormatId >= 164);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -182,7 +182,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableInteractionOptions.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Sales");
@@ -228,7 +228,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableFluentItemFilters.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -327,7 +327,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("B", product.SelectedItem);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -337,7 +337,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableBuiltInNumberFormats.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Sales");
@@ -378,7 +378,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("#,##0.00", dataField.NumberFormatCode);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -444,7 +444,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableFieldOptions.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -587,7 +587,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("$#,##0.00", dataField.NumberFormatCode);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -597,7 +597,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableShowValuesAs.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -637,7 +637,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(dataField.NumberFormatId >= 164);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -647,7 +647,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableFilters.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -707,7 +707,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(PivotFilterValues.ValueGreaterThan, pivot.Filters[1].Type);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -717,7 +717,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableExpandedFilters.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -801,7 +801,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("35", pivot.Filters[3].Value2);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -811,7 +811,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableDynamicDateFilters.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "OrderDate");
                 sheet.CellValue(1, 2, "Product");
@@ -873,7 +873,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(PivotFilterValues.February, pivot.Filters[3].Type);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -884,7 +884,7 @@ namespace OfficeIMO.Tests {
             string DateSerial(DateTime value) => value.ToOADate().ToString("G17", CultureInfo.InvariantCulture);
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "OrderDate");
                 sheet.CellValue(1, 2, "Product");
@@ -954,7 +954,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(PivotFilterValues.DateNotBetween, pivot.Filters[3].Type);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -964,7 +964,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableTopBottomFilters.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -1059,7 +1059,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("30.5", pivot.Filters[3].Value1);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1069,7 +1069,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableCalculatedFields.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Revenue");
@@ -1127,7 +1127,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("$#,##0", calculated.NumberFormatCode);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1137,7 +1137,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableGrouping.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
                 sheet.CellValue(1, 1, "OrderDate");
                 sheet.CellValue(1, 2, "Quantity");
                 sheet.CellValue(1, 3, "Sales");
@@ -1189,7 +1189,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 var pivot = document.GetPivotTables().Single();
                 Assert.Equal(2, pivot.Groupings.Count);
                 Assert.Equal("OrderDate", pivot.Groupings[0].FieldName);
@@ -1206,7 +1206,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableDateHierarchyGrouping.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
                 sheet.CellValue(1, 1, "OrderDate");
                 sheet.CellValue(1, 2, "Region");
                 sheet.CellValue(1, 3, "Sales");
@@ -1270,7 +1270,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 var pivot = document.GetPivotTables().Single();
 
                 Assert.Equal(new[] { "OrderDate Years", "OrderDate Quarters", "OrderDate Months" }, pivot.RowFields);
@@ -1285,7 +1285,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotTableDateHierarchyFieldOptions.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
                 sheet.CellValue(1, 1, "OrderDate");
                 sheet.CellValue(1, 2, "Region");
                 sheet.CellValue(1, 3, "Sales");
@@ -1361,7 +1361,7 @@ namespace OfficeIMO.Tests {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelPivotChart.xlsx");
 
             using (var document = ExcelDocument.Create(filePath)) {
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
 
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Product");
@@ -1404,7 +1404,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(0U, pivotSource.GetFirstChild<C.FormatId>()!.Val!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }

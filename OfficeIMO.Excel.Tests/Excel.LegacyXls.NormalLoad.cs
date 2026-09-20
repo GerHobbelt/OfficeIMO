@@ -63,7 +63,7 @@ namespace OfficeIMO.Tests {
                 using ExcelDocument document = ExcelDocument.LoadEncrypted(sourcePath, "openpass");
 
                 Assert.True(document.SourceFormat == ExcelFileFormat.Xls);
-                Assert.Equal(string.Empty, document.FilePath);
+                Assert.Null(document.FilePath);
                 Assert.Equal("Rc4Sheet", document.Sheets.Single().Name);
                 Assert.Throws<InvalidOperationException>(() => document.Save());
             } finally {
@@ -81,7 +81,7 @@ namespace OfficeIMO.Tests {
                 using ExcelDocument document = await ExcelDocument.LoadEncryptedAsync(sourcePath, "openpass");
 
                 Assert.True(document.SourceFormat == ExcelFileFormat.Xls);
-                Assert.Equal(string.Empty, document.FilePath);
+                Assert.Null(document.FilePath);
                 Assert.Equal("Rc4Sheet", document.Sheets.Single().Name);
                 Assert.True(document.Sheets[0].TryGetCellText(1, 1, out string? value));
                 Assert.Equal("RC4 secret", value);
@@ -107,7 +107,7 @@ namespace OfficeIMO.Tests {
             } else {
                 using var sourceStream = new MemoryStream();
                 using ExcelDocument source = ExcelDocument.Create(sourceStream);
-                source.AddWorkSheet("OpenXml").CellValue(1, 1, "Encrypted Open XML");
+                source.AddWorksheet("OpenXml").CellValue(1, 1, "Encrypted Open XML");
                 using var encrypted = new MemoryStream();
                 source.SaveEncrypted(encrypted, password);
                 encryptedBytes = encrypted.ToArray();
@@ -256,7 +256,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
-                    ExcelSheet sheet = document.AddWorkSheet("OpenXml");
+                    ExcelSheet sheet = document.AddWorksheet("OpenXml");
                     sheet.CellValue(1, 1, "Open XML payload");
                     document.Save();
                 }
@@ -335,7 +335,7 @@ namespace OfficeIMO.Tests {
             string sourcePath = WriteTempWorkbook(compound, ".xls");
 
             try {
-                NotSupportedException exception = Assert.Throws<NotSupportedException>(() => ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { PersistenceMode = OfficeIMO.Core.DocumentPersistenceMode.SaveOnDispose }));
+                NotSupportedException exception = Assert.Throws<NotSupportedException>(() => ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose }));
 
                 Assert.Contains("SaveOnDispose is not supported", exception.Message, StringComparison.OrdinalIgnoreCase);
             } finally {
@@ -463,7 +463,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
-                    ExcelSheet sheet = document.AddWorkSheet("Data");
+                    ExcelSheet sheet = document.AddWorksheet("Data");
                     sheet.CellValue(1, 1, "Name");
                     sheet.CellValue(2, 1, "Alice");
                     sheet.CellValue(2, 2, 42);

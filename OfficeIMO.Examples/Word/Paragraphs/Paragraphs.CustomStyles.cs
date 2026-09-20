@@ -16,7 +16,7 @@ internal static partial class Paragraphs {
         custom.Append(new StyleName { Val = "MyStyle" });
         var runProps = new StyleRunProperties();
         runProps.Append(new RunFonts { Ascii = "Courier New" });
-        runProps.Append(new WColor { Val = Color.Red.ToHexColor() });
+        runProps.Append(new WColor { Val = Color.Red.ToRgbHex() });
         runProps.Append(new FontSize { Val = "28" });
         custom.Append(runProps);
 
@@ -24,7 +24,8 @@ internal static partial class Paragraphs {
 
         using (WordDocument document = WordDocument.Create(filePath)) {
             document.AddParagraph("Hello world").SetStyleId("MyStyle");
-            document.Save(new WordSaveOptions { OpenAfterSave = openWord });
+            document.Save();
+            if (openWord) document.OpenInApplication();
         }
     }
 
@@ -53,7 +54,8 @@ internal static partial class Paragraphs {
         using (WordDocument document = WordDocument.Create(filePath)) {
             document.AddParagraph("This paragraph is centered and red").SetStyleId("CenteredRed");
             document.AddParagraph("This paragraph is indented and green").SetStyleId("GreenIndented");
-            document.Save(new WordSaveOptions { OpenAfterSave = openWord });
+            document.Save();
+            if (openWord) document.OpenInApplication();
         }
     }
 
@@ -71,7 +73,8 @@ internal static partial class Paragraphs {
 
         using (WordDocument document = WordDocument.Create(filePath)) {
             document.AddParagraph("Paragraph with overridden Normal style");
-            document.Save(new WordSaveOptions { OpenAfterSave = openWord });
+            document.Save();
+            if (openWord) document.OpenInApplication();
         }
 
         WordParagraphStyle.OverrideBuiltInStyle(WordParagraphStyles.Normal, original);

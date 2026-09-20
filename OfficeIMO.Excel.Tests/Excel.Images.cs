@@ -1,6 +1,8 @@
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeIMO.Drawing;
@@ -17,7 +19,7 @@ namespace OfficeIMO.Tests {
             OfficeImageInfo info = OfficeImageReader.Identify(imagePath);
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 ExcelImage image = sheet.AddImageFromFile(2, 3, imagePath, scalePercent: 20, offsetXPixels: 5, offsetYPixels: 7,
                     name: "ScaledLogo", altText: "Evotec logo", title: "Logo", rotationDegrees: 15);
 
@@ -52,7 +54,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 ExcelImage image = sheet.AddImageFromFileToRange("A1:C15", imagePath, name: "RangeLogo", altText: "Logo pinned to report header",
                     title: "Pinned logo", placement: ExcelImagePlacement.MoveAndSize);
                 Assert.True(image.WidthPixels > 0);
@@ -84,7 +86,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.SetColumnWidth(1, 20);
                 sheet.SetColumnWidth(2, 18);
                 sheet.SetRowHeight(1, 30);
@@ -112,7 +114,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 ExcelImage image = sheet.AddImageFromFileToRange("A1:C15", imagePath, name: "ScaledRange");
                 int originalWidth = image.WidthPixels;
                 int originalHeight = image.HeightPixels;
@@ -140,7 +142,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using ExcelDocument document = ExcelDocument.Create(filePath);
-            ExcelSheet sheet = document.AddWorkSheet("Images");
+            ExcelSheet sheet = document.AddWorksheet("Images");
             ExcelImage image = sheet.AddImageFromFileToRange("A1:B2", imagePath, name: "DynamicRange");
             int originalWidth = image.WidthPixels;
             int originalHeight = image.HeightPixels;
@@ -160,7 +162,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using ExcelDocument document = ExcelDocument.Create(filePath);
-            ExcelSheet sheet = document.AddWorkSheet("Images");
+            ExcelSheet sheet = document.AddWorksheet("Images");
             sheet.SetColumnWidth(1, 20);
             sheet.SetColumnWidth(2, 20);
             sheet.SetColumnWidth(3, 20);
@@ -178,7 +180,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using ExcelDocument document = ExcelDocument.Create(filePath);
-            ExcelSheet sheet = document.AddWorkSheet("Images");
+            ExcelSheet sheet = document.AddWorksheet("Images");
             sheet.SetRowHeight(1, 15);
             sheet.SetRowHeight(2, 15);
             sheet.SetRowHeight(3, 15);
@@ -195,7 +197,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using ExcelDocument document = ExcelDocument.Create(filePath);
-            ExcelSheet sheet = document.AddWorkSheet("Images");
+            ExcelSheet sheet = document.AddWorksheet("Images");
             ExcelImage image = sheet.AddImageFromFileToRange("A1:B2", imagePath, name: "MoveOnlyRange", placement: ExcelImagePlacement.MoveOnly);
             int originalWidth = image.WidthPixels;
             int originalHeight = image.HeightPixels;
@@ -215,7 +217,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.CellAt(3, 1).SetValue("{{Name}}");
                 sheet.AddImageFromFileToRange("A2:B5", imagePath, name: "MoveOnlyTemplateRange", placement: ExcelImagePlacement.MoveOnly);
 
@@ -241,7 +243,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.CellAt(2, 1).SetValue("Remove");
                 sheet.AddImageFromFileToRange("A2:B5", imagePath, name: "MoveAndSizePartialDelete", placement: ExcelImagePlacement.MoveAndSize);
 
@@ -264,7 +266,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.CellAt(5, 1).SetValue("{{Name}}");
                 sheet.AddImageFromFileToRange("A2:B5", imagePath, name: "MoveAndSizeInsertBelow", placement: ExcelImagePlacement.MoveAndSize);
 
@@ -291,7 +293,7 @@ namespace OfficeIMO.Tests {
 
             using ExcelDocument document = ExcelDocument.Create(filePath);
             SetDefaultWorkbookFont(document._spreadSheetDocument, "Consolas", 11);
-            ExcelSheet sheet = document.AddWorkSheet("Images");
+            ExcelSheet sheet = document.AddWorksheet("Images");
 
             ExcelImage image = sheet.AddImageFromFileToRange("A1:B1", imagePath, name: "FontSizedRange");
 
@@ -319,7 +321,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, "saturn.tif");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 ExcelImage image = sheet.AddImageFromFile(2, 2, imagePath, widthPixels: 32, heightPixels: 32);
 
                 Assert.Equal("image/tiff", image.ContentType);
@@ -339,7 +341,7 @@ namespace OfficeIMO.Tests {
             string imagePath = Path.Combine(_directoryWithImages, imageName);
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 ExcelImage image = sheet.AddImageFromFile(2, 2, imagePath, widthPixels: 32, heightPixels: 32);
 
                 Assert.Equal(expectedContentType, image.ContentType);
@@ -352,15 +354,17 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void Test_ExcelImage_FromUrl_AllowsScaleOnlyCallShape() {
+        public async Task Test_ExcelImage_FromUrl_PropagatesCancellation() {
             string filePath = Path.Combine(_directoryWithFiles, "ExcelImage.FromUrl.ScaleOnly.xlsx");
 
             using ExcelDocument document = ExcelDocument.Create(filePath);
-            ExcelSheet sheet = document.AddWorkSheet("Images");
+            ExcelSheet sheet = document.AddWorksheet("Images");
 
-            ExcelImage? image = sheet.AddImageFromUrl(2, 2, "http://127.0.0.1:1/not-found.png", scalePercent: 25);
-
-            Assert.Null(image);
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                sheet.AddImageFromUrlAsync(2, 2, "http://127.0.0.1:1/not-found.png", scalePercent: 25,
+                    cancellationToken: cancellation.Token));
         }
     }
 }

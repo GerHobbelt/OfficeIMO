@@ -1,6 +1,8 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using System.Net.Http;
+using OfficeIMO.Drawing;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace OfficeIMO.Word {
     /// <summary>
@@ -145,29 +147,17 @@ namespace OfficeIMO.Word {
         /// <param name="url">URL of the image to download.</param>
         /// <param name="width">Optional width for the image.</param>
         /// <param name="height">Optional height for the image.</param>
+        /// <param name="cancellationToken">Token used to cancel the remote request.</param>
         /// <returns>The created <see cref="WordImage"/>.</returns>
-        public WordImage AddImageFromUrl(string url, double? width = null, double? height = null) {
-            if (string.IsNullOrWhiteSpace(url)) {
-                throw new ArgumentException("URL cannot be null or empty.", nameof(url));
-            }
-
-            using HttpClient client = new HttpClient();
-            var data = client.GetByteArrayAsync(url).GetAwaiter().GetResult();
-            using var ms = new MemoryStream(data);
-
-            string fileName = "image";
-            try {
-                var uri = new Uri(url);
-                fileName = Path.GetFileName(uri.LocalPath);
-                if (string.IsNullOrEmpty(fileName)) {
-                    fileName = "image";
-                }
-            } catch (UriFormatException) {
-                // ignore and use default filename
-            }
-
+        public async Task<WordImage> AddImageFromUrlAsync(
+            string url,
+            double? width = null,
+            double? height = null,
+            CancellationToken cancellationToken = default) {
+            OfficeRemoteImage image = await OfficeRemoteImageLoader.LoadAsync(url, cancellationToken: cancellationToken).ConfigureAwait(false);
+            using var ms = image.ToStream();
             var paragraph = AddParagraph();
-            paragraph.AddImage(ms, fileName, width, height);
+            paragraph.AddImage(ms, image.FileName, width, height);
             return paragraph.Image ?? throw new InvalidOperationException("Image was not added to the paragraph.");
         }
 
@@ -548,7 +538,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         public WordShape AddShape(ShapeType shapeType, double widthPt, double heightPt,
             OfficeIMO.Drawing.OfficeColor fillColor, OfficeIMO.Drawing.OfficeColor strokeColor, double strokeWeightPt = 1, double arcSize = 0.25) {
-            return AddShape(shapeType, widthPt, heightPt, fillColor.ToHexColor(), strokeColor.ToHexColor(), strokeWeightPt, arcSize);
+            return AddShape(shapeType, widthPt, heightPt, fillColor.ToRgbHex(), strokeColor.ToRgbHex(), strokeWeightPt, arcSize);
         }
 
         /// <summary>

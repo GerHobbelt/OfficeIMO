@@ -19,8 +19,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var summary = document.AddWorkSheet("Summary");
-                    var hidden = document.AddWorkSheet("Hidden");
+                    var summary = document.AddWorksheet("Summary");
+                    var hidden = document.AddWorksheet("Hidden");
 
                     summary.CellValue(1, 1, "Name");
                     summary.CellValue(2, 1, "Alpha");
@@ -179,7 +179,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var sheet = document.AddWorkSheet("Summary");
+                    var sheet = document.AddWorksheet("Summary");
 
                     sheet.CellValue(2, 1, 12.34d);
                     sheet.CellBackground(2, 1, "#D9EAD3");
@@ -241,8 +241,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var summary = document.AddWorkSheet("Summary");
-                    var hidden = document.AddWorkSheet("Hidden");
+                    var summary = document.AddWorksheet("Summary");
+                    var hidden = document.AddWorksheet("Hidden");
 
                     summary.CellValue(1, 1, "Name");
                     summary.CellValue(1, 2, "Count");
@@ -314,7 +314,7 @@ namespace OfficeIMO.Tests {
                 ApplySheetDisplaySettings(filePath, "Summary", "FF336699", rightToLeft: true);
 
                 using var reloadedDocument = ExcelDocument.Load(filePath);
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "OfficeIMO Export"
                 });
 
@@ -438,11 +438,11 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var sheet = document.AddWorkSheet("Data");
+                var sheet = document.AddWorksheet("Data");
                 sheet.CellValue(1, 1, "Value");
                 document.SetPrintArea(sheet, "A1:A5", save: false);
 
-                var batch = document.CreateGoogleSheetsBatch();
+                var batch = document.BuildGoogleSheetsBatch();
 
                 Assert.Empty(batch.Requests.OfType<GoogleSheetsAddNamedRangeRequest>());
                 Assert.Contains(batch.Report.Notices, n => n.Feature == "BuiltInNames");
@@ -459,7 +459,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorkSheet("Data");
+                    var data = document.AddWorksheet("Data");
 
                     data.CellValue(1, 1, "Prefix");
                     data.CellValue(1, 2, "Suffix");
@@ -493,7 +493,7 @@ namespace OfficeIMO.Tests {
                 }
 
                 using var reloadedDocument = ExcelDocument.Load(filePath);
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Advanced Auto Filters"
                 });
 
@@ -552,7 +552,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var summary = document.AddWorkSheet("Summary");
+                    var summary = document.AddWorksheet("Summary");
 
                     summary.CellValue(1, 1, "Name");
                     summary.CellValue(1, 2, "Amount");
@@ -581,7 +581,7 @@ namespace OfficeIMO.Tests {
                 }
 
                 using var reloadedDocument = ExcelDocument.Load(filePath);
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Styled Table Export"
                 });
 
@@ -628,7 +628,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var summary = document.AddWorkSheet("Summary");
+                    var summary = document.AddWorksheet("Summary");
 
                     summary.CellValue(1, 1, "Name");
                     summary.CellValue(1, 2, "Status");
@@ -651,7 +651,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("B2:B3", Assert.Single(validation.A1Ranges));
                 Assert.Equal("\"Open,Closed,Pending\"", validation.Formula1);
 
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Dropdown Export"
                 });
 
@@ -686,8 +686,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var options = document.AddWorkSheet("Options");
-                    var summary = document.AddWorkSheet("Summary");
+                    var options = document.AddWorksheet("Options");
+                    var summary = document.AddWorksheet("Summary");
 
                     options.CellValue(1, 1, "Open");
                     options.CellValue(2, 1, "Closed");
@@ -714,7 +714,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("list", validation.Type);
                 Assert.Equal("=StatusOptions", validation.Formula1);
 
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Named Dropdown Export"
                 });
 
@@ -745,8 +745,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var options = document.AddWorkSheet("Options");
-                    var summary = document.AddWorkSheet("Summary");
+                    var options = document.AddWorksheet("Options");
+                    var summary = document.AddWorksheet("Summary");
 
                     options.CellValue(1, 1, "Open");
                     options.CellValue(2, 1, "Closed");
@@ -772,7 +772,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("list", validation.Type);
                 Assert.Equal("='Options'!A1:A3", validation.Formula1);
 
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Range Dropdown Export"
                 });
 
@@ -803,7 +803,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var summary = document.AddWorkSheet("Summary");
+                    var summary = document.AddWorksheet("Summary");
 
                     summary.CellValue(1, 1, "Name");
                     summary.CellValue(1, 2, "Status");
@@ -829,7 +829,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("list", validation.Type);
                 Assert.Equal("=D2:D4", validation.Formula1);
 
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Local Range Dropdown Export"
                 });
 
@@ -860,7 +860,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorkSheet("Data");
+                    var data = document.AddWorksheet("Data");
 
                     data.CellValue(1, 1, "Quantity");
                     data.CellValue(1, 2, "Score");
@@ -891,7 +891,7 @@ namespace OfficeIMO.Tests {
                     && validation.Formula1 == "5.5"
                     && validation.A1Ranges.SequenceEqual(new[] { "B2:B3" }));
 
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Numeric Validation Export"
                 });
 
@@ -943,7 +943,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorkSheet("Data");
+                    var data = document.AddWorksheet("Data");
 
                     data.CellValue(1, 1, "Start");
                     data.CellValue(2, 1, minimumDate);
@@ -962,7 +962,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("between", validation.Operator);
                 Assert.Equal(new[] { "A2:A3" }, validation.A1Ranges);
 
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Date Validation Export"
                 });
 
@@ -1004,7 +1004,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorkSheet("Data");
+                    var data = document.AddWorksheet("Data");
 
                     data.CellValue(1, 1, "Code");
                     data.CellValue(2, 1, "ABCD");
@@ -1024,7 +1024,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("4", validation.Formula1);
                 Assert.Equal(new[] { "A2:A3" }, validation.A1Ranges);
 
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Text Length Validation Export"
                 });
 
@@ -1066,7 +1066,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorkSheet("Data");
+                    var data = document.AddWorksheet("Data");
 
                     data.CellValue(1, 1, "Quantity");
                     data.CellValue(2, 1, 2);
@@ -1076,7 +1076,7 @@ namespace OfficeIMO.Tests {
                 }
 
                 using var reloadedDocument = ExcelDocument.Load(filePath);
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Validation Only Empty Cells Export"
                 });
 
@@ -1136,7 +1136,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorkSheet("Data");
+                    var data = document.AddWorksheet("Data");
 
                     data.CellValue(1, 1, "Status");
                     data.CellValue(2, 1, "Open");
@@ -1146,7 +1146,7 @@ namespace OfficeIMO.Tests {
                 }
 
                 using var reloadedDocument = ExcelDocument.Load(filePath);
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "Worksheet List Validation Export"
                 });
 
@@ -1204,8 +1204,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var summary = document.AddWorkSheet("Summary");
-                    var hidden = document.AddWorkSheet("Hidden");
+                    var summary = document.AddWorksheet("Summary");
+                    var hidden = document.AddWorksheet("Hidden");
 
                     summary.CellValue(1, 1, "Name");
                     summary.CellValue(2, 2, 12);
@@ -1269,7 +1269,7 @@ namespace OfficeIMO.Tests {
                 ApplySheetDisplaySettings(filePath, "Summary", "FF336699", rightToLeft: true);
 
                 using var reloadedDocument = ExcelDocument.Load(filePath);
-                var batch = reloadedDocument.CreateGoogleSheetsBatch(new GoogleSheetsSaveOptions {
+                var batch = reloadedDocument.BuildGoogleSheetsBatch(new GoogleSheetsSaveOptions {
                     Title = "API Export"
                 });
 
@@ -1389,8 +1389,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
-                var target = document.AddWorkSheet("Target");
+                var summary = document.AddWorksheet("Summary");
+                var target = document.AddWorksheet("Target");
                 summary.CellValue(1, 1, "Name");
                 summary.SetHyperlink(2, 1, "https://alpha.example/", display: "Alpha");
                 summary.SetInternalLink(3, 1, target, "B5", display: "Target");
@@ -1459,7 +1459,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
 
@@ -1512,7 +1512,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
 
@@ -1567,7 +1567,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
 
@@ -1631,7 +1631,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
 
@@ -1697,7 +1697,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
 
@@ -1756,7 +1756,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
                 summary.SetColumnWidth(1, 18);
@@ -1824,7 +1824,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
 
@@ -1885,7 +1885,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using var document = ExcelDocument.Create(filePath);
-                var summary = document.AddWorkSheet("Summary");
+                var summary = document.AddWorksheet("Summary");
                 summary.CellValue(1, 1, "Name");
                 summary.CellValue(2, 1, "Alpha");
 

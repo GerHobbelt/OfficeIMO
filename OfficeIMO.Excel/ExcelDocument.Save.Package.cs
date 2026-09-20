@@ -1,10 +1,9 @@
+using OfficeIMO.Drawing.Internal;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Validation;
-using OfficeIMO.Core.Internal;
 using OfficeIMO.Excel.Utilities;
-using OfficeIMO.Shared;
 using System.IO.Packaging;
 using System.Threading;
 using System.Threading.Tasks;

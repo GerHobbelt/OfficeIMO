@@ -1,8 +1,8 @@
+using OfficeIMO.Drawing.Internal;
 using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using OfficeIMO.Core.Internal;
 
 namespace OfficeIMO.Visio {
     /// <summary>
@@ -15,7 +15,7 @@ namespace OfficeIMO.Visio {
             if (string.IsNullOrEmpty(target)) {
                 throw new InvalidOperationException("The document has no associated file path.");
             }
-            OfficeIMO.Core.OfficeFileLauncher.Open(target);
+            OfficeFileLauncher.Open(target);
         }
 
         /// <summary>Saves the document to the path specified when created.</summary>
@@ -39,12 +39,27 @@ namespace OfficeIMO.Visio {
             _filePath = filePath;
         }
 
-        /// <summary>Saves the document to a specified stream.</summary>
+        /// <summary>Saves the document once to a specified stream without changing the associated destination.</summary>
         public void Save(Stream stream) {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
             if (!stream.CanWrite) throw new ArgumentException("Stream must be writable.", nameof(stream));
             ThrowIfInvalidForSave();
             SaveInternal(stream);
+        }
+
+        /// <summary>Saves an independent copy without changing the document's associated destination.</summary>
+        public void SaveCopy(string filePath) {
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("File path cannot be empty.", nameof(filePath));
+            ThrowIfInvalidForSave();
+            OfficeFileCommit.WriteAllBytes(filePath, ToBytes());
+        }
+
+        /// <summary>Asynchronously saves an independent copy without changing the document's associated destination.</summary>
+        public Task SaveCopyAsync(string filePath, CancellationToken cancellationToken = default) {
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("File path cannot be empty.", nameof(filePath));
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfInvalidForSave();
+            return OfficeFileCommit.WriteAllBytesAsync(filePath, ToBytes(), cancellationToken: cancellationToken);
         }
 
         /// <summary>Encodes the document as a VSDX package.</summary>
@@ -75,7 +90,7 @@ namespace OfficeIMO.Visio {
             _filePath = filePath;
         }
 
-        /// <summary>Asynchronously saves to a caller-owned writable stream.</summary>
+        /// <summary>Asynchronously saves once to a caller-owned writable stream without changing the associated destination.</summary>
         public async Task SaveAsync(Stream stream, CancellationToken cancellationToken = default) {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
             cancellationToken.ThrowIfCancellationRequested();

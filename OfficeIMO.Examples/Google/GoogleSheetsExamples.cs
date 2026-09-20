@@ -11,7 +11,7 @@ namespace OfficeIMO.Examples.Google {
             string filePath = Path.Combine(folderPath, "GoogleSheets.Plan.xlsx");
 
             using var workbook = ExcelDocument.Create(filePath);
-            var summary = workbook.AddWorkSheet("Summary");
+            var summary = workbook.AddWorksheet("Summary");
             summary.CellValue(1, 1, "Quarter");
             summary.CellValue(1, 2, "Revenue");
             summary.CellValue(2, 1, "Q1");
@@ -20,7 +20,7 @@ namespace OfficeIMO.Examples.Google {
             summary.CellValue(3, 2, 151500);
             workbook.Save();
 
-            var plan = workbook.CreateGoogleSheetsTranslationPlan(new GoogleSheetsSaveOptions {
+            var plan = workbook.BuildGoogleSheetsPlan(new GoogleSheetsSaveOptions {
                 Title = "OfficeIMO Google Sheets plan"
             });
 
@@ -41,7 +41,7 @@ namespace OfficeIMO.Examples.Google {
             string filePath = Path.Combine(folderPath, "GoogleSheets.Export.xlsx");
 
             using var workbook = ExcelDocument.Create(filePath);
-            var summary = workbook.AddWorkSheet("Summary");
+            var summary = workbook.AddWorksheet("Summary");
             summary.CellValue(1, 1, "Quarter");
             summary.CellValue(1, 2, "Revenue");
             summary.CellValue(2, 1, "Q3");

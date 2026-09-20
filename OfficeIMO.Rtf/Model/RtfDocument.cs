@@ -1,3 +1,4 @@
+using OfficeIMO.Drawing.Internal;
 using OfficeIMO.Rtf.Syntax;
 using OfficeIMO.Rtf.Writing;
 
@@ -115,7 +116,7 @@ public sealed partial class RtfDocument {
 
     /// <summary>Loads RTF from a file.</summary>
     public static RtfReadResult Load(string path, RtfReadOptions? options = null, Encoding? encoding = null) {
-        if (path == null) throw new ArgumentNullException(nameof(path));
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("File path cannot be empty.", nameof(path));
         RtfReadOptions readOptions = options ?? RtfReadOptions.CreateOfficeIMOProfile();
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         return Load(stream, readOptions, encoding);
@@ -371,22 +372,34 @@ public sealed partial class RtfDocument {
     }
 
     /// <summary>Serializes the document to an encoded RTF memory stream.</summary>
-    public MemoryStream ToMemoryStream(RtfWriteOptions? options = null, Encoding? encoding = null) {
-        return new MemoryStream(ToBytes(options, encoding), writable: false);
+    public MemoryStream ToStream(RtfWriteOptions? options = null, Encoding? encoding = null) {
+        return new MemoryStream(ToBytes(options, encoding));
     }
 
     /// <summary>Saves the document to an RTF file.</summary>
     public void Save(string path, RtfWriteOptions? options = null, Encoding? encoding = null) {
-        if (path == null) throw new ArgumentNullException(nameof(path));
-        OfficeIMO.Core.Internal.OfficeFileCommit.WriteAllBytes(path, ToBytes(options, encoding));
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("File path cannot be empty.", nameof(path));
+        OfficeFileCommit.WriteAllBytes(path, ToFileBytes(options, encoding));
     }
 
     /// <summary>Saves the document to an RTF stream without closing the stream.</summary>
     public void Save(Stream stream, RtfWriteOptions? options = null, Encoding? encoding = null) {
-        OfficeIMO.Core.Internal.OfficeStreamWriter.WriteAllBytes(stream, ToBytes(options, encoding));
+        OfficeStreamWriter.WriteAllBytes(stream, ToBytes(options, encoding));
     }
 
     private static Encoding CreateDefaultOutputEncoding() => new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+    private byte[] ToFileBytes(RtfWriteOptions? options, Encoding? encoding) {
+        Encoding outputEncoding = encoding ?? CreateDefaultOutputEncoding();
+        byte[] content = outputEncoding.GetBytes(ToRtf(options));
+        byte[] preamble = outputEncoding.GetPreamble();
+        if (preamble.Length == 0) return content;
+
+        var bytes = new byte[preamble.Length + content.Length];
+        Buffer.BlockCopy(preamble, 0, bytes, 0, preamble.Length);
+        Buffer.BlockCopy(content, 0, bytes, preamble.Length, content.Length);
+        return bytes;
+    }
 
     internal void AddParsedParagraph(RtfParagraph paragraph) {
         paragraph = paragraph ?? throw new ArgumentNullException(nameof(paragraph));

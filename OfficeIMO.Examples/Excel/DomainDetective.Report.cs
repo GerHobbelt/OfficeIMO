@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using OfficeIMO.Excel;
 using OfficeIMO.Excel.Fluent;
+using OfficeIMO.Drawing;
 using System.Linq;
 
 namespace OfficeIMO.Examples.Excel {
@@ -170,7 +171,7 @@ namespace OfficeIMO.Examples.Excel {
                           "Status",
                           $"Status: {d.Status}; Findings: {d.WarningCount} warning(s), {d.ErrorCount} error(s).")
                       .SectionWithAnchor("Overview")
-                      .DefinitionList(new (string, object?)[] {
+                      .PropertiesGrid(new (string, object?)[] {
                           ("Domain", d.Domain),
                           ("Classification", d.Classification),
                           ("Confidence", d.Confidence),
@@ -241,7 +242,7 @@ namespace OfficeIMO.Examples.Excel {
                 doc.Save();
 
                 // Re-open from disk and verify properties + header/footer
-                using (var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly }))
+                using (var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
                 {
                     Console.WriteLine("[=] Verifying saved workbook properties and header/footer...");
                     Console.WriteLine("    Title   : " + (verify.BuiltinDocumentProperties.Title ?? "<null>"));

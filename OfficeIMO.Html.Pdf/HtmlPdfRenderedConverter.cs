@@ -1,5 +1,4 @@
 using OfficeIMO.Drawing;
-using AngleSharp.Html.Dom;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -11,26 +10,13 @@ namespace OfficeIMO.Html.Pdf;
 internal static class HtmlPdfRenderedConverter {
     private const double PointsPerCssPixel = 72D / HtmlRenderOptions.CssPixelsPerInch;
 
-    internal static HtmlPdfRenderResult Convert(string html, HtmlPdfSaveOptions options) {
-        HtmlRenderOptions renderOptions = ResolveRenderOptions(options);
-        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html, renderOptions);
-        return CreatePdf(rendered, options, CancellationToken.None);
-    }
-
-    internal static HtmlPdfRenderResult Convert(IHtmlDocument document, HtmlPdfSaveOptions options) {
+    internal static HtmlPdfRenderResult Convert(HtmlConversionDocument document, HtmlPdfSaveOptions options) {
         HtmlRenderOptions renderOptions = ResolveRenderOptions(options);
         HtmlRenderDocument rendered = HtmlRenderEngine.Render(document, renderOptions);
         return CreatePdf(rendered, options, CancellationToken.None);
     }
 
-    internal static async Task<HtmlPdfRenderResult> ConvertAsync(string html, HtmlPdfSaveOptions options, CancellationToken cancellationToken) {
-        HtmlRenderOptions renderOptions = ResolveRenderOptions(options);
-        HtmlRenderDocument rendered = await HtmlRenderEngine.RenderAsync(html, renderOptions, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        return CreatePdf(rendered, options, cancellationToken);
-    }
-
-    internal static async Task<HtmlPdfRenderResult> ConvertAsync(IHtmlDocument document, HtmlPdfSaveOptions options, CancellationToken cancellationToken) {
+    internal static async Task<HtmlPdfRenderResult> ConvertAsync(HtmlConversionDocument document, HtmlPdfSaveOptions options, CancellationToken cancellationToken) {
         HtmlRenderOptions renderOptions = ResolveRenderOptions(options);
         HtmlRenderDocument rendered = await HtmlRenderEngine.RenderAsync(document, renderOptions, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
@@ -45,7 +31,7 @@ internal static class HtmlPdfRenderedConverter {
 
     private static HtmlPdfRenderResult CreatePdf(HtmlRenderDocument rendered, HtmlPdfSaveOptions options, CancellationToken cancellationToken) {
         cancellationToken.ThrowIfCancellationRequested();
-        HtmlDiagnosticReport diagnostics = rendered.Diagnostics.Clone();
+        HtmlDiagnosticReport diagnostics = rendered.DiagnosticReport.Clone();
 
         var conversionReport = new PdfCore.PdfConversionReport();
         PdfCore.PdfDocument pdf = PdfCore.PdfDocument.Create()
@@ -68,6 +54,10 @@ internal static class HtmlPdfRenderedConverter {
         var activeWebFontFamilies = new HashSet<string>(
             rendered.Fonts.Faces.Select(face => face.FamilyName),
             StringComparer.OrdinalIgnoreCase);
+        PdfCore.PdfTextFallbackFeatures activeTextFallbacks = ResolveTextFallbackFeatures(rendered, options.TextFallbacks);
+        if (activeTextFallbacks != PdfCore.PdfTextFallbackFeatures.None) {
+            RegisterUsedSystemFontFamilies(pdf, rendered, activeWebFontFamilies, reservedFontSlots);
+        }
         ReserveUsedStandardFontSlots(rendered, activeWebFontFamilies, reservedFontSlots);
         IReadOnlyDictionary<string, PdfCore.PdfStandardFont> webFonts = RegisterWebFonts(
             pdf,
@@ -78,7 +68,6 @@ internal static class HtmlPdfRenderedConverter {
         foreach (PdfCore.PdfStandardFont slot in webFonts.Values) {
             reservedFontSlots.Add(PdfCore.PdfStandardFontMapper.GetFontFamily(slot));
         }
-        PdfCore.PdfTextFallbackFeatures activeTextFallbacks = ResolveTextFallbackFeatures(rendered, options.TextFallbacks);
         if (activeTextFallbacks != PdfCore.PdfTextFallbackFeatures.None) {
             pdf.Options.UseTextFallbacks(activeTextFallbacks, reservedFontSlots, allowSystemFontEmbedding: true);
         }
@@ -537,6 +526,62 @@ internal static class HtmlPdfRenderedConverter {
             if (EnumerateFamilies(familyNames).Any(activeWebFontFamilies.Contains)) continue;
             reservedFontSlots.Add(PdfCore.PdfStandardFontMapper.GetFontFamily(MapStandardFont(familyNames)));
         }
+    }
+
+    private static void RegisterUsedSystemFontFamilies(
+        PdfCore.PdfDocument pdf,
+        HtmlRenderDocument rendered,
+        ISet<string> activeWebFontFamilies,
+        ISet<PdfCore.PdfStandardFont> reservedFontSlots) {
+        List<HtmlRenderText> textRuns = EnumerateVisuals(rendered.Pages.SelectMany(page => page.Visuals))
+            .OfType<HtmlRenderText>()
+            .Where(text => !EnumerateFamilies(text.Font.FamilyName).Any(activeWebFontFamilies.Contains))
+            .ToList();
+
+        foreach (IGrouping<PdfCore.PdfStandardFont, HtmlRenderText> slotRuns in textRuns.GroupBy(
+                     text => PdfCore.PdfStandardFontMapper.GetFontFamily(MapStandardFont(text.Font.FamilyName)))) {
+            PdfCore.PdfStandardFont slot = slotRuns.Key;
+            if (pdf.Options.HasEmbeddedStandardFontFamily(slot)) {
+                reservedFontSlots.Add(slot);
+                continue;
+            }
+
+            foreach (string familyName in slotRuns.SelectMany(text => EnumerateFamilies(text.Font.FamilyName)).Distinct(StringComparer.OrdinalIgnoreCase)) {
+                if (!PdfCore.PdfEmbeddedFontFamily.TryFromSystem(familyName, out PdfCore.PdfEmbeddedFontFamily? family) || family == null) {
+                    continue;
+                }
+
+                pdf.Options.RegisterFontFamily(slot, CreateCoverageSafeFontFamily(family, slotRuns));
+                reservedFontSlots.Add(slot);
+                break;
+            }
+        }
+    }
+
+    private static PdfCore.PdfEmbeddedFontFamily CreateCoverageSafeFontFamily(
+        PdfCore.PdfEmbeddedFontFamily family,
+        IEnumerable<HtmlRenderText> textRuns) {
+        List<HtmlRenderText> runs = textRuns.ToList();
+        byte[] regular = family.Regular;
+        byte[]? bold = SelectCoverageSafeFace(family.Bold, regular, runs.Where(run => run.Font.IsBold && !run.Font.IsItalic).Select(run => run.Text));
+        byte[]? italic = SelectCoverageSafeFace(family.Italic, regular, runs.Where(run => !run.Font.IsBold && run.Font.IsItalic).Select(run => run.Text));
+        byte[]? boldItalic = SelectCoverageSafeFace(
+            family.BoldItalic ?? family.Bold ?? family.Italic,
+            regular,
+            runs.Where(run => run.Font.IsBold && run.Font.IsItalic).Select(run => run.Text));
+        return new PdfCore.PdfEmbeddedFontFamily(family.FamilyName, regular, bold, italic, boldItalic);
+    }
+
+    private static byte[]? SelectCoverageSafeFace(byte[]? styledFace, byte[] regularFace, IEnumerable<string> requiredText) {
+        if (styledFace == null) return null;
+        string text = string.Concat(requiredText);
+        if (text.Length == 0 || FontCoversText(styledFace, text) || !FontCoversText(regularFace, text)) return styledFace;
+        return regularFace;
+    }
+
+    private static bool FontCoversText(byte[] fontData, string text) {
+        var candidate = new PdfCore.PdfEmbeddedFontFallbackCandidate("HTML system font coverage", fontData);
+        return PdfCore.PdfTextDiagnostics.PlanEmbeddedFontFallbackText(text, new[] { candidate }).IsFullyCovered;
     }
 
     private static bool TryPreparePdfImageBytes(byte[] bytes, string contentType, out byte[] pdfBytes) {

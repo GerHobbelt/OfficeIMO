@@ -10,13 +10,13 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.InvalidPngImage.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.CellValue(1, 1, "Image");
                 sheet.AddImage(2, 1, CreatePngWithInvalidCrc(), "image/png", widthPixels: 12, heightPixels: 12, name: "InvalidPng");
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
                 Assert.False(report.Can(ExcelPreflightCapability.ExportPdfReport));
@@ -33,13 +33,13 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.MixedHeaderFormatting.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Headers");
+                ExcelSheet sheet = document.AddWorksheet("Headers");
                 sheet.CellValue(1, 1, "Report");
                 sheet.SetHeaderFooter(headerLeft: "&BTotal", headerCenter: "Page &P");
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
                 Assert.False(report.Can(ExcelPreflightCapability.ExportPdfReport));
@@ -56,13 +56,13 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.UnsupportedHeaderFont.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Headers");
+                ExcelSheet sheet = document.AddWorksheet("Headers");
                 sheet.CellValue(1, 1, "Report");
                 sheet.SetHeaderFooter(headerCenter: "&\"UnmappedFont\"Report");
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
                 Assert.False(report.Can(ExcelPreflightCapability.ExportPdfReport));
@@ -79,7 +79,7 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.FormulaOutsidePrintArea.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Report");
+                ExcelSheet sheet = document.AddWorksheet("Report");
                 sheet.CellValue(1, 1, "Name");
                 sheet.CellValue(1, 2, "Value");
                 sheet.CellValue(2, 1, "Alpha");
@@ -89,7 +89,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
                 Assert.False(report.Can(ExcelPreflightCapability.UseCachedFormulaValues));
@@ -105,14 +105,14 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.HiddenRowFormulaCache.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Report");
+                ExcelSheet sheet = document.AddWorksheet("Report");
                 sheet.CellValue(1, 1, "Ready");
                 sheet.CellFormula(5, 1, "A1+1");
                 sheet.SetRowHidden(5, true);
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
                 Assert.False(report.Can(ExcelPreflightCapability.UseCachedFormulaValues));
@@ -128,7 +128,7 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.PrintTitleColumns.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Report");
+                ExcelSheet sheet = document.AddWorksheet("Report");
                 sheet.CellValue(1, 1, "Region");
                 sheet.CellValue(1, 2, "Value");
                 sheet.CellValue(2, 1, "North");
@@ -137,7 +137,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
                 Assert.False(report.Can(ExcelPreflightCapability.ExportPdfReport));

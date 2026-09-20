@@ -15,7 +15,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 ExcelCompatibilityCorpusBuilder.CreateWorkbook(filePath, document => {
-                    var sheet = document.AddWorkSheet("Imported");
+                    var sheet = document.AddWorksheet("Imported");
                     sheet.CellValue(1, 1, "Resource");
                     sheet.CellValue(1, 2, "Amount");
                     sheet.SetHyperlink(2, 1, "https://example.org/external-system/invoice/INV-2026-001", display: "Invoice");
@@ -31,7 +31,7 @@ namespace OfficeIMO.Tests {
 
                 AssertPreservedPackageParts(filePath, customXmlBytes, connectionBytes, queryTableBytes);
 
-                using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+                using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                     ExcelFeatureReport report = document.InspectFeatures();
 
                     Assert.True(report.Can(ExcelPreflightCapability.ReadWorkbookData));
@@ -68,7 +68,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 ExcelCompatibilityCorpusBuilder.CreateWorkbook(filePath, document => {
-                    var sheet = document.AddWorkSheet("Controls");
+                    var sheet = document.AddWorksheet("Controls");
                     sheet.CellValue(1, 1, "Status");
                     sheet.CellValue(2, 1, "Before");
                 });
@@ -82,7 +82,7 @@ namespace OfficeIMO.Tests {
 
                 AssertPreservedAdvancedPackageParts(filePath, vbaBytes, embeddedBytes);
 
-                using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
+                using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                     ExcelFeatureReport report = document.InspectFeatures();
 
                     Assert.True(report.Can(ExcelPreflightCapability.ReadWorkbookData));

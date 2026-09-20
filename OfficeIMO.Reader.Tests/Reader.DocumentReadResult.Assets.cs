@@ -22,7 +22,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
                 document.Save();
             }
 
-            IReadOnlyList<OfficeDocumentAsset> assets = DocumentReader.ReadAssets(path);
+            IReadOnlyList<OfficeDocumentAsset> assets = OfficeDocumentReader.Default.ReadAssets(path);
 
             OfficeDocumentAsset asset = Assert.Single(assets);
             Assert.Equal("word-image-0000", asset.Id);
@@ -54,7 +54,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
             Assets = new[] { image, preview }
         };
 
-        IReadOnlyList<OfficeDocumentAsset> assets = DocumentReader.ExtractAssets(result, asset => asset.Kind == "image");
+        IReadOnlyList<OfficeDocumentAsset> assets = OfficeDocumentReader.Default.ExtractAssets(result, asset => asset.Kind == "image");
 
         OfficeDocumentAsset asset = Assert.Single(assets);
         Assert.Same(image, asset);
@@ -73,7 +73,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
                 document.Save();
             }
 
-            OfficeDocumentReadResult result = DocumentReader.ReadDocument(path);
+            OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(path);
 
             OfficeDocumentAsset asset = Assert.Single(result.Assets);
             Assert.Equal("image", asset.Kind);
@@ -124,7 +124,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
         }
 
         stream.Position = 0;
-        OfficeDocumentReadResult result = DocumentReader.ReadDocument(stream, "deck.pptx");
+        OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(stream, "deck.pptx");
 
         OfficeDocumentAsset asset = Assert.Single(result.Assets);
         Assert.Equal("powerpoint-slide-0001-image-0000", asset.Id);
@@ -164,7 +164,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
         }
 
         stream.Position = 0;
-        OfficeDocumentReadResult result = DocumentReader.ReadDocument(stream, "placements.pptx");
+        OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(stream, "placements.pptx");
 
         Assert.Equal(2, result.Assets.Count);
         Assert.Equal(new[] { 1, 2 }, result.Assets.Select(asset => asset.Location.Slide ?? -1).ToArray());
@@ -186,7 +186,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
         }
 
         stream.Position = 0;
-        OfficeDocumentReadResult result = DocumentReader.ReadDocument(stream, "duplicate-placement.pptx");
+        OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(stream, "duplicate-placement.pptx");
 
         Assert.Equal(2, result.Assets.Count);
         Assert.All(result.Assets, asset => Assert.Equal(1, asset.Location.Slide));
@@ -207,7 +207,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
         }
 
         stream.Position = 0;
-        OfficeDocumentReadResult result = DocumentReader.ReadDocument(stream, "image-only.pptx");
+        OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(stream, "image-only.pptx");
 
         OfficeDocumentAsset asset = Assert.Single(result.Assets);
         OfficeDocumentOcrCandidate candidate = Assert.Single(result.OcrCandidates);
@@ -233,16 +233,16 @@ public sealed class ReaderDocumentReadResultAssetTests {
         byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
         try {
             using (ExcelDocument document = ExcelDocument.Create(path)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.Cell(1, 1, "Logo sheet");
                 sheet.AddImage(1, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "Logo", altText: "Company logo");
-                ExcelSheet otherSheet = document.AddWorkSheet("Other");
+                ExcelSheet otherSheet = document.AddWorksheet("Other");
                 otherSheet.Cell(1, 1, "Other sheet");
                 otherSheet.AddImage(1, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "OtherLogo", altText: "Other logo");
                 document.Save();
             }
 
-            OfficeDocumentReadResult result = DocumentReader.ReadDocument(path, new ReaderOptions { ExcelSheetName = "Images" });
+            OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(path, new ReaderOptions { ExcelSheetName = "Images" });
 
             OfficeDocumentAsset asset = Assert.Single(result.Assets);
             Assert.Equal("excel-sheet-0001-image-0000", asset.Id);
@@ -289,13 +289,13 @@ public sealed class ReaderDocumentReadResultAssetTests {
         byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
         try {
             using (ExcelDocument document = ExcelDocument.Create(path)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.Cell(1, 1, "Plain workbook");
                 sheet.AddImage(1, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "Logo", altText: "Plain logo");
                 document.Save();
             }
 
-            OfficeDocumentReadResult result = DocumentReader.ReadDocument(path, new ReaderOptions {
+            OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(path, new ReaderOptions {
                 ExcelSheetName = "Images",
                 OpenPassword = "not-used-for-plaintext"
             });
@@ -314,14 +314,14 @@ public sealed class ReaderDocumentReadResultAssetTests {
         byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
         try {
             using (ExcelDocument document = ExcelDocument.Create(path)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.AddImage(1, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "First", altText: "First");
                 sheet.AddImage(3, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "Second", altText: "Second");
                 document.Save();
             }
             PointSecondExcelPictureAtFirstImageRelationship(path);
 
-            OfficeDocumentReadResult result = DocumentReader.ReadDocument(path);
+            OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(path);
 
             OfficeDocumentAsset[] duplicateRelationshipAssets = result.Assets
                 .GroupBy(asset => asset.SourceObjectId, StringComparer.Ordinal)
@@ -340,14 +340,14 @@ public sealed class ReaderDocumentReadResultAssetTests {
         byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
         try {
             using (ExcelDocument document = ExcelDocument.Create(path)) {
-                ExcelSheet sheet = document.AddWorkSheet("Images");
+                ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.AddImage(1, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "First", altText: "First");
                 sheet.AddImage(3, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "Second", altText: "Second");
                 document.Save();
             }
             PointSecondExcelPictureAtFirstImageRelationship(path);
 
-            IOException exception = Assert.Throws<IOException>(() => DocumentReader.ReadDocument(
+            IOException exception = Assert.Throws<IOException>(() => OfficeDocumentReader.Default.ReadDocument(
                 path,
                 new ReaderOptions { MaxOpenXmlImagePlacementsPerRelationship = 1 }));
 
@@ -359,7 +359,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
 
     [Fact]
     public void DocumentReader_NormalizeOptions_AppliesOpenXmlSafetyDefaultsWhenOptionsAreNull() {
-        MethodInfo method = typeof(DocumentReader).GetMethod("NormalizeOptions", BindingFlags.NonPublic | BindingFlags.Static)!;
+        MethodInfo method = typeof(DocumentReaderEngine).GetMethod("NormalizeOptions", BindingFlags.NonPublic | BindingFlags.Static)!;
         var normalized = (ReaderOptions)method.Invoke(null, new object?[] { null })!;
         var defaults = new ReaderOptions();
 
@@ -376,7 +376,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
         byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
         try {
             using (ExcelDocument document = ExcelDocument.Create(path)) {
-                ExcelSheet sheet = document.AddWorkSheet("Data");
+                ExcelSheet sheet = document.AddWorksheet("Data");
                 sheet.Cell(1, 1, "Inside");
                 sheet.Cell(5, 5, "Outside");
                 sheet.AddImage(1, 1, png, "image/png", widthPixels: 12, heightPixels: 10, name: "InsideLogo", altText: "Inside logo");
@@ -385,7 +385,7 @@ public sealed class ReaderDocumentReadResultAssetTests {
             }
             PointSecondExcelPictureAtFirstImageRelationship(path);
 
-            OfficeDocumentReadResult result = DocumentReader.ReadDocument(
+            OfficeDocumentReadResult result = OfficeDocumentReader.Default.ReadDocument(
                 path,
                 new ReaderOptions {
                     ExcelSheetName = "data",

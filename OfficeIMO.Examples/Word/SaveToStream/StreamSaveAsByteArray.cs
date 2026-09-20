@@ -1,3 +1,4 @@
+using OfficeIMO.Drawing.Internal;
 using System;
 using System.IO;
 using OfficeIMO.Word;
@@ -22,7 +23,7 @@ namespace OfficeIMO.Examples.Word {
 
             string filePath = Path.Combine(folderPath, "ToDocx.docx");
             File.WriteAllBytes(filePath, bytes);
-            if (openWord) OfficeIMO.Core.OfficeFileLauncher.Open(filePath);
+            if (openWord) OfficeFileLauncher.Open(filePath);
         }
 
         /// <summary>
@@ -41,28 +42,28 @@ namespace OfficeIMO.Examples.Word {
             using (var file = new FileStream(filePath, FileMode.Create, FileAccess.Write)) {
                 stream.CopyTo(file);
             }
-            if (openWord) OfficeIMO.Core.OfficeFileLauncher.Open(filePath);
+            if (openWord) OfficeFileLauncher.Open(filePath);
         }
 
         /// <summary>
-        /// Clones a document into a provided <see cref="Stream"/> instance.
+        /// Saves a document into a provided <see cref="Stream"/> instance.
         /// </summary>
         /// <param name="folderPath">Directory to store the file.</param>
         /// <param name="openWord">Opens Word when <c>true</c>.</param>
         public static void Example_SaveAsStream(string folderPath, bool openWord) {
-            Console.WriteLine("[*] Cloning document into a provided stream");
+            Console.WriteLine("[*] Saving document into a provided stream");
             using var document = WordDocument.Create();
             document.AddParagraph("Cloned into stream");
 
             using var stream = new MemoryStream();
-            using var cloned = document.SaveCopy(stream);
+            document.Save(stream);
 
             string filePath = Path.Combine(folderPath, "SaveAsStream.docx");
             using (var file = new FileStream(filePath, FileMode.Create, FileAccess.Write)) {
                 stream.Position = 0;
                 stream.CopyTo(file);
             }
-            if (openWord) OfficeIMO.Core.OfficeFileLauncher.Open(filePath);
+            if (openWord) OfficeFileLauncher.Open(filePath);
         }
     }
 }

@@ -1,13 +1,12 @@
 #nullable enable
 
+using OfficeIMO.Drawing.Internal;
 using System.Collections;
 using System.Data;
 using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using OfficeIMO.Core.Internal;
-using OfficeIMO.Shared;
 
 namespace OfficeIMO.CSV;
 
@@ -291,11 +290,16 @@ public sealed partial class CsvDocument
 
         if (options.Append)
         {
+            CsvCompressionType compressionType = CsvFile.ResolveCompression(options.CompressionType, fullPath);
+            if (compressionType != CsvCompressionType.None)
+                throw new NotSupportedException("Appending to compressed CSV files is not supported.");
+            OfficeFileCommit.EnsureTargetDirectory(fullPath);
             using var writer = CsvFile.CreateTextWriter(fullPath, options, append: true, bufferSize: FileBufferSize);
             CsvWriter.Write(writer, this, options);
             return;
         }
 
+        OfficeFileCommit.EnsureTargetDirectory(fullPath);
         var temporaryPath = OfficeFileCommit.CreateTemporaryPath(fullPath);
         try
         {
@@ -334,13 +338,15 @@ public sealed partial class CsvDocument
         {
             if (compressionType != CsvCompressionType.None)
                 throw new NotSupportedException("Appending to compressed CSV files is not supported.");
+            OfficeFileCommit.EnsureTargetDirectory(fullPath);
             byte[] appendBytes = SerializeToBytes(options, CsvCompressionType.None);
             using var stream = new FileStream(fullPath, FileMode.Append, FileAccess.Write, FileShare.Read,
                 FileBufferSize, FileOptions.Asynchronous);
+            int appendOffset = GetAppendOffset(appendBytes, options.Encoding, stream.Length > 0);
 #if NET6_0_OR_GREATER
-            await stream.WriteAsync(appendBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await stream.WriteAsync(appendBytes.AsMemory(appendOffset), cancellationToken).ConfigureAwait(false);
 #else
-            await stream.WriteAsync(appendBytes, 0, appendBytes.Length, cancellationToken).ConfigureAwait(false);
+            await stream.WriteAsync(appendBytes, appendOffset, appendBytes.Length - appendOffset, cancellationToken).ConfigureAwait(false);
 #endif
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             return;
@@ -350,6 +356,20 @@ public sealed partial class CsvDocument
         await OfficeFileCommit.WriteAllBytesAsync(fullPath, bytes,
             options.NoClobber ? OfficeFileCommit.ConflictPolicy.FailIfExists : OfficeFileCommit.ConflictPolicy.Replace,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private static int GetAppendOffset(byte[] bytes, Encoding? configuredEncoding, bool destinationHasContent)
+    {
+        if (!destinationHasContent) return 0;
+        Encoding encoding = configuredEncoding ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        byte[] preamble = encoding.GetPreamble();
+        if (preamble.Length == 0 || bytes.Length < preamble.Length) return 0;
+        for (int index = 0; index < preamble.Length; index++)
+        {
+            if (bytes[index] != preamble[index]) return 0;
+        }
+
+        return preamble.Length;
     }
 
     /// <summary>Asynchronously saves the document to a caller-owned writable stream.</summary>

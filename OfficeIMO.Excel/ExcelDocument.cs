@@ -3,8 +3,8 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Validation;
 using OfficeIMO.Excel.Utilities;
-using OfficeIMO.Core;
-using OfficeIMO.Shared;
+using OfficeIMO.Drawing;
+using OfficeIMO.Drawing.Internal;
 using System.IO.Packaging;
 using System.Threading;
 using System.Threading.Tasks;
@@ -322,7 +322,10 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Underlying Open XML spreadsheet document instance.
         /// </summary>
-        public SpreadsheetDocument _spreadSheetDocument = null!;
+        internal SpreadsheetDocument _spreadSheetDocument = null!;
+
+        /// <summary>Gets the underlying Open XML package for advanced integration scenarios.</summary>
+        public SpreadsheetDocument OpenXmlDocument => _spreadSheetDocument;
         private WorkbookPart _workBookPart = null!;
         private SharedStringTablePart? _sharedStringTablePart;
         private bool _sharedStringTableDirty;
@@ -353,7 +356,7 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Diagnostics for the most recent save operation.
         /// </summary>
-        public ExcelSaveDiagnostics LastSaveDiagnostics { get; private set; } = ExcelSaveDiagnostics.Standard("Workbook has not been saved yet.");
+        internal ExcelSaveDiagnostics LastSaveDiagnostics { get; private set; } = ExcelSaveDiagnostics.Standard("Workbook has not been saved yet.");
 
         private const int StreamCopyBufferSize = 81920;
 

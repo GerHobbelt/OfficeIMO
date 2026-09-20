@@ -1,3 +1,4 @@
+using OfficeIMO.Drawing.Internal;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
@@ -6,8 +7,7 @@ using OfficeIMO.Excel.LegacyXls;
 using OfficeIMO.Excel.LegacyXls.Diagnostics;
 using OfficeIMO.Excel.LegacyXls.Model;
 using OfficeIMO.Excel.Utilities;
-using OfficeIMO.Core;
-using OfficeIMO.Shared;
+using OfficeIMO.Drawing;
 using System.IO.Packaging;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,7 +46,7 @@ namespace OfficeIMO.Excel {
         /// <param name="options">Creation and persistence options.</param>
         /// <returns>Created <see cref="ExcelDocument"/> instance.</returns>
         public static ExcelDocument Create(string filePath, ExcelCreateOptions? options = null) {
-            if (filePath == null) throw new ArgumentNullException(nameof(filePath));
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("File path cannot be empty.", nameof(filePath));
             ExcelCreateOptions resolved = options ?? new ExcelCreateOptions();
             bool saveOnDispose = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
             if (saveOnDispose && string.IsNullOrEmpty(filePath)) {
@@ -75,14 +75,9 @@ namespace OfficeIMO.Excel {
         /// <param name="options">Creation and persistence options.</param>
         /// <returns>Created <see cref="ExcelDocument"/> instance.</returns>
         public static ExcelDocument Create(Stream stream, ExcelCreateOptions? options = null) {
-            if (stream == null) throw new ArgumentNullException(nameof(stream));
-            if (!stream.CanWrite) throw new ArgumentException("Stream must be writable.", nameof(stream));
-
+            OfficeDocumentLifecycle.EnsureAssociatedDestination(stream, nameof(stream));
             ExcelCreateOptions resolved = options ?? new ExcelCreateOptions();
             bool saveOnDispose = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
-            if (saveOnDispose && !stream.CanSeek) {
-                throw new ArgumentException("Stream must support seeking when SaveOnDispose is enabled.", nameof(stream));
-            }
 
             Stream packageStream = saveOnDispose
                 ? new NonDisposingMemoryStream(StreamBufferSize)
@@ -104,7 +99,7 @@ namespace OfficeIMO.Excel {
             Stream? ownedOpenStream = null) {
             bool keepPackageStream = copyPackageToSourceOnDispose || copyPackageToFilePathOnDispose;
             var document = new ExcelDocument {
-                FilePath = filePath ?? string.Empty,
+                FilePath = filePath,
                 _spreadSheetDocument = spreadSheetDocument,
                 _persistenceMode = persistenceMode
             };
@@ -149,7 +144,7 @@ namespace OfficeIMO.Excel {
             DocumentPersistenceMode persistenceMode = DocumentPersistenceMode.Explicit) {
             bool keepPackageStream = copyPackageToSourceOnDispose || copyPackageToFilePathOnDispose;
             var document = new ExcelDocument {
-                FilePath = filePath ?? string.Empty,
+                FilePath = filePath,
                 _spreadSheetDocument = spreadSheetDocument,
                 _workBookPart = GetWorkbookPartOrThrow(spreadSheetDocument),
                 _packageStream = keepPackageStream ? packageStream : null,
@@ -199,17 +194,20 @@ namespace OfficeIMO.Excel {
             bool leaveOriginalStreamOpen = true) {
             if (bytes == null) throw new ArgumentNullException(nameof(bytes));
             if (options == null) throw new ArgumentNullException(nameof(options));
-            ValidateLifecycle(options.AccessMode, options.PersistenceMode);
+            OfficeDocumentLifecycle.Validate(options.AccessMode, options.PersistenceMode, "workbook");
 
             bool readOnly = options.AccessMode == DocumentAccessMode.ReadOnly;
             bool saveOnDispose = options.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
+            Stream? associatedStream = OfficeDocumentLifecycle.ResolveAssociatedDestination(
+                originalStream,
+                options.AccessMode);
 
             if (ExcelDocumentLoadRouting.IsLegacyXls(bytes, filePath)) {
                 return LoadLegacyXlsFromNormalFlow(bytes, readOnly, saveOnDispose, filePath);
             }
 
             var effectiveOpenSettings = CreateOpenSettings(options.OpenSettings);
-            bool shouldCopyBack = saveOnDispose && originalStream != null;
+            bool shouldCopyBack = saveOnDispose && associatedStream != null;
             bool shouldCopyBackToFilePath = !shouldCopyBack && !string.IsNullOrEmpty(filePath) && saveOnDispose;
             bool shouldRetainPackageStream = shouldCopyBack || shouldCopyBackToFilePath;
 
@@ -231,7 +229,7 @@ namespace OfficeIMO.Excel {
                     memDoc,
                     filePath,
                     shouldRetainPackageStream ? normalizedStream : null,
-                    originalStream,
+                    associatedStream,
                     shouldCopyBack,
                     leaveOriginalStreamOpen,
                     copyPackageToFilePathOnDispose: shouldCopyBackToFilePath,
@@ -251,43 +249,11 @@ namespace OfficeIMO.Excel {
         }
 
         private static byte[] ReadAllBytes(Stream stream) {
-            if (stream == null) throw new ArgumentNullException(nameof(stream));
-            if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
-
-            long originalPosition = stream.CanSeek ? stream.Position : 0;
-            try {
-                if (stream.CanSeek) {
-                    stream.Seek(0, SeekOrigin.Begin);
-                }
-
-                using var buffer = new MemoryStream();
-                stream.CopyTo(buffer, StreamCopyBufferSize);
-                return buffer.ToArray();
-            } finally {
-                if (stream.CanSeek) {
-                    stream.Seek(originalPosition, SeekOrigin.Begin);
-                }
-            }
+            return OfficeStreamReader.ReadAllBytes(stream);
         }
 
         private static async Task<byte[]> ReadAllBytesAsync(Stream stream, CancellationToken cancellationToken) {
-            if (stream == null) throw new ArgumentNullException(nameof(stream));
-            if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
-
-            long originalPosition = stream.CanSeek ? stream.Position : 0;
-            try {
-                if (stream.CanSeek) {
-                    stream.Seek(0, SeekOrigin.Begin);
-                }
-
-                using var buffer = new MemoryStream();
-                await stream.CopyToAsync(buffer, StreamCopyBufferSize, cancellationToken).ConfigureAwait(false);
-                return buffer.ToArray();
-            } finally {
-                if (stream.CanSeek) {
-                    stream.Seek(originalPosition, SeekOrigin.Begin);
-                }
-            }
+            return await OfficeStreamReader.ReadAllBytesAsync(stream, cancellationToken).ConfigureAwait(false);
         }
 
         private static void DisposeStream(Stream? stream) {
@@ -299,12 +265,6 @@ namespace OfficeIMO.Excel {
                 ndms.DisposeUnderlying();
             } else {
                 stream.Dispose();
-            }
-        }
-
-        private static void ValidateLifecycle(DocumentAccessMode accessMode, DocumentPersistenceMode persistenceMode) {
-            if (accessMode == DocumentAccessMode.ReadOnly && persistenceMode == DocumentPersistenceMode.SaveOnDispose) {
-                throw new ArgumentException("A read-only workbook cannot use SaveOnDispose persistence.");
             }
         }
 
@@ -356,7 +316,7 @@ namespace OfficeIMO.Excel {
             }
 
             ExcelLoadOptions resolved = options ?? new ExcelLoadOptions();
-            var bytes = ReadAllBytesCompatAsync(filePath, CancellationToken.None).GetAwaiter().GetResult();
+            var bytes = File.ReadAllBytes(filePath);
             return LoadFromByteArray(bytes, resolved, filePath);
         }
 
@@ -376,7 +336,7 @@ namespace OfficeIMO.Excel {
                 throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
             }
 
-            var encryptedBytes = ReadAllBytesCompatAsync(filePath, CancellationToken.None).GetAwaiter().GetResult();
+            var encryptedBytes = File.ReadAllBytes(filePath);
             if (ExcelDocumentLoadRouting.IsEncryptedLegacyXls(encryptedBytes, filePath)) {
                 return LoadEncryptedLegacyXls(encryptedBytes, password);
             }
@@ -388,7 +348,7 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Loads an existing Excel document from the provided stream.
         /// </summary>
-        /// <param name="stream">Input stream containing the workbook package.</param>
+        /// <param name="stream">Input stream containing the workbook package. Editable writable seekable sources become the associated destination; other sources remain detached.</param>
         /// <param name="options">Access, persistence, and low-level package options.</param>
         /// <returns>Loaded <see cref="ExcelDocument"/> instance.</returns>
         public static ExcelDocument Load(Stream stream, ExcelLoadOptions? options = null) {
@@ -396,23 +356,15 @@ namespace OfficeIMO.Excel {
             if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
 
             ExcelLoadOptions resolved = options ?? new ExcelLoadOptions();
-            ValidateLifecycle(resolved.AccessMode, resolved.PersistenceMode);
-            bool shouldCopyBack = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
-            if (shouldCopyBack) {
-                if (!stream.CanWrite) {
-                    throw new ArgumentException("Stream must be writable when SaveOnDispose is enabled.", nameof(stream));
-                }
-                if (!stream.CanSeek) {
-                    throw new ArgumentException("Stream must support seeking when SaveOnDispose is enabled.", nameof(stream));
-                }
-            }
+            OfficeDocumentLifecycle.Validate(resolved.AccessMode, resolved.PersistenceMode, "workbook");
+            OfficeDocumentLifecycle.EnsureSaveOnDisposeDestination(stream, resolved.PersistenceMode, nameof(stream));
 
             var bytes = ReadAllBytes(stream);
             return LoadFromByteArray(
                 bytes,
                 resolved,
                 filePath: null,
-                originalStream: stream.CanWrite ? stream : null,
+                originalStream: stream,
                 leaveOriginalStreamOpen: true);
         }
 
@@ -522,7 +474,7 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Asynchronously loads an Excel document from the provided stream.
         /// </summary>
-        /// <param name="stream">Input stream containing the workbook package.</param>
+        /// <param name="stream">Input stream containing the workbook package. Editable writable seekable sources become the associated destination; other sources remain detached.</param>
         /// <param name="options">Access, persistence, and low-level package options.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Loaded <see cref="ExcelDocument"/> instance.</returns>
@@ -531,23 +483,15 @@ namespace OfficeIMO.Excel {
             if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
 
             ExcelLoadOptions resolved = options ?? new ExcelLoadOptions();
-            ValidateLifecycle(resolved.AccessMode, resolved.PersistenceMode);
-            bool shouldCopyBack = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
-            if (shouldCopyBack) {
-                if (!stream.CanWrite) {
-                    throw new ArgumentException("Stream must be writable when SaveOnDispose is enabled.", nameof(stream));
-                }
-                if (!stream.CanSeek) {
-                    throw new ArgumentException("Stream must support seeking when SaveOnDispose is enabled.", nameof(stream));
-                }
-            }
+            OfficeDocumentLifecycle.Validate(resolved.AccessMode, resolved.PersistenceMode, "workbook");
+            OfficeDocumentLifecycle.EnsureSaveOnDisposeDestination(stream, resolved.PersistenceMode, nameof(stream));
 
             var bytes = await ReadAllBytesAsync(stream, cancellationToken).ConfigureAwait(false);
             return LoadFromByteArray(
                 bytes,
                 resolved,
                 filePath: null,
-                originalStream: stream.CanWrite ? stream : null,
+                originalStream: stream,
                 leaveOriginalStreamOpen: true);
         }
 

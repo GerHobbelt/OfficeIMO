@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using OfficeIMO.Shared;
+using OfficeIMO.Drawing.Internal;
 
 namespace OfficeIMO.Word {
     public partial class WordDocument {
@@ -71,7 +71,7 @@ namespace OfficeIMO.Word {
 
             if (packageResult.Succeeded) {
                 using WordDocument document = Load(filePath, new WordLoadOptions {
-                    AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly
+                    AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly
                 });
                 validationReport = document.ValidateSignatures();
             }

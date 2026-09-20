@@ -56,7 +56,6 @@ public sealed class PackageDependencyGuardrailTests {
         "OfficeIMO.Pdf",
         "OfficeIMO.PowerPoint",
         "OfficeIMO.PowerPoint.Pdf",
-        "OfficeIMO.Shared",
         "OfficeIMO.Visio",
         "OfficeIMO.Word",
         "OfficeIMO.Word.Pdf"
@@ -301,6 +300,41 @@ public sealed class PackageDependencyGuardrailTests {
     }
 
     [Fact]
+    public void Email_DeclaresTheCodePageCompatibilityPackageItUsesDirectly() {
+        var projectPath = GetRepositoryPath("OfficeIMO.Email/OfficeIMO.Email.csproj");
+        Assert.True(File.Exists(projectPath), "Project file is missing: " + projectPath);
+
+        var document = XDocument.Load(projectPath);
+        var ns = document.Root?.Name.Namespace ?? XNamespace.None;
+        var references = document
+            .Descendants(ns + "PackageReference")
+            .Select(static element => new {
+                Id = (string?)element.Attribute("Include") ?? string.Empty,
+                Version = (string?)element.Attribute("Version") ?? string.Empty
+            })
+            .ToArray();
+
+        var reference = Assert.Single(references);
+        Assert.Equal("System.Text.Encoding.CodePages", reference.Id);
+        Assert.Equal("8.0.0", reference.Version);
+    }
+
+    [Theory]
+    [InlineData("OfficeIMO.Examples/OfficeIMO.Examples.csproj")]
+    [InlineData("OfficeIMO.Markup.Cli/OfficeIMO.Markup.Cli.csproj")]
+    [InlineData("OfficeIMO.Excel.Benchmarks.LegacyEpPlus/OfficeIMO.Excel.Benchmarks.LegacyEpPlus.csproj")]
+    public void RepositoryExecutablesAndBenchmarks_AreNotPublishedAsLibraryPackages(string relativeProjectPath) {
+        var projectPath = GetRepositoryPath(relativeProjectPath);
+        Assert.True(File.Exists(projectPath), "Project file is missing: " + projectPath);
+
+        var document = XDocument.Load(projectPath);
+        var ns = document.Root?.Name.Namespace ?? XNamespace.None;
+
+        Assert.Equal("Exe", (string?)document.Descendants(ns + "OutputType").Single());
+        Assert.Equal("false", (string?)document.Descendants(ns + "IsPackable").Single());
+    }
+
+    [Fact]
     public void RtfHtmlBridge_IsUnifiedIntoOfficeIMOHtml() {
         var projectPath = GetRepositoryPath("OfficeIMO.Html/OfficeIMO.Html.csproj");
         Assert.True(File.Exists(projectPath), "Project file is missing: " + projectPath);
@@ -457,7 +491,71 @@ public sealed class PackageDependencyGuardrailTests {
         Assert.Equal("0.0.X", expectedVersionMap.GetProperty(packageId).GetString());
     }
 
+    [Fact]
+    public void DrawingFoundation_UsesTheConsolidatedPackageIdentity() {
+        string projectPath = GetRepositoryPath("OfficeIMO.Drawing/OfficeIMO.Drawing.csproj");
+        var document = XDocument.Load(projectPath);
+        XNamespace ns = document.Root?.Name.Namespace ?? XNamespace.None;
+        string? version = document.Descendants(ns + "VersionPrefix").Select(static element => element.Value).SingleOrDefault();
+
+        Assert.Equal("1.0.30", version);
+    }
+
+    [Fact]
+    public void FoundationKernels_AreCompiledOnceByDrawing() {
+        Assert.False(Directory.Exists(GetRepositoryPath("OfficeIMO.Shared")));
+
+        string[] expectedDrawingOwnedFiles = [
+            "ObjectDataHelpers.cs",
+            "OfficeEncryption.cs",
+            "OfficeFileConversion.cs",
+            "Compound/OfficeCompoundFileReader.cs",
+            "Ole/OfficeOlePropertySetReader.cs",
+            "Packaging/OfficeArchiveSafety.cs",
+            "Streams/NonDisposingMemoryStream.cs"
+        ];
+        Assert.All(expectedDrawingOwnedFiles, relativePath =>
+            Assert.True(
+                File.Exists(GetRepositoryPath("OfficeIMO.Drawing/Internal/" + relativePath)),
+                "Drawing-owned foundation file is missing: " + relativePath));
+
+        string[] linkedFoundationSources = EnumerateProjectFiles()
+            .SelectMany(projectPath => XDocument.Load(projectPath)
+                .Descendants()
+                .Where(static element => element.Name.LocalName == "Compile")
+                .Select(element => new {
+                    Project = GetRepositoryRelativePath(projectPath),
+                    Include = NormalizeProjectPath((string?)element.Attribute("Include"))
+                }))
+            .Where(static item => item.Include.Contains("OfficeIMO.Drawing/Internal", StringComparison.OrdinalIgnoreCase)
+                || item.Include.Contains("OfficeIMO.Shared/", StringComparison.OrdinalIgnoreCase))
+            .Select(static item => item.Project + " -> " + item.Include)
+            .ToArray();
+
+        Assert.Empty(linkedFoundationSources);
+    }
+
+    [Fact]
+    public void SharedSource_IsLimitedToDependencySpecificAdaptersAndPolyfills() {
+        string sharedSourceRoot = GetRepositoryPath("OfficeIMO.SharedSource");
+        string[] files = Directory.EnumerateFiles(sharedSourceRoot, "*.cs", SearchOption.AllDirectories)
+            .Select(GetRepositoryRelativePath)
+            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        Assert.Equal(
+            new[] {
+                "OfficeIMO.SharedSource/Compatibility/TrimmingAttributes.cs",
+                "OfficeIMO.SharedSource/OpenXml/OfficeOpenXmlThemeColorResolver.cs"
+            },
+            files);
+    }
+
     [Theory]
+    [InlineData("OfficeIMO.CSV/OfficeIMO.CSV.csproj")]
+    [InlineData("OfficeIMO.Email/OfficeIMO.Email.csproj")]
+    [InlineData("OfficeIMO.OpenDocument/OfficeIMO.OpenDocument.csproj")]
+    [InlineData("OfficeIMO.Rtf/OfficeIMO.Rtf.csproj")]
     [InlineData("OfficeIMO.Word/OfficeIMO.Word.csproj")]
     [InlineData("OfficeIMO.Excel/OfficeIMO.Excel.csproj")]
     [InlineData("OfficeIMO.Visio/OfficeIMO.Visio.csproj")]
@@ -465,7 +563,8 @@ public sealed class PackageDependencyGuardrailTests {
     [InlineData("OfficeIMO.PowerPoint.Pdf/OfficeIMO.PowerPoint.Pdf.csproj")]
     [InlineData("OfficeIMO.Word.Html/OfficeIMO.Word.Html.csproj")]
     [InlineData("OfficeIMO.Word.Markdown/OfficeIMO.Word.Markdown.csproj")]
-    public void ImageAndColorConsumers_ReferenceOfficeImoDrawing(string relativeProjectPath) {
+    [InlineData("OfficeIMO.Zip/OfficeIMO.Zip.csproj")]
+    public void SharedFoundationConsumers_ReferenceOfficeImoDrawing(string relativeProjectPath) {
         var projectPath = GetRepositoryPath(relativeProjectPath);
         Assert.True(File.Exists(projectPath), "Project file is missing: " + projectPath);
 
@@ -527,7 +626,7 @@ public sealed class PackageDependencyGuardrailTests {
 
         string[] sourceRoots = [
             "OfficeIMO.Word/LegacyDoc",
-            "OfficeIMO.Shared/Compound"
+            "OfficeIMO.Drawing/Internal/Compound"
         ];
         string[] sourceFiles = sourceRoots
             .Select(GetRepositoryPath)

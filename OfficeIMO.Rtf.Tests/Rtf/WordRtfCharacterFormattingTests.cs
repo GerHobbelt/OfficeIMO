@@ -21,7 +21,7 @@ public class WordRtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfParagraph rtfParagraph = Assert.Single(rtfDocument.Paragraphs);
         Assert.Equal("2nd H2O", rtfParagraph.ToPlainText());
@@ -46,7 +46,7 @@ public class WordRtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfParagraph rtfParagraph = Assert.Single(rtfDocument.Paragraphs);
         Assert.Contains(rtfParagraph.Runs, run => run.Text == "Hidden" && run.Hidden);
@@ -65,7 +65,7 @@ public class WordRtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfParagraph rtfParagraph = Assert.Single(rtfDocument.Paragraphs);
         Assert.Contains(rtfParagraph.Runs, run => run.Text == "Double" && run.DoubleStrike);
@@ -112,7 +112,7 @@ public class WordRtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfParagraph rtfParagraph = Assert.Single(rtfDocument.Paragraphs);
         Assert.Contains(rtfParagraph.Runs, run => run.Text == "Outline" && run.Outline);
@@ -160,7 +160,7 @@ public class WordRtfCharacterFormattingTests {
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         RtfParagraph rtfParagraph = Assert.Single(rtfDocument.Paragraphs);
         Assert.Contains(rtfParagraph.Runs, run => run.Text == "Marked" && run.HighlightColorIndex == 1);
@@ -187,12 +187,12 @@ public class WordRtfCharacterFormattingTests {
         using WordDocument word = WordDocument.Create();
         WordParagraph paragraph = word.AddParagraph();
         paragraph.AddText("Normal ");
-        paragraph.AddText("Styled").SetFontFamily("Consolas").SetColorHex("4472c4");
+        paragraph.AddText("Styled").SetFontFamily("Consolas").SetColorHex("4472C4");
         paragraph.AddText(" done");
 
         RtfDocument rtfDocument = word.ToRtfDocument();
         string rtf = word.ToRtf(new RtfWriteOptions { IncludeGenerator = false });
-        using WordDocument roundTrip = rtf.LoadFromRtf();
+        using WordDocument roundTrip = RtfDocument.Read(rtf).Document.ToWordDocument();
 
         Assert.Contains(rtfDocument.Fonts, font => font.Id == 1 && font.Name == "Consolas");
         Assert.Contains(rtfDocument.Colors, color => color.Red == 0x44 && color.Green == 0x72 && color.Blue == 0xC4);
@@ -202,7 +202,7 @@ public class WordRtfCharacterFormattingTests {
         Assert.Contains(@"{\fonttbl{\f0 Calibri;}{\f1 Consolas;}}", rtf, StringComparison.Ordinal);
         Assert.Contains(@"{\colortbl;\red68\green114\blue196;}", rtf, StringComparison.Ordinal);
         Assert.Contains(@"\f1 \cf1 Styled", rtf, StringComparison.Ordinal);
-        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Styled" && run.FontFamily == "Consolas" && run.ColorHex == "4472c4");
+        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Styled" && run.FontFamily == "Consolas" && run.ColorHex == "4472C4");
     }
 
     [Fact]
@@ -218,6 +218,6 @@ public class WordRtfCharacterFormattingTests {
 
         using WordDocument word = rtfDocument.ToWordDocument();
 
-        Assert.Contains(word.Paragraphs, run => run.Text == "Styled" && run.FontFamily == "Consolas" && run.ColorHex == "4472c4");
+        Assert.Contains(word.Paragraphs, run => run.Text == "Styled" && run.FontFamily == "Consolas" && run.ColorHex == "4472C4");
     }
 }

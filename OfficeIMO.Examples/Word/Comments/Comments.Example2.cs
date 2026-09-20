@@ -7,7 +7,6 @@ namespace OfficeIMO.Examples.Word {
             Console.WriteLine("[*] Demonstrating comment lifecycle");
             string filePath = System.IO.Path.Combine(folderPath, "Comments Lifecycle.docx");
             using (WordDocument document = WordDocument.Create(filePath)) {
-                document.TrackComments = true;
                 var paragraph = document.AddParagraph("Paragraph with comment");
                 paragraph.AddComment("John Doe", "JD", "My comment");
                 document.Save();
@@ -17,7 +16,8 @@ namespace OfficeIMO.Examples.Word {
                 if (document.Comments.Count > 0) {
                     document.Comments[0].Remove();
                 }
-                document.Save(new WordSaveOptions { OpenAfterSave = openWord });
+                document.Save();
+                if (openWord) document.OpenInApplication();
             }
         }
     }

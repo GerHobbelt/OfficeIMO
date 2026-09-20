@@ -1,6 +1,8 @@
+using OfficeIMO.Drawing.Internal;
 using System;
 using System.IO;
 using OfficeIMO.PowerPoint;
+using OfficeIMO.Drawing;
 using A = DocumentFormat.OpenXml.Drawing;
 
 namespace OfficeIMO.Examples.PowerPoint {
@@ -69,7 +71,7 @@ namespace OfficeIMO.Examples.PowerPoint {
             }
 
             presentation.Save();
-            if (openPowerPoint) OfficeIMO.Core.OfficeFileLauncher.Open(filePath);
+            if (openPowerPoint) OfficeFileLauncher.Open(filePath);
         }
 
         private sealed class ValidationRow {

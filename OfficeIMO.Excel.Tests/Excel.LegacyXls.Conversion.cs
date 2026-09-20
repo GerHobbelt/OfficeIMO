@@ -15,7 +15,7 @@ namespace OfficeIMO.Tests {
             string roundTripPath = Path.Combine(_directoryWithFiles, Guid.NewGuid().ToString("N") + ".xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(xlsxPath)) {
-                ExcelSheet sheet = document.AddWorkSheet("Data");
+                ExcelSheet sheet = document.AddWorksheet("Data");
                 sheet.CellValue(1, 1, "Name");
                 sheet.CellValue(2, 1, "Alice");
                 sheet.CellValue(2, 2, 42);
@@ -25,17 +25,17 @@ namespace OfficeIMO.Tests {
 
             ExcelDocumentConversionResult toXls = ExcelDocument.Convert(xlsxPath, xlsPath);
 
-            Assert.True(toXls.OutputCreated);
-            Assert.Equal(ExcelFileFormat.Xlsx, toXls.SourceFormat);
-            Assert.Equal(ExcelFileFormat.Xls, toXls.DestinationFormat);
-            Assert.False(toXls.HasDataLoss);
+            Assert.Equal(xlsPath, toXls.RequireNoLoss());
+            Assert.Equal(ExcelFileFormat.Xlsx, toXls.Report.SourceFormat);
+            Assert.Equal(ExcelFileFormat.Xls, toXls.Report.DestinationFormat);
+            Assert.False(toXls.HasLoss);
 
             AssertNativeXlsRoundTrip(xlsPath, expectedRow2Name: "Alice");
 
             ExcelDocumentConversionResult toXlsx = ExcelDocument.Convert(xlsPath, roundTripPath);
 
-            Assert.Equal(ExcelFileFormat.Xls, toXlsx.SourceFormat);
-            Assert.Equal(ExcelFileFormat.Xlsx, toXlsx.DestinationFormat);
+            Assert.Equal(ExcelFileFormat.Xls, toXlsx.Report.SourceFormat);
+            Assert.Equal(ExcelFileFormat.Xlsx, toXlsx.Report.DestinationFormat);
 
             using ExcelDocument roundTrip = ExcelDocument.Load(roundTripPath);
             Assert.False(roundTrip.SourceFormat == ExcelFileFormat.Xls);
@@ -59,15 +59,16 @@ namespace OfficeIMO.Tests {
                 ExcelDocumentConversionException exception = Assert.Throws<ExcelDocumentConversionException>(() => ExcelDocument.Convert(xlsPath, blockedPath));
 
                 Assert.Equal(ExcelDocumentConversionFailureReason.DataLossBlocked, exception.Reason);
-                Assert.True(exception.Result.HasDataLoss);
+                Assert.True(exception.Result.HasLoss);
                 Assert.False(File.Exists(blockedPath));
 
                 ExcelDocumentConversionResult result = ExcelDocument.Convert(xlsPath, allowedPath, new ExcelDocumentConversionOptions {
                     LossPolicy = ExcelConversionLossPolicy.Allow
                 });
 
-                Assert.True(result.HasDataLoss);
-                Assert.True(result.OutputCreated);
+                Assert.True(result.HasLoss);
+                Assert.Equal(allowedPath, result.RequireValue());
+                Assert.Throws<InvalidOperationException>(() => result.RequireNoLoss());
 
                 using ExcelDocument converted = ExcelDocument.Load(allowedPath);
                 Assert.False(converted.SourceFormat == ExcelFileFormat.Xls);
@@ -113,7 +114,7 @@ namespace OfficeIMO.Tests {
                     }));
 
                 Assert.Equal(ExcelDocumentConversionFailureReason.DataLossBlocked, exception.Reason);
-                Assert.True(exception.Result.HasDataLoss);
+                Assert.True(exception.Result.HasLoss);
                 Assert.False(File.Exists(destinationPath));
             } finally {
                 TryDelete(sourcePath);
@@ -126,7 +127,7 @@ namespace OfficeIMO.Tests {
             string destinationPath = Path.Combine(_directoryWithFiles, Guid.NewGuid().ToString("N") + ".xls");
             byte[] existing = { 1, 2, 3, 4 };
             using (ExcelDocument document = ExcelDocument.Create(sourcePath)) {
-                document.AddWorkSheet("Data").CellValue(1, 1, "Conflict policy");
+                document.AddWorksheet("Data").CellValue(1, 1, "Conflict policy");
                 document.Save();
             }
             File.WriteAllBytes(destinationPath, existing);
@@ -140,7 +141,7 @@ namespace OfficeIMO.Tests {
             ExcelDocumentConversionResult replaced = ExcelDocument.Convert(sourcePath, destinationPath, new ExcelDocumentConversionOptions {
                 FileConflictPolicy = ExcelConversionFileConflictPolicy.Replace
             });
-            Assert.True(replaced.ReplacedExistingFile);
+            Assert.True(replaced.Report.ReplacedExistingFile);
             using ExcelDocument loaded = ExcelDocument.Load(destinationPath);
             Assert.True(loaded.SourceFormat == ExcelFileFormat.Xls);
             Assert.True(loaded.Sheets[0].TryGetCellText(1, 1, out string? value));
@@ -153,7 +154,7 @@ namespace OfficeIMO.Tests {
             string destinationPath = Path.Combine(_directoryWithFiles, Guid.NewGuid().ToString("N") + ".xls");
             byte[] originalBytes = { 1, 2, 3, 4 };
             using (ExcelDocument document = ExcelDocument.Create(sourcePath)) {
-                document.AddWorkSheet("Data").CellValue(1, 1, "Read-only conversion target");
+                document.AddWorksheet("Data").CellValue(1, 1, "Read-only conversion target");
                 document.Save();
             }
             File.WriteAllBytes(destinationPath, originalBytes);
@@ -175,7 +176,7 @@ namespace OfficeIMO.Tests {
             string sourcePath = Path.Combine(_directoryWithFiles, Guid.NewGuid().ToString("N") + ".xlsx");
             string destinationPath = Path.Combine(_directoryWithFiles, Guid.NewGuid().ToString("N") + ".xlsx");
             using (ExcelDocument document = ExcelDocument.Create(sourcePath)) {
-                document.AddWorkSheet("Data").CellValue(1, 1, "Already XLSX");
+                document.AddWorksheet("Data").CellValue(1, 1, "Already XLSX");
                 document.Save();
             }
 
@@ -191,7 +192,7 @@ namespace OfficeIMO.Tests {
             string sourcePath = Path.Combine(_directoryWithFiles, Guid.NewGuid().ToString("N") + ".xlsx");
             string destinationPath = Path.Combine(_directoryWithFiles, Guid.NewGuid().ToString("N") + ".xlsx");
             using (ExcelDocument document = ExcelDocument.Create(sourcePath)) {
-                document.AddWorkSheet("Data").CellValue(1, 1, "Source must remain untouched");
+                document.AddWorksheet("Data").CellValue(1, 1, "Source must remain untouched");
                 document.Save();
             }
             File.SetLastWriteTimeUtc(sourcePath, new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc));
@@ -221,7 +222,7 @@ namespace OfficeIMO.Tests {
                 ExcelDocumentConversionException exception = Assert.Throws<ExcelDocumentConversionException>(() => ExcelDocument.Convert(xlsPath, blockedPath));
 
                 Assert.Equal(ExcelDocumentConversionFailureReason.DataLossBlocked, exception.Reason);
-                Assert.Contains(exception.Result.Diagnostics, diagnostic => diagnostic.Code.Contains("Compound", StringComparison.Ordinal));
+                Assert.Contains(exception.Result.Report.Diagnostics, diagnostic => diagnostic.Code.Contains("Compound", StringComparison.Ordinal));
                 Assert.False(File.Exists(blockedPath));
 
                 ExcelDocument.Convert(xlsPath, allowedPath, new ExcelDocumentConversionOptions {

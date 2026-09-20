@@ -1,8 +1,8 @@
+using OfficeIMO.Drawing.Internal;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using DocumentFormat.OpenXml.Wordprocessing;
-using OfficeIMO.Core;
-using OfficeIMO.Shared;
+using OfficeIMO.Drawing;
 using OfficeIMO.Word.Fluent;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -52,25 +52,25 @@ namespace OfficeIMO.Word {
             };
         }
 
-        private static void ValidateLifecycle(DocumentAccessMode accessMode, DocumentPersistenceMode persistenceMode) {
-            if (accessMode == DocumentAccessMode.ReadOnly && persistenceMode == DocumentPersistenceMode.SaveOnDispose) {
-                throw new ArgumentException("A read-only document cannot use SaveOnDispose persistence.");
-            }
-        }
-
         /// <summary>
         /// Create a new WordDocument
         /// </summary>
-        /// <param name="filePath">Optional destination associated with the document. It is not created until the document is saved.</param>
-        /// <param name="options">Creation and persistence options.</param>
-        /// <returns></returns>
-        public static WordDocument Create(string filePath = "", WordCreateOptions? options = null) {
+        /// <param name="options">Creation options. SaveOnDispose is invalid without an associated destination.</param>
+        public static WordDocument Create(WordCreateOptions? options = null) {
             WordCreateOptions resolved = options ?? new WordCreateOptions();
-            if (resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose && string.IsNullOrEmpty(filePath)) {
-                throw new ArgumentException("SaveOnDispose requires an associated file path or writable stream.", nameof(filePath));
+            if (resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose) {
+                throw new ArgumentException("SaveOnDispose requires an associated file path or writable stream.", nameof(options));
             }
+            return CreateInternal(filePath: null, stream: null, resolved.DocumentType, resolved.PersistenceMode);
+        }
 
-            var documentType = string.IsNullOrEmpty(filePath) ? resolved.DocumentType : GetDocumentType(filePath);
+        /// <summary>Creates a Word document associated with a path that is written on explicit save.</summary>
+        /// <param name="filePath">Destination associated with the document.</param>
+        /// <param name="options">Creation and persistence options.</param>
+        public static WordDocument Create(string filePath, WordCreateOptions? options = null) {
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("File path cannot be empty.", nameof(filePath));
+            WordCreateOptions resolved = options ?? new WordCreateOptions();
+            var documentType = GetDocumentType(filePath);
             var word = CreateInternal(filePath, null, documentType, resolved.PersistenceMode);
             return word;
         }
@@ -162,7 +162,7 @@ namespace OfficeIMO.Word {
 
             mainPart.Document.Body = new DocumentFormat.OpenXml.Wordprocessing.Body();
 
-            word.FilePath = filePath ?? string.Empty;
+            word.FilePath = filePath;
             word._ownedPackageStream = packageStream;
             word._wordprocessingDocument = wordDocument;
             word._document = mainPart.Document;
@@ -211,19 +211,8 @@ namespace OfficeIMO.Word {
         /// <returns>Instance of <see cref="WordDocument"/>.</returns>
         /// <exception cref="ArgumentNullException">Thrown when <paramref name="stream"/> is null.</exception>
         public static WordDocument Create(Stream stream, WordCreateOptions? options = null) {
-            if (stream == null) {
-                throw new ArgumentNullException(nameof(stream));
-            }
-
-            if (!stream.CanWrite) {
-                throw new ArgumentException("Stream must be writable.", nameof(stream));
-            }
-
+            OfficeDocumentLifecycle.EnsureAssociatedDestination(stream, nameof(stream));
             WordCreateOptions resolved = options ?? new WordCreateOptions();
-            if (resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose && !stream.CanSeek) {
-                throw new ArgumentException("Stream must support seeking when SaveOnDispose is enabled.", nameof(stream));
-            }
-
             var word = CreateInternal(null, stream, resolved.DocumentType, resolved.PersistenceMode);
             return word;
         }
@@ -322,7 +311,7 @@ namespace OfficeIMO.Word {
             }
 
             WordLoadOptions resolved = options ?? new WordLoadOptions();
-            ValidateLifecycle(resolved.AccessMode, resolved.PersistenceMode);
+            OfficeDocumentLifecycle.Validate(resolved.AccessMode, resolved.PersistenceMode, "document");
             bool readOnly = resolved.AccessMode == DocumentAccessMode.ReadOnly;
             bool saveOnDispose = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
             var word = new WordDocument { _persistenceMode = resolved.PersistenceMode };
@@ -389,11 +378,8 @@ namespace OfficeIMO.Word {
                 encryptedBytes = buffer.ToArray();
             }
             byte[] packageBytes = OfficeEncryption.DecryptPackage(encryptedBytes, password);
-            var stream = new MemoryStream(packageBytes);
-            var document = Load(stream, resolved);
-            document.FilePath = string.Empty;
-            document._ownedPackageStream = stream;
-            return document;
+            using var decryptedSource = new MemoryStream(packageBytes, writable: false);
+            return Load(decryptedSource, resolved);
         }
 
         /// <summary>
@@ -416,10 +402,8 @@ namespace OfficeIMO.Word {
             }
             stream.CopyTo(buffer);
             byte[] packageBytes = OfficeEncryption.DecryptPackage(buffer.ToArray(), password);
-            var packageStream = new MemoryStream(packageBytes);
-            var document = Load(packageStream, resolved);
-            document._ownedPackageStream = packageStream;
-            return document;
+            using var decryptedSource = new MemoryStream(packageBytes, writable: false);
+            return Load(decryptedSource, resolved);
         }
 
         private static void EnsureEncryptedLoadUsesExplicitPersistence(WordLoadOptions options) {
@@ -453,7 +437,7 @@ namespace OfficeIMO.Word {
             byte[] sourceBytes = memoryStream.ToArray();
 
             WordLoadOptions resolved = options ?? new WordLoadOptions();
-            ValidateLifecycle(resolved.AccessMode, resolved.PersistenceMode);
+            OfficeDocumentLifecycle.Validate(resolved.AccessMode, resolved.PersistenceMode, "document");
             bool readOnly = resolved.AccessMode == DocumentAccessMode.ReadOnly;
             bool saveOnDispose = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
             var effectiveOpenSettings = CreateOpenSettings(resolved.OpenSettings);
@@ -500,40 +484,27 @@ namespace OfficeIMO.Word {
             if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
 
             WordLoadOptions resolved = options ?? new WordLoadOptions();
-            ValidateLifecycle(resolved.AccessMode, resolved.PersistenceMode);
+            OfficeDocumentLifecycle.Validate(resolved.AccessMode, resolved.PersistenceMode, "document");
             bool readOnly = resolved.AccessMode == DocumentAccessMode.ReadOnly;
             bool copyBackToSource = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose && !readOnly;
-            if (copyBackToSource && !stream.CanWrite) {
-                throw new ArgumentException("Stream must be writable when SaveOnDispose is enabled.", nameof(stream));
-            }
-            if (copyBackToSource && !stream.CanSeek) {
-                throw new ArgumentException("Stream must support seeking when SaveOnDispose is enabled.", nameof(stream));
-            }
+            OfficeDocumentLifecycle.EnsureSaveOnDisposeDestination(stream, resolved.PersistenceMode, nameof(stream));
 
             if (stream.CanSeek) stream.Seek(0, SeekOrigin.Begin);
-            var bufferedStream = new MemoryStream();
-            try {
-                await stream.CopyToAsync(bufferedStream, 81920, cancellationToken).ConfigureAwait(false);
-                bufferedStream.Seek(0, SeekOrigin.Begin);
-                WordDocument document = Load(bufferedStream, resolved);
-                if (document.SourceFormat == WordFileFormat.Doc) {
-                    bufferedStream.Dispose();
-                } else {
-                    document._ownedPackageStream = bufferedStream;
-                    document.OriginalStream = stream.CanSeek ? stream : null!;
-                }
-
-                return document;
-            } catch {
-                bufferedStream.Dispose();
-                throw;
+            using var bufferedStream = new MemoryStream();
+            await stream.CopyToAsync(bufferedStream, 81920, cancellationToken).ConfigureAwait(false);
+            bufferedStream.Seek(0, SeekOrigin.Begin);
+            WordDocument document = Load(bufferedStream, resolved);
+            if (document.SourceFormat != WordFileFormat.Doc) {
+                document.OriginalStream = OfficeDocumentLifecycle.ResolveAssociatedDestination(stream, resolved.AccessMode)!;
             }
+
+            return document;
         }
 
         /// <summary>
         /// Load WordDocument from stream
         /// </summary>
-        /// <param name="stream"></param>
+        /// <param name="stream">Readable source. Editable writable seekable sources become the associated destination; other sources remain detached.</param>
         /// <param name="options">Access, persistence, style, and low-level package options.</param>
         /// <returns></returns>
         public static WordDocument Load(Stream stream, WordLoadOptions? options = null) {
@@ -545,15 +516,10 @@ namespace OfficeIMO.Word {
             }
 
             WordLoadOptions resolved = options ?? new WordLoadOptions();
-            ValidateLifecycle(resolved.AccessMode, resolved.PersistenceMode);
+            OfficeDocumentLifecycle.Validate(resolved.AccessMode, resolved.PersistenceMode, "document");
             bool readOnly = resolved.AccessMode == DocumentAccessMode.ReadOnly;
             bool saveOnDispose = resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose;
-            if (saveOnDispose && !stream.CanWrite) {
-                throw new ArgumentException("Stream must be writable when SaveOnDispose is enabled.", nameof(stream));
-            }
-            if (saveOnDispose && !stream.CanSeek) {
-                throw new ArgumentException("Stream must support seeking when SaveOnDispose is enabled.", nameof(stream));
-            }
+            OfficeDocumentLifecycle.EnsureSaveOnDisposeDestination(stream, resolved.PersistenceMode, nameof(stream));
             var effectiveOpenSettings = CreateOpenSettings(resolved.OpenSettings);
             long originalPosition = stream.CanSeek ? stream.Position : 0;
             byte[] sourceBytes;
@@ -579,7 +545,7 @@ namespace OfficeIMO.Word {
             packageStream.Position = 0;
             try {
                 var document = new WordDocument() {
-                    OriginalStream = stream.CanWrite ? stream : null!,
+                    OriginalStream = OfficeDocumentLifecycle.ResolveAssociatedDestination(stream, resolved.AccessMode)!,
                     _ownedPackageStream = packageStream,
                     _persistenceMode = resolved.PersistenceMode
                 };

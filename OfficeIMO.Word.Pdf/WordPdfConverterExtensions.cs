@@ -15,13 +15,13 @@ namespace OfficeIMO.Word.Pdf {
         /// <param name="options">Optional PDF configuration.</param>
         /// <returns>The generated first-party PDF document model.</returns>
         public static PdfCore.PdfDocument ToPdfDocument(this WordDocument document, PdfSaveOptions? options = null) {
-            return document.ToPdfResult(options).Value;
+            return document.ToPdfDocumentResult(options).Value;
         }
 
         /// <summary>
         /// Converts the specified <see cref="WordDocument"/> to a PDF document and returns conversion diagnostics with it.
         /// </summary>
-        public static PdfCore.PdfDocumentConversionResult ToPdfResult(this WordDocument document, PdfSaveOptions? options = null) {
+        public static PdfCore.PdfDocumentConversionResult ToPdfDocumentResult(this WordDocument document, PdfSaveOptions? options = null) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
@@ -37,7 +37,7 @@ namespace OfficeIMO.Word.Pdf {
         /// <param name="document">The document to convert.</param>
         /// <param name="path">The output PDF file path.</param>
         /// <param name="options">Optional PDF configuration.</param>
-        public static void SaveAsPdf(this WordDocument document, string path, PdfSaveOptions? options = null) {
+        public static PdfCore.PdfDocumentConversionResult SaveAsPdf(this WordDocument document, string path, PdfSaveOptions? options = null) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
@@ -56,7 +56,7 @@ namespace OfficeIMO.Word.Pdf {
                 Directory.CreateDirectory(directory);
             }
 
-            document.ToPdfDocument(options).Save(fullPath);
+            return document.ToPdfDocumentResult(options).Save(fullPath);
         }
 
         /// <summary>
@@ -68,7 +68,7 @@ namespace OfficeIMO.Word.Pdf {
                     throw new ArgumentNullException(nameof(document));
                 }
 
-                return document.ToPdfDocument(options).TrySave(path);
+                return document.ToPdfDocumentResult(options).TrySave(path);
             } catch (Exception ex) {
                 return PdfCore.PdfSaveResult.FromFailure(path, ex);
             }
@@ -80,7 +80,7 @@ namespace OfficeIMO.Word.Pdf {
         /// <param name="document">The document to convert.</param>
         /// <param name="stream">The output stream to receive the PDF data.</param>
         /// <param name="options">Optional PDF configuration.</param>
-        public static void SaveAsPdf(this WordDocument document, Stream stream, PdfSaveOptions? options = null) {
+        public static PdfCore.PdfDocumentConversionResult SaveAsPdf(this WordDocument document, Stream stream, PdfSaveOptions? options = null) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
@@ -93,10 +93,11 @@ namespace OfficeIMO.Word.Pdf {
                 throw new ArgumentException("Stream must be writable.", nameof(stream));
             }
 
-            document.ToPdfDocument(options).Save(stream);
+            PdfCore.PdfDocumentConversionResult result = document.ToPdfDocumentResult(options).Save(stream);
             if (stream.CanSeek) {
                 stream.Position = 0;
             }
+            return result;
         }
 
         /// <summary>
@@ -108,7 +109,7 @@ namespace OfficeIMO.Word.Pdf {
                     throw new ArgumentNullException(nameof(document));
                 }
 
-                PdfCore.PdfSaveResult result = document.ToPdfDocument(options).TrySave(stream);
+                PdfCore.PdfSaveResult result = document.ToPdfDocumentResult(options).TrySave(stream);
                 if (result.Succeeded && stream != null && stream.CanSeek) {
                     stream.Position = 0;
                 }
@@ -135,33 +136,14 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         /// <summary>
-        /// Converts the specified <see cref="WordDocument"/> to PDF bytes asynchronously.
-        /// </summary>
-        /// <param name="document">The document to convert.</param>
-        /// <param name="options">Optional PDF configuration.</param>
-        /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
-        /// <returns>The generated PDF as a byte array.</returns>
-        public static async Task<byte[]> ToPdfAsync(this WordDocument document, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) {
-            if (document == null) {
-                throw new ArgumentNullException(nameof(document));
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            using (MemoryStream stream = new MemoryStream()) {
-                await document.ToPdfDocument(options).SaveAsync(stream, cancellationToken).ConfigureAwait(false);
-                return stream.ToArray();
-            }
-        }
-
-        /// <summary>
         /// Saves the specified <see cref="WordDocument"/> as a PDF at the given <paramref name="path"/> asynchronously.
         /// </summary>
         /// <param name="document">The document to convert.</param>
         /// <param name="path">The output PDF file path.</param>
         /// <param name="options">Optional PDF configuration.</param>
         /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
-        /// <returns>A task representing the asynchronous operation.</returns>
-        public static async Task SaveAsPdfAsync(this WordDocument document, string path, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) {
+        /// <returns>The saved PDF conversion result with diagnostics.</returns>
+        public static async Task<PdfCore.PdfDocumentConversionResult> SaveAsPdfAsync(this WordDocument document, string path, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
@@ -181,7 +163,7 @@ namespace OfficeIMO.Word.Pdf {
                 Directory.CreateDirectory(directory);
             }
 
-            await document.ToPdfDocument(options).SaveAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            return await document.ToPdfDocumentResult(options).SaveAsync(fullPath, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -193,7 +175,9 @@ namespace OfficeIMO.Word.Pdf {
                     throw new ArgumentNullException(nameof(document));
                 }
 
-                return await document.ToPdfDocument(options).TrySaveAsync(path, cancellationToken).ConfigureAwait(false);
+                return await document.ToPdfDocumentResult(options).TrySaveAsync(path, cancellationToken).ConfigureAwait(false);
+            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+                throw;
             } catch (Exception ex) {
                 return PdfCore.PdfSaveResult.FromFailure(path, ex);
             }
@@ -206,8 +190,8 @@ namespace OfficeIMO.Word.Pdf {
         /// <param name="stream">The output stream to receive the PDF data.</param>
         /// <param name="options">Optional PDF configuration.</param>
         /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
-        /// <returns>A task representing the asynchronous operation.</returns>
-        public static async Task SaveAsPdfAsync(this WordDocument document, Stream stream, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) {
+        /// <returns>The saved PDF conversion result with diagnostics.</returns>
+        public static async Task<PdfCore.PdfDocumentConversionResult> SaveAsPdfAsync(this WordDocument document, Stream stream, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
@@ -222,10 +206,11 @@ namespace OfficeIMO.Word.Pdf {
                 throw new ArgumentException("Stream must be writable.", nameof(stream));
             }
 
-            await document.ToPdfDocument(options).SaveAsync(stream, cancellationToken).ConfigureAwait(false);
+            PdfCore.PdfDocumentConversionResult result = await document.ToPdfDocumentResult(options).SaveAsync(stream, cancellationToken).ConfigureAwait(false);
             if (stream.CanSeek) {
                 stream.Position = 0;
             }
+            return result;
         }
 
         /// <summary>
@@ -237,12 +222,14 @@ namespace OfficeIMO.Word.Pdf {
                     throw new ArgumentNullException(nameof(document));
                 }
 
-                PdfCore.PdfSaveResult result = await document.ToPdfDocument(options).TrySaveAsync(stream, cancellationToken).ConfigureAwait(false);
+                PdfCore.PdfSaveResult result = await document.ToPdfDocumentResult(options).TrySaveAsync(stream, cancellationToken).ConfigureAwait(false);
                 if (result.Succeeded && stream != null && stream.CanSeek) {
                     stream.Position = 0;
                 }
 
                 return result;
+            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+                throw;
             } catch (Exception ex) {
                 return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
             }

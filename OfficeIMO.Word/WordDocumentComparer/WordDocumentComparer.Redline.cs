@@ -76,7 +76,7 @@ namespace OfficeIMO.Word {
 
             File.Copy(targetPath, outputPath, overwrite: true);
             using WordDocument sourceDocument = WordDocument.Load(sourcePath, new WordLoadOptions {
-                AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly
+                AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly
             });
             using WordDocument document = WordDocument.Load(outputPath);
             HashSet<int> rewrittenParagraphs = ApplyParagraphFindings(
@@ -95,7 +95,7 @@ namespace OfficeIMO.Word {
             ApplyTableFindings(sourceDocument._wordprocessingDocument, document._wordprocessingDocument, result, options);
             AppendInPlaceFeatureAndReviewFindings(document, result, options);
 
-            document.Save(document.FilePath,
+            document.Save(document.FilePath!,
                 new WordSaveOptions { SignedDocumentPolicy = WordSignedDocumentSavePolicy.AllowSignatureInvalidation });
         }
 

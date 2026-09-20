@@ -1293,7 +1293,7 @@ public partial class Word {
             document.AddParagraph("After malformed inline chart");
 
             document.Save();
-            PdfDocumentConversionResult result = document.ToPdfResult(options);
+            PdfDocumentConversionResult result = document.ToPdfDocumentResult(options);
             result.Save(pdfPath);
             Assert.Contains(result.Warnings, warning => warning.Code == "NativeBodyChartUnsupported");
         }
@@ -1523,7 +1523,7 @@ public partial class Word {
             Assert.Contains("omitted the additional plot types", (string?)arguments[2], StringComparison.OrdinalIgnoreCase);
 
             document.Save();
-            PdfDocumentConversionResult conversion = document.ToPdfResult(options);
+            PdfDocumentConversionResult conversion = document.ToPdfDocumentResult(options);
             conversion.Save(pdfPath);
 
             Assert.DoesNotContain(conversion.Warnings, warning => warning.Code == "NativeBodyChartUnsupported");
@@ -2296,7 +2296,7 @@ public partial class Word {
         fill.SetAttribute(new OpenXmlAttribute("type", string.Empty, "gradient"));
         fill.SetAttribute(new OpenXmlAttribute("color2", string.Empty, "#ed7d31"));
         fill.SetAttribute(new OpenXmlAttribute("angle", string.Empty, "90"));
-        fill.SetAttribute(new OpenXmlAttribute("opacity", string.Empty, "32768f"));
+        fill.SetAttribute(new OpenXmlAttribute("opacity", string.Empty, "32768F"));
 
         var panel = new DocumentFormat.OpenXml.Vml.Rectangle(fill) {
             Id = "NativeCoverGradientPanel",
@@ -2382,7 +2382,7 @@ public partial class Word {
             FillColor = "#ed7d31",
             Stroked = false
         };
-        roundRect.SetAttribute(new OpenXmlAttribute("arcsize", string.Empty, "32768f"));
+        roundRect.SetAttribute(new OpenXmlAttribute("arcsize", string.Empty, "32768F"));
 
         return new Paragraph(new Run(new Picture(oval, roundRect)));
     }
