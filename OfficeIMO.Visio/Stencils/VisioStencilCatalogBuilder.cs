@@ -57,7 +57,44 @@ namespace OfficeIMO.Visio.Stencils {
             IEnumerable<string>? aliases = null,
             IEnumerable<string>? tags = null,
             string? iconNameU = null) {
-            return Add(CreateShape(id, name, masterNameU, category, defaultWidth, defaultHeight, keywords, aliases, tags, iconNameU));
+            return AddWithMetadata(id, name, masterNameU, category, defaultWidth, defaultHeight, keywords, aliases, tags, iconNameU, null);
+        }
+
+        /// <summary>
+        /// Adds a stencil shape with explicit search metadata and default-size unit.
+        /// </summary>
+        public VisioStencilCatalogBuilder AddWithMetadata(
+            string id,
+            string name,
+            string masterNameU,
+            string category,
+            double defaultWidth,
+            double defaultHeight,
+            IEnumerable<string>? keywords,
+            IEnumerable<string>? aliases,
+            IEnumerable<string>? tags,
+            string? iconNameU,
+            VisioMeasurementUnit? defaultUnit) {
+            return AddWithMetadata(id, name, masterNameU, category, defaultWidth, defaultHeight, keywords, aliases, tags, iconNameU, defaultUnit, null);
+        }
+
+        /// <summary>
+        /// Adds a stencil shape with explicit search metadata, default-size unit, and source package path.
+        /// </summary>
+        public VisioStencilCatalogBuilder AddWithMetadata(
+            string id,
+            string name,
+            string masterNameU,
+            string category,
+            double defaultWidth,
+            double defaultHeight,
+            IEnumerable<string>? keywords,
+            IEnumerable<string>? aliases,
+            IEnumerable<string>? tags,
+            string? iconNameU,
+            VisioMeasurementUnit? defaultUnit,
+            string? sourcePackagePath) {
+            return Add(CreateShape(id, name, masterNameU, category, defaultWidth, defaultHeight, keywords, aliases, tags, iconNameU, defaultUnit, sourcePackagePath));
         }
 
         /// <summary>
@@ -90,7 +127,9 @@ namespace OfficeIMO.Visio.Stencils {
             IEnumerable<string>? keywords,
             IEnumerable<string>? aliases,
             IEnumerable<string>? tags,
-            string? iconNameU) {
+            string? iconNameU,
+            VisioMeasurementUnit? defaultUnit,
+            string? sourcePackagePath) {
             string prefix = id.Contains(".") ? id.Substring(0, id.IndexOf('.')) : id;
             string localId = id.Contains(".") ? id.Substring(id.IndexOf('.') + 1) : id;
             IEnumerable<string> effectiveKeywords = keywords ?? Enumerable.Empty<string>();
@@ -114,7 +153,9 @@ namespace OfficeIMO.Visio.Stencils {
                 effectiveKeywords,
                 effectiveAliases,
                 effectiveTags,
-                iconNameU ?? masterNameU);
+                iconNameU ?? masterNameU,
+                defaultUnit,
+                sourcePackagePath);
         }
     }
 }

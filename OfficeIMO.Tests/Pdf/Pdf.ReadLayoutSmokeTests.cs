@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using OfficeIMO.Pdf;
+using OfficeIMO.Tests.Pdf;
 using Xunit;
 
 namespace OfficeIMO.Tests;
@@ -210,6 +211,34 @@ public sealed class PdfReadLayoutSmokeTests {
         }));
         Assert.Equal(1, streamParagraphPage.PageNumber);
         Assert.Contains(streamParagraphPage.Paragraphs, item => item.Text.Contains("structured paragraph", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PdfTextExtractor_ExtractStructuredByPage_DoesNotDuplicateFallbackTableRowsAsParagraphs() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 360,
+                PageHeight = 180,
+                MarginLeft = 36,
+                MarginRight = 36,
+                MarginTop = 36,
+                MarginBottom = 36,
+                DefaultFontSize = 10,
+                DefaultParagraphStyle = new PdfParagraphStyle {
+                    DefaultTabStopWidth = 160,
+                    SpacingAfter = 0
+                }
+            })
+            .Paragraph(p => p.Text("Fallback table row").Tab().Text("12345"))
+            .ToBytes();
+
+        StructuredPage page = Assert.Single(PdfTextExtractor.ExtractStructuredByPage(bytes, new PdfTextLayoutOptions {
+            ForceSingleColumn = true
+        }));
+
+        Assert.Contains(page.Tables, row => row.Length >= 2 &&
+            Normalize(row[0]).Contains("Fallbacktablerow", StringComparison.Ordinal) &&
+            Normalize(row[1]).Contains("12345", StringComparison.Ordinal));
+        Assert.DoesNotContain(page.Paragraphs, paragraph => Normalize(paragraph.Text).Contains("Fallbacktablerow", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -465,6 +494,43 @@ public sealed class PdfReadLayoutSmokeTests {
     }
 
     [Fact]
+    public void PdfTextExtractor_ExtractTablesByPageRanges_WritesStatementFixtureTablesForWrappers() {
+        byte[] bytes = PdfDocRasterVisualBaselineTests.CreateLineItemsTwoPage();
+        string directory = Path.Combine(Path.GetTempPath(), "officeimo-pdf-statement-table-csv-" + Guid.NewGuid().ToString("N"));
+        string inputPath = Path.Combine(directory, "statement.pdf");
+        string outputDirectory = Path.Combine(directory, "tables");
+
+        try {
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(inputPath, bytes);
+
+            var tablePages = PdfTextExtractor.ExtractTablesByPageRanges(bytes, PdfPageRange.ParseMany("2,1"));
+
+            Assert.Equal(new[] { 2, 1 }, tablePages.Select(page => page.PageNumber).ToArray());
+            Assert.Contains(tablePages[0].Tables.SelectMany(table => table.Rows), row => RowContains(row, "Subtotal", "5201,32PLN"));
+            Assert.Contains(tablePages[0].Tables.SelectMany(table => table.Rows), row => RowContains(row, "Total", "6397,62PLN"));
+            Assert.Contains(tablePages[1].Tables.SelectMany(table => table.Rows), row => RowContains(row, "Experientiamnostrum", "31,80PLN", "2", "63,60PLN"));
+
+            var paths = PdfTextExtractor.ExtractTablesByPageRanges(inputPath, outputDirectory, PdfPageRange.ParseMany("2,1"));
+
+            Assert.NotEmpty(paths);
+            Assert.All(paths, path => Assert.True(File.Exists(path), "Expected extracted statement CSV file to exist: " + path));
+            Assert.Contains("-page-0002-table-", Path.GetFileName(paths[0]), StringComparison.Ordinal);
+            Assert.Contains(paths, path => Path.GetFileName(path).Contains("-page-0001-table-", StringComparison.Ordinal));
+
+            string combinedCsv = string.Join("\n", paths.Select(File.ReadAllText));
+            string normalizedCsv = NormalizeCsvText(combinedCsv);
+            Assert.Contains("Subtotal,5201,32PLN", normalizedCsv, StringComparison.Ordinal);
+            Assert.Contains("Total,6397,62PLN", normalizedCsv, StringComparison.Ordinal);
+            Assert.Contains("Experientiamnostrum,31,80PLN,2,63,60PLN", normalizedCsv, StringComparison.Ordinal);
+        } finally {
+            if (Directory.Exists(directory)) {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void PdfTextExtractor_ExtractStructuredAndTablesByPageRanges_RejectsInvalidInputs() {
         byte[] bytes = BuildThreePageTablePdf();
 
@@ -545,5 +611,14 @@ public sealed class PdfReadLayoutSmokeTests {
 
     private static string Normalize(string text) {
         return text.Replace(" ", string.Empty);
+    }
+
+    private static bool RowContains(string[] row, params string[] expectedTokens) {
+        string rowText = NormalizeCsvText(string.Join(",", row));
+        return expectedTokens.All(token => rowText.Contains(token, StringComparison.Ordinal));
+    }
+
+    private static string NormalizeCsvText(string text) {
+        return new string(text.Where(ch => !char.IsWhiteSpace(ch) && ch != '"').ToArray());
     }
 }

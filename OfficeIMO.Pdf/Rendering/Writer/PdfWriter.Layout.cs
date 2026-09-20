@@ -14,6 +14,7 @@ internal static partial class PdfWriter {
     private sealed class ColImg : ColItem { public ImageBlock Block = null!; public ColImg() { Kind = "I"; } }
     private sealed class ColShape : ColItem { public ShapeBlock Block = null!; public ColShape() { Kind = "S"; } }
     private sealed class ColDrawing : ColItem { public DrawingBlock Block = null!; public ColDrawing() { Kind = "D"; } }
+    private sealed class ColForm : ColItem { public IPdfBlock Block = null!; public ColForm() { Kind = "FORM"; } }
     private sealed class ColBookmark : ColItem { public BookmarkBlock Block = null!; public ColBookmark() { Kind = "B"; } }
     private sealed class ColSpacer : ColItem { public SpacerBlock Block = null!; public ColSpacer() { Kind = "SPACE"; } }
     private sealed class ColListItem : ColItem { public System.Collections.Generic.List<string> Lines = null!; public string Marker = string.Empty; public double MarkerXOffset; public double MarkerWidth; public PdfAlign MarkerAlign; public double TextXOffset; public double TextWidth; public PdfAlign TextAlign; public PdfColor? Color; public double Leading; public double Size; public double SpacingBefore; public double SpacingAfter; public bool KeepTogether; public bool IsFirstInKeepGroup; public double KeepGroupHeight; public bool KeepWithNext; public bool IsFirstInKeepWithNextGroup; public int KeepWithNextGroupItemCount; public double KeepWithNextGroupHeight; public ColListItem() { Kind = "L"; } }
@@ -1323,9 +1324,18 @@ internal static partial class PdfWriter {
             if (currentPage == null) StartPage(currentOpts);
         }
 
+        bool HasCurrentPageNonContentObjects() =>
+            currentPage != null &&
+            (currentPage.Images.Count > 0 ||
+            currentPage.Annotations.Count > 0 ||
+            currentPage.FormFields.Count > 0 ||
+            currentPage.GraphicsStates.Count > 0 ||
+            currentPage.Shadings.Count > 0 ||
+            currentPage.NamedDestinations.Count > 0);
+
         void FlushPage(bool force = false) {
             if (currentPage == null) return;
-            if (!force && !pageDirty && currentPage.Images.Count == 0 && currentPage.Annotations.Count == 0 && currentPage.GraphicsStates.Count == 0 && currentPage.Shadings.Count == 0 && currentPage.NamedDestinations.Count == 0) {
+            if (!force && !pageDirty && !HasCurrentPageNonContentObjects()) {
                 currentPage = null;
                 sb.Clear();
                 pageDirty = false;
@@ -1339,7 +1349,7 @@ internal static partial class PdfWriter {
         }
 
         void NewPage() {
-            FlushPage(pageDirty || (currentPage?.Images.Count ?? 0) > 0 || (currentPage?.Annotations.Count ?? 0) > 0 || (currentPage?.GraphicsStates.Count ?? 0) > 0 || (currentPage?.Shadings.Count ?? 0) > 0 || (currentPage?.NamedDestinations.Count ?? 0) > 0);
+            FlushPage(pageDirty || HasCurrentPageNonContentObjects());
             StartPage(currentOpts);
         }
 
@@ -1710,6 +1720,214 @@ internal static partial class PdfWriter {
             y -= ruleStyle.Thickness + ruleStyle.SpacingAfter;
         }
 
+        void RenderTextFieldBlock(TextFieldBlock block, double containerX, double containerWidth) {
+            double spacingBefore = ResolveTopLevelSpacingBefore(block.SpacingBefore);
+            double needed = spacingBefore + block.Height + block.SpacingAfter;
+            EnsureFixedFlowBlockFits("Text field", block.Width, needed, containerWidth);
+            if (y - needed < currentOpts.MarginBottom) {
+                NewPage();
+                spacingBefore = 0D;
+            }
+
+            if (spacingBefore > 0) {
+                y -= spacingBefore;
+            }
+
+            double x = GetAlignedObjectX(containerX, containerWidth, block.Width, block.Align);
+            currentPage!.FormFields.Add(new FormFieldAnnotation {
+                X1 = x,
+                Y1 = y - block.Height,
+                X2 = x + block.Width,
+                Y2 = y,
+                Kind = FormFieldAnnotationKind.Text,
+                Name = block.Name,
+                Value = block.Value,
+                FontSize = block.FontSize
+            });
+            pageDirty = true;
+            y -= block.Height + block.SpacingAfter;
+        }
+
+        void RenderCheckBoxBlock(CheckBoxBlock block, double containerX, double containerWidth) {
+            double spacingBefore = ResolveTopLevelSpacingBefore(block.SpacingBefore);
+            double needed = spacingBefore + block.Size + block.SpacingAfter;
+            EnsureFixedFlowBlockFits("Check box", block.Size, needed, containerWidth);
+            if (y - needed < currentOpts.MarginBottom) {
+                NewPage();
+                spacingBefore = 0D;
+            }
+
+            if (spacingBefore > 0) {
+                y -= spacingBefore;
+            }
+
+            double x = GetAlignedObjectX(containerX, containerWidth, block.Size, block.Align);
+            currentPage!.FormFields.Add(new FormFieldAnnotation {
+                X1 = x,
+                Y1 = y - block.Size,
+                X2 = x + block.Size,
+                Y2 = y,
+                Kind = FormFieldAnnotationKind.CheckBox,
+                Name = block.Name,
+                Value = block.IsChecked ? block.CheckedValueName : "Off",
+                IsChecked = block.IsChecked,
+                CheckedValueName = block.CheckedValueName
+            });
+            pageDirty = true;
+            y -= block.Size + block.SpacingAfter;
+        }
+
+        void RenderChoiceFieldBlock(ChoiceFieldBlock block, double containerX, double containerWidth) {
+            double spacingBefore = ResolveTopLevelSpacingBefore(block.SpacingBefore);
+            double needed = spacingBefore + block.Height + block.SpacingAfter;
+            EnsureFixedFlowBlockFits("Choice field", block.Width, needed, containerWidth);
+            if (y - needed < currentOpts.MarginBottom) {
+                NewPage();
+                spacingBefore = 0D;
+            }
+
+            if (spacingBefore > 0) {
+                y -= spacingBefore;
+            }
+
+            double x = GetAlignedObjectX(containerX, containerWidth, block.Width, block.Align);
+            currentPage!.FormFields.Add(new FormFieldAnnotation {
+                X1 = x,
+                Y1 = y - block.Height,
+                X2 = x + block.Width,
+                Y2 = y,
+                Kind = FormFieldAnnotationKind.Choice,
+                Name = block.Name,
+                Value = block.Value,
+                Values = block.Values,
+                FontSize = block.FontSize,
+                Options = block.Options,
+                IsComboBox = block.IsComboBox,
+                AllowsMultipleSelection = block.AllowsMultipleSelection
+            });
+            pageDirty = true;
+            y -= block.Height + block.SpacingAfter;
+        }
+
+        static string GetFormFieldBlockName(IPdfBlock block) {
+            if (block is TextFieldBlock) {
+                return "Text field";
+            }
+
+            if (block is CheckBoxBlock) {
+                return "Check box";
+            }
+
+            return "Choice field";
+        }
+
+        static double GetFormFieldWidth(IPdfBlock block) {
+            if (block is TextFieldBlock textField) {
+                return textField.Width;
+            }
+
+            if (block is CheckBoxBlock checkBox) {
+                return checkBox.Size;
+            }
+
+            return ((ChoiceFieldBlock)block).Width;
+        }
+
+        static double GetFormFieldHeight(IPdfBlock block) {
+            if (block is TextFieldBlock textField) {
+                return textField.Height;
+            }
+
+            if (block is CheckBoxBlock checkBox) {
+                return checkBox.Size;
+            }
+
+            return ((ChoiceFieldBlock)block).Height;
+        }
+
+        static double GetFormFieldSpacingBefore(IPdfBlock block) {
+            if (block is TextFieldBlock textField) {
+                return textField.SpacingBefore;
+            }
+
+            if (block is CheckBoxBlock checkBox) {
+                return checkBox.SpacingBefore;
+            }
+
+            return ((ChoiceFieldBlock)block).SpacingBefore;
+        }
+
+        static double GetFormFieldSpacingAfter(IPdfBlock block) {
+            if (block is TextFieldBlock textField) {
+                return textField.SpacingAfter;
+            }
+
+            if (block is CheckBoxBlock checkBox) {
+                return checkBox.SpacingAfter;
+            }
+
+            return ((ChoiceFieldBlock)block).SpacingAfter;
+        }
+
+        static PdfAlign GetFormFieldAlign(IPdfBlock block) {
+            if (block is TextFieldBlock textField) {
+                return textField.Align;
+            }
+
+            if (block is CheckBoxBlock checkBox) {
+                return checkBox.Align;
+            }
+
+            return ((ChoiceFieldBlock)block).Align;
+        }
+
+        void AddFormFieldAnnotation(IPdfBlock block, double x, double topY) {
+            if (block is TextFieldBlock textField) {
+                currentPage!.FormFields.Add(new FormFieldAnnotation {
+                    X1 = x,
+                    Y1 = topY - textField.Height,
+                    X2 = x + textField.Width,
+                    Y2 = topY,
+                    Kind = FormFieldAnnotationKind.Text,
+                    Name = textField.Name,
+                    Value = textField.Value,
+                    FontSize = textField.FontSize
+                });
+                return;
+            }
+
+            if (block is CheckBoxBlock checkBox) {
+                currentPage!.FormFields.Add(new FormFieldAnnotation {
+                    X1 = x,
+                    Y1 = topY - checkBox.Size,
+                    X2 = x + checkBox.Size,
+                    Y2 = topY,
+                    Kind = FormFieldAnnotationKind.CheckBox,
+                    Name = checkBox.Name,
+                    Value = checkBox.IsChecked ? checkBox.CheckedValueName : "Off",
+                    IsChecked = checkBox.IsChecked,
+                    CheckedValueName = checkBox.CheckedValueName
+                });
+                return;
+            }
+
+            ChoiceFieldBlock choice = (ChoiceFieldBlock)block;
+            currentPage!.FormFields.Add(new FormFieldAnnotation {
+                X1 = x,
+                Y1 = topY - choice.Height,
+                X2 = x + choice.Width,
+                Y2 = topY,
+                Kind = FormFieldAnnotationKind.Choice,
+                Name = choice.Name,
+                Value = choice.Value,
+                Values = choice.Values,
+                FontSize = choice.FontSize,
+                Options = choice.Options,
+                IsComboBox = choice.IsComboBox,
+                AllowsMultipleSelection = choice.AllowsMultipleSelection
+            });
+        }
+
         void EnsureFixedFlowBlockFits(string blockName, double blockWidth, double blockHeight, double availableWidth) {
             if (blockWidth > availableWidth + 0.001) {
                 throw new ArgumentException(blockName + " width exceeds the available page content width.");
@@ -1955,6 +2173,18 @@ internal static partial class PdfWriter {
                 return style.SpacingBefore + style.Thickness + style.SpacingAfter;
             }
 
+            if (block is TextFieldBlock textField) {
+                return textField.SpacingBefore + textField.Height + textField.SpacingAfter;
+            }
+
+            if (block is CheckBoxBlock checkBox) {
+                return checkBox.SpacingBefore + checkBox.Size + checkBox.SpacingAfter;
+            }
+
+            if (block is ChoiceFieldBlock choiceField) {
+                return choiceField.SpacingBefore + choiceField.Height + choiceField.SpacingAfter;
+            }
+
             if (block is ImageBlock image) {
                 PdfImageStyle style = ResolveImageStyle(image, currentOpts);
                 return style.SpacingBefore + image.Height + style.SpacingAfter;
@@ -2025,7 +2255,7 @@ internal static partial class PdfWriter {
                 var block = blockList[blockIndex];
                 IPdfBlock? nextBlock = blockIndex + 1 < blockList.Count ? blockList[blockIndex + 1] : null;
                 if (block is PageBlock pageBlock) {
-                    FlushPage(pageDirty || (currentPage?.Images.Count ?? 0) > 0 || (currentPage?.Annotations.Count ?? 0) > 0 || (currentPage?.GraphicsStates.Count ?? 0) > 0 || (currentPage?.Shadings.Count ?? 0) > 0 || (currentPage?.NamedDestinations.Count ?? 0) > 0);
+                    FlushPage(pageDirty || HasCurrentPageNonContentObjects());
                     optionsStack.Push(pageBlock.Options);
                     pageGroupStack.Push(currentPageGroupId);
                     currentOpts = pageBlock.Options;
@@ -2890,6 +3120,12 @@ internal static partial class PdfWriter {
                     }
 
                     RenderHorizontalRuleBlock(hr, currentOpts.MarginLeft, width);
+                } else if (block is TextFieldBlock tf) {
+                    RenderTextFieldBlock(tf, currentOpts.MarginLeft, width);
+                } else if (block is CheckBoxBlock cbx) {
+                    RenderCheckBoxBlock(cbx, currentOpts.MarginLeft, width);
+                } else if (block is ChoiceFieldBlock choice) {
+                    RenderChoiceFieldBlock(choice, currentOpts.MarginLeft, width);
                 } else if (block is ShapeBlock sbk) {
                     PdfDrawingStyle shapeStyle = ResolveDrawingStyle(sbk, currentOpts);
                     PdfDoc.ValidateDrawingStyle(shapeStyle, "Shape");
@@ -3231,6 +3467,8 @@ internal static partial class PdfWriter {
                                 items.Add(new ColShape { Block = sb2 });
                             } else if (cb is DrawingBlock db2) {
                                 items.Add(new ColDrawing { Block = db2 });
+                            } else if (cb is TextFieldBlock || cb is CheckBoxBlock || cb is ChoiceFieldBlock) {
+                                items.Add(new ColForm { Block = cb });
                             } else if (cb is BookmarkBlock bookmark2) {
                                 items.Add(new ColBookmark { Block = bookmark2 });
                             } else if (cb is SpacerBlock spacer2) {
@@ -3267,6 +3505,8 @@ internal static partial class PdfWriter {
                             } else if (item is ColDrawing drawing) {
                                 PdfDrawingStyle drawingStyle = ResolveDrawingStyle(drawing.Block, currentOpts);
                                 total += ResolveColumnSpacingBefore(drawingStyle.SpacingBefore, total) + drawing.Block.Drawing.Height + drawingStyle.SpacingAfter;
+                            } else if (item is ColForm form) {
+                                total += ResolveColumnSpacingBefore(GetFormFieldSpacingBefore(form.Block), total) + GetFormFieldHeight(form.Block) + GetFormFieldSpacingAfter(form.Block);
                             } else if (item is ColSpacer spacerItem) {
                                 total += spacerItem.Block.Height;
                             }
@@ -3316,6 +3556,10 @@ internal static partial class PdfWriter {
                         if (item is ColDrawing drawing) {
                             PdfDrawingStyle drawingStyle = ResolveDrawingStyle(drawing.Block, currentOpts);
                             return drawingStyle.SpacingBefore + drawing.Block.Drawing.Height + drawingStyle.SpacingAfter;
+                        }
+
+                        if (item is ColForm form) {
+                            return GetFormFieldSpacingBefore(form.Block) + GetFormFieldHeight(form.Block) + GetFormFieldSpacingAfter(form.Block);
                         }
 
                         if (item is ColSpacer spacerItem) {
@@ -4162,6 +4406,23 @@ internal static partial class PdfWriter {
                                     remain -= needed;
                                     consumed += needed;
                                     idx++;
+                                } else if (it is ColForm form) {
+                                    double spacingBefore = ResolveColumnSpacingBefore(GetFormFieldSpacingBefore(form.Block), consumed);
+                                    double fieldWidth = GetFormFieldWidth(form.Block);
+                                    double fieldHeight = GetFormFieldHeight(form.Block);
+                                    double spacingAfter = GetFormFieldSpacingAfter(form.Block);
+                                    double needed = spacingBefore + fieldHeight + spacingAfter;
+                                    EnsureFixedFlowBlockFits(GetFormFieldBlockName(form.Block), fieldWidth, needed, wCol);
+                                    if (needed > remain && consumed > 0) break;
+                                    if (needed > remain && consumed == 0) { remain = 0; break; }
+                                    if (spacingBefore > 0) yCol -= spacingBefore;
+                                    double xField = GetAlignedObjectX(xCol, wCol, fieldWidth, GetFormFieldAlign(form.Block));
+                                    AddFormFieldAnnotation(form.Block, xField, yCol);
+                                    pageDirty = true;
+                                    yCol -= fieldHeight + spacingAfter;
+                                    remain -= needed;
+                                    consumed += needed;
+                                    idx++;
                                 } else if (it is ColBookmark bookmarkItem) {
                                     AddNamedDestination(bookmarkItem.Block, yCol);
                                     idx++;
@@ -4349,7 +4610,7 @@ internal static partial class PdfWriter {
         }
 
         ProcessBlocks(blocks);
-        FlushPage(pageDirty || (currentPage?.Images.Count ?? 0) > 0 || (currentPage?.Annotations.Count ?? 0) > 0 || (currentPage?.GraphicsStates.Count ?? 0) > 0 || (currentPage?.Shadings.Count ?? 0) > 0 || (currentPage?.NamedDestinations.Count ?? 0) > 0);
+        FlushPage(pageDirty || HasCurrentPageNonContentObjects());
 
         var result = new LayoutResult { UsedBold = usedBold, UsedItalic = usedItalic, UsedBoldItalic = usedBoldItalic };
         foreach (var p in pages) result.Pages.Add(p);

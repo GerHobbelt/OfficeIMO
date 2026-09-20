@@ -39,7 +39,10 @@ public interface IPdfLogicalElement {
 public sealed class PdfLogicalDocument {
     private const int AcroFormSignaturesExistFlag = 1;
     private const int AcroFormAppendOnlyFlag = 2;
+    private IReadOnlyDictionary<int, IReadOnlyList<PdfLogicalPage>>? _pagesBySourcePageNumber;
     private IReadOnlyList<IPdfLogicalElement>? _elements;
+    private IReadOnlyDictionary<PdfLogicalElementKind, IReadOnlyList<IPdfLogicalElement>>? _elementsByKind;
+    private IReadOnlyDictionary<int, IReadOnlyList<IPdfLogicalElement>>? _elementsByPageNumber;
     private IReadOnlyList<PdfLogicalTextBlock>? _textBlocks;
     private IReadOnlyList<PdfLogicalHeading>? _headings;
     private IReadOnlyList<PdfLogicalParagraph>? _paragraphs;
@@ -95,6 +98,29 @@ public sealed class PdfLogicalDocument {
 
     /// <summary>Logical pages in document order.</summary>
     public IReadOnlyList<PdfLogicalPage> Pages { get; }
+
+    /// <summary>Logical pages grouped by one-based source page number. Range-based loads can contain the same source page more than once.</summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<PdfLogicalPage>> PagesBySourcePageNumber {
+        get {
+            if (_pagesBySourcePageNumber is not null) {
+                return _pagesBySourcePageNumber;
+            }
+
+            var grouped = new Dictionary<int, List<PdfLogicalPage>>();
+            for (int i = 0; i < Pages.Count; i++) {
+                PdfLogicalPage page = Pages[i];
+                if (!grouped.TryGetValue(page.PageNumber, out List<PdfLogicalPage>? pages)) {
+                    pages = new List<PdfLogicalPage>();
+                    grouped.Add(page.PageNumber, pages);
+                }
+
+                pages.Add(page);
+            }
+
+            _pagesBySourcePageNumber = ToReadOnlyLookup(grouped);
+            return _pagesBySourcePageNumber;
+        }
+    }
 
     /// <summary>Top-level document outline/bookmark entries.</summary>
     public IReadOnlyList<PdfOutlineItem> Outlines { get; }
@@ -454,6 +480,15 @@ public sealed class PdfLogicalDocument {
     /// <summary>Number of pages in the logical document.</summary>
     public int PageCount => Pages.Count;
 
+    /// <summary>True when at least one logical page for the one-based source page number is present.</summary>
+    public bool HasSourcePage(int pageNumber) {
+        if (pageNumber <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(pageNumber), pageNumber, "Page number must be positive.");
+        }
+
+        return PagesBySourcePageNumber.ContainsKey(pageNumber);
+    }
+
     /// <summary>True when at least one outline/bookmark entry was read from the catalog.</summary>
     public bool HasOutlines => Outlines.Count > 0;
 
@@ -477,6 +512,22 @@ public sealed class PdfLogicalDocument {
 
     /// <summary>True when at least one AcroForm widget annotation was placed on a logical page.</summary>
     public bool HasFormWidgets => FormWidgets.Count > 0;
+
+    /// <summary>True when at least one logical element of the requested kind is present.</summary>
+    public bool HasElementKind(PdfLogicalElementKind kind) {
+        return ElementsByKind.ContainsKey(kind);
+    }
+
+    /// <summary>Returns logical pages for a one-based source page number, preserving range-selection duplicates.</summary>
+    public IReadOnlyList<PdfLogicalPage> GetPages(int pageNumber) {
+        if (pageNumber <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(pageNumber), pageNumber, "Page number must be positive.");
+        }
+
+        return PagesBySourcePageNumber.TryGetValue(pageNumber, out IReadOnlyList<PdfLogicalPage>? pages)
+            ? pages
+            : Array.Empty<PdfLogicalPage>();
+    }
 
     /// <summary>Attempts to get a simple AcroForm field by its fully qualified field name.</summary>
     public bool TryGetFormField(string name, out PdfFormField? field) {
@@ -537,6 +588,24 @@ public sealed class PdfLogicalDocument {
             : Array.Empty<PdfLogicalFormWidget>();
     }
 
+    /// <summary>Returns logical elements of the requested kind in document order.</summary>
+    public IReadOnlyList<IPdfLogicalElement> GetElements(PdfLogicalElementKind kind) {
+        return ElementsByKind.TryGetValue(kind, out IReadOnlyList<IPdfLogicalElement>? elements)
+            ? elements
+            : Array.Empty<IPdfLogicalElement>();
+    }
+
+    /// <summary>Returns logical elements for a one-based source page number.</summary>
+    public IReadOnlyList<IPdfLogicalElement> GetElements(int pageNumber) {
+        if (pageNumber <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(pageNumber), pageNumber, "Page number must be positive.");
+        }
+
+        return ElementsByPageNumber.TryGetValue(pageNumber, out IReadOnlyList<IPdfLogicalElement>? elements)
+            ? elements
+            : Array.Empty<IPdfLogicalElement>();
+    }
+
     /// <summary>All logical page elements flattened in page order.</summary>
     public IReadOnlyList<IPdfLogicalElement> Elements {
         get {
@@ -554,6 +623,53 @@ public sealed class PdfLogicalDocument {
         }
     }
 
+    /// <summary>Logical page elements grouped by element kind.</summary>
+    public IReadOnlyDictionary<PdfLogicalElementKind, IReadOnlyList<IPdfLogicalElement>> ElementsByKind {
+        get {
+            if (_elementsByKind is not null) {
+                return _elementsByKind;
+            }
+
+            var grouped = new Dictionary<PdfLogicalElementKind, List<IPdfLogicalElement>>();
+            IReadOnlyList<IPdfLogicalElement> elements = Elements;
+            for (int i = 0; i < elements.Count; i++) {
+                IPdfLogicalElement element = elements[i];
+                if (!grouped.TryGetValue(element.Kind, out List<IPdfLogicalElement>? kindElements)) {
+                    kindElements = new List<IPdfLogicalElement>();
+                    grouped.Add(element.Kind, kindElements);
+                }
+
+                kindElements.Add(element);
+            }
+
+            _elementsByKind = ToReadOnlyLookup(grouped);
+            return _elementsByKind;
+        }
+    }
+
+    /// <summary>Logical page elements grouped by one-based source page number.</summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<IPdfLogicalElement>> ElementsByPageNumber {
+        get {
+            if (_elementsByPageNumber is not null) {
+                return _elementsByPageNumber;
+            }
+
+            var grouped = new Dictionary<int, List<IPdfLogicalElement>>();
+            for (int i = 0; i < Pages.Count; i++) {
+                PdfLogicalPage page = Pages[i];
+                if (!grouped.TryGetValue(page.PageNumber, out List<IPdfLogicalElement>? pageElements)) {
+                    pageElements = new List<IPdfLogicalElement>();
+                    grouped.Add(page.PageNumber, pageElements);
+                }
+
+                pageElements.AddRange(page.Elements);
+            }
+
+            _elementsByPageNumber = ToReadOnlyLookup(grouped);
+            return _elementsByPageNumber;
+        }
+    }
+
     private static System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<T>> ToReadOnlyLookup<T>(Dictionary<string, List<T>> grouped) {
         var result = new Dictionary<string, IReadOnlyList<T>>(StringComparer.Ordinal);
         foreach (var item in grouped) {
@@ -561,6 +677,15 @@ public sealed class PdfLogicalDocument {
         }
 
         return new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<T>>(result);
+    }
+
+    private static System.Collections.ObjectModel.ReadOnlyDictionary<TKey, IReadOnlyList<T>> ToReadOnlyLookup<TKey, T>(Dictionary<TKey, List<T>> grouped) where TKey : notnull {
+        var result = new Dictionary<TKey, IReadOnlyList<T>>();
+        foreach (var item in grouped) {
+            result.Add(item.Key, item.Value.AsReadOnly());
+        }
+
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<TKey, IReadOnlyList<T>>(result);
     }
 
     private static System.Collections.ObjectModel.ReadOnlyCollection<T> FlattenPageItems<T>(IReadOnlyList<PdfLogicalPage> pages, Func<PdfLogicalPage, IReadOnlyList<T>> selector) {
@@ -594,24 +719,97 @@ public sealed class PdfLogicalDocument {
         return From(PdfReadDocument.Load(stream), options);
     }
 
+    /// <summary>Loads selected source page ranges from PDF bytes into the logical read model, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument LoadPageRanges(byte[] pdf, params PdfPageRange[] pageRanges) {
+        return LoadPageRanges(pdf, null, pageRanges);
+    }
+
+    /// <summary>Loads selected source page ranges from PDF bytes into the logical read model, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument LoadPageRanges(byte[] pdf, PdfTextLayoutOptions? options, params PdfPageRange[] pageRanges) {
+        Guard.NotNull(pdf, nameof(pdf));
+        return FromPageRanges(PdfReadDocument.Load(pdf), options, pageRanges);
+    }
+
+    /// <summary>Loads selected source page ranges from a file path into the logical read model, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument LoadPageRanges(string path, params PdfPageRange[] pageRanges) {
+        return LoadPageRanges(path, null, pageRanges);
+    }
+
+    /// <summary>Loads selected source page ranges from a file path into the logical read model, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument LoadPageRanges(string path, PdfTextLayoutOptions? options, params PdfPageRange[] pageRanges) {
+        Guard.NotNullOrWhiteSpace(path, nameof(path));
+        return FromPageRanges(PdfReadDocument.Load(path), options, pageRanges);
+    }
+
+    /// <summary>Loads selected source page ranges from the current position of a readable stream into the logical read model, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument LoadPageRanges(Stream stream, params PdfPageRange[] pageRanges) {
+        return LoadPageRanges(stream, null, pageRanges);
+    }
+
+    /// <summary>Loads selected source page ranges from the current position of a readable stream into the logical read model, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument LoadPageRanges(Stream stream, PdfTextLayoutOptions? options, params PdfPageRange[] pageRanges) {
+        Guard.NotNull(stream, nameof(stream));
+        return FromPageRanges(PdfReadDocument.Load(stream), options, pageRanges);
+    }
+
     /// <summary>Builds the logical read model from an already parsed PDF document.</summary>
     public static PdfLogicalDocument From(PdfReadDocument document, PdfTextLayoutOptions? options = null) {
         Guard.NotNull(document, nameof(document));
 
-        var pages = new List<PdfLogicalPage>(document.Pages.Count);
+        var pageNumbers = new int[document.Pages.Count];
         for (int i = 0; i < document.Pages.Count; i++) {
-            pages.Add(PdfLogicalPage.From(document.Pages[i], i + 1, options, document.FormFields));
+            pageNumbers[i] = i + 1;
+        }
+
+        return FromPageNumbers(document, options, pageNumbers);
+    }
+
+    /// <summary>Builds a logical read model for selected source page ranges from an already parsed PDF document, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument FromPageRanges(PdfReadDocument document, params PdfPageRange[] pageRanges) {
+        return FromPageRanges(document, null, pageRanges);
+    }
+
+    /// <summary>Builds a logical read model for selected source page ranges from an already parsed PDF document, preserving caller order and overlaps.</summary>
+    public static PdfLogicalDocument FromPageRanges(PdfReadDocument document, PdfTextLayoutOptions? options, params PdfPageRange[] pageRanges) {
+        Guard.NotNull(document, nameof(document));
+        int[] pageNumbers = PdfPageRange.ExpandMany(pageRanges, document.Pages.Count, nameof(pageRanges));
+
+        return FromPageNumbers(document, options, pageNumbers);
+    }
+
+    private static PdfLogicalDocument FromPageNumbers(PdfReadDocument document, PdfTextLayoutOptions? options, int[] pageNumbers) {
+        bool useDocumentWideObjects = PdfPageRangeObjectFilter.ShouldUseDocumentWideObjects(document.Pages.Count, pageNumbers);
+        IReadOnlyList<PdfFormField> formFields = useDocumentWideObjects
+            ? document.FormFields
+            : PdfPageRangeObjectFilter.FilterFormFieldsByPageNumbers(document.FormFields, pageNumbers, preservePageDuplicates: false);
+        IReadOnlyList<PdfOutlineItem> outlines = useDocumentWideObjects
+            ? document.Outlines
+            : PdfPageRangeObjectFilter.FilterOutlinesByPageNumbers(document.Outlines, pageNumbers);
+        IReadOnlyList<PdfPageLabel> pageLabels = useDocumentWideObjects
+            ? document.PageLabels
+            : PdfPageRangeObjectFilter.FilterPageLabelsByPageNumbers(document.PageLabels, pageNumbers);
+        IReadOnlyList<PdfNamedDestination> namedDestinations = useDocumentWideObjects
+            ? document.NamedDestinations
+            : PdfPageRangeObjectFilter.FilterNamedDestinationsByPageNumbers(document.NamedDestinations, pageNumbers);
+        PdfDocumentOpenAction? openAction = useDocumentWideObjects
+            ? document.OpenAction
+            : PdfPageRangeObjectFilter.FilterOpenActionByPageNumbers(document.OpenAction, pageNumbers);
+
+        var pages = new List<PdfLogicalPage>(pageNumbers.Length);
+        for (int i = 0; i < pageNumbers.Length; i++) {
+            int pageNumber = pageNumbers[i];
+            pages.Add(PdfLogicalPage.From(document.Pages[pageNumber - 1], pageNumber, options, formFields));
         }
 
         return new PdfLogicalDocument(
             document.Metadata,
             pages.AsReadOnly(),
-            document.Outlines,
-            document.PageLabels,
-            document.NamedDestinations,
-            document.OpenAction,
+            outlines,
+            pageLabels,
+            namedDestinations,
+            openAction,
             document.ViewerPreferences,
-            document.FormFields,
+            formFields,
             document.AcroFormDefaultAppearance,
             document.AcroFormNeedAppearances,
             document.AcroFormSignatureFlags,
@@ -626,6 +824,8 @@ public sealed class PdfLogicalDocument {
 /// Logical view of a single PDF page.
 /// </summary>
 public sealed class PdfLogicalPage {
+    private IReadOnlyDictionary<PdfLogicalElementKind, IReadOnlyList<IPdfLogicalElement>>? _elementsByKind;
+
     private PdfLogicalPage(
         int pageNumber,
         double width,
@@ -671,6 +871,46 @@ public sealed class PdfLogicalPage {
 
     /// <summary>Logical elements in extraction order.</summary>
     public IReadOnlyList<IPdfLogicalElement> Elements { get; }
+
+    /// <summary>Logical page elements grouped by element kind.</summary>
+    public IReadOnlyDictionary<PdfLogicalElementKind, IReadOnlyList<IPdfLogicalElement>> ElementsByKind {
+        get {
+            if (_elementsByKind is not null) {
+                return _elementsByKind;
+            }
+
+            var grouped = new Dictionary<PdfLogicalElementKind, List<IPdfLogicalElement>>();
+            for (int i = 0; i < Elements.Count; i++) {
+                IPdfLogicalElement element = Elements[i];
+                if (!grouped.TryGetValue(element.Kind, out List<IPdfLogicalElement>? kindElements)) {
+                    kindElements = new List<IPdfLogicalElement>();
+                    grouped.Add(element.Kind, kindElements);
+                }
+
+                kindElements.Add(element);
+            }
+
+            var result = new Dictionary<PdfLogicalElementKind, IReadOnlyList<IPdfLogicalElement>>();
+            foreach (var item in grouped) {
+                result.Add(item.Key, item.Value.AsReadOnly());
+            }
+
+            _elementsByKind = new System.Collections.ObjectModel.ReadOnlyDictionary<PdfLogicalElementKind, IReadOnlyList<IPdfLogicalElement>>(result);
+            return _elementsByKind;
+        }
+    }
+
+    /// <summary>True when at least one logical element of the requested kind is present on this page.</summary>
+    public bool HasElementKind(PdfLogicalElementKind kind) {
+        return ElementsByKind.ContainsKey(kind);
+    }
+
+    /// <summary>Returns logical page elements of the requested kind.</summary>
+    public IReadOnlyList<IPdfLogicalElement> GetElements(PdfLogicalElementKind kind) {
+        return ElementsByKind.TryGetValue(kind, out IReadOnlyList<IPdfLogicalElement>? elements)
+            ? elements
+            : Array.Empty<IPdfLogicalElement>();
+    }
 
     /// <summary>Line-level text blocks extracted from positioned text spans.</summary>
     public IReadOnlyList<PdfLogicalTextBlock> TextBlocks { get; }

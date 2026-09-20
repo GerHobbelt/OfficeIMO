@@ -15,6 +15,31 @@ namespace OfficeIMO.Examples {
             return Array.Exists(args, arg => string.Equals(arg, value, StringComparison.OrdinalIgnoreCase));
         }
 
+        private static bool HasOption(string[] args, string name) {
+            string prefix = name + "=";
+            return Array.Exists(args, arg =>
+                string.Equals(arg, name, StringComparison.OrdinalIgnoreCase) ||
+                arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string? GetArgumentValue(string[] args, string name) {
+            for (int i = 0; i < args.Length; i++) {
+                if (!string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) {
+                    continue;
+                }
+
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal)) {
+                    return args[i + 1];
+                }
+
+                return null;
+            }
+
+            string prefix = name + "=";
+            string? combined = args.FirstOrDefault(arg => arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            return combined == null ? null : combined.Substring(prefix.Length);
+        }
+
         private static void RunPdfExamples(string folderPath) {
             Pdf.BasicPdf.Example_Pdf_HelloWorld(folderPath, false);
             Pdf.WriterDefaults.Example_Pdf_DefaultStyles(folderPath, false);
@@ -36,6 +61,16 @@ namespace OfficeIMO.Examples {
             Pdf.ShowcaseStatementPdf.Example_Pdf_ShowcaseStatement(folderPath, false);
             Pdf.ShowcaseDashboardPdf.Example_Pdf_ShowcaseDashboard(folderPath, false);
             Pdf.ShowcaseManipulationPdf.Example_Pdf_ShowcaseManipulation(folderPath, false);
+        }
+
+        private static void RunVisioShowcaseExamples(string folderPath, string[] args) {
+            bool exportPreviews = HasArgument(args, "--visio-export")
+                || HasArgument(args, "--visio-showcase-export")
+                || HasArgument(args, "--visio-preview");
+            bool openVisio = HasArgument(args, "--open-visio")
+                || HasArgument(args, "--visio-open");
+
+            Visio.VisioShowcase.Example_VisioShowcase(folderPath, openVisio, exportPreviews);
         }
 
         private static void RunPowerPointExamples(string folderPath) {
@@ -150,17 +185,67 @@ namespace OfficeIMO.Examples {
                 return;
             }
 
+            if (HasArgument(args, "--visio-showcase") || HasArgument(args, "--visio")) {
+                RunVisioShowcaseExamples(folderPath, args);
+                return;
+            }
+
+            if (HasArgument(args, "--visio-external-stencils")) {
+                string? stencilPack = GetArgumentValue(args, "--visio-stencil-pack")
+                    ?? Environment.GetEnvironmentVariable("OFFICEIMO_VISIO_STENCIL_PACK");
+                if (string.IsNullOrWhiteSpace(stencilPack)) {
+                    throw new InvalidOperationException("Provide a .vssx/.vsdx/.vstx path with --visio-stencil-pack <path> or OFFICEIMO_VISIO_STENCIL_PACK.");
+                }
+
+                Visio.ExternalStencilPack.Example_ExternalStencilPack(folderPath, HasArgument(args, "--open-visio") || HasArgument(args, "--visio-open"), stencilPack);
+                return;
+            }
+
+            if (HasArgument(args, "--visio-installed-stencils")) {
+                Visio.InstalledVisioStencils.Example_InstalledVisioStencils(folderPath, HasArgument(args, "--open-visio") || HasArgument(args, "--visio-open"));
+                return;
+            }
+
+            if (HasOption(args, "--visio-integration-stencils") || HasOption(args, "--visio-microsoft-integration-stencils")) {
+                string? stencilPackPath = Visio.MicrosoftIntegrationAzureStencils.ResolveConfiguredPackPath(args);
+                if (string.IsNullOrWhiteSpace(stencilPackPath)) {
+                    throw new InvalidOperationException("Provide a Microsoft Integration/Azure stencil pack file or root directory with --visio-integration-stencils <path> or OFFICEIMO_VISIO_INTEGRATION_STENCILS.");
+                }
+
+                Visio.MicrosoftIntegrationAzureStencils.Example_MicrosoftIntegrationAzureStencils(folderPath, HasArgument(args, "--open-visio") || HasArgument(args, "--visio-open"), stencilPackPath);
+                return;
+            }
+
+            if (HasOption(args, "--visio-stencil-gallery") || HasOption(args, "--visio-stencil-gallery-pack")) {
+                string? stencilGalleryPath = Visio.ExternalStencilGallery.ResolveConfiguredGalleryPath(args);
+                if (string.IsNullOrWhiteSpace(stencilGalleryPath)) {
+                    throw new InvalidOperationException("Provide a .vssx/.vsdx/.vstx file or root directory with --visio-stencil-gallery <path> or OFFICEIMO_VISIO_STENCIL_GALLERY.");
+                }
+
+                Visio.ExternalStencilGallery.Example_ExternalStencilGallery(folderPath, HasArgument(args, "--open-visio") || HasArgument(args, "--visio-open"), stencilGalleryPath);
+                return;
+            }
+
+            if (HasArgument(args, "--visio-graph")) {
+                Visio.GraphDiagramBuilder.Example_GraphDiagramBuilder(folderPath, HasArgument(args, "--open-visio") || HasArgument(args, "--visio-open"));
+                return;
+            }
+
             // Visio - Core Examples
             // Visio.BasicVisioDocument.Example_BasicVisio(folderPath, false);
             // Visio.FlowchartBuilder.Example_FlowchartBuilder(folderPath, false);
             // Visio.BlockDiagramBuilder.Example_BlockDiagramBuilder(folderPath, false);
             // Visio.DependencyDiagramBuilder.Example_DependencyDiagramBuilder(folderPath, false);
+            // Visio.GraphDiagramBuilder.Example_GraphDiagramBuilder(folderPath, false);
+            // Visio.MicrosoftIntegrationAzureStencils.Example_MicrosoftIntegrationAzureStencils(folderPath, false, @"C:\StencilPacks\Microsoft-Integration-and-Azure-Stencils-Pack-for-Visio");
+            // Visio.ExternalStencilGallery.Example_ExternalStencilGallery(folderPath, false, @"C:\StencilPacks\Microsoft-Integration-and-Azure-Stencils-Pack-for-Visio");
             // Visio.ArchitectureDiagramBuilder.Example_ArchitectureDiagramBuilder(folderPath, false);
             // Visio.NetworkDiagramBuilder.Example_NetworkDiagramBuilder(folderPath, false);
             // Visio.NetworkTopologyDiagramBuilder.Example_NetworkTopologyDiagramBuilder(folderPath, false);
             // Visio.SwimlaneDiagramBuilder.Example_SwimlaneDiagramBuilder(folderPath, false);
             // Visio.OrgChartDiagramBuilder.Example_OrgChartDiagramBuilder(folderPath, false);
             // Visio.TimelineDiagramBuilder.Example_TimelineDiagramBuilder(folderPath, false);
+            // Visio.SequenceDiagramBuilder.Example_SequenceDiagramBuilder(folderPath, false);
             // Visio.StencilCatalog.Example_StencilCatalog(folderPath, false);
             // Visio.QueryAndSelection.Example_QueryAndSelection(folderPath, false);
             // Visio.LayoutEditing.Example_LayoutEditing(folderPath, false);

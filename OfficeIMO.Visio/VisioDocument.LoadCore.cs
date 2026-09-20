@@ -800,13 +800,13 @@ namespace OfficeIMO.Visio {
                     connector.Kind = DetermineConnectorKind(connectorElement, vNs, masters);
                     ApplyLayerNamesFromIndexes(page, connector);
                     XElement? connectorCharSection = connectorElement.Elements(vNs + "Section")
-                        .FirstOrDefault(section => string.Equals(section.Attribute("N")?.Value, "Char", StringComparison.OrdinalIgnoreCase));
+                        .FirstOrDefault(section => IsCharacterSection(section.Attribute("N")?.Value));
                     if (connectorCharSection != null && TryParseSimpleConnectorCharSection(connector, connectorCharSection, vNs, faceNamesById)) {
                         connector.HasModeledCharSection = true;
                     }
 
                     XElement? connectorParaSection = connectorElement.Elements(vNs + "Section")
-                        .FirstOrDefault(section => string.Equals(section.Attribute("N")?.Value, "Para", StringComparison.OrdinalIgnoreCase));
+                        .FirstOrDefault(section => IsParagraphSection(section.Attribute("N")?.Value));
                     if (connectorParaSection != null && TryParseSimpleConnectorParaSection(connector, connectorParaSection, vNs)) {
                         connector.HasModeledParaSection = true;
                     }
@@ -823,6 +823,12 @@ namespace OfficeIMO.Visio {
                         .FirstOrDefault(section => string.Equals(section.Attribute("N")?.Value, "Hyperlink", StringComparison.OrdinalIgnoreCase));
                     if (connectorHyperlinkSection != null) {
                         ParseHyperlinks(connectorHyperlinkSection, vNs, connector.Hyperlinks);
+                    }
+
+                    XElement? connectorPropSection = connectorElement.Elements(vNs + "Section")
+                        .FirstOrDefault(section => string.Equals(section.Attribute("N")?.Value, "Prop", StringComparison.OrdinalIgnoreCase));
+                    if (connectorPropSection != null) {
+                        ParseShapeDataRows(connectorPropSection, vNs, connector.ShapeData, connector.PreservedDataRows, connector.Data);
                     }
 
                     connector.FromConnectionPoint = ResolveConnectionPoint(fromShape, ids.fromCell);
@@ -1239,12 +1245,12 @@ namespace OfficeIMO.Visio {
         private static void ParseShapeProperties(VisioShape shape, XElement shapeElement, XNamespace ns, IReadOnlyDictionary<int, string>? faceNamesById) {
             List<XElement> sectionElements = shapeElement.Elements(ns + "Section").ToList();
 
-            XElement? charSection = sectionElements.FirstOrDefault(e => string.Equals(e.Attribute("N")?.Value, "Char", StringComparison.OrdinalIgnoreCase));
+            XElement? charSection = sectionElements.FirstOrDefault(e => IsCharacterSection(e.Attribute("N")?.Value));
             if (charSection != null && TryParseSimpleCharSection(shape, charSection, ns, faceNamesById)) {
                 shape.HasModeledCharSection = true;
             }
 
-            XElement? paraSection = sectionElements.FirstOrDefault(e => string.Equals(e.Attribute("N")?.Value, "Para", StringComparison.OrdinalIgnoreCase));
+            XElement? paraSection = sectionElements.FirstOrDefault(e => IsParagraphSection(e.Attribute("N")?.Value));
             if (paraSection != null && TryParseSimpleParaSection(shape, paraSection, ns)) {
                 shape.HasModeledParaSection = true;
             }
@@ -1311,8 +1317,17 @@ namespace OfficeIMO.Visio {
         }
 
         private static void ParseShapeDataRows(XElement propSection, XNamespace ns, VisioShape shape) {
-            shape.ShapeData.Clear();
-            shape.PreservedDataRows.Clear();
+            ParseShapeDataRows(propSection, ns, shape.ShapeData, shape.PreservedDataRows, shape.Data);
+        }
+
+        private static void ParseShapeDataRows(
+            XElement propSection,
+            XNamespace ns,
+            IList<VisioShapeDataRow> shapeData,
+            IList<XElement> preservedDataRows,
+            IDictionary<string, string> data) {
+            shapeData.Clear();
+            preservedDataRows.Clear();
             foreach (XElement row in propSection.Elements(ns + "Row")) {
                 string? key = row.Attribute("N")?.Value;
                 if (string.IsNullOrEmpty(key) || string.Equals(key, OriginalIdPropName, StringComparison.Ordinal)) {
@@ -1349,10 +1364,11 @@ namespace OfficeIMO.Visio {
 
                 dataRow.LoadedValue = dataRow.Value;
                 if (dataRow.Value != null) {
-                    shape.Data[dataRow.Name] = dataRow.Value;
+                    data[dataRow.Name] = dataRow.Value;
+                    dataRow.MirroredDataValue = dataRow.Value;
                 }
 
-                shape.ShapeData.Add(dataRow);
+                shapeData.Add(dataRow);
             }
         }
 
@@ -1809,7 +1825,7 @@ namespace OfficeIMO.Visio {
                         color = ParseColor(value, default);
                         break;
                     case "Size":
-                        size = ParseDouble(value);
+                        size = ParseTextSizeCell(cell);
                         break;
                     case "Style":
                         if (!TryParseCellIntValue(value, out int styleValue)) {
@@ -1898,7 +1914,7 @@ namespace OfficeIMO.Visio {
                         color = ParseColor(value, default);
                         break;
                     case "Size":
-                        size = ParseDouble(value);
+                        size = ParseTextSizeCell(cell);
                         break;
                     case "Style":
                         if (!TryParseCellIntValue(value, out int styleValue)) {
@@ -1923,6 +1939,16 @@ namespace OfficeIMO.Visio {
             textStyle.Italic = italic;
             textStyle.Underline = underline;
             return true;
+        }
+
+        private static double ParseTextSizeCell(XElement cell) {
+            double size = ParseDouble(cell.Attribute("V")?.Value);
+            string? unit = cell.Attribute("U")?.Value;
+            if (string.Equals(unit, "PT", StringComparison.OrdinalIgnoreCase) && size <= 3D) {
+                return Math.Round(size * 72D, 10);
+            }
+
+            return size;
         }
 
         private static bool TryParseSimpleConnectorParaSection(VisioConnector connector, XElement section, XNamespace ns) {
@@ -1983,9 +2009,9 @@ namespace OfficeIMO.Visio {
                         shape.PreservedShapeChildren.Add(new VisioShape.PreservedShapeChildEntry("Section:Connection"));
                     } else if (string.Equals(sectionName, "User", StringComparison.OrdinalIgnoreCase)) {
                         shape.PreservedShapeChildren.Add(new VisioShape.PreservedShapeChildEntry("Section:User"));
-                    } else if (shape.HasModeledCharSection && string.Equals(sectionName, "Char", StringComparison.OrdinalIgnoreCase)) {
+                    } else if (shape.HasModeledCharSection && IsCharacterSection(sectionName)) {
                         shape.PreservedShapeChildren.Add(new VisioShape.PreservedShapeChildEntry("Section:Char"));
-                    } else if (shape.HasModeledParaSection && string.Equals(sectionName, "Para", StringComparison.OrdinalIgnoreCase)) {
+                    } else if (shape.HasModeledParaSection && IsParagraphSection(sectionName)) {
                         shape.PreservedShapeChildren.Add(new VisioShape.PreservedShapeChildEntry("Section:Para"));
                     } else if (string.Equals(sectionName, "Hyperlink", StringComparison.OrdinalIgnoreCase)) {
                         shape.PreservedShapeChildren.Add(new VisioShape.PreservedShapeChildEntry("Section:Hyperlink"));
@@ -2506,10 +2532,10 @@ namespace OfficeIMO.Visio {
                     } else if (string.Equals(sectionName, "Hyperlink", StringComparison.OrdinalIgnoreCase)) {
                         connector.PreservedShapeChildren.Add(new VisioConnector.PreservedShapeChildEntry("Section:Hyperlink"));
                     } else if (connector.HasModeledCharSection &&
-                               string.Equals(sectionName, "Char", StringComparison.OrdinalIgnoreCase)) {
+                               IsCharacterSection(sectionName)) {
                         connector.PreservedShapeChildren.Add(new VisioConnector.PreservedShapeChildEntry("Section:Char"));
                     } else if (connector.HasModeledParaSection &&
-                               string.Equals(sectionName, "Para", StringComparison.OrdinalIgnoreCase)) {
+                               IsParagraphSection(sectionName)) {
                         connector.PreservedShapeChildren.Add(new VisioConnector.PreservedShapeChildEntry("Section:Para"));
                     } else if (string.Equals(sectionName, "Prop", StringComparison.OrdinalIgnoreCase)) {
                         connector.PreservedShapeChildren.Add(new VisioConnector.PreservedShapeChildEntry("Section:Prop"));
@@ -2607,12 +2633,12 @@ namespace OfficeIMO.Visio {
         private static bool ShouldPreserveConnectorSection(VisioConnector connector, XElement section) {
             string? sectionName = section.Attribute("N")?.Value;
             if (connector.HasModeledCharSection &&
-                string.Equals(sectionName, "Char", StringComparison.OrdinalIgnoreCase)) {
+                IsCharacterSection(sectionName)) {
                 return false;
             }
 
             if (connector.HasModeledParaSection &&
-                string.Equals(sectionName, "Para", StringComparison.OrdinalIgnoreCase)) {
+                IsParagraphSection(sectionName)) {
                 return false;
             }
 
@@ -2679,15 +2705,25 @@ namespace OfficeIMO.Visio {
 
         private static bool ShouldPreserveShapeSection(VisioShape shape, XElement section) {
             string? sectionName = section.Attribute("N")?.Value;
-            if (shape.HasModeledCharSection && string.Equals(sectionName, "Char", StringComparison.OrdinalIgnoreCase)) {
+            if (shape.HasModeledCharSection && IsCharacterSection(sectionName)) {
                 return false;
             }
 
-            if (shape.HasModeledParaSection && string.Equals(sectionName, "Para", StringComparison.OrdinalIgnoreCase)) {
+            if (shape.HasModeledParaSection && IsParagraphSection(sectionName)) {
                 return false;
             }
 
             return ShouldPreserveShapeSection(section);
+        }
+
+        private static bool IsCharacterSection(string? sectionName) {
+            return string.Equals(sectionName, "Character", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(sectionName, "Char", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsParagraphSection(string? sectionName) {
+            return string.Equals(sectionName, "Paragraph", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(sectionName, "Para", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool ShouldPreservePageCell(string? cellName) {
