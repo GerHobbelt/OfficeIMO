@@ -54,18 +54,21 @@ internal sealed partial class HtmlRenderStyleResolver {
             ? "Consolas"
             : parent?.Font.FamilyName ?? _options.DefaultFontFamily;
         string family = HtmlRenderCssValues.FontFamilyList(computed.GetValue("font-family"), defaultFamily);
+        string direction = ResolveDirection(computed.GetValue("direction"), parent?.Direction);
 
         var style = new HtmlRenderBoxStyle {
             Display = pseudoElement ? ResolvePseudoDisplay(computed.GetValue("display")) : ResolveDisplay(tag, computed.GetValue("display")),
             DisplayWasSpecified = !string.IsNullOrWhiteSpace(computed.GetValue("display")),
+            PaintVisible = ResolvePaintVisibility(computed.GetValue("visibility"), parent),
             Font = new OfficeFontInfo(family, fontSize, fontStyle),
             Color = ResolveColor(computed.GetValue("color"), parent?.Color ?? OfficeColor.Black),
-            Alignment = ResolveAlignment(computed.GetValue("text-align"), parent?.Alignment ?? OfficeTextAlignment.Left),
+            Alignment = ResolveAlignment(computed.GetValue("text-align"), direction),
             LineHeight = ResolveLineHeight(computed.GetValue("line-height"), fontSize),
             SemanticRole = pseudoElement ? pseudoSemanticRole : ResolveSemanticRole(tag),
             PreserveWhitespace = IsPreformatted(pseudoElement ? string.Empty : tag, computed.GetValue("white-space")),
+            ListStyleType = ResolveListStyleType(computed),
             TextTransform = string.IsNullOrWhiteSpace(computed.GetValue("text-transform")) ? parent?.TextTransform ?? "none" : computed.GetValue("text-transform").Trim().ToLowerInvariant(),
-            Direction = ResolveDirection(computed.GetValue("direction"), parent?.Direction),
+            Direction = direction,
             BorderBox = string.Equals(computed.GetValue("box-sizing"), "border-box", StringComparison.OrdinalIgnoreCase)
         };
 
@@ -83,6 +86,12 @@ internal sealed partial class HtmlRenderStyleResolver {
         ApplyTable(computed, style);
         ApplyBreaks(computed, style);
         return style;
+    }
+
+    private static bool ResolvePaintVisibility(string value, HtmlRenderBoxStyle? parent) {
+        string normalized = value.Trim().ToLowerInvariant();
+        if (normalized.Length == 0 || normalized == "inherit" || normalized == "unset") return parent?.PaintVisible ?? true;
+        return normalized != "hidden" && normalized != "collapse";
     }
 
     private void ApplyOverflow(HtmlComputedStyle computed, HtmlRenderBoxStyle style) {
@@ -202,7 +211,7 @@ internal sealed partial class HtmlRenderStyleResolver {
 
     internal static bool IsBlockElement(IElement element, HtmlRenderBoxStyle style) {
         string display = style.Display;
-        if (display == "none") return false;
+        if (display == "none" || display == "contents") return false;
         if (display == "block" || display == "table" || display == "list-item" || display == "flex" || display == "grid" || display == "flow-root") return true;
         if (display == "inline" || display == "inline-block" || display == "inline-flex" || display == "inline-grid") return false;
         return IsDefaultBlockTag(element.TagName);
@@ -281,6 +290,16 @@ internal sealed partial class HtmlRenderStyleResolver {
     private static string ResolvePseudoDisplay(string value) =>
         string.IsNullOrWhiteSpace(value) ? "inline" : value.Trim().ToLowerInvariant();
 
+    private static string ResolveListStyleType(HtmlComputedStyle computed) {
+        string type = computed.GetValue("list-style-type").Trim().ToLowerInvariant();
+        if (type.Length > 0) return type;
+        foreach (string token in HtmlRenderCssValues.SplitWhitespace(computed.GetValue("list-style"))) {
+            if (string.Equals(token, "none", StringComparison.OrdinalIgnoreCase)) return "none";
+        }
+
+        return string.Empty;
+    }
+
     private static bool IsDefaultBlockTag(string tagName) {
         string tag = tagName.ToLowerInvariant();
         return tag == "html" || tag == "body" || tag == "address" || tag == "article" || tag == "aside" || tag == "blockquote"
@@ -295,11 +314,13 @@ internal sealed partial class HtmlRenderStyleResolver {
 
     private static OfficeColor ResolveColor(string value, OfficeColor fallback) => HtmlRenderCssValues.TryColor(value, out OfficeColor color) ? color : fallback;
 
-    private static OfficeTextAlignment ResolveAlignment(string value, OfficeTextAlignment fallback) {
+    private static OfficeTextAlignment ResolveAlignment(string value, string direction) {
         if (string.Equals(value, "center", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Center;
-        if (string.Equals(value, "right", StringComparison.OrdinalIgnoreCase) || string.Equals(value, "end", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Right;
-        if (string.Equals(value, "left", StringComparison.OrdinalIgnoreCase) || string.Equals(value, "start", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Left;
-        return fallback;
+        if (string.Equals(value, "right", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Right;
+        if (string.Equals(value, "left", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Left;
+        bool rightToLeft = string.Equals(direction, "rtl", StringComparison.Ordinal);
+        if (string.Equals(value, "end", StringComparison.OrdinalIgnoreCase)) return rightToLeft ? OfficeTextAlignment.Left : OfficeTextAlignment.Right;
+        return rightToLeft ? OfficeTextAlignment.Right : OfficeTextAlignment.Left;
     }
 
     private double ResolveLineHeight(string value, double fontSize) {
@@ -447,7 +468,7 @@ internal sealed partial class HtmlRenderStyleResolver {
             string repeat = GetLayerValue(repeatLayers, index, ExtractBackgroundRepeat(sourceLayer), "repeat");
             string size = GetLayerValue(sizeLayers, index, ExtractBackgroundSize(sourceLayer), "auto");
             if (urls.Count == 0) {
-                if (HtmlCssLinearGradientParser.TryParse(sourceLayer, _options.MaxGradientStops, out OfficeLinearGradient? linearGradient, out bool linearStopLimitExceeded)
+                if (HtmlCssLinearGradientParser.TryParse(sourceLayer, _options.MaxGradientStops, out HtmlCssLinearGradientDefinition? linearGradient, out bool linearStopLimitExceeded)
                     && linearGradient != null) {
                     layers.Add(new HtmlRenderBackgroundLayer(linearGradient, position, repeat, size));
                     continue;

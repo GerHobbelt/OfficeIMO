@@ -26,5 +26,11 @@ public enum HtmlRenderVisualKind {
     EffectGroup,
 
     /// <summary>Positioned shared vector drawing.</summary>
-    Drawing
+    Drawing,
+
+    /// <summary>Paint-neutral semantic ownership group.</summary>
+    SemanticGroup,
+
+    /// <summary>Paint-neutral positioned fragments sharing one logical extraction string.</summary>
+    LogicalTextGroup
 }

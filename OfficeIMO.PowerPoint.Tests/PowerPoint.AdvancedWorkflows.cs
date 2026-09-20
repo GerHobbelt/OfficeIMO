@@ -19,8 +19,8 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void ReviewAndAnimationInspectionProjectsClassicModernAndTimingMetadata() {
             using var stream = new MemoryStream();
-            using PowerPointPresentation presentation = PowerPointPresentation.Create(stream, autoSave: false);
-            PowerPointSlide slide = presentation.Slides[0];
+            using PowerPointPresentation presentation = PowerPointPresentation.Create(stream, new PowerPointStreamCreateOptions { AutoSave = false });
+            PowerPointSlide slide = presentation.AddSlide();
             PowerPointTextBox target = slide.AddTextBoxPoints("Animated review target", 40, 40, 240, 50);
 
             PresentationPart presentationPart = slide.SlidePart.GetParentParts().OfType<PresentationPart>().Single();
@@ -95,6 +95,11 @@ namespace OfficeIMO.Tests {
             Assert.Contains("\"commentCount\":3", review.ToJson(), StringComparison.Ordinal);
             PowerPointAnimationNode animated = Assert.Single(animation.Nodes,
                 node => node.Kind == PowerPointAnimationKind.Animate);
+            PowerPointAnimationNode container = Assert.Single(animation.Nodes,
+                node => node.Kind == PowerPointAnimationKind.Parallel);
+            Assert.Equal("1", container.TimingId);
+            Assert.Null(container.ShapeId);
+            Assert.Null(container.ShapeName);
             Assert.Equal(target.Id, animated.ShapeId);
             Assert.Equal(target.Name, animated.ShapeName);
             Assert.Equal("500", animated.Duration);
@@ -105,7 +110,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".pptx");
             try {
                 using (PowerPointPresentation presentation = PowerPointPresentation.Create(path)) {
-                    PowerPointSlide slide = presentation.Slides[0];
+                    PowerPointSlide slide = presentation.AddSlide();
                     PowerPointSmartArt process = slide.AddSmartArt(PowerPointSmartArtType.BasicProcess,
                         new[] { "Discover", "Design", "Deliver" }, 20, 20, 2600000, 1200000);
                     PowerPointSmartArt hierarchy = slide.AddSmartArt(PowerPointSmartArtType.BasicHierarchy,
@@ -121,7 +126,7 @@ namespace OfficeIMO.Tests {
                     presentation.Save();
                 }
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.OpenRead(path)) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Open(path, PowerPointOpenMode.ReadOnly)) {
                     PowerPointSmartArt[] diagrams = presentation.Slides[0].SmartArts.ToArray();
                     Assert.Equal(3, diagrams.Length);
                     Assert.Equal(new[] { "Discover", "Design", "Deliver" }, diagrams[0].GetNodeTexts());
@@ -138,7 +143,7 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void NotesPagesAndHandoutsExportExistingNotesWithoutCreatingNewNotesParts() {
             using var stream = new MemoryStream();
-            using PowerPointPresentation presentation = PowerPointPresentation.Create(stream, autoSave: false);
+            using PowerPointPresentation presentation = PowerPointPresentation.Create(stream, new PowerPointStreamCreateOptions { AutoSave = false });
             for (int index = 0; index < 3; index++) {
                 PowerPointSlide slide = presentation.AddSlide();
                 slide.AddTitle("Slide " + (index + 1));
@@ -174,10 +179,10 @@ namespace OfficeIMO.Tests {
         public void NotesAndHandoutThumbnailsHonorPdfContentFilters(PowerPointPdfPageLayout layout) {
             using var controlStream = new MemoryStream();
             using var pictureStream = new MemoryStream();
-            using PowerPointPresentation control = PowerPointPresentation.Create(controlStream, autoSave: false);
-            using PowerPointPresentation withPicture = PowerPointPresentation.Create(pictureStream, autoSave: false);
-            control.Slides[0].AddTitle("Filtered thumbnail");
-            withPicture.Slides[0].AddTitle("Filtered thumbnail");
+            using PowerPointPresentation control = PowerPointPresentation.Create(controlStream, new PowerPointStreamCreateOptions { AutoSave = false });
+            using PowerPointPresentation withPicture = PowerPointPresentation.Create(pictureStream, new PowerPointStreamCreateOptions { AutoSave = false });
+            control.AddSlide().AddTitle("Filtered thumbnail");
+            withPicture.AddSlide().AddTitle("Filtered thumbnail");
             withPicture.Slides[0].AddPicture(new MemoryStream(PdfPngTestImages.CreateRgbPng(255, 0, 0)),
                 OfficeIMO.PowerPoint.ImagePartType.Png, PowerPointUnits.FromPoints(72), PowerPointUnits.FromPoints(72),
                 PowerPointUnits.FromPoints(180), PowerPointUnits.FromPoints(120));
@@ -203,7 +208,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".pptx");
             try {
                 using (PowerPointPresentation presentation = PowerPointPresentation.Create(path)) {
-                    presentation.Slides[0].AddTitle("Signed workflow");
+                    presentation.AddSlide().AddTitle("Signed workflow");
                     presentation.Save();
                 }
                 AddSyntheticSignature(path);
@@ -235,7 +240,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".pptx");
             try {
                 using (PowerPointPresentation presentation = PowerPointPresentation.Create(path)) {
-                    presentation.Slides[0].AddTitle("Signed workflow");
+                    presentation.AddSlide().AddTitle("Signed workflow");
                     presentation.Save();
                 }
                 AddSyntheticSignature(path);
@@ -249,7 +254,7 @@ namespace OfficeIMO.Tests {
                 using (PresentationDocument signed = PresentationDocument.Open(path, false)) {
                     Assert.NotNull(signed.DigitalSignatureOriginPart);
                 }
-                using PowerPointPresentation reopened = PowerPointPresentation.OpenRead(path);
+                using PowerPointPresentation reopened = PowerPointPresentation.Open(path, PowerPointOpenMode.ReadOnly);
                 Assert.DoesNotContain(reopened.Slides[0].TextBoxes,
                     textBox => textBox.Text == "Must not persist");
             } finally {
@@ -262,12 +267,12 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".pptx");
             try {
                 using (PowerPointPresentation presentation = PowerPointPresentation.Create(path)) {
-                    presentation.Slides[0].AddTitle("Signed inspection");
+                    presentation.AddSlide().AddTitle("Signed inspection");
                     presentation.Save();
                 }
                 AddSyntheticSignature(path);
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.Open(path)) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Open(path, PowerPointOpenMode.ReadOnly)) {
                     Assert.True(presentation.InspectSignatures().HasSignatureMetadata);
                     Assert.Equal("Signed inspection", presentation.Slides[0].TextBoxes.First().Text);
                 }
@@ -287,7 +292,7 @@ namespace OfficeIMO.Tests {
             string output = Path.Combine(Path.GetTempPath(), "OfficeIMO.SmartArtReference", Guid.NewGuid().ToString("N"));
             try {
                 using (PowerPointPresentation presentation = PowerPointPresentation.Create(path)) {
-                    presentation.Slides[0].AddSmartArt(PowerPointSmartArtType.BasicProcess,
+                    presentation.AddSlide().AddSmartArt(PowerPointSmartArtType.BasicProcess,
                         new[] { "Inspect", "Build", "Validate" });
                     presentation.Save();
                 }
@@ -316,6 +321,26 @@ namespace OfficeIMO.Tests {
                 Assert.False(File.Exists(Path.Combine(output, "Slide1.png")));
                 Assert.False(File.Exists(Path.Combine(output, "slide12.PNG")));
                 Assert.True(File.Exists(Path.Combine(output, "comparison.png")));
+            } finally {
+                if (Directory.Exists(output)) Directory.Delete(output, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void DesktopReferenceLaneReturnsOnlySlideImagesInNumericOrder() {
+            string output = Path.Combine(Path.GetTempPath(), "OfficeIMO.ReferenceOrder",
+                Guid.NewGuid().ToString("N"));
+            try {
+                Directory.CreateDirectory(output);
+                File.WriteAllBytes(Path.Combine(output, "Slide10.png"), new byte[] { 10 });
+                File.WriteAllBytes(Path.Combine(output, "Slide2.PNG"), new byte[] { 2 });
+                File.WriteAllBytes(Path.Combine(output, "Slide1.png"), new byte[] { 1 });
+                File.WriteAllBytes(Path.Combine(output, "comparison.png"), new byte[] { 3 });
+
+                string[] images = PowerPointDesktopReferenceRenderer.GetSlideImagesInOrder(output);
+
+                Assert.Equal(new[] { "Slide1.png", "Slide2.PNG", "Slide10.png" },
+                    images.Select(Path.GetFileName));
             } finally {
                 if (Directory.Exists(output)) Directory.Delete(output, recursive: true);
             }

@@ -159,6 +159,11 @@ namespace OfficeIMO.PowerPoint {
             Metrics = Materialize(metrics, nameof(metrics));
             Points = Materialize(points, nameof(points));
             Lead = lead;
+            if (Points.Count > 4) {
+                throw new ArgumentException(
+                    "Executive-summary content supports at most four decision points per slide; split additional points across another slide.",
+                    nameof(points));
+            }
             if (Metrics.Count == 0 && Points.Count == 0 && string.IsNullOrWhiteSpace(Lead)) {
                 throw new ArgumentException(
                     "Executive-summary content requires a lead, metric, or decision point.", nameof(points));
@@ -179,26 +184,16 @@ namespace OfficeIMO.PowerPoint {
 
     /// <summary>Editable chart plus its narrative and accessibility context.</summary>
     public sealed class PowerPointChartStoryContent {
-        /// <summary>Creates a chart story.</summary>
-        public PowerPointChartStoryContent(OfficeChartKind chartKind, PowerPointChartData data,
-            IEnumerable<string>? insights = null) : this(chartKind, ToSharedData(data), insights) {
-            Data = data;
-        }
-
         /// <summary>Creates a chart story from the shared dependency-free chart contract.</summary>
         public PowerPointChartStoryContent(OfficeChartKind chartKind, OfficeChartData data,
             IEnumerable<string>? insights = null) {
             ChartKind = chartKind;
             SharedData = data ?? throw new ArgumentNullException(nameof(data));
-            Data = new PowerPointChartData(data.Categories, data.Series.Select(series =>
-                new PowerPointChartSeries(series.Name, series.Values, series.XValues)));
             Insights = new ReadOnlyCollection<string>((insights ?? Array.Empty<string>())
                 .Where(value => !string.IsNullOrWhiteSpace(value)).ToList());
         }
         /// <summary>Shared chart family.</summary>
         public OfficeChartKind ChartKind { get; }
-        /// <summary>Native chart data.</summary>
-        public PowerPointChartData Data { get; }
         /// <summary>Shared chart data used by native authoring and fixed-layout renderers.</summary>
         public OfficeChartData SharedData { get; }
         /// <summary>Narrative insights displayed beside or below the chart.</summary>
@@ -211,12 +206,6 @@ namespace OfficeIMO.PowerPoint {
         public string? AlternativeText { get; set; }
         /// <summary>Plain-language summary of the represented data.</summary>
         public string? DataSummary { get; set; }
-
-        private static OfficeChartData ToSharedData(PowerPointChartData data) {
-            if (data == null) throw new ArgumentNullException(nameof(data));
-            return new OfficeChartData(data.Categories, data.Series.Select(series =>
-                new OfficeChartSeries(series.Name, series.Values, series.XValues)));
-        }
     }
 
     /// <summary>One option in a semantic comparison.</summary>

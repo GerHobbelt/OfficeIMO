@@ -945,7 +945,8 @@ public sealed class PdfConversionScenarioManifestTests {
             Chunks = new[] { chunk }
         }.ToJson());
         JsonElement jsonDiagnostics = chunkJson.RootElement.GetProperty("chunks")[0].GetProperty("diagnostics");
-        Assert.Equal(OfficeDocumentReadResultSchema.Version, chunkJson.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(OfficeDocumentReadResultSchema.CurrentVersion,
+            chunkJson.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(1, jsonDiagnostics.GetProperty("potentiallyUnsafeActionCount").GetInt32());
         Assert.Equal(1, jsonDiagnostics.GetProperty("javaScriptActionCount").GetInt32());
         JsonElement jsonActions = chunkJson.RootElement.GetProperty("chunks")[0].GetProperty("actions");
@@ -2260,7 +2261,7 @@ public sealed class PdfConversionScenarioManifestTests {
         presentation.SlideSize.SetSizePoints(240, 160);
         presentation.SetThemeColor(PowerPointThemeColor.Accent1, "1D4ED8");
         presentation.SetThemeColor(PowerPointThemeColor.Accent2, "16A34A");
-        PowerPointSlide slide = presentation.Slides[0];
+        PowerPointSlide slide = presentation.AddSlide();
         slide.SetBackgroundGradient("172554", "38BDF8", 35D);
         PowerPointTextBox title = slide.AddTextBoxPoints("Layout Theme Group Gate", 18, 8, 220, 34);
         title.FontSize = 14;

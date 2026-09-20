@@ -4,10 +4,37 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using DocumentFormat.OpenXml.Packaging;
 using OfficeIMO.Drawing;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeIMO.PowerPoint {
     public partial class PowerPointChart {
+        /// <summary>Updates the native chart from the shared OfficeIMO chart contract.</summary>
+        public PowerPointChart UpdateData(OfficeChartData data) {
+            if (data == null) throw new ArgumentNullException(nameof(data));
+            if (!TryGetOfficeSnapshot(out OfficeChartSnapshot current)) {
+                throw new NotSupportedException(
+                    "The current chart kind cannot be updated through the shared OfficeIMO chart contract.");
+            }
+            OfficeChartKind chartKind = current.ChartKind;
+            PowerPointUtils.ValidateSharedChartData(data, chartKind);
+
+            ChartPart chartPart = GetChartPart();
+            PowerPointUtils.UpdateSharedChartData(chartPart, data, chartKind);
+
+            EmbeddedPackagePart? embedded = chartPart.GetPartsOfType<EmbeddedPackagePart>().FirstOrDefault();
+            if (embedded != null) {
+                byte[] workbookBytes = chartKind == OfficeChartKind.Scatter
+                    ? PowerPointUtils.BuildChartWorkbook(PowerPointUtils.ToPowerPointScatterChartData(data))
+                    : PowerPointUtils.BuildChartWorkbook(PowerPointUtils.ToPowerPointChartData(data));
+                using var stream = new MemoryStream(workbookBytes);
+                embedded.FeedData(stream);
+            }
+            Save();
+            return this;
+        }
+
         /// <summary>Creates a deterministic plain-text summary suitable for accessibility review or sidecar output.</summary>
         public static string CreateDataSummary(OfficeChartKind chartKind, OfficeChartData data) {
             if (data == null) throw new ArgumentNullException(nameof(data));
@@ -91,10 +118,14 @@ namespace OfficeIMO.PowerPoint {
                 return false;
             }
             OfficeChartKind kind = MapKind(powerPointSnapshot.ChartKind);
+            HashSet<uint> hiddenLegendSeries = GetHiddenLegendSeriesIndexes();
             var series = new List<OfficeChartSeries>(powerPointSnapshot.Data.Series.Count);
-            foreach (PowerPointChartSeries item in powerPointSnapshot.Data.Series) {
+            for (int seriesIndex = 0; seriesIndex < powerPointSnapshot.Data.Series.Count; seriesIndex++) {
+                PowerPointChartSeries item = powerPointSnapshot.Data.Series[seriesIndex];
+                uint sourceIndex = item.SourceIndex ?? (uint)seriesIndex;
                 series.Add(new OfficeChartSeries(item.Name, item.Values, item.XValues, item.Color,
-                    pointColors: null, showMarkers: true, showInLegend: true, connectLine: true,
+                    pointColors: null, showMarkers: true,
+                    showInLegend: !hiddenLegendSeries.Contains(sourceIndex), connectLine: true,
                     strokeWidth: item.StrokeWidth,
                     renderKind: item.ChartKind.HasValue ? MapKind(item.ChartKind.Value) : null,
                     axisGroup: item.AxisGroup));
@@ -103,6 +134,19 @@ namespace OfficeIMO.PowerPoint {
             snapshot = new OfficeChartSnapshot(powerPointSnapshot.Name, powerPointSnapshot.Title, kind, data,
                 powerPointSnapshot.WidthPoints, powerPointSnapshot.HeightPoints);
             return true;
+        }
+
+        private HashSet<uint> GetHiddenLegendSeriesIndexes() {
+            var result = new HashSet<uint>();
+            C.Legend? legend = GetChart().GetFirstChild<C.Legend>();
+            if (legend == null) return result;
+            foreach (C.LegendEntry entry in legend.Elements<C.LegendEntry>()) {
+                if (entry.GetFirstChild<C.Delete>()?.Val?.Value == true &&
+                    entry.Index?.Val?.Value is uint seriesIndex) {
+                    result.Add(seriesIndex);
+                }
+            }
+            return result;
         }
 
         private static string CleanSummaryValue(string? value) =>

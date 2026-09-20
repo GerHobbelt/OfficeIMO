@@ -25,7 +25,51 @@ internal sealed partial class HtmlRenderLayoutEngine {
             AddGeneratedInlineRun(generatedContentOwner, HtmlPseudoElementKind.After, width, containingHeight, parentStyle, null, 0D, 0D, runs);
         }
 
+        runs = ApplyScopedFontFallbacks(runs);
+
+        if (formattingContainer != null && HtmlRenderHeading.TryGetLevel(parentStyle.SemanticRole, out _)) {
+            int semanticNodeId = GetSemanticNodeId(formattingContainer);
+            foreach (HtmlInlineRun run in runs) run.AssignSemanticNode(parentStyle.SemanticRole, semanticNodeId);
+        }
+
         return LayoutInlineRuns(runs, width, parentStyle, formattingContainer);
+    }
+
+    private List<HtmlInlineRun> ApplyScopedFontFallbacks(IEnumerable<HtmlInlineRun> sourceRuns) {
+        var resolvedRuns = new List<HtmlInlineRun>();
+        foreach (HtmlInlineRun run in sourceRuns) {
+            if (run.Text.Length == 0 || run.AtomicBlock != null || run.FloatingBlock != null || run.PositionedMarkerElement != null) {
+                resolvedRuns.Add(run);
+                continue;
+            }
+
+            IReadOnlyList<OfficeFontFallbackRun> fallbacks = _fonts.PlanFallbackRuns(run.Text, run.Style.Font.FamilyName, run.Style.Font.Style);
+            string shapedText = OfficeArabicTextShaper.Shape(fallbacks.Count == 1 ? fallbacks[0].Text : run.Text);
+            if (fallbacks.Count == 1
+                && string.Equals(fallbacks[0].Text, run.Text, StringComparison.Ordinal)
+                && string.Equals(fallbacks[0].FamilyName, run.Style.Font.FamilyName, StringComparison.Ordinal)
+                && string.Equals(shapedText, run.Text, StringComparison.Ordinal)) {
+                resolvedRuns.Add(run);
+                continue;
+            }
+
+            foreach (OfficeFontFallbackRun fallback in fallbacks) {
+                HtmlRenderBoxStyle style = run.Style.Clone();
+                style.Font = style.Font.WithFamilyName(fallback.FamilyName);
+                resolvedRuns.Add(new HtmlInlineRun(
+                    OfficeArabicTextShaper.Shape(fallback.Text),
+                    style,
+                    run.LinkUri,
+                    run.Source,
+                    run.PaintOffsetX,
+                    run.PaintOffsetY,
+                    run.OwnerElement,
+                    run.PositionedMarkerElement,
+                    fallback.Text));
+            }
+        }
+
+        return resolvedRuns;
     }
 
     private void CollectInlineRuns(
@@ -45,6 +89,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
         if (node is IText textNode) {
             if (textNode.Data.Length > 0) {
+                ReportUnsupportedBidi(textNode, inheritedStyle);
                 runs.Add(new HtmlInlineRun(ApplyTextTransform(textNode.Data, inheritedStyle.TextTransform), inheritedStyle, inheritedLink, inheritedStyle.SemanticRole, inheritedPaintOffsetX, inheritedPaintOffsetY, textNode.ParentElement));
             }
 
@@ -122,6 +167,25 @@ internal sealed partial class HtmlRenderLayoutEngine {
         AddGeneratedInlineRun(element, HtmlPseudoElementKind.After, width, containingHeight, style, link, paintOffsetX, paintOffsetY, runs);
     }
 
+    private void ReportUnsupportedBidi(IText textNode, HtmlRenderBoxStyle style) {
+        IElement? element = textNode.ParentElement;
+        if (element == null || string.IsNullOrWhiteSpace(textNode.Data) || _reportedBidiElements.Contains(element)) return;
+        bool joiningScript = OfficeTextElements.ContainsJoiningScript(textNode.Data)
+            && !OfficeArabicTextShaper.CanShapeAllJoiningCharacters(textNode.Data);
+        bool bidiControl = OfficeTextElements.ContainsBidiControl(textNode.Data);
+        if (!joiningScript && !bidiControl) return;
+        _reportedBidiElements.Add(element);
+        _diagnostics.Add(
+            ComponentName,
+            joiningScript ? HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported : HtmlRenderDiagnosticCodes.BidiLayoutUnsupported,
+            joiningScript
+                ? "A joining script outside the bounded core-Arabic shaper used scalar glyphs."
+                : "Explicit Unicode bidi controls require an embedding or isolate stage that is not active yet.",
+            HtmlDiagnosticSeverity.Warning,
+            HtmlRenderStyleResolver.DescribeSource(element),
+            joiningScript ? "joining-script" : "bidi-control");
+    }
+
     private HtmlInlineLayout LayoutInlineRuns(IReadOnlyList<HtmlInlineRun> runs, double width, HtmlRenderBoxStyle paragraphStyle, IElement? formattingContainer = null) {
         if (runs.Count == 0 || width <= 0D) return new HtmlInlineLayout(Array.Empty<HtmlRenderVisual>(), 0D);
         if (runs.Any(run => run.FloatingBlock != null)) {
@@ -149,7 +213,9 @@ internal sealed partial class HtmlRenderLayoutEngine {
                 continue;
             }
 
+            int logicalOffset = 0;
             foreach (string token in Tokenize(run.Text, paragraphStyle.PreserveWhitespace)) {
+                string logicalToken = SliceLogicalToken(run, token, ref logicalOffset);
                 if (token == "\u2028" || paragraphStyle.PreserveWhitespace && (token == "\n" || token == "\r\n")) {
                     lines.Add(line);
                     line = new InlineLine();
@@ -159,6 +225,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
                 bool whitespace = IsWhitespaceToken(token);
                 string normalizedToken = !paragraphStyle.PreserveWhitespace && whitespace ? " " : token;
+                string normalizedLogicalToken = !paragraphStyle.PreserveWhitespace && whitespace ? " " : logicalToken;
                 if (!paragraphStyle.PreserveWhitespace && whitespace) {
                     if (line.Segments.Count == 0 || previousWasCollapsibleSpace) continue;
                     previousWasCollapsibleSpace = true;
@@ -168,7 +235,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
                 double measured = MeasureText(normalizedToken, run.Style.Font);
                 if (!whitespace && measured > width) {
-                    AddBrokenToken(lines, ref line, run, normalizedToken, width);
+                    AddBrokenToken(lines, ref line, run, normalizedToken, normalizedLogicalToken, width);
                     continue;
                 }
 
@@ -179,7 +246,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
                     if (whitespace && !paragraphStyle.PreserveWhitespace) continue;
                 }
 
-                line.Add(new InlineSegment(normalizedToken, measured, run));
+                line.Add(new InlineSegment(normalizedToken, measured, run, normalizedLogicalToken));
             }
         }
 
@@ -193,7 +260,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         foreach (InlineSegment segment in segments) {
             if (segment.Run.AtomicBlock == null && merged.Count > 0 && ReferenceEquals(merged[merged.Count - 1].Run, segment.Run)) {
                 InlineSegment previous = merged[merged.Count - 1];
-                merged[merged.Count - 1] = new InlineSegment(previous.Text + segment.Text, previous.Width + segment.Width, previous.Run);
+                merged[merged.Count - 1] = new InlineSegment(previous.Text + segment.Text, previous.Width + segment.Width, previous.Run, previous.LogicalText + segment.LogicalText);
             } else {
                 merged.Add(segment);
             }
@@ -202,10 +269,15 @@ internal sealed partial class HtmlRenderLayoutEngine {
         return merged;
     }
 
-    private void AddBrokenToken(ICollection<InlineLine> lines, ref InlineLine line, HtmlInlineRun run, string token, double width) {
+    private void AddBrokenToken(ICollection<InlineLine> lines, ref InlineLine line, HtmlInlineRun run, string token, string logicalToken, double width) {
         var part = new StringBuilder();
+        var logicalPart = new StringBuilder();
         double partWidth = 0D;
-        foreach (string value in OfficeTextElements.Enumerate(token)) {
+        IReadOnlyList<string> paintElements = OfficeTextElements.Split(token);
+        IReadOnlyList<string> logicalElements = OfficeTextElements.Split(logicalToken);
+        for (int index = 0; index < paintElements.Count; index++) {
+            string value = paintElements[index];
+            string logicalValue = index < logicalElements.Count ? logicalElements[index] : OfficeArabicTextShaper.ToLogicalText(value);
             double charWidth = MeasureText(value, run.Style.Font);
             if (part.Length > 0 && partWidth + charWidth > width) {
                 if (line.Segments.Count > 0) {
@@ -214,14 +286,16 @@ internal sealed partial class HtmlRenderLayoutEngine {
                     line = new InlineLine();
                 }
 
-                line.Add(new InlineSegment(part.ToString(), partWidth, run));
+                line.Add(new InlineSegment(part.ToString(), partWidth, run, logicalPart.ToString()));
                 lines.Add(line);
                 line = new InlineLine();
                 part.Clear();
+                logicalPart.Clear();
                 partWidth = 0D;
             }
 
             part.Append(value);
+            logicalPart.Append(logicalValue);
             partWidth += charWidth;
         }
 
@@ -232,8 +306,19 @@ internal sealed partial class HtmlRenderLayoutEngine {
                 line = new InlineLine();
             }
 
-            line.Add(new InlineSegment(part.ToString(), partWidth, run));
+            line.Add(new InlineSegment(part.ToString(), partWidth, run, logicalPart.ToString()));
         }
+    }
+
+    private static string SliceLogicalToken(HtmlInlineRun run, string token, ref int offset) {
+        if (offset >= 0 && token.Length <= run.LogicalText.Length - offset) {
+            string value = run.LogicalText.Substring(offset, token.Length);
+            offset += token.Length;
+            return value;
+        }
+
+        offset += token.Length;
+        return OfficeArabicTextShaper.ToLogicalText(token);
     }
 
     private double MeasureText(string value, OfficeFontInfo font) {
@@ -388,13 +473,15 @@ internal sealed partial class HtmlRenderLayoutEngine {
     }
 
     private sealed class InlineSegment {
-        internal InlineSegment(string text, double width, HtmlInlineRun run) {
+        internal InlineSegment(string text, double width, HtmlInlineRun run, string? logicalText = null) {
             Text = text;
+            LogicalText = logicalText ?? text;
             Width = width;
             Run = run;
         }
 
         internal string Text { get; }
+        internal string LogicalText { get; }
         internal double Width { get; }
         internal HtmlInlineRun Run { get; }
     }

@@ -9,6 +9,30 @@ using Xunit;
 namespace OfficeIMO.Tests;
 
 public sealed partial class HtmlRenderingTests {
+    [Fact]
+    public void HtmlTable_PaginatesInsideOneOversizedCellAtLineBoundaries() {
+        const string html = """
+            <table style="width:100px;border-collapse:collapse"><tbody><tr><td style="font-size:12px;line-height:20px">
+              One<br>Two<br>Three<br>Four<br>Five<br>Six
+            </td></tr></tbody></table>
+            <div id="after-table" style="height:20px;background:#00ff00">After</div>
+            """;
+        var options = new HtmlRenderOptions {
+            Mode = HtmlRenderMode.Paged,
+            PageSize = new OfficePageSize(2D, 70D / HtmlRenderOptions.CssPixelsPerInch),
+            HonorCssPageRules = false,
+            Margins = HtmlRenderMargins.All(0D)
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html, options);
+
+        Assert.True(rendered.Pages.Count >= 2);
+        Assert.All(rendered.Pages, page => Assert.True(page.Visuals.Count > 1));
+        Assert.DoesNotContain(rendered.Diagnostics.Diagnostics, diagnostic =>
+            diagnostic.Code == HtmlRenderDiagnosticCodes.ForcedFragment
+            || diagnostic.Code == HtmlRenderDiagnosticCodes.VisualFragmentUnsupported);
+    }
+
     [Theory]
     [InlineData("top")]
     [InlineData("bottom")]
@@ -61,6 +85,9 @@ public sealed partial class HtmlRenderingTests {
         });
 
         Assert.Contains("CaptionOnly", string.Concat(rendered.Text.Where(character => !char.IsWhiteSpace(character))), StringComparison.Ordinal);
+        HtmlRenderSemanticGroup table = Assert.Single(rendered.Pages[0].Scene.OfType<HtmlRenderSemanticGroup>());
+        Assert.Equal(HtmlRenderSemanticGroupRole.Table, table.Role);
+        Assert.Contains(table.Visuals.OfType<HtmlRenderSemanticGroup>(), group => group.Role == HtmlRenderSemanticGroupRole.Caption);
         Assert.Contains(rendered.Diagnostics.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.EmptyTable);
     }
 

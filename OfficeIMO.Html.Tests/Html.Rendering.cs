@@ -219,6 +219,36 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public async Task HtmlRenderAsync_CancelsLargeRenderOperation() {
+        string html = "<main>" + string.Concat(Enumerable.Repeat("<div><span>Cancellation marker</span></div>", 20000)) + "</main>";
+        using var cancellation = new CancellationTokenSource();
+        cancellation.CancelAfter(TimeSpan.FromMilliseconds(1D));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            HtmlRenderEngine.RenderAsync(html, new HtmlRenderOptions { ViewportWidth = 240D }, cancellation.Token));
+    }
+
+    [Fact]
+    public void HtmlRenderPage_CreateDrawingHonorsCancellation() {
+        HtmlRenderPage page = HtmlRenderEngine.Render("<p>Drawing cancellation marker</p>").Pages[0];
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => page.CreateDrawing(cancellation.Token));
+    }
+
+    [Fact]
+    public async Task HtmlImageAndRenderedPdfAsync_HonorCancellation() {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            "<p>Image cancellation marker</p>".ExportImagesAsync(OfficeImageExportFormat.Png, cancellationToken: cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            "<p>PDF cancellation marker</p>".SaveAsPdfAsync(HtmlPdfSaveOptions.CreateRenderedProfile(), cancellation.Token));
+    }
+
+    [Fact]
     public async Task HtmlPdf_RenderedProfileAsync_ResolvesExternalImageAndWritesSearchablePdf() {
         byte[] imageBytes = PdfPngTestImages.CreateRgbPng(8, 5);
         HtmlPdfSaveOptions options = HtmlPdfSaveOptions.CreateRenderedProfile();
@@ -826,6 +856,99 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public void HtmlRenderedOutputs_AreDeterministicForIdenticalResolvedInput() {
+        const string html = "<style>body{margin:0}.card{width:180px;padding:8px;border:2px solid #123456;background:linear-gradient(90deg,#ffffff,#ddeeff)}</style>"
+            + "<div class='card'><h2>StableMarker</h2><a href='https://example.test/report'>Report link</a></div>";
+        static HtmlImageExportOptions ImageOptions() => new HtmlImageExportOptions {
+            ViewportWidth = 240D,
+            Margins = HtmlRenderMargins.All(10D)
+        };
+        static HtmlPdfSaveOptions PdfOptions() {
+            HtmlPdfSaveOptions options = HtmlPdfSaveOptions.CreateRenderedProfile();
+            options.RenderOptions!.PageSize = new OfficePageSize(4D, 3D);
+            options.RenderOptions.Margins = HtmlRenderMargins.All(12D);
+            return options;
+        }
+
+        byte[] firstPng = html.ToPng(ImageOptions());
+        byte[] secondPng = html.ToPng(ImageOptions());
+        string firstSvg = html.ToSvg(ImageOptions());
+        string secondSvg = html.ToSvg(ImageOptions());
+        byte[] firstPdf = html.SaveAsPdf(PdfOptions());
+        byte[] secondPdf = html.SaveAsPdf(PdfOptions());
+
+        Assert.Equal(firstPng, secondPng);
+        Assert.Equal(firstSvg, secondSvg);
+        Assert.Equal(firstPdf, secondPdf);
+        Assert.Contains("StableMarker", PdfCore.PdfReadDocument.Load(firstPdf).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HtmlComputedStyle_DirAttributeParticipatesAsAnOverridablePresentationalHint() {
+        const string html = "<!doctype html><html id='root' dir='rtl' style='direction:ltr'><body id='body'><p id='rtl' dir='rtl'><span id='child'>Text</span></p></body></html>";
+
+        IReadOnlyDictionary<IElement, HtmlComputedStyle> styles = HtmlComputedStyleEngine.Compute(html);
+
+        Assert.Equal("ltr", styles.Single(pair => pair.Key.Id == "root").Value.GetValue("direction"));
+        Assert.Equal("ltr", styles.Single(pair => pair.Key.Id == "body").Value.GetValue("direction"));
+        Assert.Equal("rtl", styles.Single(pair => pair.Key.Id == "rtl").Value.GetValue("direction"));
+        Assert.Equal("rtl", styles.Single(pair => pair.Key.Id == "child").Value.GetValue("direction"));
+    }
+
+    [Fact]
+    public void HtmlPdf_RenderedProfile_MapsHeadingsAndParagraphsToTaggedStructure() {
+        const string html = "<!doctype html><html lang='pl-PL' dir='rtl'><head><title>Semantic document</title></head><body><main><h1>Semantic <em>heading</em></h1><p>Semantic <strong>paragraph</strong>.</p><h2>Nested detail</h2></main></body></html>";
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html);
+        byte[] pdf = html.SaveAsPdf(HtmlPdfSaveOptions.CreateRenderedProfile());
+
+        PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
+        PdfCore.PdfTaggedContentInfo tagged = Assert.IsType<PdfCore.PdfTaggedContentInfo>(info.TaggedContent);
+        Assert.Equal("Semantic document", rendered.Metadata.Title);
+        Assert.Equal("pl-PL", rendered.Metadata.Language);
+        Assert.Equal(HtmlRenderTextDirection.RightToLeft, rendered.Metadata.Direction);
+        Assert.Equal("Semantic document", info.Metadata.Title);
+        Assert.Equal("pl-PL", info.CatalogLanguage);
+        PdfCore.PdfViewerPreferences viewerPreferences = Assert.IsType<PdfCore.PdfViewerPreferences>(info.ViewerPreferences);
+        Assert.Equal("true", viewerPreferences.GetValue("DisplayDocTitle"));
+        Assert.Equal("R2L", viewerPreferences.GetValue("Direction"));
+        Assert.Collection(
+            rendered.Headings,
+            heading => {
+                Assert.Equal(1, heading.Level);
+                Assert.Equal("Semantic heading", heading.Text);
+                Assert.Equal(1, heading.PageNumber);
+            },
+            heading => {
+                Assert.Equal(2, heading.Level);
+                Assert.Equal("Nested detail", heading.Text);
+                Assert.Equal(1, heading.PageNumber);
+            });
+        Assert.Contains("Document", tagged.StructureTypes);
+        Assert.Contains("H1", tagged.StructureTypes);
+        Assert.Contains("H2", tagged.StructureTypes);
+        Assert.Contains("P", tagged.StructureTypes);
+        Assert.Equal(1, tagged.StructureElements.Count(element => element.StructureType == "Sect"));
+        Assert.Equal(1, tagged.StructureElements.Count(element => element.StructureType == "H1"));
+        Assert.Equal(1, tagged.StructureElements.Count(element => element.StructureType == "H2"));
+        Assert.Equal(1, tagged.StructureElements.Count(element => element.StructureType == "P"));
+        HtmlRenderSemanticGroup sectionScene = Assert.Single(rendered.Pages[0].Scene.OfType<HtmlRenderSemanticGroup>());
+        Assert.Equal(HtmlRenderSemanticGroupRole.Section, sectionScene.Role);
+        Assert.Contains(sectionScene.Visuals.OfType<HtmlRenderSemanticGroup>(), group => group.Role == HtmlRenderSemanticGroupRole.Heading1);
+        Assert.Contains(sectionScene.Visuals.OfType<HtmlRenderSemanticGroup>(), group => group.Role == HtmlRenderSemanticGroupRole.Paragraph);
+        PdfCore.PdfStructureElementInfo section = Assert.Single(tagged.StructureElements, element => element.StructureType == "Sect");
+        Assert.All(
+            tagged.StructureElements.Where(element => element.StructureType == "H1" || element.StructureType == "H2" || element.StructureType == "P"),
+            element => Assert.Contains(element.ObjectNumber, section.ChildElementObjectNumbers));
+        Assert.True(tagged.StructureElements.Count(element => element.StructureType == "Span") >= 5);
+        Assert.True(tagged.MarkedContentReferenceCount >= 2);
+        PdfCore.PdfOutlineItem outline = Assert.Single(info.Outlines);
+        Assert.Equal("Semantic heading", outline.Title);
+        Assert.Equal(1, outline.Level);
+        Assert.Equal("Nested detail", Assert.Single(outline.Children).Title);
+        Assert.Contains("Semantic heading", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HtmlPdf_RenderedProfile_UsesSharedPagedLayoutAndPreservesTextAndLink() {
         const string linkUri = "https://example.test/direct-pdf";
         string html = """
@@ -854,7 +977,7 @@ public sealed partial class HtmlRenderingTests {
 
     [Fact]
     public void HtmlPdf_RenderedProfile_UsesManagedFontFallbacksForUnicodeText() {
-        const string marker = "Café Ω Ж";
+        const string marker = "Café Ω Ж שלום سلام";
         HtmlPdfSaveOptions options = HtmlPdfSaveOptions.CreateRenderedProfile();
 
         byte[] pdf = ("<p>" + marker + "</p>").SaveAsPdf(options);
@@ -867,6 +990,215 @@ public sealed partial class HtmlRenderingTests {
         if (fallbackProbe.TryUseDefaultDocumentFontFallback(requireEmbeddedFont: true)) {
             Assert.True(PdfCore.PdfDiagnostics.Analyze(pdf).EmbeddedFontCount > 0);
         }
+    }
+
+    [Fact]
+    public void HtmlPdf_RenderedProfile_UsesRegularFallbackCoverageWhenBoldSystemFaceIsNarrower() {
+        const string marker = "Bold שלום سلام";
+
+        byte[] pdf = ("<h1>" + marker + "</h1>").SaveAsPdf(HtmlPdfSaveOptions.CreateRenderedProfile());
+
+        Assert.Contains(marker, PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HtmlPdf_RenderedProfile_PreservesCallerUnicodeFontWhenManagedFallbacksAreActive() {
+        if (!PdfCore.PdfEmbeddedFontFamily.TryFromSystem("Arial", out PdfCore.PdfEmbeddedFontFamily? installed) || installed == null) return;
+        const string marker = "Caller שלום سلام";
+        HtmlPdfSaveOptions options = HtmlPdfSaveOptions.CreateRenderedProfile();
+        options.RenderedFontFamily = new PdfCore.PdfEmbeddedFontFamily("CallerUnicode", installed.Regular);
+
+        byte[] pdf = ("<h1>" + marker + "</h1>").SaveAsPdf(options);
+        PdfCore.PdfDiagnosticReport report = PdfCore.PdfDiagnostics.Analyze(pdf);
+
+        Assert.Contains(marker, PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains(report.Fonts, font => font.BaseFont?.Contains("CallerUnicode", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public void HtmlPdf_RenderedProfile_LoadsManagedFontFallbacksOnlyWhenSceneTextRequiresUnicode() {
+        HtmlRenderDocument winAnsi = HtmlRenderEngine.Render("<p>Invoice Café — paid</p>");
+        HtmlRenderDocument unicode = HtmlRenderEngine.Render("<p>Invoice Ω Ж שלום سلام</p>");
+
+        Assert.Equal(
+            PdfCore.PdfTextFallbackFeatures.None,
+            HtmlPdfRenderedConverter.ResolveTextFallbackFeatures(winAnsi, PdfCore.PdfTextFallbackFeatures.Default));
+        Assert.Equal(
+            PdfCore.PdfTextFallbackFeatures.Default,
+            HtmlPdfRenderedConverter.ResolveTextFallbackFeatures(unicode, PdfCore.PdfTextFallbackFeatures.Default));
+        Assert.Equal(
+            PdfCore.PdfTextFallbackFeatures.None,
+            HtmlPdfRenderedConverter.ResolveTextFallbackFeatures(unicode, PdfCore.PdfTextFallbackFeatures.None));
+    }
+
+    [Fact]
+    public void HtmlRenderer_PositionsSimpleRtlTextAndDiagnosesOnlyRemainingBidiStages() {
+        const string html = "<div style='width:200px'><p id='declared' dir='rtl'>Latin text</p><p id='hebrew' dir='rtl'>שלום 123</p><h2 id='arabic' dir='rtl'>سلام</h2><p id='authored' dir='rtl'>\uFE8F\uFE8F</p><p id='syriac' dir='rtl'>ܫܠܡ</p><p id='control'>abc\u202Edef</p></div>";
+
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html);
+        IReadOnlyList<HtmlRenderText> text = rendered.Pages[0].Visuals.OfType<HtmlRenderText>().ToList();
+        IReadOnlyList<HtmlRenderText> hebrew = text
+            .Where(run => run.Text.Length == 1 && "שלום".Contains(run.Text, StringComparison.Ordinal))
+            .OrderBy(run => run.PaintOrder)
+            .ToList();
+
+        Assert.Equal(4, hebrew.Count);
+        Assert.Equal("שלום", string.Concat(hebrew.Select(run => run.Text)));
+        HtmlRenderLogicalTextGroup logicalGroup = Assert.Single(
+            EnumerateRenderVisuals(rendered.Pages[0].Scene).OfType<HtmlRenderLogicalTextGroup>(),
+            group => group.Text == "שלום 123");
+        Assert.Equal("שלום 123", logicalGroup.Text);
+        for (int index = 1; index < hebrew.Count; index++) Assert.True(hebrew[index].X < hebrew[index - 1].X);
+        HtmlRenderText number = Assert.Single(text, run => run.Text == "123");
+        Assert.Equal("שלום 123", string.Concat(text.Where(run => Math.Abs(run.Y - number.Y) < 0.001D).OrderBy(run => run.PaintOrder).Select(run => run.Text)));
+        Assert.True(number.X < hebrew.Min(run => run.X));
+
+        HtmlRenderLogicalTextGroup arabicGroup = Assert.Single(
+            EnumerateRenderVisuals(rendered.Pages[0].Scene).OfType<HtmlRenderLogicalTextGroup>(),
+            group => group.Text == "سلام");
+        Assert.Equal("\uFEB3\uFEE0\uFE8E\uFEE1", string.Concat(arabicGroup.Visuals.OfType<HtmlRenderText>().Select(run => run.Text)));
+        HtmlRenderLogicalTextGroup authoredForms = Assert.Single(
+            EnumerateRenderVisuals(rendered.Pages[0].Scene).OfType<HtmlRenderLogicalTextGroup>(),
+            group => group.Text == "\uFE8F\uFE8F");
+        Assert.Equal("\uFE91\uFE90", string.Concat(authoredForms.Visuals.OfType<HtmlRenderText>().Select(run => run.Text)));
+        Assert.Contains("سلام", rendered.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\uFEB3\uFEE0\uFE8E\uFEE1", rendered.Text, StringComparison.Ordinal);
+        HtmlRenderHeading arabicHeading = Assert.Single(rendered.Headings, heading => heading.Level == 2);
+        Assert.Equal("سلام", arabicHeading.Text);
+        Assert.True(html.ToPng().Length > 8);
+        string svg = html.ToSvg();
+        Assert.All("\uFEB3\uFEE0\uFE8E\uFEE1", character => Assert.Contains(character.ToString(), svg, StringComparison.Ordinal));
+
+        Assert.Collection(
+            rendered.Diagnostics.Diagnostics
+                .Where(diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.BidiLayoutUnsupported || diagnostic.Code == HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported)
+                .OrderBy(diagnostic => diagnostic.Source),
+            diagnostic => {
+                Assert.Equal(HtmlRenderDiagnosticCodes.BidiLayoutUnsupported, diagnostic.Code);
+                Assert.Equal("p#control", diagnostic.Source);
+            },
+            diagnostic => {
+                Assert.Equal(HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported, diagnostic.Code);
+                Assert.Equal("p#syriac", diagnostic.Source);
+            });
+        Assert.Contains(HtmlRenderDiagnosticCodes.BidiLayoutUnsupported, HtmlRenderDiagnosticCodes.All);
+        Assert.Contains(HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported, HtmlRenderDiagnosticCodes.All);
+        Assert.True(HtmlDiagnosticCatalog.TryGet(HtmlRenderDiagnosticCodes.BidiLayoutUnsupported, out _));
+        Assert.True(HtmlDiagnosticCatalog.TryGet(HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported, out _));
+    }
+
+    [Fact]
+    public void HtmlRenderer_PositionsHebrewRunInsideLtrTextWithoutChangingLogicalSceneOrder() {
+        const string html = "<p style='margin:0;width:240px'>Left שלום 42</p>";
+
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html);
+        IReadOnlyList<HtmlRenderText> runs = rendered.Pages[0].Visuals.OfType<HtmlRenderText>().OrderBy(run => run.PaintOrder).ToList();
+        IReadOnlyList<HtmlRenderText> hebrew = runs.Where(run => run.Text.Length == 1 && "שלום".Contains(run.Text, StringComparison.Ordinal)).ToList();
+        HtmlRenderText left = Assert.Single(runs, run => run.Text == "Left ");
+        HtmlRenderText number = Assert.Single(runs, run => run.Text == "42");
+
+        Assert.Equal("Left שלום 42", string.Concat(runs.Select(run => run.Text)));
+        Assert.Equal(4, hebrew.Count);
+        Assert.True(left.X < hebrew.Min(run => run.X));
+        Assert.True(number.X > hebrew.Max(run => run.X));
+        for (int index = 1; index < hebrew.Count; index++) Assert.True(hebrew[index].X < hebrew[index - 1].X);
+        Assert.DoesNotContain(rendered.Diagnostics.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.BidiLayoutUnsupported || diagnostic.Code == HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported);
+        Assert.True(html.ToPng().Length > 8);
+        Assert.Contains("ש", html.ToSvg(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HtmlRenderer_ResolvesLogicalTextAlignmentAgainstElementDirection() {
+        const string html = "<div style='width:160px'><p id='start' dir='rtl' style='margin:0'>Start</p><p id='end' dir='rtl' style='margin:0;text-align:end'>End</p><p id='left' dir='rtl' style='margin:0;text-align:left'>Left</p></div>";
+
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html, new HtmlRenderOptions {
+            ViewportWidth = 160D,
+            Margins = HtmlRenderMargins.All(0D)
+        });
+        IReadOnlyList<HtmlRenderText> text = rendered.Pages[0].Visuals.OfType<HtmlRenderText>().ToList();
+
+        HtmlRenderText start = Assert.Single(text, item => item.Text == "Start");
+        HtmlRenderText end = Assert.Single(text, item => item.Text == "End");
+        HtmlRenderText left = Assert.Single(text, item => item.Text == "Left");
+        Assert.True(start.X > 100D);
+        Assert.Equal(0D, end.X, 6);
+        Assert.Equal(0D, left.X, 6);
+    }
+
+    [Fact]
+    public void HtmlPdf_RenderedProfile_TagsRasterAndVectorImageAlternativeTextAsFigures() {
+        string rasterData = Convert.ToBase64String(PdfPngTestImages.CreateRgbPng(2, 2));
+        const string vectorData = "%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Crect width='2' height='2' fill='red'/%3E%3C/svg%3E";
+        string html = "<img alt='Raster badge' width='24' height='24' src='data:image/png;base64," + rasterData + "'>"
+            + "<img alt='Vector badge' width='24' height='24' src=\"data:image/svg+xml," + vectorData + "\">";
+
+        byte[] pdf = html.SaveAsPdf(HtmlPdfSaveOptions.CreateRenderedProfile());
+        PdfCore.PdfTaggedContentInfo tagged = Assert.IsType<PdfCore.PdfTaggedContentInfo>(PdfCore.PdfInspector.Inspect(pdf).TaggedContent);
+        IReadOnlyList<PdfCore.PdfStructureElementInfo> figures = tagged.StructureElements
+            .Where(element => element.StructureType == "Figure")
+            .ToList();
+
+        Assert.Equal(2, figures.Count);
+        Assert.Contains(figures, figure => figure.AlternateText == "Raster badge");
+        Assert.Contains(figures, figure => figure.AlternateText == "Vector badge");
+        Assert.True(tagged.FiguresHaveAlternateText);
+    }
+
+    [Fact]
+    public void HtmlPdf_RenderedProfile_PreservesListItemLabelAndBodySemantics() {
+        const string html = "<ol><li>First item</li><li>Second item</li></ol>";
+
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html);
+        HtmlRenderSemanticGroup listScene = Assert.Single(rendered.Pages[0].Scene.OfType<HtmlRenderSemanticGroup>());
+        Assert.Equal(HtmlRenderSemanticGroupRole.List, listScene.Role);
+        IReadOnlyList<HtmlRenderSemanticGroup> items = listScene.Visuals
+            .OfType<HtmlRenderSemanticGroup>()
+            .Where(group => group.Role == HtmlRenderSemanticGroupRole.ListItem)
+            .ToList();
+        Assert.Equal(2, items.Count);
+        Assert.All(items, item => {
+            Assert.Contains(item.Visuals.OfType<HtmlRenderSemanticGroup>(), group => group.Role == HtmlRenderSemanticGroupRole.ListLabel);
+            Assert.Contains(item.Visuals.OfType<HtmlRenderSemanticGroup>(), group => group.Role == HtmlRenderSemanticGroupRole.ListBody);
+        });
+
+        byte[] pdf = html.SaveAsPdf(HtmlPdfSaveOptions.CreateRenderedProfile());
+        PdfCore.PdfTaggedContentInfo tagged = Assert.IsType<PdfCore.PdfTaggedContentInfo>(PdfCore.PdfInspector.Inspect(pdf).TaggedContent);
+        PdfCore.PdfStructureElementInfo list = Assert.Single(tagged.StructureElements, element => element.StructureType == "L");
+        IReadOnlyList<PdfCore.PdfStructureElementInfo> pdfItems = tagged.StructureElements.Where(element => element.StructureType == "LI").ToList();
+        Assert.Equal(2, pdfItems.Count);
+        Assert.Equal(2, tagged.StructureElements.Count(element => element.StructureType == "Lbl"));
+        Assert.Equal(2, tagged.StructureElements.Count(element => element.StructureType == "LBody"));
+        Assert.All(pdfItems, item => Assert.Contains(item.ObjectNumber, list.ChildElementObjectNumbers));
+        Assert.Contains("1. First item", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("2. Second item", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HtmlPdf_RenderedProfile_PreservesNestedTableCaptionRowAndCellSemantics() {
+        const string html = "<table><caption>Quarterly status</caption><tr><th scope='row' rowspan='2'>Area</th><th colspan='2'>Status</th></tr><tr><td>Green</td><td>Ready</td></tr></table>";
+
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html);
+        HtmlRenderSemanticGroup tableScene = Assert.Single(rendered.Pages[0].Scene.OfType<HtmlRenderSemanticGroup>());
+        Assert.Equal(HtmlRenderSemanticGroupRole.Table, tableScene.Role);
+        Assert.Contains(tableScene.Visuals.OfType<HtmlRenderSemanticGroup>(), group => group.Role == HtmlRenderSemanticGroupRole.Caption);
+        Assert.Equal(2, tableScene.Visuals.OfType<HtmlRenderSemanticGroup>().Count(group => group.Role == HtmlRenderSemanticGroupRole.TableRow));
+
+        byte[] pdf = html.SaveAsPdf(HtmlPdfSaveOptions.CreateRenderedProfile());
+        PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
+        PdfCore.PdfTaggedContentInfo tagged = Assert.IsType<PdfCore.PdfTaggedContentInfo>(info.TaggedContent);
+        PdfCore.PdfStructureElementInfo table = Assert.Single(tagged.StructureElements, element => element.StructureType == "Table");
+        PdfCore.PdfStructureElementInfo caption = Assert.Single(tagged.StructureElements, element => element.StructureType == "Caption");
+        IReadOnlyList<PdfCore.PdfStructureElementInfo> rows = tagged.StructureElements.Where(element => element.StructureType == "TR").ToList();
+        Assert.Equal(2, rows.Count);
+        Assert.Contains(caption.ObjectNumber, table.ChildElementObjectNumbers);
+        Assert.All(rows, row => Assert.Contains(row.ObjectNumber, table.ChildElementObjectNumbers));
+        Assert.Equal(2, tagged.StructureElements.Count(element => element.StructureType == "TH"));
+        Assert.Equal(2, tagged.StructureElements.Count(element => element.StructureType == "TD"));
+        string raw = Encoding.ASCII.GetString(pdf);
+        Assert.Contains("/Scope /Row", raw, StringComparison.Ordinal);
+        Assert.Contains("/ColSpan 2", raw, StringComparison.Ordinal);
+        Assert.Contains("/RowSpan 2", raw, StringComparison.Ordinal);
+        Assert.Contains("Quarterly status", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -328,8 +328,10 @@ internal sealed class HtmlInlineRun {
         double paintOffsetX = 0D,
         double paintOffsetY = 0D,
         IElement? ownerElement = null,
-        IElement? positionedMarkerElement = null) {
+        IElement? positionedMarkerElement = null,
+        string? logicalText = null) {
         Text = text;
+        LogicalText = logicalText ?? text;
         Style = style;
         LinkUri = linkUri;
         Source = source;
@@ -337,6 +339,7 @@ internal sealed class HtmlInlineRun {
         PaintOffsetY = paintOffsetY;
         OwnerElement = ownerElement;
         PositionedMarkerElement = positionedMarkerElement;
+        SemanticRole = style.SemanticRole;
     }
 
     internal HtmlInlineRun(
@@ -350,6 +353,7 @@ internal sealed class HtmlInlineRun {
         bool isReplacedImage = false) {
         AtomicBlock = atomicBlock;
         Text = string.Empty;
+        LogicalText = string.Empty;
         Style = style;
         LinkUri = linkUri;
         Source = source;
@@ -357,6 +361,7 @@ internal sealed class HtmlInlineRun {
         PaintOffsetY = paintOffsetY;
         OwnerElement = ownerElement;
         IsReplacedImage = isReplacedImage;
+        SemanticRole = style.SemanticRole;
     }
 
     internal HtmlInlineRun(
@@ -369,15 +374,18 @@ internal sealed class HtmlInlineRun {
         IElement ownerElement) {
         FloatingBlock = floatingBlock;
         Text = string.Empty;
+        LogicalText = string.Empty;
         Style = style;
         LinkUri = linkUri;
         Source = source;
         FloatSide = floatSide;
         ClearSide = clearSide;
         OwnerElement = ownerElement;
+        SemanticRole = style.SemanticRole;
     }
 
     internal string Text { get; }
+    internal string LogicalText { get; }
     internal HtmlRenderFlowBlock? AtomicBlock { get; }
     internal HtmlRenderFlowBlock? FloatingBlock { get; }
     internal HtmlRenderBoxStyle Style { get; }
@@ -388,8 +396,17 @@ internal sealed class HtmlInlineRun {
     internal IElement? OwnerElement { get; }
     internal IElement? PositionedMarkerElement { get; }
     internal bool IsReplacedImage { get; }
+    internal string SemanticRole { get; private set; }
+    internal int? SemanticNodeId { get; private set; }
     internal string FloatSide { get; } = "none";
     internal string ClearSide { get; } = "none";
+
+    internal void AssignSemanticNode(string role, int nodeId) {
+        SemanticNodeId = nodeId;
+        if (!SemanticRole.StartsWith("generated-", StringComparison.Ordinal)) {
+            SemanticRole = role;
+        }
+    }
 }
 
 internal sealed class HtmlInlineLayout {

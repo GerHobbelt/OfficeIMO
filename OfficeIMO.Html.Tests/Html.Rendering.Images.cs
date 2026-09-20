@@ -35,7 +35,7 @@ public sealed partial class HtmlRenderingTests {
 
     [Fact]
     public void HtmlImages_SvgPrimitivesAndLocalReferencesFlowAsNativeVectorsAcrossPngSvgAndSearchablePdf() {
-        const string svgSource = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'><defs><rect id='marker' width='2' height='2' fill='lime'/></defs><path d='M0 0h20v20H0z' fill='red'/><circle cx='30' cy='10' r='8' fill='blue'/><path d='M22 10A8 6 30 0 1 38 10' fill='none' stroke='black'/><use href='#marker' transform='translate(18 8) scale(2)'/><text x='20' y='18' font-size='4' text-anchor='middle' fill='black' transform='translate(0 -1)'>Svg<tspan font-weight='bold'>LabelX</tspan></text></svg>";
+        const string svgSource = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'><defs><symbol id='marker' viewBox='0 0 2 2'><rect width='2' height='2' fill='currentColor'/></symbol></defs><path d='M0 0h20v20H0z' fill='red'/><circle cx='30' cy='10' r='8' fill='blue'/><path d='M22 10A8 6 30 0 1 38 10' fill='none' stroke='black'/><use href='#marker' style='fill:red;color:lime' transform='translate(18 8) scale(2)'/><text x='20' y='18' font-size='4' text-anchor='middle' textLength='20' lengthAdjust='spacingAndGlyphs' fill='black' transform='translate(0 -1)'>Svg<tspan font-weight='bold'>LabelX</tspan></text></svg>";
         string data = Convert.ToBase64String(Encoding.UTF8.GetBytes(svgSource));
         string html = "<body style='margin:0'><img id='vector' src='data:image/svg+xml;base64," + data + "' style='display:block;width:80px;height:40px'><div style='font-size:6px;line-height:8px'>SvgPdf</div></body>";
         var options = new HtmlImageExportOptions {
@@ -60,7 +60,7 @@ public sealed partial class HtmlRenderingTests {
         byte[] pdf = html.SaveAsPdf(pdfOptions);
         string pdfText = string.Concat(PdfCore.PdfReadDocument.Load(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
 
-        Assert.Equal(4, vector.Drawing.Shapes.Count);
+        Assert.Equal(3, vector.Drawing.Shapes.Count);
         string[] svgTextRuns = vector.Drawing.Elements.OfType<OfficeDrawingEffectGroup>()
             .SelectMany(group => group.Drawing.Elements.OfType<OfficeDrawingText>())
             .Select(text => text.Text)
@@ -84,9 +84,9 @@ public sealed partial class HtmlRenderingTests {
     [Fact]
     public void HtmlImages_SvgPaintServersStayNativeAcrossPngSvgAndSearchablePdf() {
         const string svgSource = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'><defs>"
-            + "<linearGradient id='linear'><stop offset='0' stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>"
-            + "<radialGradient id='radial'><stop offset='0' stop-color='white'/><stop offset='1' stop-color='navy'/></radialGradient>"
-            + "</defs><rect width='20' height='20' fill='url(#linear)'/><rect x='20' width='20' height='20' fill='url(#radial)'/></svg>";
+            + "<linearGradient id='linear' gradientUnits='userSpaceOnUse' spreadMethod='repeat' x1='0' y1='0' x2='12.5%' y2='0'><stop offset='0' stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>"
+            + "<radialGradient id='radial' gradientUnits='userSpaceOnUse' gradientTransform='matrix(.5 0 0 1 15 0)' cx='30' cy='10' r='8' fx='28' fy='10'><stop offset='0' stop-color='white'/><stop offset='1' stop-color='navy'/></radialGradient>"
+            + "</defs><rect width='10' height='20' fill='url(#linear)'/><rect x='10' width='10' height='20' fill='url(#linear)'/><rect x='20' width='20' height='20' fill='url(#radial)'/></svg>";
         string data = Convert.ToBase64String(Encoding.UTF8.GetBytes(svgSource));
         string html = "<body style='margin:0'><img id='paint-server' src='data:image/svg+xml;base64," + data
             + "' style='display:block;width:80px;height:40px'><div style='font-size:6px;line-height:8px'>SvgPdfX</div></body>";
@@ -112,10 +112,21 @@ public sealed partial class HtmlRenderingTests {
         byte[] pdf = html.SaveAsPdf(pdfOptions);
         string pdfText = string.Concat(PdfCore.PdfReadDocument.Load(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
 
-        Assert.IsType<OfficeLinearGradient>(visual.Drawing.Shapes[0].Shape.FillGradient);
-        Assert.IsType<OfficeRadialGradient>(visual.Drawing.Shapes[1].Shape.FillRadialGradient);
-        Assert.True(raster.GetPixel(3, 20).R > raster.GetPixel(3, 20).B);
-        Assert.True(raster.GetPixel(37, 20).B > raster.GetPixel(37, 20).R);
+        OfficeLinearGradient first = Assert.IsType<OfficeLinearGradient>(visual.Drawing.Shapes[0].Shape.FillGradient);
+        OfficeLinearGradient second = Assert.IsType<OfficeLinearGradient>(visual.Drawing.Shapes[1].Shape.FillGradient);
+        Assert.Equal(0D, first.StartX, 8);
+        Assert.Equal(1D, first.EndX, 8);
+        Assert.Equal(0D, second.StartX, 8);
+        Assert.Equal(1D, second.EndX, 8);
+        Assert.True(first.Stops.Count > 2);
+        Assert.True(second.Stops.Count > 2);
+        OfficeRadialGradient radial = Assert.IsType<OfficeRadialGradient>(visual.Drawing.Shapes[2].Shape.FillRadialGradient);
+        Assert.Equal(0.2D, radial.EndRadiusX);
+        Assert.Equal(0.4D, radial.EndRadiusY);
+        OfficeColor repeatStart = raster.GetPixel(3, 20);
+        OfficeColor repeatEnd = raster.GetPixel(37, 20);
+        Assert.True(repeatStart.R > repeatStart.B, $"Expected the repeated gradient start to be red-dominant, got {repeatStart}.");
+        Assert.True(repeatEnd.B > repeatEnd.R, $"Expected the repeated gradient end to be blue-dominant, got {repeatEnd}.");
         Assert.Contains("<linearGradient", exportedSvg, StringComparison.Ordinal);
         Assert.Contains("<radialGradient", exportedSvg, StringComparison.Ordinal);
         Assert.DoesNotContain("data:image/svg+xml", exportedSvg, StringComparison.Ordinal);
@@ -209,6 +220,63 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal(0D, image.SourceCrop.Right, 3);
         Assert.Equal(0D, image.SourceCrop.Bottom, 3);
         Assert.Contains("clipPath", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HtmlImages_SvgCoverPreservesPositionedSourceCropAcrossSharedScene() {
+        const string svgSource = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 10'><rect width='10' height='10' fill='red'/><rect x='10' width='10' height='10' fill='blue'/></svg>";
+        string data = Convert.ToBase64String(Encoding.UTF8.GetBytes(svgSource));
+        string html = "<img id='covered-svg' src='data:image/svg+xml;base64," + data + "' style='display:block;width:10px;height:10px;object-fit:cover;object-position:right center'>";
+        var options = new HtmlImageExportOptions {
+            ViewportWidth = 12D,
+            ViewportHeight = 12D,
+            Margins = HtmlRenderMargins.All(0D),
+            BackgroundColor = OfficeColor.Transparent
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderEngine.Render(html, options);
+        IReadOnlyList<HtmlRenderVisual> visuals = EnumerateRenderVisuals(rendered.Pages[0].Visuals).ToList();
+        HtmlRenderClipGroup clip = Assert.Single(visuals.OfType<HtmlRenderClipGroup>(), item => item.Source == "img#covered-svg:object-fit-clip");
+        HtmlRenderDrawing drawing = Assert.Single(clip.Visuals.OfType<HtmlRenderDrawing>());
+        OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(rendered.Pages[0].CreateDrawing());
+
+        Assert.Equal(10D, clip.Width, 3);
+        Assert.Equal(20D, drawing.Width, 3);
+        Assert.Equal(-10D, drawing.X, 3);
+        Assert.Equal(OfficeColor.Blue, raster.GetPixel(5, 5));
+    }
+
+    [Theory]
+    [InlineData("image/gif")]
+    [InlineData("image/bmp")]
+    public void HtmlPdf_RenderedProfile_ConvertsDependencyFreeRasterFormatsToPng(string contentType) {
+        byte[] bytes = contentType == "image/gif"
+            ? Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
+            : CreateSinglePixelBmp(0x12, 0x34, 0x56);
+        string html = "<img src='data:" + contentType + ";base64," + Convert.ToBase64String(bytes) + "' style='width:10px;height:10px'>";
+
+        byte[] pdf = html.SaveAsPdf(HtmlPdfSaveOptions.CreateRenderedProfile());
+        IReadOnlyList<PdfCore.PdfExtractedImage> images = PdfCore.PdfImageExtractor.ExtractImages(pdf);
+
+        Assert.Contains(images, image => image.IsImageFile && image.MimeType == "image/png");
+    }
+
+    private static byte[] CreateSinglePixelBmp(byte red, byte green, byte blue) {
+        var bytes = new byte[58];
+        bytes[0] = (byte)'B';
+        bytes[1] = (byte)'M';
+        BitConverter.GetBytes(bytes.Length).CopyTo(bytes, 2);
+        BitConverter.GetBytes(54).CopyTo(bytes, 10);
+        BitConverter.GetBytes(40).CopyTo(bytes, 14);
+        BitConverter.GetBytes(1).CopyTo(bytes, 18);
+        BitConverter.GetBytes(1).CopyTo(bytes, 22);
+        BitConverter.GetBytes((short)1).CopyTo(bytes, 26);
+        BitConverter.GetBytes((short)24).CopyTo(bytes, 28);
+        BitConverter.GetBytes(4).CopyTo(bytes, 34);
+        bytes[54] = blue;
+        bytes[55] = green;
+        bytes[56] = red;
+        return bytes;
     }
 
     [Fact]

@@ -257,6 +257,12 @@ internal static partial class PdfWriter {
 
         private int? AppendDrawingMarkedContentBegin(PdfDrawingStyle style, out bool markedContent) {
             EnsurePage();
+
+            if (_suppressCanvasAccessibilityWrappers) {
+                markedContent = false;
+                return null;
+            }
+
             currentPage!.Drawings.Add(new PdfGeneratedDrawingAccessibilityEvidence(!string.IsNullOrWhiteSpace(style.AlternativeText), style.Decorative));
 
             if (style.Decorative) {
@@ -270,7 +276,7 @@ internal static partial class PdfWriter {
                 return null;
             }
 
-            int? markedContentId = RegisterFigureStructureElement(style.AlternativeText!);
+            int? markedContentId = RegisterFigureStructureElement(style.AlternativeText!, _canvasStructureParentElementIndex);
             int? structElementIndex = FindStructElementIndex(currentPage, markedContentId, "Figure");
             sb.Append("/Figure << /Alt ")
                 .Append(PdfSyntaxEscaper.TextString(style.AlternativeText!));

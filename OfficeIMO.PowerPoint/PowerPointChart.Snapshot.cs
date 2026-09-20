@@ -13,7 +13,7 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         /// Tries to create a dependency-free snapshot for rendering/export consumers.
         /// </summary>
-        public bool TryGetSnapshot(out PowerPointChartSnapshot snapshot) =>
+        internal bool TryGetSnapshot(out PowerPointChartSnapshot snapshot) =>
             TryGetSnapshot(null, out snapshot);
 
         internal bool TryGetSnapshot(A.ColorScheme? colorScheme, out PowerPointChartSnapshot snapshot) {
@@ -220,7 +220,8 @@ namespace OfficeIMO.PowerPoint {
                 .Where(axis => axis.Val?.Value != null).Select(axis => axis.Val!.Value));
             return plotArea.Elements<C.ValueAxis>().Any(axis =>
                        axis.AxisId?.Val?.Value != null && axisIds.Contains(axis.AxisId.Val.Value) &&
-                       axis.AxisPosition?.Val?.Value == C.AxisPositionValues.Right)
+                       (axis.AxisPosition?.Val?.Value == C.AxisPositionValues.Right ||
+                        axis.AxisPosition?.Val?.Value == C.AxisPositionValues.Top))
                 ? OfficeChartAxisGroup.Secondary
                 : OfficeChartAxisGroup.Primary;
         }
@@ -321,7 +322,9 @@ namespace OfficeIMO.PowerPoint {
 
                 series.Add(new PowerPointChartSeries(name, values, null, chartKind,
                     ReadSeriesColor(seriesElement, chartKind, colorScheme), ReadSeriesStrokeWidth(seriesElement),
-                    axisGroup));
+                    axisGroup) {
+                    SourceIndex = seriesElement.GetFirstChild<C.Index>()?.Val?.Value
+                });
             }
 
             return series.Count == 0 ? null : new PowerPointChartData(categories, series);
@@ -355,7 +358,12 @@ namespace OfficeIMO.PowerPoint {
                     name = "Series " + (i + 1).ToString(CultureInfo.InvariantCulture);
                 }
 
-                series.Add(new PowerPointChartSeries(name, values, xValues.Take(pointCount).ToList(), PowerPointChartSnapshotKind.Scatter, ReadSeriesColor(seriesElement, PowerPointChartSnapshotKind.Scatter, colorScheme), ReadSeriesStrokeWidth(seriesElement)));
+                series.Add(new PowerPointChartSeries(name, values, xValues.Take(pointCount).ToList(),
+                    PowerPointChartSnapshotKind.Scatter,
+                    ReadSeriesColor(seriesElement, PowerPointChartSnapshotKind.Scatter, colorScheme),
+                    ReadSeriesStrokeWidth(seriesElement)) {
+                    SourceIndex = seriesElement.GetFirstChild<C.Index>()?.Val?.Value
+                });
             }
 
             if (series.Count == 0 || categoryXValues == null || categoryXValues.Count == 0) {

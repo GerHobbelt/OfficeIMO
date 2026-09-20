@@ -12,6 +12,133 @@ namespace OfficeIMO.Tests.Pdf;
 
 public class PdfDocumentCanvasTests {
     [Fact]
+    public void CanvasActualText_PreservesLogicalExtractionForReversePositionedFragments() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .TaggedPdfCatalogMarkers()
+            .Canvas(canvas => canvas.ActualText("ABC", logical => logical
+                .Text("A", 50D, 10D, 10D, 20D)
+                .Text("B", 35D, 10D, 10D, 20D)
+                .Text("C", 20D, 10D, 10D, 20D)))
+            .ToBytes();
+
+        Assert.Contains("ABC", PdfReadDocument.Load(bytes).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("/ActualText", Encoding.ASCII.GetString(bytes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CanvasActualText_RejectsInvalidArgumentsAndEmptyBuilders() {
+        var canvas = new PdfPageCanvas();
+
+        Assert.Throws<ArgumentNullException>(() => canvas.ActualText(null!, _ => { }));
+        Assert.Throws<ArgumentException>(() => canvas.ActualText(string.Empty, _ => { }));
+        Assert.Throws<ArgumentNullException>(() => canvas.ActualText("Text", null!));
+        Assert.Throws<ArgumentException>(() => canvas.ActualText("Text", _ => { }));
+    }
+
+    [Fact]
+    public void CanvasStructure_GroupsFragmentedHeadingAndParagraphTextUnderSection() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .TaggedPdfCatalogMarkers()
+            .Canvas(canvas => canvas
+                .Structure(PdfCanvasStructureRole.Section, section => section
+                    .Structure(PdfCanvasStructureRole.Heading1, heading => heading
+                        .Text(new[] { TextRun.Normal("Heading") }, PdfCanvasTextStructureRole.Span, 10D, 10D, 120D, 20D))
+                    .Structure(PdfCanvasStructureRole.Paragraph, paragraph => paragraph
+                        .Text(new[] { TextRun.Normal("Paragraph") }, PdfCanvasTextStructureRole.Span, 10D, 40D, 120D, 20D))))
+            .ToBytes();
+
+        PdfTaggedContentInfo tagged = Assert.IsType<PdfTaggedContentInfo>(PdfInspector.Inspect(bytes).TaggedContent);
+        PdfStructureElementInfo section = Assert.Single(tagged.StructureElements, element => element.StructureType == "Sect");
+        PdfStructureElementInfo heading = Assert.Single(tagged.StructureElements, element => element.StructureType == "H1");
+        PdfStructureElementInfo paragraph = Assert.Single(tagged.StructureElements, element => element.StructureType == "P");
+        Assert.Contains(heading.ObjectNumber, section.ChildElementObjectNumbers);
+        Assert.Contains(paragraph.ObjectNumber, section.ChildElementObjectNumbers);
+        Assert.Equal(2, tagged.StructureElements.Count(element => element.StructureType == "Span"));
+    }
+
+    [Fact]
+    public void CanvasStructure_BuildsNestedListAndTableHierarchyWithCellAttributes() {
+        var headerOptions = new PdfCanvasStructureOptions {
+            HeaderScope = PdfCanvasTableHeaderScope.Column,
+            ColumnSpan = 2
+        };
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .TaggedPdfCatalogMarkers()
+            .Canvas(canvas => canvas
+                .Structure(PdfCanvasStructureRole.List, list => list
+                    .Structure(PdfCanvasStructureRole.ListItem, item => item
+                        .Structure(PdfCanvasStructureRole.ListLabel, label => label.Text("1.", 10D, 10D, 20D, 20D))
+                        .Structure(PdfCanvasStructureRole.ListBody, body => body.Text("First item", 35D, 10D, 100D, 20D))))
+                .Structure(PdfCanvasStructureRole.Table, table => table
+                    .Structure(PdfCanvasStructureRole.TableRow, row => row
+                        .Structure(PdfCanvasStructureRole.TableHeaderCell, cell => cell.Text("Header", 10D, 40D, 100D, 20D), headerOptions))))
+            .ToBytes();
+
+        PdfTaggedContentInfo tagged = Assert.IsType<PdfTaggedContentInfo>(PdfInspector.Inspect(bytes).TaggedContent);
+        PdfStructureElementInfo list = Assert.Single(tagged.StructureElements, element => element.StructureType == "L");
+        PdfStructureElementInfo listItem = Assert.Single(tagged.StructureElements, element => element.StructureType == "LI");
+        PdfStructureElementInfo label = Assert.Single(tagged.StructureElements, element => element.StructureType == "Lbl");
+        PdfStructureElementInfo body = Assert.Single(tagged.StructureElements, element => element.StructureType == "LBody");
+        Assert.Contains(listItem.ObjectNumber, list.ChildElementObjectNumbers);
+        Assert.Contains(label.ObjectNumber, listItem.ChildElementObjectNumbers);
+        Assert.Contains(body.ObjectNumber, listItem.ChildElementObjectNumbers);
+
+        PdfStructureElementInfo table = Assert.Single(tagged.StructureElements, element => element.StructureType == "Table");
+        PdfStructureElementInfo row = Assert.Single(tagged.StructureElements, element => element.StructureType == "TR");
+        PdfStructureElementInfo header = Assert.Single(tagged.StructureElements, element => element.StructureType == "TH");
+        Assert.Contains(row.ObjectNumber, table.ChildElementObjectNumbers);
+        Assert.Contains(header.ObjectNumber, row.ChildElementObjectNumbers);
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("/Scope /Column", raw, StringComparison.Ordinal);
+        Assert.Contains("/ColSpan 2", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CanvasStructure_RejectsInvalidRolesOptionsAndEmptyBuilders() {
+        var canvas = new PdfPageCanvas();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => canvas.Structure((PdfCanvasStructureRole)99, _ => { }));
+        Assert.Throws<ArgumentNullException>(() => canvas.Structure(PdfCanvasStructureRole.List, null!));
+        Assert.Throws<ArgumentException>(() => canvas.Structure(PdfCanvasStructureRole.List, _ => { }));
+        Assert.Throws<ArgumentException>(() => canvas.Structure(
+            PdfCanvasStructureRole.List,
+            nested => nested.Text("Item", 0D, 0D, 20D, 20D),
+            new PdfCanvasStructureOptions { ColumnSpan = 2 }));
+        Assert.Throws<ArgumentException>(() => canvas.Structure(
+            PdfCanvasStructureRole.TableCell,
+            nested => nested.Text("Cell", 0D, 0D, 20D, 20D),
+            new PdfCanvasStructureOptions { HeaderScope = PdfCanvasTableHeaderScope.Row }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfCanvasStructureOptions { ColumnSpan = 0 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfCanvasStructureOptions { HeaderScope = (PdfCanvasTableHeaderScope)99 });
+    }
+
+    [Fact]
+    public void CanvasFigure_GroupsMixedCanvasContentUnderOneTaggedFigure() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .TaggedPdfCatalogMarkers()
+            .Canvas(canvas => canvas.Figure("Composite diagram", figure => figure
+                .Shape(OfficeShape.Rectangle(20D, 10D), 12D, 12D)
+                .Text("Diagram label", 12D, 28D, 100D, 20D)
+                .Image(CreateMinimalRgbPng(), 120D, 12D, 20D, 20D, alternativeText: "Nested image alt")))
+            .ToBytes();
+
+        PdfTaggedContentInfo tagged = Assert.IsType<PdfTaggedContentInfo>(PdfInspector.Inspect(bytes).TaggedContent);
+        PdfStructureElementInfo figure = Assert.Single(tagged.StructureElements, element => element.StructureType == "Figure");
+        Assert.Equal("Composite diagram", figure.AlternateText);
+        Assert.DoesNotContain(tagged.StructureElements, element => element.StructureType == "P");
+        Assert.Equal(1, CountOccurrences(Encoding.ASCII.GetString(bytes), "/Figure <<"));
+    }
+
+    [Fact]
+    public void CanvasFigure_RejectsMissingAlternativeTextOrBuilder() {
+        var canvas = new PdfPageCanvas();
+
+        Assert.Throws<ArgumentException>(() => canvas.Figure(" ", _ => { }));
+        Assert.Throws<ArgumentNullException>(() => canvas.Figure("Figure", null!));
+        Assert.Throws<ArgumentException>(() => canvas.Figure("Figure", _ => { }));
+    }
+
+    [Fact]
     public void CanvasText_RendersAtFixedTopLeftCoordinatesWithoutMovingFlowContent() {
         byte[] bytes = PdfDocument.Create(new PdfOptions {
                 PageWidth = 240,
@@ -35,6 +162,33 @@ public class PdfDocumentCanvasTests {
         Assert.InRange(FindWordStartX(page, "CanvasTitle"), 23D, 26D);
         Assert.True(canvasY > flowY, "Canvas text should render above the flow paragraph when placed near the page top.");
         Assert.InRange(flowY, 77D, 91D);
+    }
+
+    [Fact]
+    public void CanvasText_EmitsTypedHeadingStructureWhenTagged() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .TaggedPdfCatalogMarkers()
+            .Canvas(canvas => canvas.Text(
+                new[] { TextRun.Normal("Canvas semantic heading") },
+                PdfCanvasTextStructureRole.Heading2,
+                24,
+                20,
+                180,
+                24,
+                fontSize: 12))
+            .ToBytes();
+
+        PdfTaggedContentInfo tagged = Assert.IsType<PdfTaggedContentInfo>(PdfInspector.Inspect(bytes).TaggedContent);
+        Assert.Contains("Document", tagged.StructureTypes);
+        Assert.Contains("H2", tagged.StructureTypes);
+        Assert.True(tagged.MarkedContentReferenceCount >= 1);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfPageCanvas().Text(
+            new[] { TextRun.Normal("Invalid") },
+            (PdfCanvasTextStructureRole)99,
+            0,
+            0,
+            10,
+            10));
     }
 
     [Fact]
@@ -1114,6 +1268,9 @@ public class PdfDocumentCanvasTests {
 
     private static void AssertClose(double expected, double actual) =>
         Assert.InRange(Math.Abs(expected - actual), 0D, 0.01D);
+
+    private static int CountOccurrences(string value, string marker) =>
+        value.Split(new[] { marker }, StringSplitOptions.None).Length - 1;
 
     private static byte[] CreateMinimalRgbPng() => PdfPngTestImages.CreateRgbPng(255, 0, 0);
 }

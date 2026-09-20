@@ -7,7 +7,6 @@ using OfficeIMO.Reader.Html;
 using OfficeIMO.Reader.Json;
 using OfficeIMO.Reader.Pdf;
 using OfficeIMO.Reader.Rtf;
-using OfficeIMO.Reader.Text;
 using OfficeIMO.Reader.Visio;
 using OfficeIMO.Reader.Xml;
 using OfficeIMO.Reader.Yaml;
@@ -49,7 +48,6 @@ public class ReaderDocumentBenchmarks {
         .AddJsonHandler()
         .AddPdfHandler()
         .AddRtfHandler()
-        .AddStructuredTextHandler()
         .AddVisioHandler()
         .AddXmlHandler()
         .AddYamlHandler()
@@ -98,6 +96,38 @@ public class ReaderTransportBenchmarks {
 
     [Benchmark]
     public OfficeDocumentReadResult Deserialize() => OfficeDocumentReadResultJson.Deserialize(_json);
+}
+
+[MemoryDiagnoser]
+[ShortRunJob(RuntimeMoniker.Net80)]
+public class ReaderHierarchicalChunkingBenchmarks {
+    private OfficeDocumentReadResult _document = null!;
+    private ReaderHierarchicalChunkingOptions _options = null!;
+    private ReaderChunkHierarchyResult _hierarchy = null!;
+
+    [GlobalSetup]
+    public void Setup() {
+        ReaderBenchmarkInput input = ReaderBenchmarkCorpus.Get("Markdown");
+        _document = ReaderDocumentBenchmarks.CreateReader().ReadDocument(
+            input.Bytes,
+            input.SourceName,
+            new ReaderOptions { ComputeHashes = false, MaxChars = 4_000, MaxTableRows = 5_000 });
+        _options = new ReaderHierarchicalChunkingOptions {
+            MaxTokens = 512,
+            OverlapTokens = 64,
+            MaxInputChunks = 10_000,
+            MaxOutputChunks = 50_000,
+            IncludeContextInText = true
+        };
+        _hierarchy = ReaderHierarchicalChunker.Chunk(_document, _options);
+    }
+
+    [Benchmark]
+    public ReaderChunkHierarchyResult ChunkHierarchy() =>
+        ReaderHierarchicalChunker.Chunk(_document, _options);
+
+    [Benchmark]
+    public string SerializeHierarchy() => _hierarchy.ToJson();
 }
 
 [MemoryDiagnoser]

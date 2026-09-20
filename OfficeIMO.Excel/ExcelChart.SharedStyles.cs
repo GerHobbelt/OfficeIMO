@@ -6,11 +6,13 @@ using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeIMO.Excel {
     public sealed partial class ExcelChart {
-        internal void ApplyAuthoredSeriesStyles(IReadOnlyList<ExcelChartSeries> seriesStyles) {
+        internal void ApplyAuthoredSeriesStyles(IReadOnlyList<ExcelChartSeries> seriesStyles,
+            IReadOnlyList<bool>? seriesLegendVisibility = null) {
             bool changed = false;
             for (int seriesIndex = 0; seriesIndex < seriesStyles.Count; seriesIndex++) {
                 ExcelChartSeries style = seriesStyles[seriesIndex];
-                changed |= ApplySeriesByIndex(seriesIndex, series => ApplyAuthoredSeriesStyle(series, style));
+                changed |= ApplySeriesByChartIndex(seriesIndex,
+                    series => ApplyAuthoredSeriesStyle(series, style));
 
                 if (style.PointColorArgb != null) {
                     for (int pointIndex = 0; pointIndex < style.PointColorArgb.Count; pointIndex++) {
@@ -18,22 +20,66 @@ namespace OfficeIMO.Excel {
                         if (!string.IsNullOrWhiteSpace(color)) {
                             int currentPoint = pointIndex;
                             string currentColor = color!;
-                            changed |= ApplySeriesByIndex(seriesIndex,
+                            changed |= ApplySeriesByChartIndex(seriesIndex,
                                 series => ApplyPointFill(series, currentPoint, NormalizeHexColor(currentColor)));
                         }
                     }
                 }
 
-                changed |= ApplySeriesMarkerByIndex(seriesIndex, marker => ApplyMarker(
+                changed |= ApplySeriesMarkerByChartIndex(seriesIndex, marker => ApplyMarker(
                     marker,
                     style.ShowMarkers ? MapMarkerStyle(style.MarkerShape) : C.MarkerStyleValues.None,
-                    style.MarkerSize,
+                    style.MarkerSize.HasValue ? System.Math.Min(72, style.MarkerSize.Value) : (int?)null,
                     style.ShowMarkers ? style.SeriesColorArgb : null,
                     style.ShowMarkers ? style.MarkerOutlineColorArgb : null,
                     style.ShowMarkers ? style.MarkerOutlineWidth : null));
             }
 
+            if (seriesLegendVisibility != null) {
+                changed |= ApplySeriesLegendVisibility(seriesLegendVisibility);
+            }
+
             if (changed) Save();
+        }
+
+        private bool ApplySeriesLegendVisibility(IReadOnlyList<bool> seriesLegendVisibility) {
+            C.Chart chart = GetChart();
+            C.Legend? legend = chart.GetFirstChild<C.Legend>();
+            bool hasHiddenSeries = false;
+            for (int index = 0; index < seriesLegendVisibility.Count; index++) {
+                if (!seriesLegendVisibility[index]) {
+                    hasHiddenSeries = true;
+                    break;
+                }
+            }
+            if (legend == null && !hasHiddenSeries) return false;
+
+            if (legend == null) {
+                legend = new C.Legend(
+                    new C.LegendPosition { Val = C.LegendPositionValues.Bottom },
+                    new C.Layout(),
+                    new C.Overlay { Val = false });
+                C.PlotArea? plotArea = chart.GetFirstChild<C.PlotArea>();
+                if (plotArea != null) chart.InsertAfter(legend, plotArea);
+                else chart.Append(legend);
+            }
+
+            bool changed = false;
+            C.LegendEntry? existing;
+            while ((existing = legend.GetFirstChild<C.LegendEntry>()) != null) {
+                existing.Remove();
+                changed = true;
+            }
+            for (int index = 0; index < seriesLegendVisibility.Count; index++) {
+                if (seriesLegendVisibility[index]) continue;
+                var entry = new C.LegendEntry(new C.Index { Val = (uint)index }, new C.Delete { Val = true });
+                OpenXmlElement? insertBefore = legend.GetFirstChild<C.Layout>();
+                insertBefore ??= legend.GetFirstChild<C.Overlay>();
+                if (insertBefore != null) legend.InsertBefore(entry, insertBefore);
+                else legend.Append(entry);
+                changed = true;
+            }
+            return changed;
         }
 
         private static void ApplyAuthoredSeriesStyle(OpenXmlCompositeElement series,

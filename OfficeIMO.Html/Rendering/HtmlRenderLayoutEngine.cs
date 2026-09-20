@@ -14,14 +14,17 @@ internal sealed partial class HtmlRenderLayoutEngine {
     private readonly HtmlRenderResourceSet _resources;
     private readonly HtmlCssPageRuleSet _pageRules;
     private readonly OfficeFontFaceCollection _fonts;
+    private readonly HtmlRenderMetadata _metadata;
     private readonly Uri? _baseUri;
     private readonly HtmlUrlPolicy _resourceUrlPolicy;
+    private readonly CancellationToken _cancellationToken;
     private IElement? _surfaceRootElement;
     private HtmlRenderBoxStyle? _surfaceRootStyle;
     private IElement? _viewportOverflowElement;
     private HtmlRenderBoxStyle? _viewportOverflowStyle;
     private int _paintOrder;
     private int _positionedSourceOrder;
+    private int _nextSemanticNodeId;
     private long _backgroundImageTileCount;
     private readonly List<PositionedElementRequest> _fixedPositionedElements = new List<PositionedElementRequest>();
     private readonly List<PositionedElementRequest> _rootPositionedElements = new List<PositionedElementRequest>();
@@ -35,6 +38,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
     private readonly Dictionary<IElement, bool> _containsInFlowFloatCache = new Dictionary<IElement, bool>();
     private readonly Dictionary<int, int> _rootStackingPaintOrders = new Dictionary<int, int>();
     private readonly Dictionary<IElement, int> _positionedSourceOrdersByElement = new Dictionary<IElement, int>();
+    private readonly Dictionary<IElement, int> _semanticNodeIds = new Dictionary<IElement, int>();
     private readonly HashSet<IElement> _registeredFixedElements = new HashSet<IElement>();
     private readonly HashSet<IElement> _registeredAbsoluteElements = new HashSet<IElement>();
     private readonly HashSet<IElement> _reportedPositionStaticAnchorFallbacks = new HashSet<IElement>();
@@ -48,8 +52,11 @@ internal sealed partial class HtmlRenderLayoutEngine {
     private readonly HashSet<string> _reportedOutlinePaintFallbacks = new HashSet<string>(StringComparer.Ordinal);
     private readonly HashSet<string> _reportedReplacedElementFallbacks = new HashSet<string>(StringComparer.Ordinal);
     private readonly HashSet<string> _reportedStickySources = new HashSet<string>(StringComparer.Ordinal);
+    private readonly HashSet<IElement> _reportedBidiElements = new HashSet<IElement>();
 
-    internal HtmlRenderLayoutEngine(IHtmlDocument document, HtmlComputedStyleSet computedStyles, HtmlRenderOptions options, HtmlDiagnosticReport diagnostics, HtmlRenderResourceSet? resources = null, HtmlCssPageRuleSet? pageRules = null, OfficeFontFaceCollection? fonts = null) {
+    internal HtmlRenderLayoutEngine(IHtmlDocument document, HtmlComputedStyleSet computedStyles, HtmlRenderOptions options, HtmlDiagnosticReport diagnostics, HtmlRenderResourceSet? resources = null, HtmlCssPageRuleSet? pageRules = null, OfficeFontFaceCollection? fonts = null, CancellationToken cancellationToken = default) {
+        _cancellationToken = cancellationToken;
+        _cancellationToken.ThrowIfCancellationRequested();
         _document = document;
         _options = options;
         _diagnostics = diagnostics;
@@ -58,11 +65,33 @@ internal sealed partial class HtmlRenderLayoutEngine {
         _resources = resources ?? new HtmlRenderResourceSet();
         _pageRules = pageRules ?? new HtmlCssPageRuleSet();
         _fonts = fonts?.Clone() ?? new OfficeFontFaceCollection();
+        string? language = document.DocumentElement?.GetAttribute("lang");
+        if (string.IsNullOrWhiteSpace(language)) language = document.DocumentElement?.GetAttribute("xml:lang");
+        _metadata = new HtmlRenderMetadata(document.Title, language, ResolveDocumentDirection(document, computedStyles));
         _baseUri = HtmlDocumentParser.ResolveEffectiveBaseUri(document, options.BaseUri);
         _resourceUrlPolicy = HtmlResourceUrlPolicy.Create(options.UrlPolicy);
     }
 
+    private static HtmlRenderTextDirection ResolveDocumentDirection(IHtmlDocument document, HtmlComputedStyleSet computedStyles) {
+        IElement? root = document.DocumentElement;
+        if (root != null && computedStyles.Elements.TryGetValue(root, out HtmlComputedStyle? style)) {
+            string computedDirection = style.GetValue("direction").Trim();
+            if (string.Equals(computedDirection, "rtl", StringComparison.OrdinalIgnoreCase)) {
+                return HtmlRenderTextDirection.RightToLeft;
+            }
+            if (string.Equals(computedDirection, "ltr", StringComparison.OrdinalIgnoreCase)) {
+                return HtmlRenderTextDirection.LeftToRight;
+            }
+        }
+
+        string? attributeDirection = root?.GetAttribute("dir");
+        return string.Equals(attributeDirection?.Trim(), "rtl", StringComparison.OrdinalIgnoreCase)
+            ? HtmlRenderTextDirection.RightToLeft
+            : HtmlRenderTextDirection.LeftToRight;
+    }
+
     internal HtmlRenderDocument Render() {
+        CheckCancellation();
         IElement root = _document.Body ?? _document.DocumentElement ?? throw new InvalidOperationException("The parsed HTML document has no renderable root element.");
         double surfaceWidth = _options.Mode == HtmlRenderMode.Paged ? _options.PageWidth : _options.ViewportWidth;
         double contentWidth = surfaceWidth - _options.Margins.Left - _options.Margins.Right;
@@ -85,10 +114,23 @@ internal sealed partial class HtmlRenderLayoutEngine {
             }
         }
 
-        IReadOnlyList<HtmlRenderFlowBlock> blocks = BuildChildBlocks(root, contentWidth, rootStyle, 0);
-        return _options.Mode == HtmlRenderMode.Paged
+        IReadOnlyList<HtmlRenderFlowBlock> blocks = rootStyle.Display == "none"
+            ? Array.Empty<HtmlRenderFlowBlock>()
+            : BuildChildBlocks(root, contentWidth, rootStyle, 0);
+        HtmlRenderDocument rendered = _options.Mode == HtmlRenderMode.Paged
             ? RenderPaged(blocks)
             : RenderContinuous(blocks);
+        CheckCancellation();
+        return rendered;
+    }
+
+    private void CheckCancellation() => _cancellationToken.ThrowIfCancellationRequested();
+
+    private int GetSemanticNodeId(IElement element) {
+        if (_semanticNodeIds.TryGetValue(element, out int nodeId)) return nodeId;
+        nodeId = ++_nextSemanticNodeId;
+        _semanticNodeIds[element] = nodeId;
+        return nodeId;
     }
 
     private HtmlRenderDocument RenderContinuous(IReadOnlyList<HtmlRenderFlowBlock> blocks) {
@@ -96,6 +138,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double y = _options.Margins.Top;
         var placements = new List<FlowPaintLayer>(blocks.Count);
         foreach (HtmlRenderFlowBlock block in blocks) {
+            CheckCancellation();
             placements.Add(new FlowPaintLayer(block, _options.Margins.Left, y, placements.Count));
             y += block.Height;
         }
@@ -112,12 +155,13 @@ internal sealed partial class HtmlRenderLayoutEngine {
         BuildRootStackingPaintOrders(blocks);
         AppendGlobalPositionedRequests(visuals, includeRoot: true, width, height, contentWidth, contentHeight, PositionedPaintBand.Negative);
         foreach (FlowPaintLayer placement in placements) {
+            CheckCancellation();
             AddTranslatedVisuals(visuals, placement.Block.Visuals, placement.X, placement.Y, placement.Block);
         }
         AppendGlobalPositionedRequests(visuals, includeRoot: true, width, height, contentWidth, contentHeight, PositionedPaintBand.NonNegative);
         ApplyViewportOverflow(visuals, width, height);
         var page = new HtmlRenderPage(1, width, height, visuals, fonts: _fonts);
-        return new HtmlRenderDocument(HtmlRenderMode.Continuous, new[] { page }, _diagnostics, _fonts);
+        return new HtmlRenderDocument(HtmlRenderMode.Continuous, new[] { page }, _diagnostics, _fonts, _metadata);
     }
 
     private HtmlRenderDocument RenderPaged(IReadOnlyList<HtmlRenderFlowBlock> blocks) {
@@ -138,6 +182,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double y = _options.Margins.Top;
         string? currentPageName = null;
         for (int index = 0; index < blocks.Count; index++) {
+            CheckCancellation();
             HtmlRenderFlowBlock block = blocks[index];
             bool hasPageContent = y > _options.Margins.Top + 0.0001D;
             if (hasPageContent && !string.Equals(currentPageName, block.PageName, StringComparison.OrdinalIgnoreCase)) {
@@ -167,6 +212,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             } else {
                 double blockOffset = 0D;
                 while (blockOffset < block.Height - 0.0001D) {
+                    CheckCancellation();
                     HtmlRenderContinuationGroup? continuationGroup = block.ContinuationGroups.FirstOrDefault(group => group.AppliesAt(blockOffset));
                     bool repeatContinuation = blockOffset > 0.0001D && continuationGroup != null && continuationGroup.Visuals.Count > 0 && continuationGroup.Height > 0D;
                     double continuationHeight = repeatContinuation ? continuationGroup!.Height : 0D;
@@ -285,12 +331,12 @@ internal sealed partial class HtmlRenderLayoutEngine {
         }
 
         CommitPage(pages, visuals, pageWidth, pageHeight, currentPageName);
-        return new HtmlRenderDocument(HtmlRenderMode.Paged, ApplyPageMarginContent(pages), _diagnostics, _fonts);
+        return new HtmlRenderDocument(HtmlRenderMode.Paged, ApplyPageMarginContent(pages), _diagnostics, _fonts, _metadata);
     }
 
     private List<HtmlRenderVisual> CreatePageVisuals(double width, double height) {
         var visuals = new List<HtmlRenderVisual> { CreatePageBackground(width, height) };
-        if (_surfaceRootElement == null || _surfaceRootStyle == null) return visuals;
+        if (_surfaceRootElement == null || _surfaceRootStyle == null || !_surfaceRootStyle.PaintVisible || _surfaceRootStyle.Display == "none") return visuals;
 
         var rootBackground = new List<HtmlRenderVisual>();
         AddBoxBackground(
@@ -458,6 +504,43 @@ internal sealed partial class HtmlRenderLayoutEngine {
                         fragment.Count,
                         clipGroup.Source,
                         Math.Max(start, clipGroup.LayoutY) - start));
+                }
+                continue;
+            }
+
+            if (visual is HtmlRenderSemanticGroup semanticGroup) {
+                IReadOnlyList<HtmlRenderVisual> children = SliceVisuals(semanticGroup.Visuals, start, end);
+                if (children.Count > 0) {
+                    fragment.Add(new HtmlRenderSemanticGroup(
+                        semanticGroup.Role,
+                        semanticGroup.X,
+                        semanticGroup.Y - start,
+                        semanticGroup.Width,
+                        Math.Max(0.01D, intersectionBottom - intersectionTop),
+                        children,
+                        fragment.Count,
+                        semanticGroup.Source,
+                        semanticGroup.ColumnSpan,
+                        semanticGroup.RowSpan,
+                        semanticGroup.HeaderScope,
+                        semanticGroup.LayoutY - start));
+                }
+                continue;
+            }
+
+            if (visual is HtmlRenderLogicalTextGroup logicalTextGroup) {
+                IReadOnlyList<HtmlRenderVisual> children = SliceVisuals(logicalTextGroup.Visuals, start, end);
+                if (children.Count > 0) {
+                    fragment.Add(new HtmlRenderLogicalTextGroup(
+                        ResolveLogicalText(children, logicalTextGroup.Text),
+                        logicalTextGroup.X,
+                        logicalTextGroup.Y - start,
+                        logicalTextGroup.Width,
+                        Math.Max(0.01D, intersectionBottom - intersectionTop),
+                        children,
+                        fragment.Count,
+                        logicalTextGroup.Source,
+                        logicalTextGroup.LayoutY - start));
                 }
                 continue;
             }

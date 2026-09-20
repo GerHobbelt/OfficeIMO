@@ -16,12 +16,16 @@ public static class HtmlRenderEngine {
 
         HtmlRenderOptions resolved = options?.Clone() ?? new HtmlRenderOptions();
         resolved.Validate();
+        HtmlRenderInputGuard.ValidateSource(html, resolved);
         IHtmlDocument document = HtmlDocumentParser.ParseDocument(html);
+        HtmlRenderInputGuard.ValidateDocument(document, resolved, CancellationToken.None);
         var diagnostics = new HtmlDiagnosticReport();
         var resourceOptions = new HtmlResourcePipelineOptions {
             BaseUri = resolved.BaseUri,
             UrlPolicy = (resolved.UrlPolicy ?? HtmlUrlPolicy.CreateOfficeIMOProfile()).Clone(),
-            MediaContext = resolved.MediaContext
+            MediaContext = resolved.MediaContext,
+            MediaWidth = resolved.Mode == HtmlRenderMode.Paged ? resolved.PageWidth : resolved.ViewportWidth,
+            MediaHeight = resolved.Mode == HtmlRenderMode.Paged ? resolved.PageHeight : resolved.ViewportHeight ?? 1056D
         };
         HtmlResourceManifest manifest = HtmlResourcePipeline.BuildManifest(document, resourceOptions);
         diagnostics.AddRange(manifest.Diagnostics.Diagnostics);
@@ -30,7 +34,7 @@ public static class HtmlRenderEngine {
         OfficeIMO.Drawing.OfficeFontFaceCollection fonts = HtmlRenderFontFaceLoader.Load(document, resources, resolved, diagnostics);
         HtmlCssPageRuleSet pageRules = HtmlCssPageSettingsResolver.Apply(document, resolved, diagnostics);
         resolved.Validate();
-        HtmlComputedStyleSet styles = HtmlComputedStyleEngine.ComputeForRendering(document, resolved.MediaContext);
+        HtmlComputedStyleSet styles = HtmlComputedStyleEngine.ComputeForRendering(document, resolved);
         return new HtmlRenderLayoutEngine(document, styles, resolved, diagnostics, resources, pageRules, fonts).Render();
     }
 
@@ -42,12 +46,16 @@ public static class HtmlRenderEngine {
         cancellationToken.ThrowIfCancellationRequested();
         HtmlRenderOptions resolved = options?.Clone() ?? new HtmlRenderOptions();
         resolved.Validate();
+        HtmlRenderInputGuard.ValidateSource(html, resolved);
         IHtmlDocument document = HtmlDocumentParser.ParseDocument(html);
+        HtmlRenderInputGuard.ValidateDocument(document, resolved, cancellationToken);
         var diagnostics = new HtmlDiagnosticReport();
         var resourceOptions = new HtmlResourcePipelineOptions {
             BaseUri = resolved.BaseUri,
             UrlPolicy = (resolved.UrlPolicy ?? HtmlUrlPolicy.CreateOfficeIMOProfile()).Clone(),
-            MediaContext = resolved.MediaContext
+            MediaContext = resolved.MediaContext,
+            MediaWidth = resolved.Mode == HtmlRenderMode.Paged ? resolved.PageWidth : resolved.ViewportWidth,
+            MediaHeight = resolved.Mode == HtmlRenderMode.Paged ? resolved.PageHeight : resolved.ViewportHeight ?? 1056D
         };
         HtmlResourceManifest manifest = HtmlResourcePipeline.BuildManifest(document, resourceOptions);
         diagnostics.AddRange(manifest.Diagnostics.Diagnostics);
@@ -57,9 +65,11 @@ public static class HtmlRenderEngine {
         AddPendingStylesheetDiagnostics(manifest, resources, diagnostics);
         OfficeIMO.Drawing.OfficeFontFaceCollection fonts = HtmlRenderFontFaceLoader.Load(document, resources, resolved, diagnostics);
         HtmlCssPageRuleSet pageRules = HtmlCssPageSettingsResolver.Apply(document, resolved, diagnostics);
+        cancellationToken.ThrowIfCancellationRequested();
         resolved.Validate();
-        HtmlComputedStyleSet styles = HtmlComputedStyleEngine.ComputeForRendering(document, resolved.MediaContext);
-        return new HtmlRenderLayoutEngine(document, styles, resolved, diagnostics, resources, pageRules, fonts).Render();
+        HtmlComputedStyleSet styles = HtmlComputedStyleEngine.ComputeForRendering(document, resolved);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new HtmlRenderLayoutEngine(document, styles, resolved, diagnostics, resources, pageRules, fonts, cancellationToken).Render();
     }
 
     /// <summary>

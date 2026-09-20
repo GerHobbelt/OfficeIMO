@@ -9,6 +9,18 @@ internal static partial class PdfWriter {
             EnsurePage();
             foreach (PdfCanvasItem item in canvas.Items) {
                 switch (item) {
+                    case PdfCanvasActualTextItem actualText:
+                        RenderCanvasActualText(actualText);
+                        break;
+                    case PdfCanvasStructureItem structure:
+                        RenderCanvasStructure(structure);
+                        break;
+                    case PdfCanvasFigureItem figure:
+                        RenderCanvasFigure(figure);
+                        break;
+                    case PdfCanvasOutlineItem outline:
+                        RenderCanvasOutline(outline);
+                        break;
                     case PdfCanvasTextItem text:
                         RenderCanvasText(text);
                         break;
@@ -46,6 +58,91 @@ internal static partial class PdfWriter {
             }
         }
 
+        private void RenderCanvasActualText(PdfCanvasActualTextItem item) {
+            EnsurePage();
+            sb.Append("/Span << /ActualText ")
+                .Append(PdfSyntaxEscaper.TextString(item.Text))
+                .Append(" >> BDC\n");
+            RenderCanvasBlock(new PdfCanvasBlock(item.Items));
+            sb.Append("EMC\n");
+        }
+
+        private void RenderCanvasStructure(PdfCanvasStructureItem item) {
+            PdfCanvasStructureOptions options = item.Options;
+            int? structureElementIndex = RegisterStructureContainer(
+                MapCanvasStructureType(item.Role),
+                _canvasStructureParentElementIndex,
+                MapCanvasTableHeaderScope(options.HeaderScope),
+                options.ColumnSpan,
+                options.RowSpan,
+                options.AlternativeText);
+            int? previous = _canvasStructureParentElementIndex;
+            _canvasStructureParentElementIndex = structureElementIndex ?? previous;
+            try {
+                RenderCanvasBlock(new PdfCanvasBlock(item.Items));
+            } finally {
+                _canvasStructureParentElementIndex = previous;
+            }
+        }
+
+        private static string MapCanvasStructureType(PdfCanvasStructureRole role) {
+            if (role == PdfCanvasStructureRole.Section) return "Sect";
+            if (role == PdfCanvasStructureRole.Division) return "Div";
+            if (role == PdfCanvasStructureRole.Paragraph) return "P";
+            if (role == PdfCanvasStructureRole.Heading1) return "H1";
+            if (role == PdfCanvasStructureRole.Heading2) return "H2";
+            if (role == PdfCanvasStructureRole.Heading3) return "H3";
+            if (role == PdfCanvasStructureRole.Heading4) return "H4";
+            if (role == PdfCanvasStructureRole.Heading5) return "H5";
+            if (role == PdfCanvasStructureRole.Heading6) return "H6";
+            if (role == PdfCanvasStructureRole.List) return "L";
+            if (role == PdfCanvasStructureRole.ListItem) return "LI";
+            if (role == PdfCanvasStructureRole.ListLabel) return "Lbl";
+            if (role == PdfCanvasStructureRole.ListBody) return "LBody";
+            if (role == PdfCanvasStructureRole.Table) return "Table";
+            if (role == PdfCanvasStructureRole.TableRow) return "TR";
+            if (role == PdfCanvasStructureRole.TableHeaderCell) return "TH";
+            if (role == PdfCanvasStructureRole.TableCell) return "TD";
+            return "Caption";
+        }
+
+        private static string MapCanvasTableHeaderScope(PdfCanvasTableHeaderScope? scope) {
+            if (scope == PdfCanvasTableHeaderScope.Row) return "Row";
+            if (scope == PdfCanvasTableHeaderScope.Column) return "Column";
+            if (scope == PdfCanvasTableHeaderScope.Both) return "Both";
+            return string.Empty;
+        }
+
+        private void RenderCanvasFigure(PdfCanvasFigureItem item) {
+            EnsurePage();
+            int? markedContentId = RegisterFigureStructureElement(item.AlternativeText, _canvasStructureParentElementIndex);
+            sb.Append("/Figure << /Alt ")
+                .Append(PdfSyntaxEscaper.TextString(item.AlternativeText));
+            if (markedContentId.HasValue) {
+                sb.Append(" /MCID ")
+                    .Append(markedContentId.Value.ToString(CultureInfo.InvariantCulture));
+            }
+
+            sb.Append(" >> BDC\n");
+            bool previous = _suppressCanvasAccessibilityWrappers;
+            _suppressCanvasAccessibilityWrappers = true;
+            try {
+                RenderCanvasBlock(new PdfCanvasBlock(item.Items));
+            } finally {
+                _suppressCanvasAccessibilityWrappers = previous;
+            }
+            sb.Append("EMC\n");
+        }
+
+        private void RenderCanvasOutline(PdfCanvasOutlineItem item) {
+            EnsurePage();
+            currentPage!.Bookmarks.Add(new PageBookmark {
+                Level = item.Level,
+                Title = item.Title,
+                Y = currentOpts.PageHeight - item.Y
+            });
+        }
+
         private void RenderCanvasText(PdfCanvasTextItem item) {
             ValidateCanvasBox(item.X, item.Y, item.Width, item.Height, "Canvas text");
             double size = item.FontSize ?? currentOpts.DefaultFontSize;
@@ -58,7 +155,8 @@ internal static partial class PdfWriter {
 
             double topY = currentOpts.PageHeight - item.Y;
             double bottomY = topY - item.Height;
-            int? markedContentId = RegisterTextStructureElement("P");
+            string? structureType = _suppressCanvasAccessibilityWrappers ? null : MapCanvasTextStructureType(item.StructureRole);
+            int? markedContentId = structureType == null ? null : RegisterTextStructureElement(structureType, _canvasStructureParentElementIndex);
             WriteClippedRichParagraph(
                 sb,
                 block,
@@ -75,12 +173,23 @@ internal static partial class PdfWriter {
                 item.Height,
                 item.X,
                 item.Width,
-                structureType: "P",
+                structureType: structureType,
                 markedContentId: markedContentId,
                 structurePage: currentPage);
             MarkRichFonts(item.Runs);
             DrawDebugCanvasItemBox(item.X, bottomY, item.Width, item.Height);
             pageDirty = true;
+        }
+
+        private static string MapCanvasTextStructureType(PdfCanvasTextStructureRole role) {
+            if (role == PdfCanvasTextStructureRole.Heading1) return "H1";
+            if (role == PdfCanvasTextStructureRole.Heading2) return "H2";
+            if (role == PdfCanvasTextStructureRole.Heading3) return "H3";
+            if (role == PdfCanvasTextStructureRole.Heading4) return "H4";
+            if (role == PdfCanvasTextStructureRole.Heading5) return "H5";
+            if (role == PdfCanvasTextStructureRole.Heading6) return "H6";
+            if (role == PdfCanvasTextStructureRole.Span) return "Span";
+            return "P";
         }
 
         private void RenderCanvasTextBox(PdfCanvasTextBoxItem item) {
@@ -140,7 +249,7 @@ internal static partial class PdfWriter {
 
                 double verticalOffset = GetCanvasTextBoxVerticalOffset(style.VerticalAlign, textHeight, textContentHeight);
                 var annotations = rotated ? new System.Collections.Generic.List<LinkAnnotation>() : currentPage!.Annotations;
-                int? markedContentId = RegisterTextStructureElement("P");
+                int? markedContentId = _suppressCanvasAccessibilityWrappers ? null : RegisterTextStructureElement("P", _canvasStructureParentElementIndex);
                 WriteClippedRichParagraph(
                     sb,
                     blockText,
@@ -157,7 +266,7 @@ internal static partial class PdfWriter {
                     textHeight,
                     textX,
                     textWidth,
-                    structureType: "P",
+                    structureType: _suppressCanvasAccessibilityWrappers ? null : "P",
                     markedContentId: markedContentId,
                     structurePage: currentPage);
                 MarkRichFonts(item.Runs);
@@ -284,14 +393,15 @@ internal static partial class PdfWriter {
             PdfDocument.ValidateImageFitDimensions(block.Info, imageStyle.Fit, nameof(imageStyle.Fit));
             double bottomY = currentOpts.PageHeight - item.Y - block.Height;
             PageImage pageImage = CreatePageImage(block, imageStyle, item.X, bottomY, block.Width, block.Height);
+            pageImage.SuppressAccessibilityWrapper = _suppressCanvasAccessibilityWrappers;
             pageImage.RotationAngle = item.RotationAngle;
             pageImage.HorizontalFlip = item.HorizontalFlip;
             pageImage.VerticalFlip = item.VerticalFlip;
             currentPage!.Images.Add(pageImage);
             pageImage.InlineDrawToken = "\n%OIMO_INLINE_IMAGE_" + currentPage.Images.Count.ToString("D6", CultureInfo.InvariantCulture) + "\n";
             sb.Append(pageImage.InlineDrawToken);
-            if (!string.IsNullOrWhiteSpace(pageImage.AlternativeText)) {
-                int? markedContentId = RegisterFigureStructureElement(pageImage.AlternativeText!);
+            if (!_suppressCanvasAccessibilityWrappers && !string.IsNullOrWhiteSpace(pageImage.AlternativeText)) {
+                int? markedContentId = RegisterFigureStructureElement(pageImage.AlternativeText!, _canvasStructureParentElementIndex);
                 pageImage.MarkedContentId = markedContentId;
                 pageImage.StructElementIndex = FindStructElementIndex(currentPage, markedContentId, "Figure");
             }

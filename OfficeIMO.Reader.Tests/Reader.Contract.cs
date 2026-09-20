@@ -1,5 +1,6 @@
 using OfficeIMO.Reader;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Xunit;
 
 namespace OfficeIMO.Tests;
@@ -28,6 +29,12 @@ public sealed class ReaderContractTests {
             root.GetProperty("properties").GetProperty("schemaId").GetProperty("const").GetString());
         Assert.Equal(OfficeDocumentReadResultSchema.CurrentVersion,
             root.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
+        Assert.Equal(
+            Enum.GetNames(typeof(ReaderInputKind)),
+            root.GetProperty("properties").GetProperty("kind").GetProperty("enum")
+                .EnumerateArray()
+                .Select(value => value.GetString())
+                .ToArray());
 
         string[] properties = root.GetProperty("properties")
             .EnumerateObject()
@@ -58,6 +65,12 @@ public sealed class ReaderContractTests {
 
     [Fact]
     public void OfficeDocumentReadResultJson_RoundTripsCurrentTransportShape() {
+        var chunkLocation = new ReaderLocation {
+            Path = "report.pdf",
+            Page = 1,
+            HeadingPath = "Q1 > Q2"
+        };
+        ReaderHeadingPath.SetHierarchyPath(chunkLocation, ReaderHeadingPath.Combine(new[] { "Q1 > Q2" }));
         var original = new OfficeDocumentReadResult {
             Kind = ReaderInputKind.Pdf,
             Source = new OfficeDocumentSource {
@@ -72,7 +85,7 @@ public sealed class ReaderContractTests {
                     Id = "chunk-1",
                     Kind = ReaderInputKind.Pdf,
                     Text = "Report body",
-                    Location = new ReaderLocation { Path = "report.pdf", Page = 1 }
+                    Location = chunkLocation
                 }
             },
             Tables = new[] {
@@ -104,7 +117,14 @@ public sealed class ReaderContractTests {
         Assert.Equal(ReaderInputKind.Pdf, restored.Kind);
         Assert.Equal("report.pdf", restored.Source.Path);
         Assert.Equal("officeimo.reader.pdf", Assert.Single(restored.CapabilitiesUsed));
-        Assert.Equal("Report body", Assert.Single(restored.Chunks).Text);
+        ReaderChunk restoredChunk = Assert.Single(restored.Chunks);
+        Assert.Equal("Report body", restoredChunk.Text);
+        Assert.Equal("Q1 > Q2", restoredChunk.Location.HeadingPath);
+        Assert.Equal(@"Q1 \> Q2", restoredChunk.Location.HierarchyHeadingPath);
+        ReaderChunkHierarchyNode restoredHeading = Assert.Single(
+            ReaderHierarchicalChunker.Chunk(restored).Nodes,
+            node => node.Kind == ReaderChunkHierarchyNodeKind.Heading);
+        Assert.Equal("Q1 > Q2", restoredHeading.Title);
         Assert.Equal("2", Assert.Single(Assert.Single(restored.Tables).Rows)[1]);
         OfficeDocumentDiagnostic diagnostic = Assert.Single(restored.Diagnostics);
         Assert.Equal(OfficeDocumentDiagnosticCategory.Content, diagnostic.Category);
@@ -156,10 +176,158 @@ public sealed class ReaderContractTests {
     }
 
     [Fact]
+    public void OfficeDocumentReadResultJson_RejectsUnknownSourceMembers() {
+        JsonObject envelope = JsonNode.Parse(
+            OfficeDocumentReadResultJson.Serialize(new OfficeDocumentReadResult()))!.AsObject();
+        envelope["source"]!["futureField"] = true;
+
+        JsonException exception = Assert.Throws<JsonException>(
+            () => OfficeDocumentReadResultJson.Deserialize(envelope.ToJsonString()));
+
+        Assert.Contains("source.futureField", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("source")]
+    [InlineData("capabilitiesUsed")]
+    [InlineData("chunks")]
+    [InlineData("diagnostics")]
+    public void OfficeDocumentReadResultJson_RejectsNullRequiredMembers(string propertyName) {
+        JsonObject envelope = JsonNode.Parse(
+            OfficeDocumentReadResultJson.Serialize(new OfficeDocumentReadResult()))!.AsObject();
+        envelope[propertyName] = null;
+
+        JsonException exception = Assert.Throws<JsonException>(
+            () => OfficeDocumentReadResultJson.Deserialize(envelope.ToJsonString()));
+
+        Assert.Contains(propertyName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("cannot be null", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeDocumentReadResultJson_AllowsNestedExtensionMembers() {
+        var result = new OfficeDocumentReadResult {
+            Chunks = new[] {
+                new ReaderChunk { Id = "chunk-1", Kind = ReaderInputKind.Text, Text = "Body" }
+            }
+        };
+        JsonObject envelope = JsonNode.Parse(OfficeDocumentReadResultJson.Serialize(result))!.AsObject();
+        JsonObject chunk = envelope["chunks"]![0]!.AsObject();
+        chunk["futureField"] = true;
+
+        OfficeDocumentReadResult restored = OfficeDocumentReadResultJson.Deserialize(envelope.ToJsonString());
+
+        Assert.Equal("chunk-1", Assert.Single(restored.Chunks).Id);
+    }
+
+    [Theory]
+    [InlineData("chunks")]
+    [InlineData("metadata")]
+    [InlineData("pages")]
+    [InlineData("blocks")]
+    [InlineData("tables")]
+    [InlineData("assets")]
+    [InlineData("links")]
+    [InlineData("forms")]
+    [InlineData("ocrCandidates")]
+    [InlineData("visuals")]
+    [InlineData("diagnostics")]
+    public void OfficeDocumentReadResultJson_RejectsNullItemsInRequiredObjectArrays(string propertyName) {
+        JsonObject envelope = JsonNode.Parse(
+            OfficeDocumentReadResultJson.Serialize(new OfficeDocumentReadResult()))!.AsObject();
+        envelope[propertyName] = new JsonArray((JsonNode?)null);
+
+        JsonException exception = Assert.Throws<JsonException>(
+            () => OfficeDocumentReadResultJson.Deserialize(envelope.ToJsonString()));
+
+        Assert.Contains(propertyName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("item 0", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("message")]
+    [InlineData("attributes")]
+    public void OfficeDocumentReadResultJson_RejectsNullRequiredDiagnosticMembers(string propertyName) {
+        var result = new OfficeDocumentReadResult {
+            Diagnostics = new[] { new OfficeDocumentDiagnostic { Code = "fixture", Message = "Fixture" } }
+        };
+        JsonObject envelope = JsonNode.Parse(OfficeDocumentReadResultJson.Serialize(result))!.AsObject();
+        envelope["diagnostics"]![0]![propertyName] = null;
+
+        JsonException exception = Assert.Throws<JsonException>(
+            () => OfficeDocumentReadResultJson.Deserialize(envelope.ToJsonString()));
+
+        Assert.Contains(propertyName, exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void OfficeDocumentReadResultJson_RejectsDiagnosticsWithoutStableCodes() {
+        var result = new OfficeDocumentReadResult {
+            Diagnostics = new[] { new OfficeDocumentDiagnostic { Message = "Missing code" } }
+        };
+
+        JsonException exception = Assert.Throws<JsonException>(() => OfficeDocumentReadResultJson.Serialize(result));
+
+        Assert.Contains("non-empty code", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("message")]
+    [InlineData("attributes")]
+    public void OfficeDocumentReadResultJson_RejectsNullDiagnosticMembersDuringSerialization(string propertyName) {
+        var diagnostic = new OfficeDocumentDiagnostic { Code = "fixture", Message = "Fixture" };
+        if (propertyName == "message") diagnostic.Message = null!;
+        if (propertyName == "attributes") diagnostic.Attributes = null!;
+        var result = new OfficeDocumentReadResult { Diagnostics = new[] { diagnostic } };
+
+        JsonException exception = Assert.Throws<JsonException>(() => OfficeDocumentReadResultJson.Serialize(result));
+
+        Assert.Contains(propertyName, exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void OfficeDocumentReadResultJson_RejectsNumericEnums() {
         string json = OfficeDocumentReadResultJson.Serialize(new OfficeDocumentReadResult());
-        string withNumericKind = json.Replace("\"kind\":\"Unknown\"", "\"kind\":0", StringComparison.Ordinal);
+        string withNumericKind = json.Replace("\"kind\":\"Unknown\"", "\"kind\":0");
 
         Assert.Throws<JsonException>(() => OfficeDocumentReadResultJson.Deserialize(withNumericKind));
+    }
+
+    [Theory]
+    [InlineData("markdown")]
+    [InlineData("html")]
+    [InlineData("json")]
+    public void OfficeDocumentReadResultJson_RejectsNullOptionalTextMembers(string propertyName) {
+        JsonObject envelope = JsonNode.Parse(
+            OfficeDocumentReadResultJson.Serialize(new OfficeDocumentReadResult()))!.AsObject();
+        envelope[propertyName] = null;
+
+        JsonException exception = Assert.Throws<JsonException>(
+            () => OfficeDocumentReadResultJson.Deserialize(envelope.ToJsonString()));
+
+        Assert.Contains(propertyName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("string", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("kind", "pdf")]
+    [InlineData("severity", "warning")]
+    [InlineData("category", "ocr")]
+    public void OfficeDocumentReadResultJson_RejectsEnumsWithSchemaInvalidCasing(string propertyName, string value) {
+        var result = new OfficeDocumentReadResult {
+            Diagnostics = new[] { new OfficeDocumentDiagnostic { Code = "fixture", Message = "Fixture" } }
+        };
+        JsonObject envelope = JsonNode.Parse(OfficeDocumentReadResultJson.Serialize(result))!.AsObject();
+        if (propertyName == "kind") {
+            envelope[propertyName] = value;
+        } else {
+            envelope["diagnostics"]![0]![propertyName] = value;
+        }
+
+        JsonException exception = Assert.Throws<JsonException>(
+            () => OfficeDocumentReadResultJson.Deserialize(envelope.ToJsonString()));
+
+        Assert.Contains(propertyName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("enum", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

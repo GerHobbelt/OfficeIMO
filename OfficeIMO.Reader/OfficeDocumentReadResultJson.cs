@@ -8,7 +8,7 @@ namespace OfficeIMO.Reader;
 /// <summary>
 /// JSON serialization helpers for the shared OfficeIMO document read result envelope.
 /// </summary>
-public static class OfficeDocumentReadResultJson {
+public static partial class OfficeDocumentReadResultJson {
     private static readonly string[] RequiredTopLevelProperties = {
         "schemaId",
         "schemaVersion",
@@ -28,6 +28,30 @@ public static class OfficeDocumentReadResultJson {
         "diagnostics"
     };
 
+    private static readonly HashSet<string> AllowedTopLevelProperties = new HashSet<string>(
+        new[] {
+            "schemaId",
+            "schemaVersion",
+            "kind",
+            "source",
+            "capabilitiesUsed",
+            "markdown",
+            "html",
+            "json",
+            "chunks",
+            "metadata",
+            "pages",
+            "blocks",
+            "tables",
+            "assets",
+            "links",
+            "forms",
+            "ocrCandidates",
+            "visuals",
+            "diagnostics"
+        },
+        StringComparer.Ordinal);
+
     /// <summary>
     /// Serializes a document read result into the stable OfficeIMO transport shape.
     /// </summary>
@@ -42,6 +66,8 @@ public static class OfficeDocumentReadResultJson {
             ? OfficeDocumentReadResultSchema.CurrentVersion
             : result.SchemaVersion;
         OfficeDocumentReadResultSchema.EnsureSupported(schemaId, schemaVersion);
+        EnsureStringCollection(result.CapabilitiesUsed, "capabilitiesUsed");
+        EnsureDiagnosticContracts(result.Diagnostics);
 
         return JsonSerializer.Serialize(ProjectResult(result), CreateOptions(indented));
     }
@@ -74,12 +100,16 @@ public static class OfficeDocumentReadResultJson {
         int schemaVersion = TryReadSchemaVersion(root);
         OfficeDocumentReadResultSchema.EnsureSupported(schemaId, schemaVersion);
         EnsureRequiredTopLevelProperties(root);
+        EnsureKnownTopLevelProperties(root);
+        EnsureNestedTransportContracts(root);
 
         OfficeDocumentReadResult? result = JsonSerializer.Deserialize<OfficeDocumentReadResult>(json, CreateReadOptions());
         if (result == null) {
             throw new JsonException("The document read result payload produced a null result.");
         }
-        return NormalizeDeserializedResult(result);
+        result = NormalizeDeserializedResult(result);
+        EnsureDiagnosticContracts(result.Diagnostics);
+        return result;
     }
 
     private static JsonSerializerOptions CreateOptions(bool indented) {
@@ -91,8 +121,7 @@ public static class OfficeDocumentReadResultJson {
 
     private static JsonSerializerOptions CreateReadOptions() {
         var options = new JsonSerializerOptions {
-            PropertyNameCaseInsensitive = true,
-            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+            PropertyNameCaseInsensitive = true
         };
         options.Converters.Add(new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false));
         return options;
@@ -101,8 +130,41 @@ public static class OfficeDocumentReadResultJson {
     private static void EnsureRequiredTopLevelProperties(JsonElement root) {
         for (int index = 0; index < RequiredTopLevelProperties.Length; index++) {
             string propertyName = RequiredTopLevelProperties[index];
-            if (!root.TryGetProperty(propertyName, out _)) {
+            if (!root.TryGetProperty(propertyName, out JsonElement property)) {
                 throw new JsonException($"Required document read result property '{propertyName}' is missing.");
+            }
+            if (property.ValueKind == JsonValueKind.Null) {
+                throw new JsonException($"Required document read result property '{propertyName}' cannot be null.");
+            }
+        }
+    }
+
+    private static void EnsureKnownTopLevelProperties(JsonElement root) {
+        foreach (JsonProperty property in root.EnumerateObject()) {
+            if (!AllowedTopLevelProperties.Contains(property.Name)) {
+                throw new JsonException($"Unknown document read result property '{property.Name}'.");
+            }
+        }
+    }
+
+    private static void EnsureDiagnosticContracts(IReadOnlyList<OfficeDocumentDiagnostic>? diagnostics) {
+        if (diagnostics == null) return;
+
+        for (int index = 0; index < diagnostics.Count; index++) {
+            OfficeDocumentDiagnostic? diagnostic = diagnostics[index];
+            if (diagnostic == null || string.IsNullOrWhiteSpace(diagnostic.Code)) {
+                throw new JsonException($"Document diagnostic at index {index} must have a non-empty code.");
+            }
+            if (diagnostic.Message == null) {
+                throw new JsonException($"Document diagnostic at index {index} must have a message string.");
+            }
+            if (diagnostic.Attributes == null) {
+                throw new JsonException($"Document diagnostic at index {index} must have an attributes object.");
+            }
+            foreach (KeyValuePair<string, string> attribute in diagnostic.Attributes) {
+                if (attribute.Value == null) {
+                    throw new JsonException($"Document diagnostic at index {index} has a null attribute value for '{attribute.Key}'.");
+                }
             }
         }
     }
@@ -543,6 +605,7 @@ public static class OfficeDocumentReadResultJson {
             normalizedStartLine = location.NormalizedStartLine,
             normalizedEndLine = location.NormalizedEndLine,
             headingPath = location.HeadingPath,
+            hierarchyHeadingPath = location.HierarchyHeadingPath,
             headingSlug = location.HeadingSlug,
             sourceBlockKind = location.SourceBlockKind,
             blockAnchor = location.BlockAnchor,
@@ -589,6 +652,9 @@ public static class OfficeDocumentReadResultJson {
 
         var projected = new object[values.Count];
         for (int i = 0; i < values.Count; i++) {
+            if (ReferenceEquals(values[i], null)) {
+                throw new JsonException($"Document transport collection contains a null item at index {i}.");
+            }
             projected[i] = projector(values[i]);
         }
 

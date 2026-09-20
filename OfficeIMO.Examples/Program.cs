@@ -90,7 +90,7 @@ namespace OfficeIMO.Examples {
             PowerPoint.DesignBriefRecommendationsPowerPoint.Example_DesignBriefRecommendationsPowerPoint(folderPath, false);
             PowerPoint.DeckPlanAdvisorPowerPoint.Example_DeckPlanAdvisorPowerPoint(folderPath, false);
             PowerPoint.LayoutStrategyComparisonPowerPoint.Example_LayoutStrategyComparisonPowerPoint(folderPath, false);
-            PowerPoint.FluentPowerPoint.Example_FluentPowerPoint(folderPath, false);
+            PowerPoint.DirectEditingPowerPoint.Example(folderPath, false);
             PowerPoint.ShapesPowerPoint.Example_PowerPointShapes(folderPath, false);
             PowerPoint.SlidesManagementPowerPoint.Example_SlidesManagement(folderPath, false);
             PowerPoint.SectionsWithoutRepairPowerPoint.Example_PowerPointSectionsWithoutRepair(folderPath, false);
@@ -143,6 +143,11 @@ namespace OfficeIMO.Examples {
             string templatesPath = Path.Combine(baseFolder, "Templates");
             string folderPath = Path.Combine(baseFolder, "Documents");
             Setup(folderPath);
+            if (HasArgument(args, "--opendocument")) {
+                OpenDocument.OpenDocumentMilestones.Example(folderPath);
+                return;
+            }
+
             if (HasArgument(args, "--modern-powerpoint")) {
                 PowerPoint.ModernPowerPointDeck.Example_ModernPowerPointDeck(folderPath, false);
                 return;
@@ -415,7 +420,7 @@ namespace OfficeIMO.Examples {
             PowerPoint.DesignBriefRecommendationsPowerPoint.Example_DesignBriefRecommendationsPowerPoint(folderPath, false);
             PowerPoint.DeckPlanAdvisorPowerPoint.Example_DeckPlanAdvisorPowerPoint(folderPath, false);
             PowerPoint.LayoutStrategyComparisonPowerPoint.Example_LayoutStrategyComparisonPowerPoint(folderPath, false);
-            PowerPoint.FluentPowerPoint.Example_FluentPowerPoint(folderPath, false);
+            PowerPoint.DirectEditingPowerPoint.Example(folderPath, false);
             PowerPoint.ShapesPowerPoint.Example_PowerPointShapes(folderPath, false);
             PowerPoint.SlidesManagementPowerPoint.Example_SlidesManagement(folderPath, false);
             PowerPoint.SectionsWithoutRepairPowerPoint.Example_PowerPointSectionsWithoutRepair(folderPath, false);

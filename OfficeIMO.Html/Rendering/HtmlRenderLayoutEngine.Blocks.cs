@@ -23,6 +23,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double allocatedAdjoiningMargins = 0D;
         var inlineNodes = new List<INode>();
         foreach (INode node in nodes) {
+            CheckCancellation();
             if (node is IElement element) {
                 if (ShouldSkipElement(element)) {
                     continue;
@@ -30,6 +31,18 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
                 HtmlRenderBoxStyle childStyle = _styleResolver.Resolve(element, width, parentStyle);
                 if (childStyle.Display == "none") {
+                    continue;
+                }
+                if (childStyle.Display == "contents" && HasBlockChildren(element, width, childStyle)) {
+                    double inlineHeight = FlushInlineNodes(blocks, inlineNodes, width, parentStyle, container, depth);
+                    flowHeight += inlineHeight;
+                    foreach (HtmlRenderFlowBlock flattenedBlock in BuildChildBlocks(element, width, childStyle, depth + 1)) {
+                        blocks.Add(flattenedBlock);
+                        flowHeight += flattenedBlock.Height;
+                    }
+
+                    adjoiningMargins.Clear();
+                    allocatedAdjoiningMargins = 0D;
                     continue;
                 }
                 if (ShouldExtractOutOfFlow(childStyle)) {
@@ -145,12 +158,15 @@ internal sealed partial class HtmlRenderLayoutEngine {
         if (tag == "table") return AttachElementMargins(ApplyElementPositioning(ApplyOverflowToSpecializedBlock(LayoutTable(element, containingWidth, style, depth), style, element, containingWidth), style, containingWidth, containingHeight, element), style, element);
         if (tag == "hr") return AttachElementMargins(ApplyElementPositioning(ApplyOverflowToSpecializedBlock(LayoutHorizontalRule(element, containingWidth, style), style, element, containingWidth), style, containingWidth, containingHeight, element), style, element);
         if (style.Display == "flex" && TryLayoutFlexContainer(element, containingWidth, style, depth, out HtmlRenderFlowBlock flexBlock)) {
+            flexBlock = ApplyElementSemantics(flexBlock, element);
             return AttachElementMargins(ApplyElementPositioning(ApplyOverflowToSpecializedBlock(flexBlock, style, element, containingWidth), style, containingWidth, containingHeight, element), style, element);
         }
         if (style.Display == "grid" && TryLayoutGridContainer(element, containingWidth, style, depth, out HtmlRenderFlowBlock gridBlock)) {
+            gridBlock = ApplyElementSemantics(gridBlock, element);
             return AttachElementMargins(ApplyElementPositioning(ApplyOverflowToSpecializedBlock(gridBlock, style, element, containingWidth), style, containingWidth, containingHeight, element), style, element);
         }
         if (TryLayoutMultiColumnContainer(element, containingWidth, style, depth, out HtmlRenderFlowBlock columnsBlock)) {
+            columnsBlock = ApplyElementSemantics(columnsBlock, element);
             return AttachElementMargins(ApplyElementPositioning(ApplyOverflowToSpecializedBlock(columnsBlock, style, element, containingWidth), style, containingWidth, containingHeight, element), style, element);
         }
 
@@ -218,7 +234,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             }
             AppendFlowPaintLayers(contentVisuals, childPaintLayers);
         } else {
-            string? prefix = tag == "li" ? ResolveListPrefix(element) : null;
+            string? prefix = tag == "li" ? ResolveListPrefix(element, style) : null;
             HtmlInlineLayout inline = LayoutInlineNodes(element.ChildNodes, contentWidth, style, depth, prefix, element);
             contentVisuals.AddRange(inline.Visuals);
             contentHeight = inline.Height;
@@ -304,6 +320,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             adjustedContinuationGroups,
             adjustedTrailingGroups,
             pageName: pageName);
+        block = ApplyElementSemantics(block, element);
         bool collapsesThrough = CanCollapseThroughEmptyBlock(style, usesBlockFormatting, children, contentVisuals, contentHeight);
         return AttachElementMargins(ApplyElementPositioning(block, style, containingWidth, containingHeight, element), style, element, collapsesThrough);
     }
@@ -375,6 +392,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             if (ShouldSkipElement(child)) continue;
             HtmlRenderBoxStyle style = _styleResolver.Resolve(child, width, parentStyle);
             if (style.FloatSide != "none") return true;
+            if (style.Display == "contents" && HasBlockChildren(child, width, style)) return true;
             if (style.Display != "none" && ShouldExtractOutOfFlow(style) && !UsesInlineStaticPosition(child, style)) return true;
             if (style.Display != "none" && HtmlRenderStyleResolver.IsBlockElement(child, style)) return true;
             if (style.Display != "none" && ContainsFloatingDescendant(child, width, style)) return true;
@@ -398,7 +416,8 @@ internal sealed partial class HtmlRenderLayoutEngine {
         shape.StrokeWidth = 0D;
         double height = style.MarginTop + lineWidth + style.MarginBottom;
         var visual = new HtmlRenderShape(shape, style.MarginLeft, style.MarginTop, 0, source: HtmlRenderStyleResolver.DescribeSource(element));
-        return new HtmlRenderFlowBlock(containingWidth, Math.Max(height, 0.01D), new[] { visual }, style.BreakBefore, style.BreakAfter, style.AvoidBreakInside, HtmlRenderStyleResolver.DescribeSource(element), pageName: style.PageName);
+        IReadOnlyList<HtmlRenderVisual> visuals = style.PaintVisible ? new[] { visual } : Array.Empty<HtmlRenderVisual>();
+        return new HtmlRenderFlowBlock(containingWidth, Math.Max(height, 0.01D), visuals, style.BreakBefore, style.BreakAfter, style.AvoidBreakInside, HtmlRenderStyleResolver.DescribeSource(element), pageName: style.PageName);
     }
 
     private double ResolveBoxWidth(double availableWidth, HtmlRenderBoxStyle style) {
@@ -441,7 +460,8 @@ internal sealed partial class HtmlRenderLayoutEngine {
             _options.MaxLayoutDepth);
     }
 
-    private static string? ResolveListPrefix(IElement element) {
+    private static string? ResolveListPrefix(IElement element, HtmlRenderBoxStyle style) {
+        if (string.Equals(style.ListStyleType, "none", StringComparison.OrdinalIgnoreCase)) return null;
         IElement? parent = element.ParentElement;
         if (parent == null) return "• ";
         if (!string.Equals(parent.TagName, "ol", StringComparison.OrdinalIgnoreCase)) return "• ";

@@ -6,8 +6,18 @@ namespace OfficeIMO.Html;
 internal sealed partial class HtmlRenderLayoutEngine {
     private HtmlRenderFlowBlock LayoutImage(IElement element, double containingWidth, HtmlRenderBoxStyle style, string? inheritedLink = null) {
         string sourceDescription = HtmlRenderStyleResolver.DescribeSource(element);
-        string? source = element.GetAttribute("src");
-        TryResolveImageSource(source, sourceDescription, out byte[]? bytes, out string contentType, out OfficeImageInfo? imageInfo);
+        IReadOnlyList<string> candidates = HtmlImageSourceResolver.ResolveImageSourceCandidatesForRendering(element, _baseUri, _resourceUrlPolicy, _options);
+        string? source = candidates.FirstOrDefault() ?? element.GetAttribute("src");
+        byte[]? bytes = null;
+        string contentType = string.Empty;
+        OfficeImageInfo? imageInfo = null;
+        foreach (string candidate in candidates) {
+            if (TryResolveImageSource(candidate, sourceDescription, out bytes, out contentType, out imageInfo, reportDiagnostics: false)) {
+                source = candidate;
+                break;
+            }
+        }
+        if (bytes == null) TryResolveImageSource(source, sourceDescription, out bytes, out contentType, out imageInfo);
         bool hasIntrinsicSize = imageInfo != null && imageInfo.Width > 0 && imageInfo.Height > 0;
         double intrinsicWidth = hasIntrinsicSize
             ? imageInfo!.Width * HtmlRenderOptions.CssPixelsPerInch / Math.Max(1D, imageInfo.DpiX)
@@ -37,16 +47,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         if (bytes != null && bytes.Length > 0 && placement.IsVisible) {
             if (string.Equals(contentType, "image/svg+xml", StringComparison.OrdinalIgnoreCase)) {
                 if (TryReadSvgDrawing(bytes, sourceDescription, out OfficeDrawing? svgDrawing) && svgDrawing != null) {
-                    objectVisuals.Add(new HtmlRenderDrawing(
-                        svgDrawing,
-                        imageX + placement.X,
-                        imageY + placement.Y,
-                        placement.Width,
-                        placement.Height,
-                        objectVisuals.Count,
-                        alternativeText,
-                        link,
-                        sourceDescription));
+                    AddSvgImageVisual(objectVisuals, svgDrawing, imageX, imageY, placement, alternativeText, link, sourceDescription);
                     addedObject = true;
                 }
             } else {
@@ -64,7 +65,10 @@ internal sealed partial class HtmlRenderLayoutEngine {
                     placement.SourceCrop));
                 addedObject = true;
                 if (!OfficeRasterImageDecoder.TryDecode(bytes, out _)) {
-                    _diagnostics.Add(ComponentName, HtmlRenderDiagnosticCodes.RasterDecoderUnavailable, "The image can be retained for SVG/PDF but the dependency-free PNG backend cannot decode this image format yet.", HtmlDiagnosticSeverity.Warning, sourceDescription, contentType);
+                    string message = imageInfo?.Format == OfficeImageFormat.Jpeg
+                        ? "The dependency-free PNG backend cannot decode this JPEG image; SVG and PDF can retain the encoded payload."
+                        : "The image cannot be decoded by the dependency-free raster backend and may be omitted from PNG or PDF output.";
+                    _diagnostics.Add(ComponentName, HtmlRenderDiagnosticCodes.RasterDecoderUnavailable, message, HtmlDiagnosticSeverity.Warning, sourceDescription, contentType);
                 }
             }
         }
@@ -98,6 +102,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             sourceDescription + ":content-clip");
         ReportReplacedElementFallbacks(style, element);
         AddBoxOutlinePaint(visuals, style, style.MarginLeft, style.MarginTop, boxWidth, boxHeight, element);
+        if (!style.PaintVisible) visuals.Clear();
 
         double outerHeight = style.MarginTop + boxHeight + style.MarginBottom;
         return new HtmlRenderFlowBlock(containingWidth, outerHeight, visuals, style.BreakBefore, style.BreakAfter, style.AvoidBreakInside, sourceDescription, pageName: style.PageName);
@@ -131,6 +136,61 @@ internal sealed partial class HtmlRenderLayoutEngine {
         return false;
     }
 
+    private static void AddSvgImageVisual(
+        ICollection<HtmlRenderVisual> visuals,
+        OfficeDrawing drawing,
+        double imageX,
+        double imageY,
+        ReplacedObjectPlacement placement,
+        string? alternativeText,
+        string? link,
+        string sourceDescription) {
+        double visibleX = imageX + placement.X;
+        double visibleY = imageY + placement.Y;
+        if (!placement.SourceCrop.HasCrop) {
+            visuals.Add(new HtmlRenderDrawing(
+                drawing,
+                visibleX,
+                visibleY,
+                placement.Width,
+                placement.Height,
+                visuals.Count,
+                alternativeText,
+                link,
+                sourceDescription));
+            return;
+        }
+
+        double visibleWidthRatio = Math.Max(
+            OfficeImageSourceCrop.MinimumVisibleRatio,
+            1D - placement.SourceCrop.Left - placement.SourceCrop.Right);
+        double visibleHeightRatio = Math.Max(
+            OfficeImageSourceCrop.MinimumVisibleRatio,
+            1D - placement.SourceCrop.Top - placement.SourceCrop.Bottom);
+        double fullWidth = placement.Width / visibleWidthRatio;
+        double fullHeight = placement.Height / visibleHeightRatio;
+        var child = new HtmlRenderDrawing(
+            drawing,
+            visibleX - fullWidth * placement.SourceCrop.Left,
+            visibleY - fullHeight * placement.SourceCrop.Top,
+            fullWidth,
+            fullHeight,
+            0,
+            alternativeText,
+            link,
+            sourceDescription);
+        visuals.Add(new HtmlRenderClipGroup(
+            visibleX,
+            visibleY,
+            placement.Width,
+            placement.Height,
+            clipHorizontal: true,
+            clipVertical: true,
+            new[] { child },
+            visuals.Count,
+            sourceDescription + ":object-fit-clip"));
+    }
+
     private bool TryResolveImageSource(
         string? source,
         string sourceDescription,
@@ -145,12 +205,30 @@ internal sealed partial class HtmlRenderLayoutEngine {
         string extension = string.Empty;
         if (_resources.TryGet(source, resolvedSource, out HtmlResolvedResource resolvedResource)) {
             bytes = resolvedResource.Bytes;
-            contentType = resolvedResource.ContentType;
+            contentType = NormalizeImageContentType(resolvedResource.ContentType);
             extension = OfficeImageInfo.GetDefaultExtension(OfficeImageInfo.FromMimeType(contentType));
-        } else if (HtmlImageDataUri.TryParse(source, out HtmlImageDataUri dataUri) && dataUri.TryDecodeBytes(out byte[] decoded)) {
-            bytes = decoded;
-            contentType = dataUri.MediaType;
-            extension = dataUri.FileExtension;
+        } else if (resolvedSource.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            && HtmlImageDataUri.TryParse(resolvedSource, out HtmlImageDataUri dataUri)) {
+            long estimatedBytes;
+            try {
+                estimatedBytes = dataUri.EstimateDecodedByteCount();
+            } catch (FormatException) {
+                estimatedBytes = -1L;
+            }
+
+            string diagnosticCode = string.Empty;
+            string diagnosticDetail = string.Empty;
+            bool withinBudget = estimatedBytes >= 0L
+                && _resources.CanAcceptInlineResource(estimatedBytes, _options, out diagnosticCode, out diagnosticDetail);
+            if (withinBudget && dataUri.TryDecodeBytes(out byte[] decoded)) {
+                var inlineResource = new HtmlResolvedResource(decoded, dataUri.MediaType);
+                _resources.AddInline(resolvedSource, inlineResource);
+                bytes = inlineResource.Bytes;
+                contentType = NormalizeImageContentType(inlineResource.ContentType);
+                extension = dataUri.FileExtension;
+            } else if (!withinBudget && diagnosticCode.Length > 0) {
+                _diagnostics.Add(ComponentName, diagnosticCode, "An image data URI exceeded the configured operation-wide resource budget.", HtmlDiagnosticSeverity.Warning, sourceDescription, diagnosticDetail);
+            }
         } else if (reportDiagnostics && !string.IsNullOrWhiteSpace(source) && !_resources.WasAttempted(source, resolvedSource)) {
             string code = resolvedSource.Length == 0 ? "ImageResourceRejectedByPolicy" : HtmlRenderDiagnosticCodes.ExternalImagePending;
             string message = resolvedSource.Length == 0
@@ -169,4 +247,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
         return true;
     }
+
+    private static string NormalizeImageContentType(string contentType) =>
+        OfficeImageInfo.TryNormalizeImageContentType(contentType, out string normalized) ? normalized : contentType.Split(';')[0].Trim();
 }

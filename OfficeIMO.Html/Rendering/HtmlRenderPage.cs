@@ -8,6 +8,7 @@ namespace OfficeIMO.Html;
 /// </summary>
 public sealed class HtmlRenderPage {
     private readonly ReadOnlyCollection<HtmlRenderVisual> _visuals;
+    private readonly ReadOnlyCollection<HtmlRenderVisual> _scene;
     private readonly OfficeFontFaceCollection _fonts;
 
     internal HtmlRenderPage(int pageNumber, double width, double height, IEnumerable<HtmlRenderVisual> visuals, string? pageName = null, OfficeFontFaceCollection? fonts = null) {
@@ -23,10 +24,11 @@ public sealed class HtmlRenderPage {
         Width = width;
         Height = height;
         PageName = pageName == null || string.IsNullOrWhiteSpace(pageName) ? null : pageName.Trim();
-        _visuals = new List<HtmlRenderVisual>(visuals ?? throw new ArgumentNullException(nameof(visuals)))
+        _scene = new List<HtmlRenderVisual>(visuals ?? throw new ArgumentNullException(nameof(visuals)))
             .OrderBy(item => item.PaintOrder)
             .ToList()
             .AsReadOnly();
+        _visuals = FlattenSemanticGroups(_scene).ToList().AsReadOnly();
         // The renderer passes one operation-scoped snapshot to every page. Public access still clones it.
         _fonts = fonts ?? new OfficeFontFaceCollection();
     }
@@ -46,18 +48,39 @@ public sealed class HtmlRenderPage {
     /// <summary>Ordered backend-neutral visuals on this page.</summary>
     public IReadOnlyList<HtmlRenderVisual> Visuals => _visuals;
 
+    /// <summary>Ordered backend-neutral scene including paint-neutral semantic ownership groups.</summary>
+    public IReadOnlyList<HtmlRenderVisual> Scene => _scene;
+
     /// <summary>Independent snapshot of scoped font faces used by this page.</summary>
     public OfficeFontFaceCollection Fonts => _fonts.Clone();
 
     /// <summary>Creates a dependency-free drawing snapshot for PNG or SVG rendering.</summary>
-    public OfficeDrawing CreateDrawing() {
+    public OfficeDrawing CreateDrawing() => CreateDrawing(CancellationToken.None);
+
+    /// <summary>Creates a dependency-free drawing snapshot for PNG or SVG rendering with cooperative cancellation.</summary>
+    public OfficeDrawing CreateDrawing(CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         var drawing = new OfficeDrawing(Width, Height);
         drawing.Fonts.AddRange(_fonts);
-        foreach (HtmlRenderVisual visual in _visuals) {
-            AddVisual(drawing, visual, Width, Height, _fonts);
+        foreach (HtmlRenderVisual visual in _scene) {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddVisual(drawing, visual, Width, Height, _fonts, cancellationToken);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return drawing;
+    }
+
+    private static IEnumerable<HtmlRenderVisual> FlattenSemanticGroups(IEnumerable<HtmlRenderVisual> visuals) {
+        foreach (HtmlRenderVisual visual in visuals) {
+            if (visual is HtmlRenderSemanticGroup semanticGroup) {
+                foreach (HtmlRenderVisual child in FlattenSemanticGroups(semanticGroup.Visuals)) yield return child;
+            } else if (visual is HtmlRenderLogicalTextGroup logicalTextGroup) {
+                foreach (HtmlRenderVisual child in FlattenSemanticGroups(logicalTextGroup.Visuals)) yield return child;
+            } else {
+                yield return visual;
+            }
+        }
     }
 
     private static void AddVisual(
@@ -65,7 +88,9 @@ public sealed class HtmlRenderPage {
         HtmlRenderVisual visual,
         double surfaceWidth,
         double surfaceHeight,
-        OfficeFontFaceCollection fonts) {
+        OfficeFontFaceCollection fonts,
+        CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         if (visual is HtmlRenderShape shape) {
             drawing.AddShape(shape.Shape.Clone(), shape.X, shape.Y);
         } else if (visual is HtmlRenderText text && text.Text.Length > 0) {
@@ -86,11 +111,15 @@ public sealed class HtmlRenderPage {
                 imagePattern.Pattern,
                 imagePattern.MaximumTileCount);
         } else if (visual is HtmlRenderClipGroup group) {
-            AddClipGroup(drawing, group, surfaceWidth, surfaceHeight, fonts);
+            AddClipGroup(drawing, group, surfaceWidth, surfaceHeight, fonts, cancellationToken);
         } else if (visual is HtmlRenderPathClipGroup pathClipGroup) {
-            AddPathClipGroup(drawing, pathClipGroup, surfaceWidth, surfaceHeight, fonts);
+            AddPathClipGroup(drawing, pathClipGroup, surfaceWidth, surfaceHeight, fonts, cancellationToken);
         } else if (visual is HtmlRenderEffectGroup effectGroup) {
-            AddEffectGroup(drawing, effectGroup, surfaceWidth, surfaceHeight, fonts);
+            AddEffectGroup(drawing, effectGroup, surfaceWidth, surfaceHeight, fonts, cancellationToken);
+        } else if (visual is HtmlRenderSemanticGroup semanticGroup) {
+            foreach (HtmlRenderVisual child in semanticGroup.Visuals) AddVisual(drawing, child, surfaceWidth, surfaceHeight, fonts, cancellationToken);
+        } else if (visual is HtmlRenderLogicalTextGroup logicalTextGroup) {
+            foreach (HtmlRenderVisual child in logicalTextGroup.Visuals) AddVisual(drawing, child, surfaceWidth, surfaceHeight, fonts, cancellationToken);
         }
     }
 
@@ -99,12 +128,16 @@ public sealed class HtmlRenderPage {
         HtmlRenderEffectGroup group,
         double surfaceWidth,
         double surfaceHeight,
-        OfficeFontFaceCollection fonts) {
+        OfficeFontFaceCollection fonts,
+        CancellationToken cancellationToken) {
         double nestedWidth = Math.Max(surfaceWidth, MaximumRight(group.Visuals));
         double nestedHeight = Math.Max(surfaceHeight, MaximumBottom(group.Visuals));
         var nested = new OfficeDrawing(Math.Max(0.01D, nestedWidth), Math.Max(0.01D, nestedHeight));
         nested.Fonts.AddRange(fonts);
-        foreach (HtmlRenderVisual child in group.Visuals) AddVisual(nested, child, nested.Width, nested.Height, fonts);
+        foreach (HtmlRenderVisual child in group.Visuals) {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddVisual(nested, child, nested.Width, nested.Height, fonts, cancellationToken);
+        }
         drawing.AddEffectDrawing(nested, group.Transform, group.Opacity);
     }
 
@@ -113,7 +146,8 @@ public sealed class HtmlRenderPage {
         HtmlRenderClipGroup group,
         double surfaceWidth,
         double surfaceHeight,
-        OfficeFontFaceCollection fonts) {
+        OfficeFontFaceCollection fonts,
+        CancellationToken cancellationToken) {
         double left = group.ClipHorizontal ? Math.Max(0D, group.ClipX) : 0D;
         double top = group.ClipVertical ? Math.Max(0D, group.ClipY) : 0D;
         double right = group.ClipHorizontal ? Math.Min(surfaceWidth, group.ClipX + group.ClipWidth) : surfaceWidth;
@@ -128,7 +162,10 @@ public sealed class HtmlRenderPage {
         double nestedHeight = Math.Max(surfaceHeight, MaximumBottom(group.Visuals)) - minimumTop;
         var nested = new OfficeDrawing(Math.Max(0.01D, nestedWidth), Math.Max(0.01D, nestedHeight));
         nested.Fonts.AddRange(fonts);
-        foreach (HtmlRenderVisual child in group.Visuals) AddVisual(nested, child.Translate(shiftX, shiftY, child.PaintOrder), nested.Width, nested.Height, fonts);
+        foreach (HtmlRenderVisual child in group.Visuals) {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddVisual(nested, child.Translate(shiftX, shiftY, child.PaintOrder), nested.Width, nested.Height, fonts, cancellationToken);
+        }
         drawing.AddClippedDrawing(
             nested,
             left,
@@ -143,12 +180,16 @@ public sealed class HtmlRenderPage {
         HtmlRenderPathClipGroup group,
         double surfaceWidth,
         double surfaceHeight,
-        OfficeFontFaceCollection fonts) {
+        OfficeFontFaceCollection fonts,
+        CancellationToken cancellationToken) {
         double nestedWidth = Math.Max(surfaceWidth, MaximumRight(group.Visuals));
         double nestedHeight = Math.Max(surfaceHeight, MaximumBottom(group.Visuals));
         var nested = new OfficeDrawing(Math.Max(0.01D, nestedWidth), Math.Max(0.01D, nestedHeight));
         nested.Fonts.AddRange(fonts);
-        foreach (HtmlRenderVisual child in group.Visuals) AddVisual(nested, child, nested.Width, nested.Height, fonts);
+        foreach (HtmlRenderVisual child in group.Visuals) {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddVisual(nested, child, nested.Width, nested.Height, fonts, cancellationToken);
+        }
         drawing.AddClippedDrawing(nested, group.ClipX, group.ClipY, group.ClipPath, -group.ClipX, -group.ClipY);
     }
 
@@ -159,6 +200,10 @@ public sealed class HtmlRenderPage {
                 ? Math.Max(visual.X + visual.Width, MaximumRight(pathClipGroup.Visuals))
             : visual is HtmlRenderEffectGroup effectGroup
                 ? Math.Max(visual.X + visual.Width, MaximumRight(effectGroup.Visuals))
+            : visual is HtmlRenderSemanticGroup semanticGroup
+                ? Math.Max(visual.X + visual.Width, MaximumRight(semanticGroup.Visuals))
+            : visual is HtmlRenderLogicalTextGroup logicalTextGroup
+                ? Math.Max(visual.X + visual.Width, MaximumRight(logicalTextGroup.Visuals))
                 : visual.X + visual.Width)
         .DefaultIfEmpty(0.01D)
         .Max();
@@ -170,6 +215,10 @@ public sealed class HtmlRenderPage {
                 ? Math.Max(visual.Y + visual.Height, MaximumBottom(pathClipGroup.Visuals))
             : visual is HtmlRenderEffectGroup effectGroup
                 ? Math.Max(visual.Y + visual.Height, MaximumBottom(effectGroup.Visuals))
+            : visual is HtmlRenderSemanticGroup semanticGroup
+                ? Math.Max(visual.Y + visual.Height, MaximumBottom(semanticGroup.Visuals))
+            : visual is HtmlRenderLogicalTextGroup logicalTextGroup
+                ? Math.Max(visual.Y + visual.Height, MaximumBottom(logicalTextGroup.Visuals))
                 : visual.Y + visual.Height)
         .DefaultIfEmpty(0.01D)
         .Max();
@@ -181,6 +230,10 @@ public sealed class HtmlRenderPage {
                 ? Math.Min(visual.X, MinimumLeft(pathClipGroup.Visuals))
                 : visual is HtmlRenderEffectGroup effectGroup
                     ? Math.Min(visual.X, MinimumLeft(effectGroup.Visuals))
+                : visual is HtmlRenderSemanticGroup semanticGroup
+                    ? Math.Min(visual.X, MinimumLeft(semanticGroup.Visuals))
+                : visual is HtmlRenderLogicalTextGroup logicalTextGroup
+                    ? Math.Min(visual.X, MinimumLeft(logicalTextGroup.Visuals))
                     : visual.X)
         .DefaultIfEmpty(0D)
         .Min();
@@ -192,6 +245,10 @@ public sealed class HtmlRenderPage {
                 ? Math.Min(visual.Y, MinimumTop(pathClipGroup.Visuals))
                 : visual is HtmlRenderEffectGroup effectGroup
                     ? Math.Min(visual.Y, MinimumTop(effectGroup.Visuals))
+                : visual is HtmlRenderSemanticGroup semanticGroup
+                    ? Math.Min(visual.Y, MinimumTop(semanticGroup.Visuals))
+                : visual is HtmlRenderLogicalTextGroup logicalTextGroup
+                    ? Math.Min(visual.Y, MinimumTop(logicalTextGroup.Visuals))
                     : visual.Y)
         .DefaultIfEmpty(0D)
         .Min();

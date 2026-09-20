@@ -41,6 +41,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         GridAxisLayout columns = ResolveGridAxisLayout(columnTracks, columnSizes, contentWidth, columnGap, style.JustifyContent, source, "justify-content");
 
         foreach (GridItem item in items) {
+            CheckCancellation();
             double cellWidth = columns.SpanSize(item.Column, item.ColumnSpan);
             ApplyInitialGridItemWidth(item, style, cellWidth);
             item.Block = LayoutFlexItem(item.Item, Math.Max(1D, cellWidth), style, depth + 1);
@@ -73,6 +74,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             rowLineNames);
 
         foreach (GridItem item in items) {
+            CheckCancellation();
             double cellWidth = columns.SpanSize(item.Column, item.ColumnSpan);
             double cellHeight = rows.SpanSize(item.Row, item.RowSpan);
             ApplyFinalGridItemSize(item, style, cellWidth, cellHeight);
@@ -96,6 +98,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double contentY = style.MarginTop + style.BorderTopWidth + style.PaddingTop;
         var itemPaintLayers = new List<FlowPaintLayer>();
         foreach (GridItem item in items) {
+            CheckCancellation();
             double itemX = contentX + columns.Positions[item.Column] + item.OffsetX;
             double itemY = contentY + rows.Positions[item.Row] + item.OffsetY;
             if (item.Item.Element != null) {
@@ -119,9 +122,14 @@ internal sealed partial class HtmlRenderLayoutEngine {
             visuals);
         AddBoxOutlinePaint(visuals, style, style.MarginLeft, style.MarginTop, boxWidth, boxHeight, element);
 
-        IEnumerable<double> breakOffsets = Enumerable.Range(1, Math.Max(0, rowCount - 1))
+        IEnumerable<double> rowBreakOffsets = Enumerable.Range(1, Math.Max(0, rowCount - 1))
             .Where(boundary => !items.Any(item => item.Row < boundary && item.Row + item.RowSpan > boundary))
             .Select(boundary => contentY + rows.Positions[boundary]);
+        IEnumerable<double> itemBreakOffsets = items
+            .Where(item => item.RowSpan == 1 && items.Count(other => other.Row <= item.Row && other.Row + other.RowSpan > item.Row) == 1)
+            .SelectMany(item => item.Block!.BreakOffsets.Select(offset =>
+                contentY + rows.Positions[item.Row] + item.OffsetY + offset));
+        IEnumerable<double> breakOffsets = rowBreakOffsets.Concat(itemBreakOffsets).Distinct().OrderBy(offset => offset);
         block = new HtmlRenderFlowBlock(
             containingWidth,
             outerHeight,

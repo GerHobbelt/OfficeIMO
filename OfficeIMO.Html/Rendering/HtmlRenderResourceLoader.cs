@@ -27,6 +27,42 @@ internal sealed class HtmlRenderResourceSet {
         }
     }
 
+    internal bool CanAcceptInlineResource(
+        long estimatedBytes,
+        HtmlRenderOptions options,
+        out string diagnosticCode,
+        out string diagnosticDetail) {
+        if (estimatedBytes > options.MaxResourceBytes) {
+            diagnosticCode = HtmlRenderDiagnosticCodes.ResourceByteLimitExceeded;
+            diagnosticDetail = "bytes=" + estimatedBytes;
+            return false;
+        }
+
+        if (AcceptedResourceCount >= options.MaxResourceCount) {
+            diagnosticCode = HtmlRenderDiagnosticCodes.ResourceCountLimitExceeded;
+            diagnosticDetail = "limit=" + options.MaxResourceCount;
+            return false;
+        }
+
+        if (estimatedBytes > options.MaxTotalResourceBytes - AcceptedResourceBytes) {
+            diagnosticCode = HtmlRenderDiagnosticCodes.TotalResourceByteLimitExceeded;
+            diagnosticDetail = "bytes=" + (AcceptedResourceBytes + estimatedBytes);
+            return false;
+        }
+
+        diagnosticCode = string.Empty;
+        diagnosticDetail = string.Empty;
+        return true;
+    }
+
+    internal void AddInline(string resolvedSource, HtmlResolvedResource resource) {
+        if (string.IsNullOrWhiteSpace(resolvedSource) || _resources.ContainsKey(resolvedSource)) return;
+        AcceptedResourceBytes += resource.Bytes.LongLength;
+        AcceptedResourceCount++;
+        _resources[resolvedSource] = resource;
+        _resolvedSources[resolvedSource] = resolvedSource;
+    }
+
     internal bool TryGet(string? source, string? resolvedSource, out HtmlResolvedResource resource) {
         if (!string.IsNullOrWhiteSpace(resolvedSource) && _resources.TryGetValue(resolvedSource!, out resource!)) return true;
         if (!string.IsNullOrWhiteSpace(source) && _resources.TryGetValue(source!, out resource!)) return true;
@@ -72,7 +108,9 @@ internal static class HtmlRenderResourceLoader {
 
         var resourceOptions = new HtmlResourcePipelineOptions {
             UrlPolicy = (options.UrlPolicy ?? HtmlUrlPolicy.CreateOfficeIMOProfile()).Clone(),
-            MediaContext = options.MediaContext
+            MediaContext = options.MediaContext,
+            MediaWidth = options.Mode == HtmlRenderMode.Paged ? options.PageWidth : options.ViewportWidth,
+            MediaHeight = options.Mode == HtmlRenderMode.Paged ? options.PageHeight : options.ViewportHeight ?? 1056D
         };
         while (pending.Count > 0) {
             cancellationToken.ThrowIfCancellationRequested();
