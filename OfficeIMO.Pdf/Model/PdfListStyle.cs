@@ -77,6 +77,12 @@ public sealed class PdfListStyle {
 
     /// <summary>List marker and text color. A list block color overrides this value.</summary>
     public PdfColor? Color { get; set; }
+    /// <summary>Optional standard font family used for list markers. When null the writer uses the current default font.</summary>
+    public PdfStandardFont? MarkerFont { get; set; }
+    /// <summary>When true, list markers render with the bold variant of the current list font.</summary>
+    public bool MarkerBold { get; set; }
+    /// <summary>When true, list markers render with the italic variant of the current list font.</summary>
+    public bool MarkerItalic { get; set; }
     /// <summary>When true, the list moves as a unit instead of splitting across pages when it fits in the page frame.</summary>
     public bool KeepTogether { get; set; }
     /// <summary>When true, the list moves to the next page when it would otherwise be separated from the following flow block.</summary>
@@ -93,6 +99,9 @@ public sealed class PdfListStyle {
             SpacingAfter = SpacingAfter,
             ItemSpacing = ItemSpacing,
             Color = Color,
+            MarkerFont = MarkerFont,
+            MarkerBold = MarkerBold,
+            MarkerItalic = MarkerItalic,
             KeepTogether = KeepTogether,
             KeepWithNext = KeepWithNext
         };

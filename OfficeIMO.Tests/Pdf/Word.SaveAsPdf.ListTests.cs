@@ -87,6 +87,80 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Honors_Direct_List_Paragraph_Indentation() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListDirectIndent.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListDirectIndent.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordList bulletList = document.AddList(WordListStyle.Bulleted);
+                WordListLevel level = bulletList.Numbering.Levels[0];
+                level.IndentationLeft = 720;
+                level.IndentationHanging = 360;
+
+                bulletList.AddItem("RegularIndentMarker");
+                WordParagraph wideIndent = bulletList.AddItem("WideIndentMarker");
+                wideIndent.IndentationBeforePoints = 72;
+                wideIndent.IndentationHangingPoints = 36;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            double regularX = Assert.Single(words, word => word.Text == "RegularIndentMarker").BoundingBox.Left;
+            double wideX = Assert.Single(words, word => word.Text == "WideIndentMarker").BoundingBox.Left;
+
+            Assert.True(wideX > regularX + 30D, $"Expected direct Word list paragraph indentation to move the list text right. Regular x: {regularX:0.##}; wide x: {wideX:0.##}.");
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Honors_Paragraph_Style_List_Indentation() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleIndent.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleIndent.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeListStyleIndent";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native List Style Indent" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleParagraphProperties(new Indentation {
+                        Left = "1440",
+                        Hanging = "360"
+                    }))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordList bulletList = document.AddList(WordListStyle.Bulleted);
+                WordListLevel level = bulletList.Numbering.Levels[0];
+                level.IndentationLeft = 720;
+                level.IndentationHanging = 360;
+
+                bulletList.AddItem("RegularStyleFallbackMarker");
+                WordParagraph styledIndent = bulletList.AddItem("StyledIndentMarker");
+                styledIndent.SetStyleId(styleId);
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            double regularX = Assert.Single(words, word => word.Text == "RegularStyleFallbackMarker").BoundingBox.Left;
+            double styledX = Assert.Single(words, word => word.Text == "StyledIndentMarker").BoundingBox.Left;
+
+            Assert.True(styledX > regularX + 30D, $"Expected paragraph style indentation to move native Word list text right. Regular x: {regularX:0.##}; styled x: {styledX:0.##}.");
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Renders_Custom_And_Nested_Word_List_Markers() {
             string docPath = Path.Combine(_directoryWithFiles, "PdfNativeCustomNestedListMarkers.docx");
             string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeCustomNestedListMarkers.pdf");
@@ -217,6 +291,132 @@ namespace OfficeIMO.Tests {
             Assert.Matches(@"/F\d+\s+11\s+Tf", content);
             Assert.Contains("1 1 0 rg", content, StringComparison.Ordinal);
             Assert.Equal("Native list link metadata", link.Contents);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Maps_Paragraph_Style_Color_To_List_Marker() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleMarkerColor.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleMarkerColor.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeListMarkerColor";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native List Marker Color" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleRunProperties(new Color { Val = "C00000" }))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordList numberedList = document.AddCustomList();
+                numberedList.Numbering.AddLevel(new WordListLevel(WordListLevelKind.DecimalDot));
+                WordParagraph styled = numberedList.AddItem("StyledListMarkerColor");
+                styled.SetStyleId(styleId);
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            byte[] bytes = File.ReadAllBytes(pdfPath);
+            string content = ReadPdfPageContent(bytes);
+            var listItems = PdfTextExtractor.ExtractListItemsByPage(bytes)
+                .SelectMany(page => page.ListItems)
+                .ToList();
+
+            Assert.Contains(listItems, item => item.Marker == "1" && item.Text == "StyledListMarkerColor");
+            Assert.True(
+                CountOccurrences(content, "0.753 0 0 rg") >= 2,
+                "Expected paragraph style color to be emitted for both the list marker and the list item text.");
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Maps_Paragraph_Style_BoldItalic_To_List_Marker() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleMarkerBoldItalic.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleMarkerBoldItalic.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeListMarkerBoldItalic";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native List Marker Bold Italic" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleRunProperties(new Bold(), new Italic()))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordList numberedList = document.AddCustomList();
+                numberedList.Numbering.AddLevel(new WordListLevel(WordListLevelKind.DecimalDot));
+                WordParagraph styled = numberedList.AddItem("StyledListMarkerBoldItalic");
+                styled.SetStyleId(styleId);
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            byte[] bytes = File.ReadAllBytes(pdfPath);
+            string content = ReadPdfPageContent(bytes);
+            var listItems = PdfTextExtractor.ExtractListItemsByPage(bytes)
+                .SelectMany(page => page.ListItems)
+                .ToList();
+
+            Assert.Contains(listItems, item => item.Marker == "1" && item.Text == "StyledListMarkerBoldItalic");
+            Assert.True(
+                Regex.Matches(content, @"/F4\s+11\s+Tf").Count >= 2,
+                "Expected paragraph style bold italic typography to be emitted for both the list marker and the list item text.");
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Maps_Paragraph_Style_Font_To_List_Marker() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleMarkerFont.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListStyleMarkerFont.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeListMarkerFont";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native List Marker Font" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleRunProperties(new RunFonts { Ascii = "Courier New", HighAnsi = "Courier New" }))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordList numberedList = document.AddCustomList();
+                numberedList.Numbering.AddLevel(new WordListLevel(WordListLevelKind.DecimalDot));
+                WordParagraph styled = numberedList.AddItem("StyledListMarkerFont");
+                styled.SetStyleId(styleId);
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            byte[] bytes = File.ReadAllBytes(pdfPath);
+            string content = ReadPdfPageContent(bytes);
+            var listItems = PdfTextExtractor.ExtractListItemsByPage(bytes)
+                .SelectMany(page => page.ListItems)
+                .ToList();
+
+            Assert.Contains(listItems, item => item.Marker == "1" && item.Text == "StyledListMarkerFont");
+            Assert.True(
+                Regex.Matches(content, @"/F19\s+11\s+Tf").Count >= 2,
+                "Expected paragraph style font family to be emitted for both the list marker and the list item text.");
         }
 
         [Fact]

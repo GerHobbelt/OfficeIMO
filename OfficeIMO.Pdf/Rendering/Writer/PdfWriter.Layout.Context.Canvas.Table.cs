@@ -236,6 +236,7 @@ internal static partial class PdfWriter {
             double firstBaseline = cellTop - padTop - verticalOffset - GetAscenderForOptions(cellFont, fontSize, currentOpts) + style.RowBaselineOffset;
             var visibleLines = SliceTableCellLines(lines, 0, lineCount);
             var visibleHeights = SliceTableCellLineHeights(lines, 0, lineCount, leading);
+            var visibleAlignments = SliceTableCellLineAlignments(lines, 0, lineCount);
             string? linkUri = cell.LinkUri;
             string? linkDestinationName = cell.LinkDestinationName;
             string? linkContents = cell.LinkContents;
@@ -265,7 +266,8 @@ internal static partial class PdfWriter {
                 innerWidth,
                 structureType: rowIsHeader ? "TH" : "TD",
                 markedContentId: markedContentId,
-                structurePage: currentPage);
+                structurePage: currentPage,
+                lineAlignments: visibleAlignments);
             if (cell.Runs.Any(run => run.Bold || rowUsesBold)) {
                 currentPage!.UsedBold = true;
                 usedBold = true;
@@ -295,10 +297,10 @@ internal static partial class PdfWriter {
 
             if (HasCellLinkTarget(linkUri, linkDestinationName)) {
                 currentPage!.Annotations.Add(new LinkAnnotation {
-                    X1 = cellX + padLeft,
-                    Y1 = cellBottom,
-                    X2 = cellX + cellWidth - padRight,
-                    Y2 = cellTop,
+                    X1 = cellX + padLeft - TableCellClipBleed,
+                    Y1 = cellBottom - TableCellClipBleed,
+                    X2 = cellX + cellWidth - padRight + TableCellClipBleed,
+                    Y2 = cellTop + TableCellClipBleed,
                     Uri = linkUri,
                     DestinationName = linkDestinationName,
                     Contents = linkContents ?? cell.Text

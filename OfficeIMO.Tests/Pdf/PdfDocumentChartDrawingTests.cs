@@ -56,6 +56,29 @@ public class PdfDocumentChartDrawingTests {
     }
 
     [Fact]
+    public void FlowDrawing_Honors_Chart_Title_Top_Padding() {
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot(
+            "Title padding chart",
+            "Padded Title",
+            OfficeChartKind.Pie,
+            new OfficeChartData(
+                new[] { "Passed", "Failed" },
+                new[] {
+                    new OfficeChartSeries("Outcomes", new[] { 4D, 2D })
+                }),
+            widthPoints: 320D,
+            heightPoints: 200D,
+            layout: new OfficeChartLayout(
+                showDataLabels: true,
+                showDataLabelValues: true,
+                titleTopPadding: 31D)));
+
+        OfficeDrawingText title = drawing.Elements.OfType<OfficeDrawingText>().Single(text => text.Text == "Padded Title");
+
+        Assert.Equal(31D, title.Y);
+    }
+
+    [Fact]
     public void ScatterRange_IncludesSharedXValuesWhenSeriesMixExplicitAndSharedCoordinates() {
         var series = new[] {
             new OfficeChartSeries("Explicit", new[] { 4D, 5D }, new[] { 10D, 20D }),
@@ -490,12 +513,39 @@ public class PdfDocumentChartDrawingTests {
     [Fact]
     public void FlowDrawing_IgnoresBracketDirectivesInDataLabelNumberFormatsLinearly() {
         MethodInfo method = typeof(OfficeChartDrawingRenderer).GetMethod("FormatDataLabelValue", BindingFlags.NonPublic | BindingFlags.Static)!;
-        string unmatchedPrefixFormat = new string('[', 4096) + "0";
+        string unmatchedPrefixFormat = new string('[', 512) + "0";
         string directivePrefix = (string)method.Invoke(null, new object?[] { 123D, "[Red]$0" })!;
         string unmatchedPrefix = (string)method.Invoke(null, new object?[] { 123D, unmatchedPrefixFormat })!;
 
         Assert.Equal("$123", directivePrefix);
-        Assert.Equal(new string('[', 4096) + "123", unmatchedPrefix);
+        Assert.Equal(new string('[', 512) + "123", unmatchedPrefix);
+    }
+
+    [Fact]
+    public void FlowDrawing_DropsOversizedChartNumberFormatsFromLayout() {
+        string oversized = "\"" + new string('x', 2048) + "\"0";
+
+        var layout = new OfficeChartLayout(
+            dataLabelNumberFormat: oversized,
+            axisNumberFormat: oversized,
+            horizontalAxisNumberFormat: oversized,
+            verticalAxisNumberFormat: oversized);
+
+        Assert.Null(layout.DataLabelNumberFormat);
+        Assert.Null(layout.AxisNumberFormat);
+        Assert.Null(layout.HorizontalAxisNumberFormat);
+        Assert.Null(layout.VerticalAxisNumberFormat);
+    }
+
+    [Fact]
+    public void FlowDrawing_FallsBackForOversizedChartNumberFormatsBeforeParsingAffixes() {
+        MethodInfo method = typeof(OfficeChartDrawingRenderer).GetMethod("FormatDataLabelValue", BindingFlags.NonPublic | BindingFlags.Static)!;
+        string oversized = "\"" + new string('x', 2048) + "\"0";
+
+        string formatted = (string)method.Invoke(null, new object?[] { 123D, oversized })!;
+
+        Assert.Equal("123", formatted);
+        Assert.DoesNotContain("x", formatted);
     }
 
     [Fact]
@@ -1445,6 +1495,24 @@ public class PdfDocumentChartDrawingTests {
         OfficeChartStyle style = CreateNativeWordChartStyle(chart, chartElement, plotArea, OfficeChartKind.ColumnClustered, 1, 1);
 
         Assert.False(style.ShowBackground);
+    }
+
+    [Fact]
+    public void WordChartStyle_Uses_Word_Default_Chart_Surface_When_Style_Is_Implicit() {
+        var chart = new Chart();
+        var chartElement = new BarChart(
+            new BarDirection { Val = BarDirectionValues.Column },
+            new BarGrouping { Val = BarGroupingValues.Clustered },
+            CreateBarSeries(0U, new[] { "Q1" }, new[] { 1D }));
+        var plotArea = new PlotArea(chartElement);
+
+        OfficeChartStyle style = CreateNativeWordChartStyle(chart, chartElement, plotArea, OfficeChartKind.ColumnClustered, 1, 1);
+
+        Assert.True(style.ShowBackground);
+        Assert.True(style.ShowBorder);
+        Assert.Equal(OfficeColor.White, style.BackgroundColor);
+        Assert.Equal(OfficeColor.Black, style.TitleColor);
+        Assert.Equal("Calibri", style.FontFamily);
     }
 
     [Fact]

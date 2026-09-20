@@ -14,6 +14,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using A = DocumentFormat.OpenXml.Drawing;
+using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using V = DocumentFormat.OpenXml.Vml;
 using PdfPigDocument = UglyToad.PdfPig.PdfDocument;
 using Xunit;
@@ -1202,7 +1203,8 @@ public partial class Word {
         }
 
         string text = PdfTextExtractor.ExtractAllText(pdfPath);
-        Assert.Contains("Native header first Native header second", text);
+        string normalizedText = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+        Assert.Contains("Native header first Native header second", normalizedText);
         Assert.Contains("Native header newline body", text);
     }
 
@@ -1269,6 +1271,37 @@ public partial class Word {
         Assert.Contains("0.184 0.435 0.243 rg", rawPdf, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SaveAsPdf_OfficeIMOEngine_Ignores_Malformed_Inline_Word_Chart_References(bool relationshipPointsToImagePart) {
+        string suffix = relationshipPointsToImagePart ? "WrongPart" : "MissingPart";
+        string docPath = Path.Combine(_directoryWithFiles, $"PdfNativeMalformedInlineWordChart{suffix}.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, $"PdfNativeMalformedInlineWordChart{suffix}.pdf");
+        const string relationshipId = "rIdMalformedInlineChart";
+        var options = new PdfSaveOptions {
+            IncludePageNumbers = false
+        };
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordParagraph paragraph = document.AddParagraph("Before malformed inline chart");
+            if (relationshipPointsToImagePart) {
+                AddPngImagePart(document, relationshipId);
+            }
+
+            paragraph._paragraph!.Append(CreateMalformedInlineChartRun(relationshipId));
+            document.AddParagraph("After malformed inline chart");
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, options);
+        }
+
+        Assert.Contains(options.Warnings, warning => warning.Code == "NativeBodyChartUnsupported");
+        string text = PdfTextExtractor.ExtractAllText(pdfPath);
+        Assert.Contains("Before malformed inline chart", text);
+        Assert.Contains("After malformed inline chart", text);
+    }
+
     [Fact]
     public void SaveAsPdf_OfficeIMOEngine_Renders_Word_Pie_DataLabels() {
         string docPath = Path.Combine(_directoryWithFiles, "PdfNativeWordPieDataLabels.docx");
@@ -1299,6 +1332,37 @@ public partial class Word {
         Assert.Contains("1; 100%", text);
         Assert.Contains("0; 0%", text);
         Assert.Contains("After pie labels", text);
+    }
+
+    private static Run CreateMalformedInlineChartRun(string relationshipId) {
+        var chartReference = new ChartReference {
+            Id = relationshipId
+        };
+        chartReference.AddNamespaceDeclaration("c", "http://schemas.openxmlformats.org/drawingml/2006/chart");
+        chartReference.AddNamespaceDeclaration("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+
+        return new Run(
+            new DocumentFormat.OpenXml.Wordprocessing.Drawing(
+                new DW.Inline(
+                    new DW.Extent {
+                        Cx = 3048000L,
+                        Cy = 1714500L
+                    },
+                    new DW.DocProperties {
+                        Id = 1U,
+                        Name = "malformed chart"
+                    },
+                    new A.Graphic(
+                        new A.GraphicData(chartReference) {
+                            Uri = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+                        }))));
+    }
+
+    private static void AddPngImagePart(WordDocument document, string relationshipId) {
+        ImagePart imagePart = document._wordprocessingDocument.MainDocumentPart!.AddImagePart(ImagePartType.Png, relationshipId);
+        byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
+        using Stream stream = imagePart.GetStream(FileMode.Create, FileAccess.Write);
+        stream.Write(png, 0, png.Length);
     }
 
     [Fact]
@@ -1912,6 +1976,33 @@ public partial class Word {
         Assert.Contains("0.184 0.702 0.267 rg", rawPdf, StringComparison.Ordinal);
         Assert.Contains("0.969 0.404 0.027 rg", rawPdf, StringComparison.Ordinal);
         Assert.Contains("0.525 0.557 0.588 rg", rawPdf, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Word_Chart_Title_Band() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeWordChartTitleBand.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeWordChartTitleBand.pdf");
+        var options = new PdfSaveOptions {
+            IncludePageNumbers = false
+        };
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordChart chart = document.AddChart("Word PDF Title Band", false, 360, 220);
+            chart.AddPie("Passed", 4);
+            chart.AddPie("Failed", 2);
+            document.AddParagraph("After chart title band");
+
+            object snapshot = CreateNativeWordChartSnapshot(chart);
+            object layout = snapshot.GetType().GetProperty("Layout")!.GetValue(snapshot)!;
+            Assert.Equal(31D, (double)layout.GetType().GetProperty("TitleTopPadding")!.GetValue(layout)!);
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, options);
+        }
+
+        Assert.DoesNotContain(options.Warnings, warning => warning.Code == "NativeBodyChartUnsupported");
+        string text = PdfTextExtractor.ExtractAllText(pdfPath);
+        Assert.Contains("After chart title band", text);
     }
 
     [Fact]

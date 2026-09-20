@@ -92,7 +92,7 @@ internal static partial class PdfWriter {
     }
 
     private static PdfStandardFont GetHeadingFont(PdfOptions options, PdfHeadingStyle? style) {
-        var normalFont = ChooseNormal(options.DefaultFont);
+        var normalFont = ChooseNormal(style?.Font ?? options.DefaultFont);
         return GetHeadingBold(style) ? ChooseBold(normalFont) : normalFont;
     }
 
@@ -101,7 +101,8 @@ internal static partial class PdfWriter {
             new TextRun(
                 heading.Text,
                 bold: GetHeadingBold(style),
-                color: color)
+                color: color,
+                font: style?.Font)
         });
 
     private static string GetHeadingFontResource(PdfHeadingStyle? style) {
@@ -126,6 +127,23 @@ internal static partial class PdfWriter {
 
     private static double GetListMarkerGap(PdfListStyle? style, double defaultGap) {
         return style?.GetMarkerGap(defaultGap) ?? defaultGap;
+    }
+
+    private static PdfStandardFont GetListMarkerFont(PdfListStyle? style, PdfStandardFont defaultFont) {
+        PdfStandardFont normalFont = ChooseNormal(style?.MarkerFont ?? defaultFont);
+        if (style?.MarkerBold == true && style.MarkerItalic) {
+            return ChooseBoldItalic(normalFont);
+        }
+
+        if (style?.MarkerBold == true) {
+            return ChooseBold(normalFont);
+        }
+
+        if (style?.MarkerItalic == true) {
+            return ChooseItalic(normalFont);
+        }
+
+        return normalFont;
     }
 
     private static double GetListItemSpacing(PdfListStyle? style, double leading) {

@@ -271,10 +271,21 @@ namespace OfficeIMO.Word.Pdf {
         private static string GetNativeCellText(WordTableCell cell) =>
             GetNativeCellText(cell, null);
 
+        private readonly record struct NativeCellText(IReadOnlyList<PdfCore.TextRun> Runs, IReadOnlyList<PdfCore.PdfTableCellParagraph> Paragraphs);
+
         private static IReadOnlyList<PdfCore.TextRun> CreateNativeCellRuns(WordTableCell cell, Dictionary<long, int>? footnoteNumbersById) {
+            return CreateNativeCellText(cell, footnoteNumbersById, NativeDocumentDefaults.WordDefault, NativeTableStyleDefaults.Empty).Runs;
+        }
+
+        private static NativeCellText CreateNativeCellText(WordTableCell cell, Dictionary<long, int>? footnoteNumbersById, NativeDocumentDefaults nativeDefaults) {
+            return CreateNativeCellText(cell, footnoteNumbersById, nativeDefaults, NativeTableStyleDefaults.Empty);
+        }
+
+        private static NativeCellText CreateNativeCellText(WordTableCell cell, Dictionary<long, int>? footnoteNumbersById, NativeDocumentDefaults nativeDefaults, NativeTableStyleDefaults tableStyleDefaults) {
             var runs = new List<PdfCore.TextRun>();
+            var paragraphs = new List<PdfCore.PdfTableCellParagraph>();
             foreach (WordParagraph paragraph in GetNativeCellParagraphs(cell)) {
-                List<PdfCore.TextRun> paragraphRuns = CreateNativeCellParagraphRuns(paragraph, footnoteNumbersById);
+                List<PdfCore.TextRun> paragraphRuns = CreateNativeCellParagraphRuns(paragraph, footnoteNumbersById, tableStyleDefaults);
                 if (paragraphRuns.Count == 0) {
                     continue;
                 }
@@ -284,12 +295,36 @@ namespace OfficeIMO.Word.Pdf {
                 }
 
                 runs.AddRange(paragraphRuns);
+                paragraphs.Add(new PdfCore.PdfTableCellParagraph(
+                    paragraphRuns,
+                    GetNativeCellParagraphSpacingAfter(paragraph, nativeDefaults, tableStyleDefaults),
+                    MapNativeParagraphAlign(ResolveNativeParagraphJustification(paragraph))));
             }
 
-            return runs;
+            return new NativeCellText(runs, paragraphs);
         }
 
-        private static List<PdfCore.TextRun> CreateNativeCellParagraphRuns(WordParagraph paragraph, Dictionary<long, int>? footnoteNumbersById) {
+        private static double GetNativeCellParagraphSpacingAfter(WordParagraph paragraph, NativeDocumentDefaults nativeDefaults) {
+            return GetNativeCellParagraphSpacingAfter(paragraph, nativeDefaults, NativeTableStyleDefaults.Empty);
+        }
+
+        private static double GetNativeCellParagraphSpacingAfter(WordParagraph paragraph, NativeDocumentDefaults nativeDefaults, NativeTableStyleDefaults tableStyleDefaults) {
+            NativeParagraphStyleDefaults styleDefaults = GetNativeParagraphStyleDefaults(paragraph);
+            double fontSize = ResolveNativeParagraphFontSize(paragraph, nativeDefaults, styleDefaults);
+            double lineHeight = ResolveNativeParagraphLineHeight(paragraph, fontSize, nativeDefaults, styleDefaults);
+            W.SpacingBetweenLines? directSpacing = paragraph._paragraph?.ParagraphProperties?.GetFirstChild<W.SpacingBetweenLines>();
+            double spacingAfter = paragraph.LineSpacingAfterPoints ??
+                GetNativeSpacingAfterPoints(directSpacing, fontSize, lineHeight) ??
+                styleDefaults.SpacingAfter ??
+                tableStyleDefaults.ParagraphSpacingAfter ??
+                (nativeDefaults.ParagraphSpacingAfterDeclared ? nativeDefaults.ParagraphSpacingAfter : 0D);
+            return spacingAfter > 0D && !double.IsNaN(spacingAfter) && !double.IsInfinity(spacingAfter) ? spacingAfter : 0D;
+        }
+
+        private static List<PdfCore.TextRun> CreateNativeCellParagraphRuns(WordParagraph paragraph, Dictionary<long, int>? footnoteNumbersById) =>
+            CreateNativeCellParagraphRuns(paragraph, footnoteNumbersById, NativeTableStyleDefaults.Empty);
+
+        private static List<PdfCore.TextRun> CreateNativeCellParagraphRuns(WordParagraph paragraph, Dictionary<long, int>? footnoteNumbersById, NativeTableStyleDefaults tableStyleDefaults) {
             var result = new List<PdfCore.TextRun>();
             List<WordParagraph> runs = GetNativeRuns(paragraph);
             string content = paragraph.IsHyperLink && paragraph.Hyperlink != null ? paragraph.Hyperlink.Text : AppendNativeTextWithEquation(paragraph.Text, paragraph);
@@ -304,23 +339,23 @@ namespace OfficeIMO.Word.Pdf {
                         continue;
                     }
 
-                    if (IsNativeTextWrappingBreak(run)) {
+                    if (IsNativeTextWrappingBreak(run) && string.IsNullOrEmpty(run.Text)) {
                         result.Add(PdfCore.TextRun.LineBreak());
                         tabIndex = 0;
                         continue;
                     }
 
-                    AddNativeCellRun(result, run, tabStops, ref tabIndex);
+                    AddNativeCellRun(result, run, tableStyleDefaults, tabStops, ref tabIndex);
                 }
 
                 string? supplementalText = GetNativeSupplementalTextAfterRuns(content, runs);
                 if (!string.IsNullOrEmpty(supplementalText)) {
-                    AddNativeCellText(result, supplementalText!, paragraph, tabStops, ref tabIndex);
+                    AddNativeCellText(result, supplementalText!, paragraph, tableStyleDefaults, tabStops, ref tabIndex);
                 }
             } else if (paragraph.IsHyperLink && paragraph.Hyperlink != null && !string.IsNullOrEmpty(paragraph.Hyperlink.Text)) {
-                AddNativeCellHyperLinkRun(result, paragraph.Hyperlink.Text, paragraph, paragraph.Hyperlink, tabStops, ref tabIndex);
+                AddNativeCellHyperLinkRun(result, paragraph.Hyperlink.Text, paragraph, paragraph.Hyperlink, tableStyleDefaults, tabStops, ref tabIndex);
             } else if (!string.IsNullOrEmpty(content)) {
-                AddNativeCellText(result, content, paragraph, tabStops, ref tabIndex);
+                AddNativeCellText(result, content, paragraph, tableStyleDefaults, tabStops, ref tabIndex);
             }
 
             foreach (W.SdtRun repeatingSection in repeatingSectionControls) {
@@ -334,7 +369,7 @@ namespace OfficeIMO.Word.Pdf {
                         tabIndex = 0;
                     }
 
-                    AddNativeCellText(result, itemText, paragraph, tabStops, ref tabIndex);
+                    AddNativeCellText(result, itemText, paragraph, tableStyleDefaults, tabStops, ref tabIndex);
                 }
             }
 
@@ -346,25 +381,25 @@ namespace OfficeIMO.Word.Pdf {
             return result;
         }
 
-        private static void AddNativeCellRun(List<PdfCore.TextRun> target, WordParagraph run, IReadOnlyList<WordTabStop> tabStops, ref int tabIndex) {
+        private static void AddNativeCellRun(List<PdfCore.TextRun> target, WordParagraph run, NativeTableStyleDefaults tableStyleDefaults, IReadOnlyList<WordTabStop> tabStops, ref int tabIndex) {
             if (string.IsNullOrEmpty(run.Text)) {
                 return;
             }
 
             if (run.IsHyperLink && run.Hyperlink != null) {
-                AddNativeCellHyperLinkRun(target, run.Text, run, run.Hyperlink, tabStops, ref tabIndex);
+                AddNativeCellHyperLinkRun(target, run.Text, run, run.Hyperlink, tableStyleDefaults, tabStops, ref tabIndex);
                 return;
             }
 
-            AddNativeCellTextRuns(target, run.Text, text => CreateNativeCellTextRun(text, run), tabStops, ref tabIndex);
+            AddNativeCellTextRuns(target, run.Text, text => CreateNativeCellTextRun(text, run, tableStyleDefaults), tabStops, ref tabIndex);
         }
 
-        private static void AddNativeCellText(List<PdfCore.TextRun> target, string text, WordParagraph paragraph, IReadOnlyList<WordTabStop> tabStops, ref int tabIndex) {
-            AddNativeCellTextRuns(target, text, value => CreateNativeCellTextRun(value, paragraph), tabStops, ref tabIndex);
+        private static void AddNativeCellText(List<PdfCore.TextRun> target, string text, WordParagraph paragraph, NativeTableStyleDefaults tableStyleDefaults, IReadOnlyList<WordTabStop> tabStops, ref int tabIndex) {
+            AddNativeCellTextRuns(target, text, value => CreateNativeCellTextRun(value, paragraph, tableStyleDefaults), tabStops, ref tabIndex);
         }
 
-        private static void AddNativeCellHyperLinkRun(List<PdfCore.TextRun> target, string text, WordParagraph paragraph, WordHyperLink hyperlink, IReadOnlyList<WordTabStop> tabStops, ref int tabIndex) {
-            AddNativeCellTextRuns(target, text, value => CreateNativeCellLinkRun(value, paragraph, hyperlink), tabStops, ref tabIndex);
+        private static void AddNativeCellHyperLinkRun(List<PdfCore.TextRun> target, string text, WordParagraph paragraph, WordHyperLink hyperlink, NativeTableStyleDefaults tableStyleDefaults, IReadOnlyList<WordTabStop> tabStops, ref int tabIndex) {
+            AddNativeCellTextRuns(target, text, value => CreateNativeCellLinkRun(value, paragraph, hyperlink, tableStyleDefaults), tabStops, ref tabIndex);
         }
 
         private static void AddNativeCellTextRuns(List<PdfCore.TextRun> target, string text, Func<string, PdfCore.TextRun> createRun, IReadOnlyList<WordTabStop> tabStops, ref int tabIndex) {
@@ -424,40 +459,45 @@ namespace OfficeIMO.Word.Pdf {
             Equals(left.Color, right.Color) &&
             Equals(left.BackgroundColor, right.BackgroundColor);
 
-        private static PdfCore.TextRun CreateNativeCellTextRun(string text, WordParagraph paragraph) =>
-            new PdfCore.TextRun(
+        private static PdfCore.TextRun CreateNativeCellTextRun(string text, WordParagraph paragraph, NativeTableStyleDefaults tableStyleDefaults = default) {
+            NativeResolvedTextStyle style = ResolveNativeTextRunStyle(paragraph, tableRunStyleDefaults: tableStyleDefaults.RunStyle);
+            return new PdfCore.TextRun(
                 text,
-                bold: paragraph.Bold,
-                underline: paragraph.Underline != null,
-                color: ParseNativeColor(paragraph.ColorHex),
-                italic: paragraph.Italic,
-                strike: paragraph.Strike || paragraph.DoubleStrike,
-                fontSize: paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0 ? paragraph.FontSize.Value : null,
+                bold: style.Bold,
+                underline: style.Underline,
+                color: style.Color,
+                italic: style.Italic,
+                strike: style.Strike,
+                fontSize: style.FontSize,
+                font: style.Font,
                 baseline: GetNativeTextBaseline(paragraph),
-                backgroundColor: MapNativeHighlight(paragraph.Highlight));
+                backgroundColor: style.BackgroundColor);
+        }
 
-        private static PdfCore.TextRun CreateNativeCellLinkRun(string text, WordParagraph paragraph, WordHyperLink hyperlink) {
+        private static PdfCore.TextRun CreateNativeCellLinkRun(string text, WordParagraph paragraph, WordHyperLink hyperlink, NativeTableStyleDefaults tableStyleDefaults = default) {
             Uri? uri = hyperlink.Uri;
             string? linkUri = uri != null && uri.IsAbsoluteUri ? uri.AbsoluteUri : null;
-            string? destinationName = string.IsNullOrWhiteSpace(hyperlink.Anchor) ? null : hyperlink.Anchor;
+            string? destinationName = linkUri != null || string.IsNullOrWhiteSpace(hyperlink.Anchor) ? null : hyperlink.Anchor;
             if (linkUri == null && destinationName == null) {
-                return CreateNativeCellTextRun(text, paragraph);
+                return CreateNativeCellTextRun(text, paragraph, tableStyleDefaults);
             }
 
             string? contents = string.IsNullOrWhiteSpace(hyperlink.Tooltip) ? null : hyperlink.Tooltip;
+            NativeResolvedTextStyle style = ResolveNativeTextRunStyle(paragraph, tableRunStyleDefaults: tableStyleDefaults.RunStyle);
             return new PdfCore.TextRun(
                 text,
-                bold: paragraph.Bold,
-                underline: paragraph.Underline != null || linkUri != null || destinationName != null,
-                color: ParseNativeColor(paragraph.ColorHex),
-                italic: paragraph.Italic,
-                strike: paragraph.Strike || paragraph.DoubleStrike,
-                fontSize: paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0 ? paragraph.FontSize.Value : null,
+                bold: style.Bold,
+                underline: style.Underline || linkUri != null || destinationName != null,
+                color: style.Color,
+                italic: style.Italic,
+                strike: style.Strike,
+                fontSize: style.FontSize,
+                font: style.Font,
                 linkUri: linkUri,
                 linkContents: contents,
                 baseline: GetNativeTextBaseline(paragraph),
                 linkDestinationName: destinationName,
-                backgroundColor: MapNativeHighlight(paragraph.Highlight));
+                backgroundColor: style.BackgroundColor);
         }
 
         private static PdfCore.TextRun CreateNativeCellTabRun(IReadOnlyList<WordTabStop> tabStops, int tabIndex) {

@@ -97,7 +97,7 @@ internal static partial class PdfWriter {
             }
         }
 
-        private void RenderListItem(System.Collections.Generic.IReadOnlyList<TextRun> runs, System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>> lines, System.Collections.Generic.List<double> lineHeights, string marker, double markerX, double markerWidth, PdfAlign markerAlign, double textX, double textWidth, PdfAlign textAlign, PdfColor? color, double size, double leading, double spacingBefore, double spacingAfter, string? bookmarkName, ref int? listStructureElementIndex, ref LayoutResult.Page? listStructurePage) {
+        private void RenderListItem(System.Collections.Generic.IReadOnlyList<TextRun> runs, System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>> lines, System.Collections.Generic.List<double> lineHeights, string marker, PdfStandardFont markerFont, double markerX, double markerWidth, PdfAlign markerAlign, double textX, double textWidth, PdfAlign textAlign, PdfColor? color, double size, double leading, double spacingBefore, double spacingAfter, string? bookmarkName, ref int? listStructureElementIndex, ref LayoutResult.Page? listStructurePage) {
             int lineIndex = 0;
             bool firstSegment = true;
             var listFont = ChooseNormal(currentOpts.DefaultFont);
@@ -161,7 +161,8 @@ internal static partial class PdfWriter {
 
                     var markerLines = new System.Collections.Generic.List<string>(1) { marker };
                     int? labelMarkedContentId = RegisterTextStructureElement("Lbl", listItemElementIndex);
-                    WriteLinesInternal("F1", size, leading, markerX, markerWidth, baselineY, markerLines, markerAlign, color, applyBaselineTweak: true, structureType: "Lbl", markedContentId: labelMarkedContentId);
+                    MarkSimpleFont(markerFont);
+                    WriteLinesInternal(GetStandardFontResourceName(markerFont, ChooseNormal(currentOpts.DefaultFont)), size, leading, markerX, markerWidth, baselineY, markerLines, markerAlign, color, applyBaselineTweak: true, structureType: "Lbl", markedContentId: labelMarkedContentId);
                 }
 
                 pageDirty = true;
@@ -194,18 +195,113 @@ internal static partial class PdfWriter {
 
         private PdfParagraphStyle? EffectiveParagraphStyle(RichParagraphBlock paragraph) => paragraph.Style ?? currentOpts.DefaultParagraphStyleSnapshot;
 
-        private double MeasureNextParagraphFirstLineHeight(RichParagraphBlock paragraph, double frameX, double frameWidth, double fontSize) {
+        private double MeasureNextParagraphFirstVisualHeight(RichParagraphBlock paragraph, double frameX, double frameWidth, double fontSize) {
             PdfParagraphStyle? paragraphStyle = EffectiveParagraphStyle(paragraph);
             double leading = GetParagraphLeading(paragraphStyle, fontSize);
             double spacingBefore = GetParagraphSpacingBefore(paragraphStyle);
             var textFrame = GetParagraphTextFrame(paragraphStyle, frameX, frameWidth);
             var wrap = WrapRichRunsCoreWithFirstLineOrigin(paragraph.Runs, textFrame.Width, fontSize, ChooseNormal(currentOpts.DefaultFont), leading, textFrame.FirstLineWidth, textFrame.FirstLineX - textFrame.X, GetParagraphTabStopWidth(paragraphStyle), currentOpts, paragraphStyle?.TabStops.ToArray());
-            return wrap.LineHeights.Count == 0 ? spacingBefore : spacingBefore + wrap.LineHeights[0];
+            if (wrap.LineHeights.Count == 0) {
+                return spacingBefore;
+            }
+
+            int linesToReserve = 1;
+            if (paragraphStyle?.KeepTogether == true) {
+                linesToReserve = wrap.LineHeights.Count;
+            } else if (paragraphStyle?.WidowControl == true && wrap.LineHeights.Count > 1) {
+                linesToReserve = Math.Min(2, wrap.LineHeights.Count);
+            }
+
+            double height = spacingBefore;
+            for (int i = 0; i < linesToReserve; i++) {
+                height += GetRichLineHeight(wrap.LineHeights, i, leading);
+            }
+
+            return height;
+        }
+
+        private double MeasureKeepWithNextChainHeight(System.Collections.Generic.IList<IPdfBlock> blocks, int startIndex, double frameX, double frameWidth, double fontSize) {
+            double height = 0D;
+            for (int blockIndex = startIndex; blockIndex < blocks.Count; blockIndex++) {
+                IPdfBlock block = blocks[blockIndex];
+                if (IsNonVisualFlowMarker(block)) {
+                    continue;
+                }
+
+                bool keepWithNext = KeepsWithNext(block);
+                height += keepWithNext
+                    ? MeasureKeepWithNextBlockHeight(block, frameX, frameWidth, fontSize)
+                    : MeasureNextBlockFirstVisualHeight(block, frameX, frameWidth, fontSize);
+
+                if (!keepWithNext) {
+                    break;
+                }
+            }
+
+            return height;
+        }
+
+        private static bool IsNonVisualFlowMarker(IPdfBlock block) =>
+            block is BookmarkBlock;
+
+        private double MeasureKeepWithNextBlockHeight(IPdfBlock block, double frameX, double frameWidth, double fontSize) {
+            if (block is HeadingBlock heading) {
+                return MeasureHeadingBlockHeight(heading, frameWidth);
+            }
+
+            if (block is RichParagraphBlock paragraph) {
+                return MeasureParagraphBlockHeight(paragraph, frameX, frameWidth, fontSize);
+            }
+
+            if (block is HorizontalRuleBlock rule) {
+                PdfHorizontalRuleStyle style = ResolveHorizontalRuleStyle(rule, currentOpts);
+                return style.SpacingBefore + style.Thickness + style.SpacingAfter;
+            }
+
+            return MeasureNextBlockFirstVisualHeight(block, frameX, frameWidth, fontSize);
+        }
+
+        private double MeasureHeadingBlockHeight(HeadingBlock heading, double frameWidth) {
+            PdfHeadingStyle? headingStyle = ResolveHeadingStyle(heading, currentOpts);
+            double headingSize = GetHeadingFontSize(heading, headingStyle);
+            double headingLeading = GetHeadingLeading(headingStyle, headingSize);
+            double spacingBefore = headingStyle?.SpacingBefore ?? 0D;
+            double spacingAfter = GetHeadingSpacingAfter(headingStyle, headingLeading);
+            PdfColor? headingColor = heading.Color ?? headingStyle?.Color;
+            System.Collections.Generic.IReadOnlyList<TextRun> headingRuns = CreateHeadingTextRuns(heading, headingStyle, headingColor);
+            var wrap = WrapRichRunsCore(headingRuns, frameWidth, headingSize, ChooseNormal(currentOpts.DefaultFont), headingLeading, null, DefaultParagraphTabStopWidth, currentOpts);
+            return spacingBefore + MeasureRichLinesHeight(wrap.LineHeights, wrap.Lines.Count, headingLeading) + spacingAfter;
+        }
+
+        private double MeasureParagraphBlockHeight(RichParagraphBlock paragraph, double frameX, double frameWidth, double fontSize) {
+            PdfParagraphStyle? paragraphStyle = EffectiveParagraphStyle(paragraph);
+            double leading = GetParagraphLeading(paragraphStyle, fontSize);
+            double spacingBefore = GetParagraphSpacingBefore(paragraphStyle);
+            double spacingAfter = GetParagraphSpacingAfter(paragraphStyle, leading);
+            var textFrame = GetParagraphTextFrame(paragraphStyle, frameX, frameWidth);
+            var wrap = WrapRichRunsCoreWithFirstLineOrigin(paragraph.Runs, textFrame.Width, fontSize, ChooseNormal(currentOpts.DefaultFont), leading, textFrame.FirstLineWidth, textFrame.FirstLineX - textFrame.X, GetParagraphTabStopWidth(paragraphStyle), currentOpts, paragraphStyle?.TabStops.ToArray());
+            return spacingBefore + wrap.LineHeights.Sum() + spacingAfter;
+        }
+
+        private bool KeepsWithNext(IPdfBlock block) {
+            if (block is HeadingBlock heading) {
+                return ResolveHeadingStyle(heading, currentOpts)?.KeepWithNext ?? true;
+            }
+
+            if (block is RichParagraphBlock paragraph) {
+                return EffectiveParagraphStyle(paragraph)?.KeepWithNext == true;
+            }
+
+            if (block is HorizontalRuleBlock rule) {
+                return ResolveHorizontalRuleStyle(rule, currentOpts).KeepWithNext;
+            }
+
+            return false;
         }
 
         private double MeasureNextBlockFirstVisualHeight(IPdfBlock block, double frameX, double frameWidth, double fontSize) {
             if (block is RichParagraphBlock paragraph) {
-                return MeasureNextParagraphFirstLineHeight(paragraph, frameX, frameWidth, fontSize);
+                return MeasureNextParagraphFirstVisualHeight(paragraph, frameX, frameWidth, fontSize);
             }
 
             if (block is HeadingBlock heading) {

@@ -17,9 +17,10 @@ namespace OfficeIMO.Word.Pdf {
             ref int index,
             Dictionary<WordParagraph, (int Level, string Marker)> listMarkers,
             Dictionary<WordParagraph, (int Level, int Index)> listIndices,
-            Dictionary<long, int> footnoteNumbersById) {
+            Dictionary<long, int> footnoteNumbersById,
+            NativeDocumentDefaults nativeDefaults) {
             if (elements[index] is not WordParagraph firstParagraph ||
-                !TryGetNativeListItem(firstParagraph, listMarkers, listIndices, footnoteNumbersById, out bool ordered, out int level, out int startNumber, out PdfCore.PdfListItem? item, out PdfCore.PdfAlign align, out PdfCore.PdfColor? color, out PdfCore.PdfListStyle? style)) {
+                !TryGetNativeListItem(firstParagraph, listMarkers, listIndices, footnoteNumbersById, nativeDefaults, out bool ordered, out int level, out int startNumber, out PdfCore.PdfListItem? item, out PdfCore.PdfAlign align, out PdfCore.PdfColor? color, out PdfCore.PdfListStyle? style)) {
                 return false;
             }
 
@@ -28,7 +29,7 @@ namespace OfficeIMO.Word.Pdf {
             int expectedNumber = startNumber + 1;
             while (nextIndex < elements.Count &&
                    elements[nextIndex] is WordParagraph paragraph &&
-                   TryGetNativeListItem(paragraph, listMarkers, listIndices, footnoteNumbersById, out bool nextOrdered, out int nextLevel, out int nextNumber, out PdfCore.PdfListItem? nextItem, out PdfCore.PdfAlign nextAlign, out PdfCore.PdfColor? nextColor, out PdfCore.PdfListStyle? nextStyle) &&
+                   TryGetNativeListItem(paragraph, listMarkers, listIndices, footnoteNumbersById, nativeDefaults, out bool nextOrdered, out int nextLevel, out int nextNumber, out PdfCore.PdfListItem? nextItem, out PdfCore.PdfAlign nextAlign, out PdfCore.PdfColor? nextColor, out PdfCore.PdfListStyle? nextStyle) &&
                    nextOrdered == ordered &&
                    nextLevel == level &&
                    nextAlign == align &&
@@ -55,6 +56,7 @@ namespace OfficeIMO.Word.Pdf {
             Dictionary<WordParagraph, (int Level, string Marker)> listMarkers,
             Dictionary<WordParagraph, (int Level, int Index)> listIndices,
             Dictionary<long, int> footnoteNumbersById,
+            NativeDocumentDefaults nativeDefaults,
             out bool ordered,
             out int level,
             out int index,
@@ -80,7 +82,7 @@ namespace OfficeIMO.Word.Pdf {
                 return false;
             }
 
-            if (paragraph.PageBreakBefore ||
+            if (HasNativePageBreakBefore(paragraph) ||
                 paragraph.IsPageBreak ||
                 paragraph.Shape != null ||
                 paragraph.TextBox != null ||
@@ -110,9 +112,10 @@ namespace OfficeIMO.Word.Pdf {
             level = info.Value.Level;
             index = listIndex.Index;
             item = new PdfCore.PdfListItem(richRuns, paragraph.Bookmark?.Name, string.IsNullOrWhiteSpace(displayMarker) ? null : displayMarker);
-            align = MapNativeParagraphAlign(paragraph.ParagraphAlignment, allowJustify: false);
-            color = ParseNativeColor(paragraph.ColorHex);
-            style = CreateNativeListStyle(paragraph, info.Value, displayMarker);
+            align = ResolveNativeParagraphAlign(paragraph, allowJustify: false);
+            NativeResolvedTextStyle textStyle = ResolveNativeTextRunStyle(paragraph);
+            color = textStyle.Color;
+            style = CreateNativeListStyle(paragraph, info.Value, displayMarker, nativeDefaults, textStyle);
             return true;
         }
 
@@ -130,40 +133,76 @@ namespace OfficeIMO.Word.Pdf {
             };
         }
 
-        private static PdfCore.PdfListStyle CreateNativeListStyle(WordParagraph paragraph, DocumentTraversal.ListInfo info, string marker) {
+        private static PdfCore.PdfListStyle CreateNativeListStyle(WordParagraph paragraph, DocumentTraversal.ListInfo info, string marker, NativeDocumentDefaults nativeDefaults, NativeResolvedTextStyle markerTextStyle) {
             const double defaultLevelTextIndent = 36D;
             const double defaultHangingIndent = 18D;
+            NativeParagraphStyleDefaults styleDefaults = GetNativeParagraphStyleDefaults(paragraph);
 
-            double textIndent = ConvertNativeTwipsToPoints(info.LeftIndentTwips ?? ((info.Level + 1) * 720)) ?? ((info.Level + 1) * defaultLevelTextIndent);
-            double hangingIndent = ConvertNativeTwipsToPoints(info.HangingIndentTwips ?? 360) ?? defaultHangingIndent;
+            double numberingTextIndent = ConvertNativeTwipsToPoints(info.LeftIndentTwips ?? ((info.Level + 1) * 720)) ??
+                ((info.Level + 1) * defaultLevelTextIndent);
+            double numberingHangingIndent = ConvertNativeTwipsToPoints(info.HangingIndentTwips ?? 360) ??
+                defaultHangingIndent;
+            bool useParagraphStyleIndent = ShouldApplyNativeListParagraphStyleIndent(paragraph);
+            double textIndent = paragraph.IndentationBeforePoints ??
+                (useParagraphStyleIndent ? styleDefaults.LeftIndent : null) ??
+                numberingTextIndent;
+            double hangingIndent = paragraph.IndentationHangingPoints ??
+                (useParagraphStyleIndent ? GetNativeStyleHangingIndent(styleDefaults) : null) ??
+                numberingHangingIndent;
             double markerIndent = Math.Max(0D, textIndent - hangingIndent);
-            double fontSize = paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0D ? paragraph.FontSize.Value : 11D;
+            double fontSize = paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0D ? paragraph.FontSize.Value : styleDefaults.FontSize ?? nativeDefaults.FontSize;
+            double lineHeight = ResolveNativeParagraphLineHeight(paragraph, fontSize, nativeDefaults, styleDefaults);
+            W.SpacingBetweenLines? directSpacing = paragraph._paragraph?.ParagraphProperties?.GetFirstChild<W.SpacingBetweenLines>();
             double markerWidth = EstimateNativeListMarkerWidth(marker, fontSize);
             double markerGap = Math.Max(0D, textIndent - markerIndent - markerWidth);
 
             var style = new PdfCore.PdfListStyle {
                 LeftIndent = markerIndent,
-                MarkerGap = markerGap
+                MarkerGap = markerGap,
+                MarkerFont = markerTextStyle.Font,
+                MarkerBold = markerTextStyle.Bold,
+                MarkerItalic = markerTextStyle.Italic
             };
 
             if (paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0D) {
                 style.FontSize = paragraph.FontSize.Value;
+            } else if (styleDefaults.FontSize.HasValue) {
+                style.FontSize = styleDefaults.FontSize.Value;
             }
 
-            style.LineHeight = ResolveNativeParagraphLineHeight(paragraph, fontSize);
+            style.LineHeight = lineHeight;
 
             if (paragraph.LineSpacingBeforePoints.HasValue) {
                 style.SpacingBefore = paragraph.LineSpacingBeforePoints.Value;
+            } else if (GetNativeSpacingBeforePoints(directSpacing, fontSize, lineHeight) is { } directSpacingBefore) {
+                style.SpacingBefore = directSpacingBefore;
+            } else if (styleDefaults.SpacingBefore.HasValue) {
+                style.SpacingBefore = styleDefaults.SpacingBefore.Value;
+            } else if (nativeDefaults.ParagraphSpacingBeforeDeclared) {
+                style.SpacingBefore = nativeDefaults.ParagraphSpacingBefore;
             }
 
             if (paragraph.LineSpacingAfterPoints.HasValue) {
                 style.SpacingAfter = paragraph.LineSpacingAfterPoints.Value;
+            } else if (GetNativeSpacingAfterPoints(directSpacing, fontSize, lineHeight) is { } directSpacingAfter) {
+                style.SpacingAfter = directSpacingAfter;
+            } else if (styleDefaults.SpacingAfter.HasValue) {
+                style.SpacingAfter = styleDefaults.SpacingAfter.Value;
+            } else {
+                style.SpacingAfter = nativeDefaults.ParagraphSpacingAfter;
             }
 
-            style.KeepTogether = paragraph.KeepLinesTogether;
-            style.KeepWithNext = paragraph.KeepWithNext;
+            style.KeepTogether = ReadNativeDirectParagraphOnOff<W.KeepLines>(paragraph) ?? styleDefaults.KeepTogether ?? false;
+            style.KeepWithNext = ReadNativeDirectParagraphOnOff<W.KeepNext>(paragraph) ?? styleDefaults.KeepWithNext ?? false;
             return style;
         }
+
+        private static double? GetNativeStyleHangingIndent(NativeParagraphStyleDefaults styleDefaults) =>
+            styleDefaults.FirstLineIndent is < 0D ? -styleDefaults.FirstLineIndent.Value : null;
+
+        private static bool ShouldApplyNativeListParagraphStyleIndent(WordParagraph paragraph) =>
+            !string.IsNullOrWhiteSpace(paragraph.StyleId) &&
+            !string.Equals(paragraph.StyleId, "ListParagraph", StringComparison.OrdinalIgnoreCase);
 
         private static double EstimateNativeListMarkerWidth(string marker, double fontSize) {
             if (string.IsNullOrEmpty(marker)) {
@@ -204,6 +243,9 @@ namespace OfficeIMO.Word.Pdf {
                    DoubleEquals(left.SpacingBefore, right.SpacingBefore) &&
                    NullableDoubleEquals(left.SpacingAfter, right.SpacingAfter) &&
                    NullableDoubleEquals(left.ItemSpacing, right.ItemSpacing) &&
+                   left.MarkerFont == right.MarkerFont &&
+                   left.MarkerBold == right.MarkerBold &&
+                   left.MarkerItalic == right.MarkerItalic &&
                    left.Color.Equals(right.Color) &&
                    left.KeepTogether == right.KeepTogether &&
                    left.KeepWithNext == right.KeepWithNext;

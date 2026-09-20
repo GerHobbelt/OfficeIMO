@@ -1,0 +1,233 @@
+using System.Collections.Generic;
+using System.Globalization;
+using W = DocumentFormat.OpenXml.Wordprocessing;
+
+namespace OfficeIMO.Word.Pdf {
+    public static partial class WordPdfConverterExtensions {
+        private readonly record struct NativeParagraphStyleDefaults(
+            double? FontSize,
+            string? FontFamily,
+            bool? Bold,
+            bool? Italic,
+            bool? Underline,
+            bool? Strike,
+            string? ColorHex,
+            W.HighlightColorValues? Highlight,
+            double? LineHeight,
+            double? LineSpacingPoints,
+            double? SpacingBefore,
+            double? SpacingAfter,
+            double? LeftIndent,
+            double? RightIndent,
+            double? FirstLineIndent,
+            W.JustificationValues? Alignment,
+            bool? PageBreakBefore,
+            bool? KeepTogether,
+            bool? KeepWithNext,
+            bool? WidowControl) {
+            public static NativeParagraphStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+
+        private static NativeParagraphStyleDefaults GetNativeParagraphStyleDefaults(WordParagraph paragraph) {
+            IReadOnlyList<W.Style> styleChain = GetNativeParagraphStyleChain(paragraph._document, paragraph.StyleId);
+            if (styleChain.Count == 0) {
+                return NativeParagraphStyleDefaults.Empty;
+            }
+
+            double? fontSize = null;
+            string? fontFamily = null;
+            bool? bold = null;
+            bool? italic = null;
+            bool? underline = null;
+            bool? strike = null;
+            string? colorHex = null;
+            W.HighlightColorValues? highlight = null;
+            double? lineHeight = null;
+            double? lineSpacingPoints = null;
+            double? spacingBefore = null;
+            double? spacingAfter = null;
+            double? leftIndent = null;
+            double? rightIndent = null;
+            double? firstLineIndent = null;
+            W.JustificationValues? alignment = null;
+            bool? pageBreakBefore = null;
+            bool? keepTogether = null;
+            bool? keepWithNext = null;
+            bool? widowControl = null;
+
+            foreach (W.Style style in styleChain) {
+                W.StyleRunProperties? runProperties = style.GetFirstChild<W.StyleRunProperties>();
+                fontSize = GetNativeStyleFontSize(runProperties) ?? fontSize;
+                fontFamily = ResolveNativeRunFontsFamily(paragraph._document, runProperties?.GetFirstChild<W.RunFonts>()) ?? fontFamily;
+                bold = ReadNativeOnOff(runProperties?.GetFirstChild<W.Bold>()) ?? bold;
+                italic = ReadNativeOnOff(runProperties?.GetFirstChild<W.Italic>()) ?? italic;
+                underline = ReadNativeUnderline(runProperties?.GetFirstChild<W.Underline>()) ?? underline;
+                strike = ReadNativeOnOff(runProperties?.GetFirstChild<W.Strike>()) ?? ReadNativeOnOff(runProperties?.GetFirstChild<W.DoubleStrike>()) ?? strike;
+                colorHex = runProperties?.GetFirstChild<W.Color>()?.Val?.Value ?? colorHex;
+                highlight = runProperties?.GetFirstChild<W.Highlight>()?.Val?.Value ?? highlight;
+
+                W.StyleParagraphProperties? paragraphProperties = style.GetFirstChild<W.StyleParagraphProperties>();
+                if (paragraphProperties != null) {
+                    W.SpacingBetweenLines? spacing = paragraphProperties.GetFirstChild<W.SpacingBetweenLines>();
+                    if (spacing != null) {
+                        double? styleLineHeight = GetNativeStyleParagraphLineHeight(spacing);
+                        double? styleLineSpacingPoints = GetNativeStyleParagraphLineSpacingPoints(spacing);
+                        if (styleLineHeight.HasValue || styleLineSpacingPoints.HasValue) {
+                            lineHeight = styleLineHeight;
+                            lineSpacingPoints = styleLineSpacingPoints;
+                        }
+
+                        double effectiveFontSize = fontSize ?? NativeDocumentDefaults.WordDefault.FontSize;
+                        double effectiveLineHeight = styleLineSpacingPoints.HasValue && effectiveFontSize > 0D
+                            ? styleLineSpacingPoints.Value / effectiveFontSize
+                            : styleLineHeight ?? lineHeight ?? NativeDocumentDefaults.WordDefault.ParagraphLineHeight;
+                        spacingBefore = GetNativeSpacingBeforePoints(spacing, effectiveFontSize, effectiveLineHeight) ?? spacingBefore;
+                        spacingAfter = GetNativeSpacingAfterPoints(spacing, effectiveFontSize, effectiveLineHeight) ?? spacingAfter;
+                    }
+
+                    W.Indentation? indentation = paragraphProperties.GetFirstChild<W.Indentation>();
+                    if (indentation != null) {
+                        leftIndent = ConvertNativeTwipsToPoints(indentation.Left?.Value) ?? leftIndent;
+                        rightIndent = ConvertNativeTwipsToPoints(indentation.Right?.Value) ?? rightIndent;
+
+                        double? firstLine = ConvertNativeTwipsToPoints(indentation.FirstLine?.Value);
+                        double? hanging = ConvertNativeTwipsToPoints(indentation.Hanging?.Value);
+                        if (hanging.HasValue) {
+                            firstLineIndent = -hanging.Value;
+                        } else if (firstLine.HasValue) {
+                            firstLineIndent = firstLine.Value;
+                        }
+                    }
+
+                    alignment = paragraphProperties.GetFirstChild<W.Justification>()?.Val?.Value ?? alignment;
+                    pageBreakBefore = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.PageBreakBefore>()) ?? pageBreakBefore;
+                    keepTogether = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.KeepLines>()) ?? keepTogether;
+                    keepWithNext = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.KeepNext>()) ?? keepWithNext;
+                    widowControl = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.WidowControl>()) ?? widowControl;
+                }
+            }
+
+            return new NativeParagraphStyleDefaults(
+                fontSize,
+                fontFamily,
+                bold,
+                italic,
+                underline,
+                strike,
+                colorHex,
+                highlight,
+                lineHeight,
+                lineSpacingPoints,
+                spacingBefore,
+                spacingAfter,
+                leftIndent,
+                rightIndent,
+                firstLineIndent,
+                alignment,
+                pageBreakBefore,
+                keepTogether,
+                keepWithNext,
+                widowControl);
+        }
+
+        private static IReadOnlyList<W.Style> GetNativeParagraphStyleChain(WordDocument? document, string? styleId) {
+            W.Styles? styles = document?._wordprocessingDocument?.MainDocumentPart?.StyleDefinitionsPart?.Styles;
+            if (styles == null) {
+                return Array.Empty<W.Style>();
+            }
+
+            Dictionary<string, W.Style> paragraphStyles = styles
+                .Elements<W.Style>()
+                .Where(style => IsNativeParagraphStyle(style) && !string.IsNullOrEmpty(style.StyleId?.Value))
+                .ToDictionary(style => style.StyleId!.Value!, style => style, StringComparer.Ordinal);
+
+            if (string.IsNullOrWhiteSpace(styleId)) {
+                styleId = paragraphStyles.Values.FirstOrDefault(style => style.Default?.Value == true)?.StyleId?.Value;
+            }
+
+            if (string.IsNullOrWhiteSpace(styleId)) {
+                return Array.Empty<W.Style>();
+            }
+
+            var chain = new List<W.Style>();
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            string? currentStyleId = styleId;
+            while (!string.IsNullOrWhiteSpace(currentStyleId) && visited.Add(currentStyleId!) && paragraphStyles.TryGetValue(currentStyleId!, out W.Style? style)) {
+                chain.Add(style);
+                currentStyleId = style.BasedOn?.Val?.Value;
+            }
+
+            chain.Reverse();
+            return chain;
+        }
+
+        private static bool IsNativeParagraphStyle(W.Style style) {
+            if (style.Type == null) {
+                return false;
+            }
+
+            string? type = string.IsNullOrWhiteSpace(style.Type.InnerText)
+                ? style.Type.Value.ToString()
+                : style.Type.InnerText;
+            return string.Equals(type, "paragraph", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static double? GetNativeStyleParagraphLineHeight(W.SpacingBetweenLines spacing) {
+            if (spacing.LineRule?.Value != W.LineSpacingRuleValues.Auto) {
+                return null;
+            }
+
+            if (!double.TryParse(spacing.Line?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
+                line <= 0D ||
+                double.IsNaN(line) ||
+                double.IsInfinity(line)) {
+                return null;
+            }
+
+            return Math.Max(0.01D, NativeWordAutoLineSpacingHeight * (line / 240D));
+        }
+
+        private static double? GetNativeStyleParagraphLineSpacingPoints(W.SpacingBetweenLines spacing) {
+            if (spacing.LineRule?.Value == W.LineSpacingRuleValues.Auto) {
+                return null;
+            }
+
+            return ConvertNativeTwipsToPoints(spacing.Line?.Value);
+        }
+
+        private static double? GetNativeStyleFontSize(W.StyleRunProperties? runProperties) {
+            string? value = runProperties?.FontSize?.Val?.Value;
+            if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double halfPoints) ||
+                halfPoints <= 0D ||
+                double.IsNaN(halfPoints) ||
+                double.IsInfinity(halfPoints)) {
+                return null;
+            }
+
+            return halfPoints / 2D;
+        }
+
+        private static bool? ReadNativeOnOff(W.OnOffType? value) {
+            if (value == null) {
+                return null;
+            }
+
+            return value.Val?.Value != false;
+        }
+
+        private static bool? ReadNativeUnderline(W.Underline? value) {
+            if (value == null) {
+                return null;
+            }
+
+            return value.Val?.Value != W.UnderlineValues.None;
+        }
+
+        private static bool? ReadNativeDirectParagraphOnOff<T>(WordParagraph paragraph) where T : W.OnOffType =>
+            ReadNativeOnOff(paragraph._paragraph?.ParagraphProperties?.GetFirstChild<T>());
+
+        private static bool HasNativePageBreakBefore(WordParagraph paragraph) =>
+            paragraph.PageBreakBefore ||
+            GetNativeParagraphStyleDefaults(paragraph).PageBreakBefore == true;
+    }
+}

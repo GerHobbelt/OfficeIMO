@@ -8,6 +8,8 @@ namespace OfficeIMO.Drawing;
 /// Reusable chart layout metadata shared by OfficeIMO chart renderers and format exporters.
 /// </summary>
 public sealed class OfficeChartLayout {
+    internal const int MaxNumberFormatLength = 1024;
+
     private static readonly OfficeChartLayout DefaultLayout = new OfficeChartLayout();
 
     /// <summary>
@@ -52,6 +54,7 @@ public sealed class OfficeChartLayout {
     /// <param name="showCategoryAxisLabels">Whether category or horizontal tick labels should be rendered.</param>
     /// <param name="showValueAxisLabels">Whether value or vertical tick labels should be rendered.</param>
     /// <param name="overlayTitle">Whether the title should overlay the plot instead of reserving layout space.</param>
+    /// <param name="titleTopPadding">Top padding before the chart title inside the chart canvas.</param>
     public OfficeChartLayout(
         double? seriesLegendWidthRatio = null,
         double? categoryLegendWidthRatio = null,
@@ -91,7 +94,8 @@ public sealed class OfficeChartLayout {
         bool showValueAxisLine = true,
         bool showCategoryAxisLabels = true,
         bool showValueAxisLabels = true,
-        bool overlayTitle = false)
+        bool overlayTitle = false,
+        double? titleTopPadding = null)
         : this(
             overlayLegend: false,
             seriesLegendWidthRatio: seriesLegendWidthRatio,
@@ -132,7 +136,8 @@ public sealed class OfficeChartLayout {
             showValueAxisLine: showValueAxisLine,
             showCategoryAxisLabels: showCategoryAxisLabels,
             showValueAxisLabels: showValueAxisLabels,
-            overlayTitle: overlayTitle) {
+            overlayTitle: overlayTitle,
+            titleTopPadding: titleTopPadding) {
     }
 
     /// <summary>
@@ -178,6 +183,7 @@ public sealed class OfficeChartLayout {
     /// <param name="showCategoryAxisLabels">Whether category or horizontal tick labels should be rendered.</param>
     /// <param name="showValueAxisLabels">Whether value or vertical tick labels should be rendered.</param>
     /// <param name="overlayTitle">Whether the title should overlay the plot instead of reserving layout space.</param>
+    /// <param name="titleTopPadding">Top padding before the chart title inside the chart canvas.</param>
     public OfficeChartLayout(
         bool overlayLegend,
         double? seriesLegendWidthRatio = null,
@@ -218,7 +224,8 @@ public sealed class OfficeChartLayout {
         bool showValueAxisLine = true,
         bool showCategoryAxisLabels = true,
         bool showValueAxisLabels = true,
-        bool overlayTitle = false) {
+        bool overlayTitle = false,
+        double? titleTopPadding = null) {
         SeriesLegendWidthRatio = ValidateRatio(seriesLegendWidthRatio ?? 0.34D, nameof(seriesLegendWidthRatio));
         CategoryLegendWidthRatio = ValidateRatio(categoryLegendWidthRatio ?? 0.38D, nameof(categoryLegendWidthRatio));
         LegendRowHeight = ValidatePositiveFinite(legendRowHeight ?? 12D, nameof(legendRowHeight));
@@ -243,11 +250,11 @@ public sealed class OfficeChartLayout {
         DataLabelSeparator = string.IsNullOrEmpty(dataLabelSeparator) ? "; " : dataLabelSeparator!;
         DataLabelFontSize = ValidatePositiveFinite(dataLabelFontSize ?? 7D, nameof(dataLabelFontSize));
         DataLabelPosition = dataLabelPosition;
-        DataLabelNumberFormat = string.IsNullOrWhiteSpace(dataLabelNumberFormat) ? null : dataLabelNumberFormat;
+        DataLabelNumberFormat = NormalizeNumberFormat(dataLabelNumberFormat);
         ShowMarkers = showMarkers;
-        AxisNumberFormat = string.IsNullOrWhiteSpace(axisNumberFormat) ? null : axisNumberFormat;
-        HorizontalAxisNumberFormat = string.IsNullOrWhiteSpace(horizontalAxisNumberFormat) ? AxisNumberFormat : horizontalAxisNumberFormat;
-        VerticalAxisNumberFormat = string.IsNullOrWhiteSpace(verticalAxisNumberFormat) ? AxisNumberFormat : verticalAxisNumberFormat;
+        AxisNumberFormat = NormalizeNumberFormat(axisNumberFormat);
+        HorizontalAxisNumberFormat = string.IsNullOrWhiteSpace(horizontalAxisNumberFormat) ? AxisNumberFormat : NormalizeNumberFormat(horizontalAxisNumberFormat);
+        VerticalAxisNumberFormat = string.IsNullOrWhiteSpace(verticalAxisNumberFormat) ? AxisNumberFormat : NormalizeNumberFormat(verticalAxisNumberFormat);
         CategoryAxisTitle = string.IsNullOrWhiteSpace(categoryAxisTitle) ? null : categoryAxisTitle;
         ValueAxisTitle = string.IsNullOrWhiteSpace(valueAxisTitle) ? null : valueAxisTitle;
         ConnectScatterPoints = connectScatterPoints;
@@ -259,6 +266,7 @@ public sealed class OfficeChartLayout {
         ShowCategoryAxisLabels = showCategoryAxis && showCategoryAxisLabels;
         ShowValueAxisLabels = showValueAxis && showValueAxisLabels;
         OverlayTitle = overlayTitle;
+        TitleTopPadding = ValidateNonNegativeFinite(titleTopPadding ?? 5D, nameof(titleTopPadding));
     }
 
     /// <summary>Default premium OfficeIMO chart layout.</summary>
@@ -396,6 +404,9 @@ public sealed class OfficeChartLayout {
     /// <summary>Whether the chart title should overlay the plot area instead of reserving a title band.</summary>
     public bool OverlayTitle { get; }
 
+    /// <summary>Top padding before the chart title inside the chart canvas.</summary>
+    public double TitleTopPadding { get; }
+
     private static double ValidateRatio(double value, string paramName) {
         ValidatePositiveFinite(value, paramName);
         if (value > 0.75D) {
@@ -413,11 +424,28 @@ public sealed class OfficeChartLayout {
         return value;
     }
 
+    private static double ValidateNonNegativeFinite(double value, string paramName) {
+        if (double.IsNaN(value) || double.IsInfinity(value) || value < 0D) {
+            throw new ArgumentOutOfRangeException(paramName, "Chart layout values must be finite non-negative numbers.");
+        }
+
+        return value;
+    }
+
     private static int ValidatePositive(int value, string paramName) {
         if (value <= 0) {
             throw new ArgumentOutOfRangeException(paramName, "Chart layout counts must be positive.");
         }
 
         return value;
+    }
+
+    private static string? NormalizeNumberFormat(string? value) {
+        if (string.IsNullOrWhiteSpace(value)) {
+            return null;
+        }
+
+        string normalized = value!.Trim();
+        return normalized.Length <= MaxNumberFormatLength ? normalized : null;
     }
 }
