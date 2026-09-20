@@ -42,14 +42,18 @@ namespace OfficeIMO.Excel {
             double scale = options.Scale;
             int headerHeight = chrome.HasHeader ? ResolveHeaderFooterBandHeight(chrome.HeaderImageHeightPoints, scale) : 0;
             int footerHeight = chrome.HasFooter ? ResolveHeaderFooterBandHeight(chrome.FooterImageHeightPoints, scale) : 0;
+            bool pageSetupCanvasApplied = ShouldApplyPageSetupCanvas(GetPageSetup());
             int width = Math.Max(1, content.Width);
-            int height = Math.Max(1, content.Height + headerHeight + footerHeight);
+            int height = pageSetupCanvasApplied
+                ? Math.Max(1, content.Height)
+                : Math.Max(1, content.Height + headerHeight + footerHeight);
+            int contentY = pageSetupCanvasApplied ? 0 : headerHeight;
 
             if (format == OfficeImageExportFormat.Svg) {
                 OfficeImageLayer layer = OfficeImageLayer.FromSvgInner(
                     OfficeSvgFormatting.ExtractSvgInner(Encoding.UTF8.GetString(content.Bytes)),
                     0D,
-                    headerHeight,
+                    contentY,
                     content.Width,
                     content.Height);
                 return new OfficeImageExportResult(
@@ -61,7 +65,8 @@ namespace OfficeIMO.Excel {
                         height,
                         options.BackgroundColor,
                         new[] { layer },
-                        beforeLayers: builder => AppendHeaderFooterSvgText(builder, chrome, width, height, headerHeight, options.Scale)),
+                        beforeLayers: pageSetupCanvasApplied ? null : builder => AppendHeaderFooterSvgText(builder, chrome, width, height, headerHeight, options.Scale),
+                        afterLayers: pageSetupCanvasApplied ? builder => AppendHeaderFooterSvgText(builder, chrome, width, height, headerHeight, options.Scale) : null),
                     content.Name,
                     content.Source,
                     diagnostics);
@@ -71,7 +76,7 @@ namespace OfficeIMO.Excel {
                 return content;
             }
 
-            OfficeImageLayer contentLayer = OfficeImageLayer.FromRaster(contentImage, 0D, headerHeight, content.Width, content.Height);
+            OfficeImageLayer contentLayer = OfficeImageLayer.FromRaster(contentImage, 0D, contentY, content.Width, content.Height);
             return new OfficeImageExportResult(
                 format,
                 width,
@@ -81,7 +86,8 @@ namespace OfficeIMO.Excel {
                     height,
                     options.BackgroundColor,
                     new[] { contentLayer },
-                    beforeLayers: canvas => DrawHeaderFooterRaster(canvas, chrome, width, height, headerHeight, footerHeight, scale)),
+                    beforeLayers: pageSetupCanvasApplied ? null : canvas => DrawHeaderFooterRaster(canvas, chrome, width, height, headerHeight, footerHeight, scale),
+                    afterLayers: pageSetupCanvasApplied ? canvas => DrawHeaderFooterRaster(canvas, chrome, width, height, headerHeight, footerHeight, scale) : null),
                 content.Name,
                 content.Source,
                 diagnostics);
@@ -357,13 +363,15 @@ namespace OfficeIMO.Excel {
             double padding = HeaderFooterHorizontalPadding * scale;
             double lineHeight = fontSize * 1.2D;
             OfficeTextZoneLayout zones = OfficeTextZoneLayout.CreateThreeColumn(width, padding, HeaderFooterZoneGap * scale);
-            var textMeasureCanvas = new OfficeRasterCanvas(new OfficeRasterImage(1, 1, OfficeColor.Transparent));
+            OfficeTextMeasurer textMeasurer = OfficeTextMeasurer.Create(new OfficeFontInfo(chrome.FontFamily, fontSize));
+            double MeasureText(string? text, double size, string? family) =>
+                MeasureHeaderFooterSvgText(textMeasurer, text, size, string.IsNullOrWhiteSpace(family) ? chrome.FontFamily : family);
             if (chrome.HasHeader) {
                 double baseline = Math.Max(fontSize, (headerHeight + fontSize) / 2D);
                 AppendHeaderFooterSvgImages(builder, chrome, isHeader: true, 0D, headerHeight, zones, scale);
-                AppendHeaderFooterSvgLine(builder, chrome.HeaderLeft, zones.Left, 0D, headerHeight, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Left, "header-left", (text, size, family) => textMeasureCanvas.MeasureText(text, size, family));
-                AppendHeaderFooterSvgLine(builder, chrome.HeaderCenter, zones.Center, 0D, headerHeight, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Center, "header-center", (text, size, family) => textMeasureCanvas.MeasureText(text, size, family));
-                AppendHeaderFooterSvgLine(builder, chrome.HeaderRight, zones.Right, 0D, headerHeight, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Right, "header-right", (text, size, family) => textMeasureCanvas.MeasureText(text, size, family));
+                AppendHeaderFooterSvgLine(builder, chrome.HeaderLeft, zones.Left, 0D, headerHeight, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Left, "header-left", MeasureText);
+                AppendHeaderFooterSvgLine(builder, chrome.HeaderCenter, zones.Center, 0D, headerHeight, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Center, "header-center", MeasureText);
+                AppendHeaderFooterSvgLine(builder, chrome.HeaderRight, zones.Right, 0D, headerHeight, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Right, "header-right", MeasureText);
             }
 
             if (chrome.HasFooter) {
@@ -371,10 +379,15 @@ namespace OfficeIMO.Excel {
                 double footerTop = height - footerHeight;
                 double baseline = footerTop + Math.Max(fontSize, (footerHeight + fontSize) / 2D);
                 AppendHeaderFooterSvgImages(builder, chrome, isHeader: false, footerTop, footerHeight, zones, scale);
-                AppendHeaderFooterSvgLine(builder, chrome.FooterLeft, zones.Left, footerTop, height - footerTop, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Left, "footer-left", (text, size, family) => textMeasureCanvas.MeasureText(text, size, family));
-                AppendHeaderFooterSvgLine(builder, chrome.FooterCenter, zones.Center, footerTop, height - footerTop, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Center, "footer-center", (text, size, family) => textMeasureCanvas.MeasureText(text, size, family));
-                AppendHeaderFooterSvgLine(builder, chrome.FooterRight, zones.Right, footerTop, height - footerTop, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Right, "footer-right", (text, size, family) => textMeasureCanvas.MeasureText(text, size, family));
+                AppendHeaderFooterSvgLine(builder, chrome.FooterLeft, zones.Left, footerTop, height - footerTop, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Left, "footer-left", MeasureText);
+                AppendHeaderFooterSvgLine(builder, chrome.FooterCenter, zones.Center, footerTop, height - footerTop, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Center, "footer-center", MeasureText);
+                AppendHeaderFooterSvgLine(builder, chrome.FooterRight, zones.Right, footerTop, height - footerTop, baseline, lineHeight, fontSize, chrome.FontFamily, OfficeTextAlignment.Right, "footer-right", MeasureText);
             }
+        }
+
+        private static double MeasureHeaderFooterSvgText(OfficeTextMeasurer measurer, string? text, double fontSize, string? fontFamily) {
+            OfficeTextMeasurementStyle style = measurer.CreateStyle(new OfficeFontInfo(fontFamily, fontSize));
+            return measurer.MeasureWidth(text, style);
         }
 
         private static void AppendHeaderFooterSvgLine(
@@ -400,10 +413,9 @@ namespace OfficeIMO.Excel {
             if (section.HasFormatting) {
                 AppendHeaderFooterSvgRichLine(builder, section, zone, baseline, fontSize, fontFamily, lineHeight, alignment, measure);
             } else {
-                string displayText = ResolveHeaderFooterZoneText(section.Text, fontSize, zone.Width, (text, size) => measure(text, size, fontFamily), alignment);
-                if (!string.IsNullOrWhiteSpace(displayText)) {
+                if (!string.IsNullOrWhiteSpace(section.Text)) {
                     builder.AppendSvgTextElement(
-                        displayText,
+                        section.Text,
                         zone.AnchorX,
                         baseline,
                         lineHeight,
@@ -433,7 +445,10 @@ namespace OfficeIMO.Excel {
                 Math.Max(lineHeight, section.GetMaxResolvedFontSize(fontSize) * 1.2D),
                 1.2D,
                 measure,
-                wrap: false);
+                wrap: false,
+                shrinkToFit: false,
+                minimumFontSize: 1D,
+                OfficeTextOverflowBehavior.Clip);
             if (layout.Lines.Count == 0) {
                 return;
             }

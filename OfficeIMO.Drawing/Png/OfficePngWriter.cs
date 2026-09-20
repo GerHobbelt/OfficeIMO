@@ -90,6 +90,8 @@ public static class OfficePngWriter {
             throw new ArgumentNullException(nameof(scanlines));
         }
 
+        ValidateScanlineBufferLength(width, height, bitDepth, colorType, scanlines);
+
         byte[] compressed = compression switch {
             OfficePngCompression.Optimal => DeflateZlib(scanlines),
             OfficePngCompression.Stored => DeflateZlibStored(scanlines),
@@ -139,6 +141,42 @@ public static class OfficePngWriter {
 
         if (colorType is not (0 or 2 or 3 or 4 or 6)) {
             throw new ArgumentOutOfRangeException(nameof(colorType), "Color type must be a valid PNG color type.");
+        }
+
+        if (colorType == 3) {
+            throw new ArgumentOutOfRangeException(nameof(colorType), "Indexed-color PNGs require a palette (PLTE), which this writer does not emit.");
+        }
+
+        bool validForColorType = colorType == 0
+            || bitDepth is 8 or 16;
+        if (!validForColorType) {
+            throw new ArgumentOutOfRangeException(nameof(bitDepth), "Bit depth is not valid for the PNG color type.");
+        }
+    }
+
+    private static void ValidateScanlineBufferLength(int width, int height, int bitDepth, int colorType, byte[] scanlines) {
+        int bitsPerPixel = GetBitsPerPixel(colorType, bitDepth);
+        long rowPayloadBytes = ((long)width * bitsPerPixel + 7L) / 8L;
+        long expectedLength = (rowPayloadBytes + 1L) * height;
+        if (scanlines.LongLength != expectedLength) {
+            throw new ArgumentException(
+                "PNG scanline buffer length must match the IHDR width, height, bit depth, and color type including one filter byte per row.",
+                nameof(scanlines));
+        }
+    }
+
+    private static int GetBitsPerPixel(int colorType, int bitDepth) {
+        switch (colorType) {
+            case 0:
+                return bitDepth;
+            case 2:
+                return bitDepth * 3;
+            case 4:
+                return bitDepth * 2;
+            case 6:
+                return bitDepth * 4;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(colorType), "Color type must be a supported PNG color type.");
         }
     }
 

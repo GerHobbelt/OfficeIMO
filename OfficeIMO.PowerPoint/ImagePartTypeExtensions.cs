@@ -23,6 +23,7 @@ namespace OfficeIMO.PowerPoint {
             FromOfficeImageFormat(OfficeImageReader.FromExtension(imagePath));
 
         public static ImagePartType FromOfficeImageFormat(OfficeImageFormat format) => format switch {
+            OfficeImageFormat.Png => ImagePartType.Png,
             OfficeImageFormat.Jpeg => ImagePartType.Jpeg,
             OfficeImageFormat.Gif => ImagePartType.Gif,
             OfficeImageFormat.Bmp => ImagePartType.Bmp,
@@ -32,7 +33,8 @@ namespace OfficeIMO.PowerPoint {
             OfficeImageFormat.Wmf => ImagePartType.Wmf,
             OfficeImageFormat.Icon => ImagePartType.Icon,
             OfficeImageFormat.Pcx => ImagePartType.Pcx,
-            _ => ImagePartType.Png
+            OfficeImageFormat.Unknown => ImagePartType.Png,
+            _ => throw new NotSupportedException($"Image format {format} is not supported by PowerPoint image parts.")
         };
     }
 }

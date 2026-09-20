@@ -211,6 +211,8 @@ namespace OfficeIMO.Excel {
             bool showValueAxisLine = IsImageExportAxisLineVisible(valueAxis);
             bool showCategoryAxisLabels = IsImageExportAxisLabelsVisible(categoryAxis);
             bool showValueAxisLabels = IsImageExportAxisLabelsVisible(valueAxis);
+            C.ScatterStyleValues? scatterStyle = GetImageExportScatterStyle(plotArea);
+            bool connectScatterPoints = GetImageExportConnectScatterPoints(scatterStyle);
             bool hasAxisLineVisibility = !showCategoryAxisLine || !showValueAxisLine;
             bool hasAxisNumberFormat = horizontalAxisNumberFormat != null || verticalAxisNumberFormat != null || categoryAxisNumberFormat != null;
             bool hasAxisDisplayUnit = horizontalAxisDisplayUnit.Divisor != null || verticalAxisDisplayUnit.Divisor != null;
@@ -229,6 +231,9 @@ namespace OfficeIMO.Excel {
             bool hasAxisCrossingPosition = horizontalAxisCrossingPosition != OfficeChartAxisCrossingPosition.AutoZero ||
                 verticalAxisCrossingPosition != OfficeChartAxisCrossingPosition.AutoZero;
             bool hasCategoryAxisOrientation = reverseCategoryAxis;
+            bool fillRadarSeries = GetImageExportFillRadarSeries(plotArea);
+            bool hasRadarFillLayout = !fillRadarSeries;
+            bool hasScatterStyleLayout = !connectScatterPoints;
             bool hasTextFont = legendFontSize != null ||
                 legendFontFamily != null ||
                 legendFontStyle != null ||
@@ -257,6 +262,8 @@ namespace OfficeIMO.Excel {
                 hasAxisLabelPosition ||
                 hasAxisCrossingPosition ||
                 hasCategoryAxisOrientation ||
+                hasRadarFillLayout ||
+                hasScatterStyleLayout ||
                 hasTextFont;
             if (!hasLayout) {
                 return null;
@@ -316,10 +323,12 @@ namespace OfficeIMO.Excel {
                 horizontalAxisCrossingPosition: horizontalAxisCrossingPosition,
                 verticalAxisCrossingPosition: verticalAxisCrossingPosition,
                 reverseCategoryAxis: reverseCategoryAxis,
+                fillRadarSeries: fillRadarSeries,
                 showCategoryAxisLine: showCategoryAxisLine,
                 showValueAxisLine: showValueAxisLine,
                 showCategoryAxisLabels: showCategoryAxisLabels,
                 showValueAxisLabels: showValueAxisLabels,
+                connectScatterPoints: connectScatterPoints,
                 overlayTitle: IsEnabled(title?.GetFirstChild<C.Overlay>()));
         }
 
@@ -341,7 +350,7 @@ namespace OfficeIMO.Excel {
             for (int i = 0; i < data.Series.Count; i++) {
                 ExcelChartSeries current = data.Series[i];
                 if (styles.TryGetValue(i, out ImageExportSeriesStyle? style)) {
-                    series.Add(current.WithImageExportStyle(style.SeriesColorArgb, style.SeriesLineWidth, style.SeriesLineDashStyle, style.PointColorArgb, style.ShowMarkers, style.MarkerSize, style.MarkerShape, style.MarkerOutlineColorArgb, style.MarkerOutlineWidth));
+                    series.Add(current.WithImageExportStyle(style.SeriesColorArgb, style.SeriesLineWidth, style.SeriesLineDashStyle, style.PointColorArgb, style.ShowMarkers, style.ConnectLine, style.MarkerSize, style.MarkerShape, style.MarkerOutlineColorArgb, style.MarkerOutlineWidth));
                     changed = true;
                 } else {
                     series.Add(current);
@@ -353,8 +362,9 @@ namespace OfficeIMO.Excel {
 
         private static Dictionary<int, ImageExportSeriesStyle> GetImageExportSeriesStyles(C.PlotArea plotArea, ExcelChartData data, WorkbookPart workbookPart) {
             var styles = new Dictionary<int, ImageExportSeriesStyle>();
+            int seriesOrder = 0;
             foreach (OpenXmlCompositeElement series in plotArea.Descendants<OpenXmlCompositeElement>().Where(IsSeriesElement)) {
-                int index = GetSeriesIndex(series);
+                int index = seriesOrder++;
                 ImageExportSeriesStyle style = new ImageExportSeriesStyle();
 
                 C.ChartShapeProperties? properties = series.GetFirstChild<C.ChartShapeProperties>();
@@ -362,11 +372,15 @@ namespace OfficeIMO.Excel {
                     style.SeriesColorArgb = GetImageExportSeriesColor(properties, workbookPart);
                     style.SeriesLineWidth = GetImageExportSeriesLineWidth(properties);
                     style.SeriesLineDashStyle = GetImageExportSeriesLineDashStyle(properties);
+                    if (HasNoLine(properties)) {
+                        style.ConnectLine = false;
+                    }
                 }
 
                 int valueCount = index >= 0 && index < data.Series.Count ? data.Series[index].Values.Count : 0;
                 C.Marker? marker = series.GetFirstChild<C.Marker>();
-                style.ShowMarkers = GetImageExportShowMarkers(marker);
+                C.ScatterStyleValues? scatterStyle = (series.Parent as C.ScatterChart)?.GetFirstChild<C.ScatterStyle>()?.Val?.Value;
+                style.ShowMarkers = GetImageExportShowMarkers(marker, scatterStyle);
                 style.MarkerSize = GetImageExportMarkerSize(marker);
                 style.MarkerShape = GetImageExportMarkerShape(marker);
                 style.MarkerOutlineColorArgb = GetImageExportMarkerOutlineColor(marker, workbookPart);
@@ -381,6 +395,18 @@ namespace OfficeIMO.Excel {
 
             return styles;
         }
+
+        private static bool GetImageExportFillRadarSeries(C.PlotArea plotArea) {
+            C.RadarChart? radarChart = plotArea.GetFirstChild<C.RadarChart>();
+            C.RadarStyleValues? radarStyle = radarChart?.GetFirstChild<C.RadarStyle>()?.Val?.Value;
+            return radarStyle == null || radarStyle.Value != C.RadarStyleValues.Standard;
+        }
+
+        private static C.ScatterStyleValues? GetImageExportScatterStyle(C.PlotArea plotArea) =>
+            plotArea.GetFirstChild<C.ScatterChart>()?.GetFirstChild<C.ScatterStyle>()?.Val?.Value;
+
+        private static bool GetImageExportConnectScatterPoints(C.ScatterStyleValues? style) =>
+            style == null || style.Value != C.ScatterStyleValues.Marker;
 
         private static string? GetImageExportSeriesColor(C.ChartShapeProperties properties, WorkbookPart workbookPart) {
             if (TryGetSolidFill(properties, workbookPart, out OfficeColor fill)) {
@@ -550,9 +576,23 @@ namespace OfficeIMO.Excel {
             return any ? colors : null;
         }
 
-        private static bool GetImageExportShowMarkers(C.Marker? marker) {
+        private static bool GetImageExportShowMarkers(C.Marker? marker, C.ScatterStyleValues? scatterStyle) {
+            if (marker == null) {
+                return scatterStyle.HasValue && GetImageExportScatterStyleShowMarkers(scatterStyle);
+            }
+
             C.MarkerStyleValues? symbol = marker?.Symbol?.Val?.Value;
             return symbol == null || symbol.Value != C.MarkerStyleValues.None;
+        }
+
+        private static bool GetImageExportScatterStyleShowMarkers(C.ScatterStyleValues? style) {
+            if (style == null) {
+                return true;
+            }
+
+            return style.Value == C.ScatterStyleValues.Marker ||
+                style.Value == C.ScatterStyleValues.LineMarker ||
+                style.Value == C.ScatterStyleValues.SmoothMarker;
         }
 
         private static int? GetImageExportMarkerSize(C.Marker? marker) {
@@ -704,6 +744,14 @@ namespace OfficeIMO.Excel {
                     source));
             }
 
+            if (HasImageExportSecondaryAxis(chartSpace)) {
+                diagnostics.Add(new OfficeImageExportDiagnostic(
+                    OfficeImageExportDiagnosticSeverity.Warning,
+                    ExcelImageExportDiagnosticCodes.ChartSecondaryAxisUnsupported,
+                    "Excel secondary-axis series are not scaled independently yet; image export renders them against the primary value axis.",
+                    source));
+            }
+
             if (HasUnsupportedImageExportAxisNumberFormat(chartSpace)) {
                 diagnostics.Add(new OfficeImageExportDiagnostic(
                     OfficeImageExportDiagnosticSeverity.Warning,
@@ -757,6 +805,14 @@ namespace OfficeIMO.Excel {
 
         private string GetImageExportSource() =>
             _sheetName + "!" + (string.IsNullOrWhiteSpace(Name) ? ChartType.ToString() : Name);
+
+        private static bool HasImageExportSecondaryAxis(C.ChartSpace chartSpace) =>
+            chartSpace.Descendants<C.ValueAxis>()
+                .Any(axis => axis.AxisPosition?.Val?.Value == C.AxisPositionValues.Right)
+            || chartSpace.Descendants<C.CategoryAxis>()
+                .Any(axis => axis.AxisPosition?.Val?.Value == C.AxisPositionValues.Top)
+            || chartSpace.Descendants<C.DateAxis>()
+                .Any(axis => axis.AxisPosition?.Val?.Value == C.AxisPositionValues.Top);
 
         private static bool HasAnyVisibleDataLabelPart(C.DataLabels labels) =>
             IsEnabled(labels.GetFirstChild<C.ShowValue>()) ||
@@ -1458,6 +1514,8 @@ namespace OfficeIMO.Excel {
 
             internal bool ShowMarkers { get; set; } = true;
 
+            internal bool? ConnectLine { get; set; }
+
             internal int? MarkerSize { get; set; }
 
             internal OfficeChartMarkerShape? MarkerShape { get; set; }
@@ -1466,7 +1524,7 @@ namespace OfficeIMO.Excel {
 
             internal double? MarkerOutlineWidth { get; set; }
 
-            internal bool HasAny => SeriesColorArgb != null || SeriesLineWidth != null || SeriesLineDashStyle != null || PointColorArgb != null || !ShowMarkers || MarkerSize != null || MarkerShape != null || MarkerOutlineColorArgb != null || MarkerOutlineWidth != null;
+            internal bool HasAny => SeriesColorArgb != null || SeriesLineWidth != null || SeriesLineDashStyle != null || PointColorArgb != null || !ShowMarkers || ConnectLine.HasValue || MarkerSize != null || MarkerShape != null || MarkerOutlineColorArgb != null || MarkerOutlineWidth != null;
         }
     }
 }

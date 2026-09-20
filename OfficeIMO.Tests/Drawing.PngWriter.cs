@@ -35,6 +35,32 @@ namespace OfficeIMO.Tests {
             Assert.Equal(OfficeColor.FromRgba(255, 0, 0, 128), decoded!.GetPixel(0, 0));
         }
 
+        [Fact]
+        public void OfficePngWriter_RejectsIndexedColorWithoutPalette() {
+            byte[] scanlines = { 0, 0 };
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => OfficePngWriter.EncodeScanlines(1, 1, 8, 3, scanlines));
+            Assert.Throws<ArgumentOutOfRangeException>(() => OfficePngWriter.CreateFromCompressedScanlines(1, 1, 8, 3, Array.Empty<byte>()));
+        }
+
+        [Fact]
+        public void OfficePngWriter_RejectsInvalidColorTypeBitDepthPairs() {
+            byte[] scanlines = { 0, 0, 0, 0 };
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => OfficePngWriter.EncodeScanlines(1, 1, 4, 2, scanlines));
+            Assert.Throws<ArgumentOutOfRangeException>(() => OfficePngWriter.EncodeScanlines(1, 1, 4, 4, scanlines));
+            Assert.Throws<ArgumentOutOfRangeException>(() => OfficePngWriter.CreateFromCompressedScanlines(1, 1, 4, 6, Array.Empty<byte>()));
+        }
+
+        [Fact]
+        public void OfficePngWriter_RejectsScanlineBuffersThatDoNotMatchIhdrLayout() {
+            byte[] shortRgbaScanline = { 0, 255, 0, 0, 255 };
+            byte[] shortGrayscaleScanlines = { 0, 0, 0 };
+
+            Assert.Throws<ArgumentException>(() => OfficePngWriter.EncodeScanlines(2, 1, 8, 6, shortRgbaScanline));
+            Assert.Throws<ArgumentException>(() => OfficePngWriter.EncodeScanlines(8, 2, 1, 0, shortGrayscaleScanlines));
+        }
+
         private static byte[] ExtractChunk(byte[] png, string type) {
             int offset = 8;
             while (offset + 8 <= png.Length) {

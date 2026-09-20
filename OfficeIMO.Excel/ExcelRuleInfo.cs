@@ -1,3 +1,5 @@
+using DocumentFormat.OpenXml.Spreadsheet;
+
 namespace OfficeIMO.Excel {
     /// <summary>
     /// Read-only snapshot of a conditional formatting rule.
@@ -25,8 +27,14 @@ namespace OfficeIMO.Excel {
         public IReadOnlyList<string> Formulas { get; set; } = Array.Empty<string>();
         /// <summary>Gets or sets ARGB colors attached to a color-scale rule, in rule order.</summary>
         public IReadOnlyList<string> ColorScaleColors { get; set; } = Array.Empty<string>();
+        /// <summary>Gets or sets color-scale thresholds in rule order.</summary>
+        public IReadOnlyList<ExcelConditionalFormatThreshold> ColorScaleThresholds { get; set; } = Array.Empty<ExcelConditionalFormatThreshold>();
         /// <summary>Gets or sets the ARGB color attached to a data-bar rule.</summary>
         public string? DataBarColor { get; set; }
+        /// <summary>Gets or sets data-bar thresholds in rule order.</summary>
+        public IReadOnlyList<ExcelConditionalFormatThreshold> DataBarThresholds { get; set; } = Array.Empty<ExcelConditionalFormatThreshold>();
+        /// <summary>Gets or sets whether the data-bar rule displays the underlying cell value.</summary>
+        public bool DataBarShowValue { get; set; } = true;
         /// <summary>Gets or sets the icon-set name attached to an icon-set rule.</summary>
         public string? IconSet { get; set; }
         /// <summary>Gets or sets whether the icon-set rule displays the underlying cell value.</summary>
@@ -50,6 +58,16 @@ namespace OfficeIMO.Excel {
     }
 
     /// <summary>
+    /// Threshold metadata for a conditional-formatting value object.
+    /// </summary>
+    public sealed class ExcelConditionalFormatThreshold {
+        /// <summary>Gets or sets the threshold type, such as Min, Max, Number, Percent, Percentile, or Formula.</summary>
+        public string Type { get; set; } = string.Empty;
+        /// <summary>Gets or sets the raw threshold value, when present.</summary>
+        public string? Value { get; set; }
+    }
+
+    /// <summary>
     /// Threshold metadata for a conditional-formatting icon-set rule.
     /// </summary>
     public sealed class ExcelConditionalIconSetThreshold {
@@ -57,6 +75,8 @@ namespace OfficeIMO.Excel {
         public string Type { get; set; } = string.Empty;
         /// <summary>Gets or sets the raw threshold value, when present.</summary>
         public string? Value { get; set; }
+        /// <summary>Gets or sets whether values equal to the threshold are included in the higher icon bucket.</summary>
+        public bool GreaterThanOrEqual { get; set; } = true;
     }
 
     /// <summary>
@@ -71,6 +91,14 @@ namespace OfficeIMO.Excel {
         public string? Operator { get; set; }
         /// <summary>Gets or sets whether blank values are allowed.</summary>
         public bool AllowBlank { get; set; }
+        /// <summary>Gets or sets whether Excel should hide the in-cell dropdown for list validations.</summary>
+        public bool SuppressDropDown { get; set; }
+        /// <summary>Gets or sets the OpenXML validation error style.</summary>
+        public string? ErrorStyle { get; set; }
+        /// <summary>Gets or sets whether Excel should show the input prompt.</summary>
+        public bool ShowInputMessage { get; set; }
+        /// <summary>Gets or sets whether Excel should show the validation error.</summary>
+        public bool ShowErrorMessage { get; set; }
         /// <summary>Gets or sets the first validation formula.</summary>
         public string? Formula1 { get; set; }
         /// <summary>Gets or sets the second validation formula.</summary>
@@ -101,5 +129,10 @@ namespace OfficeIMO.Excel {
         public bool ShowInputMessage { get; set; }
         /// <summary>Gets or sets whether Excel should show the validation error.</summary>
         public bool ShowErrorMessage { get; set; }
+        internal bool PreserveShowMessageFlags { get; set; }
+        /// <summary>Gets or sets the validation error alert style.</summary>
+        public DataValidationErrorStyleValues? ErrorStyle { get; set; }
+        /// <summary>Gets or sets whether Excel should hide the in-cell dropdown for list validations. Leave null to preserve the existing value.</summary>
+        public bool? SuppressDropDown { get; set; }
     }
 }

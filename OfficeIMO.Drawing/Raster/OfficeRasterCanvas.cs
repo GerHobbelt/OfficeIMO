@@ -38,7 +38,7 @@ public sealed partial class OfficeRasterCanvas {
 
     /// <summary>Fills a rectangle.</summary>
     public void FillRectangle(double x, double y, double width, double height, OfficeColor color) {
-        if (color.A == 0 || width <= 0D || height <= 0D) {
+        if (color.A == 0 || width <= 0D || height <= 0D || IsOutsideCanvas(x, y, width, height)) {
             return;
         }
 
@@ -59,7 +59,7 @@ public sealed partial class OfficeRasterCanvas {
             throw new ArgumentNullException(nameof(gradient));
         }
 
-        if (width <= 0D || height <= 0D) {
+        if (width <= 0D || height <= 0D || IsOutsideCanvas(x, y, width, height)) {
             return;
         }
 
@@ -97,7 +97,7 @@ public sealed partial class OfficeRasterCanvas {
 
     /// <summary>Fills an ellipse bounded by the supplied rectangle.</summary>
     public void FillEllipse(double x, double y, double width, double height, OfficeColor color) {
-        if (color.A == 0 || width <= 0D || height <= 0D) {
+        if (color.A == 0 || width <= 0D || height <= 0D || IsOutsideCanvas(x, y, width, height)) {
             return;
         }
 
@@ -117,7 +117,7 @@ public sealed partial class OfficeRasterCanvas {
 
     /// <summary>Draws an ellipse outline bounded by the supplied rectangle.</summary>
     public void DrawEllipse(double x, double y, double width, double height, OfficeColor color, double thickness = 1D) {
-        if (color.A == 0 || width <= 0D || height <= 0D || thickness <= 0D) {
+        if (color.A == 0 || width <= 0D || height <= 0D || thickness <= 0D || IsOutsideCanvas(x, y, width, height)) {
             return;
         }
 
@@ -388,6 +388,19 @@ public sealed partial class OfficeRasterCanvas {
         FillPolygonCore(points, color);
     }
 
+    /// <summary>Fills a polygon with a two-stop linear gradient fitted to the polygon bounds.</summary>
+    public void FillLinearGradientPolygon(IReadOnlyList<OfficePoint> points, OfficeLinearGradient gradient) {
+        if (gradient == null) {
+            throw new ArgumentNullException(nameof(gradient));
+        }
+
+        if (points == null || points.Count < 3) {
+            return;
+        }
+
+        FillPolygonCore(points, gradient);
+    }
+
     /// <summary>Fills multiple polygon contours using the even-odd fill rule.</summary>
     public void FillPolygonsEvenOdd(IReadOnlyList<IReadOnlyList<OfficePoint>> contours, OfficeColor color) {
         if (color.A == 0 || contours == null || contours.Count == 0) {
@@ -648,6 +661,49 @@ public sealed partial class OfficeRasterCanvas {
         }
     }
 
+    private void FillPolygonCore(IReadOnlyList<OfficePoint> points, OfficeLinearGradient gradient) {
+        double minX = points[0].X;
+        double maxX = points[0].X;
+        double minY = points[0].Y;
+        double maxY = points[0].Y;
+        for (int i = 1; i < points.Count; i++) {
+            minX = Math.Min(minX, points[i].X);
+            maxX = Math.Max(maxX, points[i].X);
+            minY = Math.Min(minY, points[i].Y);
+            maxY = Math.Max(maxY, points[i].Y);
+        }
+
+        double width = Math.Max(0.0001D, maxX - minX);
+        double height = Math.Max(0.0001D, maxY - minY);
+        OfficeGradientStop start = gradient.Stops[0];
+        OfficeGradientStop end = gradient.Stops[gradient.Stops.Count - 1];
+        double dx = gradient.EndX - gradient.StartX;
+        double dy = gradient.EndY - gradient.StartY;
+        double lengthSquared = (dx * dx) + (dy * dy);
+        if (lengthSquared <= double.Epsilon) {
+            FillPolygonCore(points, start.Color);
+            return;
+        }
+
+        int left = Clamp((int)Math.Floor(minX), 0, Width - 1);
+        int right = Clamp((int)Math.Ceiling(maxX), 0, Width - 1);
+        int top = Clamp((int)Math.Floor(minY), 0, Height - 1);
+        int bottom = Clamp((int)Math.Ceiling(maxY), 0, Height - 1);
+        for (int py = top; py <= bottom; py++) {
+            double ny = ((py + 0.5D) - minY) / height;
+            for (int px = left; px <= right; px++) {
+                double coverage = PolygonCoverage(points, px, py);
+                if (coverage <= 0D) {
+                    continue;
+                }
+
+                double nx = ((px + 0.5D) - minX) / width;
+                double ratio = (((nx - gradient.StartX) * dx) + ((ny - gradient.StartY) * dy)) / lengthSquared;
+                BlendPixel(px, py, ApplyCoverage(Interpolate(start.Color, end.Color, Clamp(ratio, 0D, 1D)), coverage));
+            }
+        }
+    }
+
     private static bool ContainsPoint(IReadOnlyList<OfficePoint> points, double x, double y) {
         bool inside = false;
         int j = points.Count - 1;
@@ -679,6 +735,9 @@ public sealed partial class OfficeRasterCanvas {
 
         _target!.BlendPixel(x, y, color);
     }
+
+    private bool IsOutsideCanvas(double x, double y, double width, double height) =>
+        x >= Width || y >= Height || x + width <= 0D || y + height <= 0D;
 
     private double PolygonCoverage(IReadOnlyList<OfficePoint> points, int x, int y) {
         int samples = CoverageSamples;

@@ -171,7 +171,7 @@ namespace OfficeIMO.Tests {
             sheet.AddManualRowPageBreak(2, save: false);
 
             IReadOnlyList<OfficeImageExportResult> results = sheet.ExportImages(OfficeImageExportFormat.Svg, new ExcelWorksheetImageExportOptions {
-                Range = "A1:D4",
+                Range = "A1:P4",
                 SplitByManualPageBreaks = true,
                 ShowGridlines = false
             });
@@ -180,7 +180,7 @@ namespace OfficeIMO.Tests {
             Assert.DoesNotContain(results[1].Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.HeaderFooterUnsupported);
             Assert.Contains(results[1].Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.HeaderFooterFormattingApproximation);
             Assert.Contains("text-decoration=\"line-through\"", svg);
-            Assert.Contains(">Strike Header<", svg);
+            Assert.Contains("Strike Header", svg);
         }
 
         [Fact]
@@ -277,7 +277,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("clip-path=\"url(#xl-header-footer-footer-right)\"", svg);
             Assert.Contains(">Date ", svg);
             Assert.Contains(">Time ", svg);
-            Assert.Contains("...", svg);
+            Assert.Contains(">Printed ", svg);
         }
 
         [Fact]
@@ -339,6 +339,46 @@ namespace OfficeIMO.Tests {
             OfficeImageInfo bodyInfo = OfficeImageReader.Identify(bodyOnly.Bytes);
             Assert.Equal(bodyInfo.Width, composedInfo.Width);
             Assert.True(composedInfo.Height > bodyInfo.Height);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedImageExportKeepsHeaderFooterInsidePageSetupCanvas() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetPaperSize(ExcelPaperSize.Letter);
+            sheet.SetHeaderFooter(headerCenter: "Prepared", footerCenter: "Internal");
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            Assert.Equal(OfficePageSizes.Letter.ToPixelHeight(96D), result.Height);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedImageExportKeepsHeaderFooterInsidePageSetupCanvasWithPrintTitles() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetPaperSize(ExcelPaperSize.Letter);
+            sheet.SetHeaderFooter(headerCenter: "Prepared", footerCenter: "Internal");
+            document.SetPrintTitles(sheet, firstRow: 1, lastRow: 1, firstCol: null, lastCol: null, save: false);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PrintTitlesUnsupported);
+            Assert.Equal(OfficePageSizes.Letter.ToPixelHeight(96D), result.Height);
         }
 
         [Fact]

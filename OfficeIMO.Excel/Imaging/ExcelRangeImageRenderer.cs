@@ -74,7 +74,7 @@ namespace OfficeIMO.Excel {
             var backgroundAttributes = new StringBuilder();
             backgroundAttributes.AppendPaintAttribute("fill", options.BackgroundColor);
             builder.AppendRectElement(0D, 0D, width, height, backgroundAttributes.ToString());
-            OfficeRasterCanvas textMeasureCanvas = new OfficeRasterCanvas(new OfficeRasterImage(1, 1, OfficeColor.Transparent));
+            OfficeTextMeasurer textMeasurer = OfficeTextMeasurer.Create();
             Dictionary<string, ExcelVisualConditionalDataBar> dataBars = BuildDataBarMap(snapshot.ConditionalDataBars);
             Dictionary<string, ExcelVisualCell> cellsByAddress = BuildCellMap(snapshot.Cells);
 
@@ -109,13 +109,13 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                AppendSvgCellText(builder, cell, snapshot, options, textMeasureCanvas, cellsByAddress, diagnostics);
+                AppendSvgCellText(builder, cell, snapshot, options, textMeasurer, cellsByAddress, diagnostics);
             }
 
             AppendSvgConditionalIcons(builder, snapshot, options);
             AppendSvgSparklines(builder, snapshot, options);
             AppendSvgCommentIndicators(builder, snapshot, options);
-            AppendSvgDrawingLayers(builder, snapshot, options, diagnostics, textMeasureCanvas);
+            AppendSvgDrawingLayers(builder, snapshot, options, diagnostics, textMeasurer);
 
             builder.Append("</svg>");
             return builder.ToString();
@@ -186,7 +186,8 @@ namespace OfficeIMO.Excel {
             }
 
             OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(officeSnapshot);
-            OfficeRasterImage chartImage = OfficeDrawingRasterRenderer.Render(drawing, scale, OfficeColor.White);
+            OfficeColor chartBackground = officeSnapshot.Style?.ShowBackground == false ? OfficeColor.Transparent : OfficeColor.White;
+            OfficeRasterImage chartImage = OfficeDrawingRasterRenderer.Render(drawing, scale, chartBackground);
             canvas.DrawImage(chartImage, chart.X * scale, chart.Y * scale, chart.Width * scale, chart.Height * scale);
         }
 
@@ -196,12 +197,15 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            string chartSvg = OfficeDrawingSvgExporter.ToSvg(OfficeChartDrawingRenderer.Render(officeSnapshot));
+            OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(officeSnapshot);
+            string chartSvg = OfficeDrawingSvgExporter.ToSvg(drawing);
             builder.AppendNestedSvg(
                 chart.X * scale,
                 chart.Y * scale,
                 chart.Width * scale,
                 chart.Height * scale,
+                drawing.Width,
+                drawing.Height,
                 OfficeSvgFormatting.ExtractSvgInner(chartSvg));
         }
 
@@ -224,15 +228,32 @@ namespace OfficeIMO.Excel {
                     sheetName + "!" + snapshot.Name));
             }
 
+            if (snapshot.Data.Series.Any(series => series.ChartType.HasValue && series.ChartType.Value != snapshot.ChartType)) {
+                diagnostics?.Add(new OfficeImageExportDiagnostic(
+                    OfficeImageExportDiagnosticSeverity.Warning,
+                    ExcelImageExportDiagnosticCodes.ChartKindApproximated,
+                    "Excel combo chart series types are not rendered independently yet; image export uses the chart's primary kind for all series.",
+                    sheetName + "!" + snapshot.Name));
+            }
+
+            if (snapshot.Data.Series.Any(series => series.AxisGroup == ExcelChartAxisGroup.Secondary)) {
+                diagnostics?.Add(new OfficeImageExportDiagnostic(
+                    OfficeImageExportDiagnosticSeverity.Warning,
+                    ExcelImageExportDiagnosticCodes.ChartSecondaryAxisUnsupported,
+                    "Excel secondary-axis series are not scaled independently yet; image export renders them against the primary value axis.",
+                    sheetName + "!" + snapshot.Name));
+            }
+
             OfficeChartData data = new OfficeChartData(
                 snapshot.Data.Categories,
                 snapshot.Data.Series.Select(series => new OfficeChartSeries(
                     series.Name,
                     series.Values,
-                    xValues: null,
+                    series.XValues,
                     ResolveArgb(series.SeriesColorArgb),
                     ResolvePointColors(series.PointColorArgb),
                     series.ShowMarkers,
+                    connectLine: series.ConnectLine,
                     markerSize: series.MarkerSize,
                     markerShape: series.MarkerShape,
                     markerOutlineColor: ResolveArgb(series.MarkerOutlineColorArgb),

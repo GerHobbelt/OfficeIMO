@@ -23,6 +23,10 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
+            if (TryGetConditionalDataBarForCell(snapshot, cell, out ExcelVisualConditionalDataBar dataBar) && !dataBar.ShowValue) {
+                return;
+            }
+
             CellTextViewport viewport = ResolveCellTextViewport(cell, snapshot, scale, cellsByAddress);
             if (TryGetConditionalIconForCell(snapshot, cell, out ExcelVisualConditionalIcon conditionalIcon)) {
                 if (!conditionalIcon.ShowValue) {
@@ -149,7 +153,7 @@ namespace OfficeIMO.Excel {
             ExcelVisualCell cell,
             ExcelRangeVisualSnapshot snapshot,
             ExcelImageExportOptions options,
-            OfficeRasterCanvas textMeasureCanvas,
+            OfficeTextMeasurer textMeasurer,
             IReadOnlyDictionary<string, ExcelVisualCell> cellsByAddress,
             List<OfficeImageExportDiagnostic>? diagnostics) {
             if (string.IsNullOrEmpty(cell.Text)) {
@@ -157,6 +161,10 @@ namespace OfficeIMO.Excel {
             }
 
             double scale = options.Scale;
+            if (TryGetConditionalDataBarForCell(snapshot, cell, out ExcelVisualConditionalDataBar dataBar) && !dataBar.ShowValue) {
+                return;
+            }
+
             CellTextViewport viewport = ResolveCellTextViewport(cell, snapshot, scale, cellsByAddress);
             if (TryGetConditionalIconForCell(snapshot, cell, out ExcelVisualConditionalIcon conditionalIcon)) {
                 if (!conditionalIcon.ShowValue) {
@@ -196,14 +204,14 @@ namespace OfficeIMO.Excel {
                 minimumFontSize,
                 rotationDegrees,
                 stacked,
-                (text, size) => textMeasureCanvas.MeasureText(text, size, fontFamily));
+                (text, size) => MeasureSvgText(textMeasurer, text, size, fontFamily));
             OfficeTextBlockLayout layout = plan.Layout;
             if (layout.Lines.Count == 0) {
                 return;
             }
 
             if (cell.RichTextRuns.Count > 0) {
-                if (richTextSupported && TryAppendSvgRichText(builder, cell, options, x, y, w, h, paddingX, paddingY, availableWidth, availableHeight, rotationDegrees, stacked, (text, size, family) => textMeasureCanvas.MeasureText(text, size, family), out OfficeRichTextBlockLayout richLayout)) {
+                if (richTextSupported && TryAppendSvgRichText(builder, cell, options, x, y, w, h, paddingX, paddingY, availableWidth, availableHeight, rotationDegrees, stacked, (text, size, family) => MeasureSvgText(textMeasurer, text, size, family), out OfficeRichTextBlockLayout richLayout)) {
                     AddRichTextFontFamilyFallbackDiagnostics(snapshot, cell, diagnostics);
                     AddTextClippingDiagnosticIfNeeded(richLayout, snapshot, cell, diagnostics);
                     if (rotated || stacked) {
@@ -498,6 +506,11 @@ namespace OfficeIMO.Excel {
             return layout.Lines.Count > 0;
         }
 
+        private static double MeasureSvgText(OfficeTextMeasurer measurer, string? text, double fontSize, string? fontFamily) {
+            OfficeTextMeasurementStyle style = measurer.CreateStyle(new OfficeFontInfo(fontFamily, fontSize));
+            return measurer.MeasureWidth(text, style);
+        }
+
         private static OfficeTextBlockRenderPlan CreateCenteredRotatedCellTextPlan(
             OfficeTextBlockLayout layout,
             double centerX,
@@ -529,6 +542,19 @@ namespace OfficeIMO.Excel {
             return false;
         }
 
+        private static bool TryGetConditionalDataBarForCell(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, out ExcelVisualConditionalDataBar dataBar) {
+            for (int index = 0; index < snapshot.ConditionalDataBars.Count; index++) {
+                ExcelVisualConditionalDataBar candidate = snapshot.ConditionalDataBars[index];
+                if (candidate.Row == cell.Row && candidate.Column == cell.Column) {
+                    dataBar = candidate;
+                    return true;
+                }
+            }
+
+            dataBar = null!;
+            return false;
+        }
+
         private static CellTextViewport ReserveConditionalIconTextSpace(CellTextViewport viewport, ExcelVisualConditionalIcon icon, double scale) {
             IconBounds bounds = GetConditionalIconBounds(icon, scale);
             double reservedRight = Math.Min(
@@ -555,24 +581,59 @@ namespace OfficeIMO.Excel {
             double y = cell.Y * scale;
             double width = cell.Width * scale;
             double height = cell.Height * scale;
-            if (!CanCellTextSpillRight(cell, snapshot)) {
-                return new CellTextViewport(x, y, width, height);
-            }
 
-            double unscaledRight = cell.X + cell.Width;
-            for (int column = cell.Column + 1; column <= snapshot.LastColumn; column++) {
-                if (!cellsByAddress.TryGetValue(Key(cell.Row, column), out ExcelVisualCell? neighbor) ||
-                    !CanSpillThroughNeighbor(neighbor, snapshot)) {
-                    break;
+            if (CanCellTextSpillLeft(cell, snapshot)) {
+                double unscaledLeft = cell.X;
+                for (int column = cell.Column - 1; column >= snapshot.FirstColumn; column--) {
+                    if (!cellsByAddress.TryGetValue(Key(cell.Row, column), out ExcelVisualCell? neighbor) ||
+                        !CanSpillThroughNeighbor(neighbor, snapshot)) {
+                        break;
+                    }
+
+                    unscaledLeft = neighbor.X;
                 }
 
-                unscaledRight = neighbor.X + neighbor.Width;
+                return new CellTextViewport(unscaledLeft * scale, y, Math.Max(width, ((cell.X + cell.Width) - unscaledLeft) * scale), height);
             }
 
-            return new CellTextViewport(x, y, Math.Max(width, (unscaledRight - cell.X) * scale), height);
+            if (CanCellTextSpillRight(cell, snapshot)) {
+                double unscaledRight = cell.X + cell.Width;
+                for (int column = cell.Column + 1; column <= snapshot.LastColumn; column++) {
+                    if (!cellsByAddress.TryGetValue(Key(cell.Row, column), out ExcelVisualCell? neighbor) ||
+                        !CanSpillThroughNeighbor(neighbor, snapshot)) {
+                        break;
+                    }
+
+                    unscaledRight = neighbor.X + neighbor.Width;
+                }
+
+                return new CellTextViewport(x, y, Math.Max(width, (unscaledRight - cell.X) * scale), height);
+            }
+
+            return new CellTextViewport(x, y, width, height);
         }
 
         private static bool CanCellTextSpillRight(ExcelVisualCell cell, ExcelRangeVisualSnapshot snapshot) {
+            if (!CanCellTextSpill(cell, snapshot)) {
+                return false;
+            }
+
+            string? alignment = cell.Style.HorizontalAlignment;
+            if (string.Equals(alignment, "left", StringComparison.OrdinalIgnoreCase)) {
+                return true;
+            }
+
+            return (string.IsNullOrWhiteSpace(alignment) || string.Equals(alignment, "general", StringComparison.OrdinalIgnoreCase)) &&
+                cell.ValueKind == ExcelVisualCellValueKind.Text;
+        }
+
+        private static bool CanCellTextSpillLeft(ExcelVisualCell cell, ExcelRangeVisualSnapshot snapshot) {
+            return CanCellTextSpill(cell, snapshot) &&
+                cell.ValueKind == ExcelVisualCellValueKind.Text &&
+                string.Equals(cell.Style.HorizontalAlignment, "right", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool CanCellTextSpill(ExcelVisualCell cell, ExcelRangeVisualSnapshot snapshot) {
             if (cell.CoveredByMerge ||
                 cell.Style.WrapText ||
                 cell.Style.ShrinkToFit ||
@@ -584,13 +645,7 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
-            string? alignment = cell.Style.HorizontalAlignment;
-            if (string.Equals(alignment, "left", StringComparison.OrdinalIgnoreCase)) {
-                return true;
-            }
-
-            return (string.IsNullOrWhiteSpace(alignment) || string.Equals(alignment, "general", StringComparison.OrdinalIgnoreCase)) &&
-                cell.ValueKind == ExcelVisualCellValueKind.Text;
+            return true;
         }
 
         private static bool CanSpillThroughNeighbor(ExcelVisualCell neighbor, ExcelRangeVisualSnapshot snapshot) {

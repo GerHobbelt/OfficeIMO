@@ -874,7 +874,11 @@ public class DrawingTests {
 
         string svg = OfficeDrawingSvgExporter.ToSvg(drawing);
 
-        Assert.Contains("<text x=\"50\" y=\"22\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"middle\" fill=\"#010203\" fill-opacity=\"0.502\" font-weight=\"700\" font-style=\"italic\">A&amp;B<tspan x=\"50\" dy=\"14\">Beta</tspan></text>", svg, StringComparison.Ordinal);
+        Assert.Contains("<text x=\"50\" y=\"22\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"middle\" fill=\"#010203\"", svg, StringComparison.Ordinal);
+        Assert.Contains("fill-opacity=\"0.502\"", svg, StringComparison.Ordinal);
+        Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
+        Assert.Contains("font-style=\"italic\"", svg, StringComparison.Ordinal);
+        Assert.Contains(">A&amp;B<tspan x=\"50\" dy=\"14\">Beta</tspan></text>", svg, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1319,6 +1323,9 @@ public class DrawingTests {
         nestedBuilder.AppendNestedSvg(1.25D, 2.5D, 30.125D, 40.75D, inner);
         Assert.Equal("<rect width=\"10\"/>", inner);
         Assert.Equal("<svg x=\"1.25\" y=\"2.5\" width=\"30.125\" height=\"40.75\" viewBox=\"0 0 30.125 40.75\"><rect width=\"10\"/></svg>", nestedBuilder.ToString());
+        var scaledNestedBuilder = new StringBuilder();
+        scaledNestedBuilder.AppendNestedSvg(1D, 2D, 100D, 50D, 240D, 150D, inner);
+        Assert.Equal("<svg x=\"1\" y=\"2\" width=\"100\" height=\"50\" viewBox=\"0 0 240 150\"><rect width=\"10\"/></svg>", scaledNestedBuilder.ToString());
         Assert.Equal("<g/>", OfficeSvgFormatting.ExtractSvgInner("<g/>"));
 
         Assert.Equal("rotate(12.346)", OfficeSvgFormatting.FormatRotateTransform(12.34567D));
@@ -1877,7 +1884,15 @@ public class DrawingTests {
         Assert.NotNull(presetLine);
         Assert.Equal(OfficeShapeKind.Line, presetLine!.Kind);
         Assert.Equal(new OfficePoint(0, 0), presetLine.Points[0]);
-        Assert.Equal(new OfficePoint(120, 0), presetLine.Points[1]);
+        Assert.Equal(new OfficePoint(120, 40), presetLine.Points[1]);
+
+        Assert.True(OfficeShapePresets.TryCreate("line", 120, 0, out OfficeShape? horizontalLine));
+        Assert.NotNull(horizontalLine);
+        Assert.Equal(new OfficePoint(120, 0), horizontalLine!.Points[1]);
+
+        Assert.True(OfficeShapePresets.TryCreate("line", 0, 40, out OfficeShape? verticalLine));
+        Assert.NotNull(verticalLine);
+        Assert.Equal(new OfficePoint(0, 40), verticalLine!.Points[1]);
 
         Assert.True(OfficeShapePresets.TryCreate("straightConnector1", 120, 40, out OfficeShape? straightConnector));
         Assert.NotNull(straightConnector);

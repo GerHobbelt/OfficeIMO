@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using OfficeIMO.Drawing;
 using OfficeIMO.PowerPoint;
 using Xunit;
 
@@ -40,11 +41,17 @@ namespace OfficeIMO.Tests {
 
         [Fact]
         public void PowerPointImagePartExtensionsUseSharedDrawingPolicy() {
+            Assert.Equal(ImagePartType.Png, ImagePartTypeExtensions.FromOfficeImageFormat(OfficeImageFormat.Png));
             Assert.Equal(".png", PowerPointPartFactory.GetImageExtension(ImagePartType.Png));
             Assert.Equal(".jpeg", PowerPointPartFactory.GetImageExtension(ImagePartType.Jpeg));
             Assert.Equal(".svg", PowerPointPartFactory.GetImageExtension(ImagePartType.Svg));
             Assert.Equal(".emf", PowerPointPartFactory.GetImageExtension(ImagePartType.Emf));
             Assert.Equal(".jpg", PowerPointPartFactory.GetImageExtension(ImagePartType.Jpeg, @"C:\Temp\photo.JPG"));
+        }
+
+        [Fact]
+        public void PowerPointImagePartExtensionsRejectUnsupportedWebP() {
+            Assert.Throws<NotSupportedException>(() => ImagePartTypeExtensions.FromOfficeImageFormat(OfficeImageFormat.Webp));
         }
 
         [Theory]

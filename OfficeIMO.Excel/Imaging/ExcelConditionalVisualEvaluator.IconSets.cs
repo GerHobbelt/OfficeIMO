@@ -7,6 +7,7 @@ namespace OfficeIMO.Excel {
             ExcelSheet sheet,
             IReadOnlyList<ExcelVisualCell> cells,
             IReadOnlyList<ExcelConditionalFormattingInfo> rules,
+            HashSet<string> stoppedCells,
             List<OfficeImageExportDiagnostic> diagnostics) {
             var icons = new List<ExcelVisualConditionalIcon>();
             foreach (ExcelConditionalFormattingInfo rule in rules
@@ -16,7 +17,9 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                List<ConditionalNumericCell> candidates = GetNumericCandidates(cells, rule.Range);
+                List<ConditionalNumericCell> candidates = GetNumericCandidates(sheet, cells, rule.Range)
+                    .Where(candidate => !stoppedCells.Contains(Key(candidate.Cell.Row, candidate.Cell.Column)))
+                    .ToList();
                 if (candidates.Count == 0) {
                     diagnostics.Add(new OfficeImageExportDiagnostic(
                         OfficeImageExportDiagnosticSeverity.Warning,
@@ -26,8 +29,13 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                double min = candidates.Min(candidate => candidate.Value);
-                double max = candidates.Max(candidate => candidate.Value);
+                IReadOnlyList<double> values = GetRuleNumericValues(sheet, rule.Range);
+                if (values.Count == 0) {
+                    values = candidates.Select(candidate => candidate.Value).ToArray();
+                }
+
+                double min = values.Min();
+                double max = values.Max();
                 foreach (ConditionalNumericCell candidate in candidates) {
                     int index = ResolveIconIndex(candidate.Value, min, max, iconCount, rule.IconSetThresholds);
                     if (rule.IconSetReverse) {
@@ -106,7 +114,13 @@ namespace OfficeIMO.Excel {
             int resolved = 0;
             for (int i = 1; i < iconCount; i++) {
                 double threshold = ResolveIconThreshold(min, max, iconCount, thresholds, i);
-                if (value >= threshold) {
+                ExcelConditionalIconSetThreshold? thresholdInfo = thresholds.Count == iconCount && i < thresholds.Count
+                    ? thresholds[i]
+                    : null;
+                bool matches = thresholdInfo?.GreaterThanOrEqual == false
+                    ? value > threshold
+                    : value >= threshold;
+                if (matches) {
                     resolved = i;
                 }
             }

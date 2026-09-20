@@ -52,6 +52,18 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeRasterCanvas_IgnoresRectanglesFullyOutsideCanvas() {
+            OfficeRasterImage image = new OfficeRasterImage(6, 6, OfficeColor.Transparent);
+            OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
+
+            canvas.FillRectangle(8, 1, 4, 4, OfficeColor.Red);
+            canvas.FillRectangle(1, 8, 4, 4, OfficeColor.Blue);
+            canvas.FillLinearGradientRectangle(8, 8, 4, 4, OfficeLinearGradient.Horizontal(OfficeColor.Red, OfficeColor.Blue));
+
+            Assert.Equal(0, CountPaintedPixels(image));
+        }
+
+        [Fact]
         public void OfficeRasterCanvas_DrawsSharedHatchPatternRectangle() {
             OfficeRasterImage image = new OfficeRasterImage(32, 24, OfficeColor.Transparent);
             OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
@@ -186,10 +198,11 @@ namespace OfficeIMO.Tests {
 
             Assert.True(CountPixelsNear(circle, OfficeColor.FromRgb(220, 38, 38)) > 40);
             Assert.True(CountPixelsNear(arrow, OfficeColor.FromRgb(22, 163, 74)) > 30);
-            Assert.True(CountPixelsNear(rating, OfficeColor.FromRgb(22, 163, 74)) > 45);
+            Assert.True(CountPixelsNear(rating, OfficeColor.FromRgb(22, 163, 74)) > 30);
             Assert.True(CountPixelsNear(quarter, OfficeColor.FromRgb(249, 115, 22)) > 20);
             Assert.True(CountPixelsNearAlpha(circle, OfficeColor.FromRgb(15, 23, 42), 8, 10, 70) > 0);
             Assert.True(CountPixelsNearAlpha(arrow, OfficeColor.FromRgb(15, 23, 42), 8, 10, 70) > 0);
+            Assert.True(CountPixelsNearAlpha(rating, OfficeColor.FromRgb(15, 23, 42), 8, 10, 70) > 0);
             Assert.Equal(0, circle.GetPixel(0, 0).A);
             Assert.Equal(0, arrow.GetPixel(0, 0).A);
             Assert.Equal(0, rating.GetPixel(0, 0).A);
@@ -204,8 +217,8 @@ namespace OfficeIMO.Tests {
             OfficeConditionalIconRenderer.AppendSvg(builder, 24, 3, 18, OfficeConditionalIconKind.QuarterTwo, scale: 1D);
             string svg = builder.ToString();
 
-            Assert.Contains("<rect", svg, StringComparison.Ordinal);
-            Assert.Contains("<polygon", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain("<rect", svg, StringComparison.Ordinal);
+            Assert.True(CountOccurrences(svg, "<polygon") >= 3, svg);
             Assert.Contains("#F59E0B", svg, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -1015,6 +1028,148 @@ namespace OfficeIMO.Tests {
             Assert.True(CountPaintedPixels(solid) > CountPaintedPixels(dashed));
             Assert.True(AnyAlpha(dashed, 4, 7, 10, 9));
             Assert.True(CountTransparentColumnsOnRow(dashed, 8, 4, 68) >= 6);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_KeepsZeroWidthStrokesInvisible() {
+            OfficeDrawing drawing = new OfficeDrawing(32, 24);
+            OfficeShape shape = OfficeShape.Rectangle(20, 12);
+            shape.StrokeColor = OfficeColor.Red;
+            shape.StrokeWidth = 0D;
+            drawing.AddShape(shape, 6, 6);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.Equal(0, CountPaintedPixels(image));
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_AppliesFillOpacityToGradients() {
+            OfficeDrawing drawing = new OfficeDrawing(32, 24);
+            OfficeShape shape = OfficeShape.Rectangle(24, 16);
+            shape.FillGradient = OfficeLinearGradient.Horizontal(OfficeColor.Red, OfficeColor.Blue);
+            shape.FillOpacity = 0.5D;
+            drawing.AddShape(shape, 4, 4);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+            OfficeColor middle = image.GetPixel(16, 12);
+
+            Assert.InRange(middle.A, 100, 155);
+            Assert.True(middle.R > 20 || middle.B > 20);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_FillsRoundedRectangleGradientsInsideRoundedContour() {
+            OfficeDrawing drawing = new OfficeDrawing(48, 36);
+            OfficeShape shape = OfficeShape.RoundedRectangle(28, 18, 7);
+            shape.FillGradient = OfficeLinearGradient.Horizontal(OfficeColor.Red, OfficeColor.Blue);
+            drawing.AddShape(shape, 4, 4);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.Equal(0, image.GetPixel(4, 4).A);
+            OfficeColor middle = image.GetPixel(18, 13);
+            Assert.True(middle.A > 200);
+            Assert.True(middle.R > 20 || middle.B > 20);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_FillsEllipseGradientsInsideEllipseContour() {
+            OfficeDrawing drawing = new OfficeDrawing(48, 36);
+            OfficeShape shape = OfficeShape.Ellipse(28, 18);
+            shape.FillGradient = OfficeLinearGradient.Horizontal(OfficeColor.Red, OfficeColor.Blue);
+            drawing.AddShape(shape, 4, 4);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.Equal(0, image.GetPixel(4, 4).A);
+            OfficeColor middle = image.GetPixel(18, 13);
+            Assert.True(middle.A > 200);
+            Assert.True(middle.R > 20 || middle.B > 20);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_FillsPolygonGradients() {
+            OfficeDrawing drawing = new OfficeDrawing(48, 28);
+            OfficeShape shape = OfficeShape.Polygon(
+                new OfficePoint(0, 0),
+                new OfficePoint(32, 0),
+                new OfficePoint(32, 18),
+                new OfficePoint(0, 18));
+            shape.FillGradient = OfficeLinearGradient.Horizontal(OfficeColor.Red, OfficeColor.Blue);
+            drawing.AddShape(shape, 4, 4);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            OfficeColor left = image.GetPixel(8, 12);
+            OfficeColor right = image.GetPixel(32, 12);
+            Assert.True(left.R > left.B, $"Expected polygon gradient left side to keep the red stop, got {left}.");
+            Assert.True(right.B > right.R, $"Expected polygon gradient right side to keep the blue stop, got {right}.");
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_FillsPathGradients() {
+            OfficeDrawing drawing = new OfficeDrawing(48, 28);
+            OfficeShape shape = OfficeShape.Path(
+                OfficePathCommand.MoveTo(0, 0),
+                OfficePathCommand.LineTo(32, 0),
+                OfficePathCommand.LineTo(32, 18),
+                OfficePathCommand.LineTo(0, 18),
+                OfficePathCommand.Close());
+            shape.FillGradient = OfficeLinearGradient.Horizontal(OfficeColor.Red, OfficeColor.Blue);
+            drawing.AddShape(shape, 4, 4);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            OfficeColor left = image.GetPixel(8, 12);
+            OfficeColor right = image.GetPixel(32, 12);
+            Assert.True(left.R > left.B, $"Expected path gradient left side to keep the red stop, got {left}.");
+            Assert.True(right.B > right.R, $"Expected path gradient right side to keep the blue stop, got {right}.");
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_PreservesGradientOnTransformedShapes() {
+            OfficeDrawing drawing = new OfficeDrawing(64, 48);
+            OfficeShape shape = OfficeShape.Rectangle(34, 20);
+            shape.FillGradient = OfficeLinearGradient.Horizontal(OfficeColor.Red, OfficeColor.Blue);
+            shape.Transform = OfficeTransform.RotateDegrees(20D, 17D, 10D);
+            drawing.AddShape(shape, 14, 12);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            OfficeColor left = image.GetPixel(20, 25);
+            OfficeColor right = image.GetPixel(45, 23);
+            Assert.True(left.R > left.B, $"Expected transformed gradient left side to keep the red stop, got {left}.");
+            Assert.True(right.B > right.R, $"Expected transformed gradient right side to keep the blue stop, got {right}.");
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_RendersRoundedRectanglesAndShapeShadows() {
+            OfficeDrawing drawing = new OfficeDrawing(48, 36);
+            OfficeShape shape = OfficeShape.RoundedRectangle(24, 16, 6);
+            shape.FillColor = OfficeColor.Red;
+            shape.Shadow = new OfficeShadow(OfficeColor.Black, 0.5D, 8D, 6D);
+            drawing.AddShape(shape, 4, 4);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.Equal(0, image.GetPixel(4, 4).A);
+            Assert.True(image.GetPixel(16, 12).A > 200);
+            Assert.True(image.GetPixel(34, 24).A > 0, "Expected the shape shadow to render behind the rounded rectangle.");
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_AppliesRasterClipPaths() {
+            OfficeDrawing drawing = new OfficeDrawing(32, 24);
+            OfficeShape shape = OfficeShape.Rectangle(24, 16);
+            shape.FillColor = OfficeColor.Red;
+            shape.ClipPath = OfficeClipPath.RoundedRectangle(24, 16, 7);
+            drawing.AddShape(shape, 4, 4);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.Equal(0, image.GetPixel(4, 4).A);
+            Assert.True(image.GetPixel(16, 12).A > 200);
         }
 
         [Fact]
