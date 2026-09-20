@@ -61,60 +61,30 @@ namespace OfficeIMO.Visio {
             OfficeTextMeasurer textMeasurer = OfficeTextMeasurer.Create(new OfficeFontInfo(fontFamily, fontSize, fontStyle));
             double availableWidth = IsFinitePositive(maxWidth) ? maxWidth : double.PositiveInfinity;
             double availableHeight = IsFinitePositive(maxHeight) ? maxHeight : double.PositiveInfinity;
-            OfficeTextBlockLayout layout = OfficeTextLayoutEngine.FitWrappedText(
-                text,
-                fontSize,
-                availableWidth,
-                availableHeight,
-                lineHeightFactor: 1.2D,
-                minimumFontSize: 5D,
-                (candidate, candidateFontSize) => MeasureSvgTextWidth(textMeasurer, candidate, candidateFontSize, fontFamily, fontStyle));
-            fontSize = layout.FontSize;
             OfficeTextAlignment alignment = VisioDrawingTextAlignment.ToOfficeTextAlignment(style?.HorizontalAlignment);
             OfficeTextVerticalAlignment verticalAlignment = VisioDrawingTextAlignment.ToOfficeTextVerticalAlignment(style?.VerticalAlignment);
-            double anchorX = OfficeTextPlacement.ResolveAnchorXFromCenter(x, availableWidth, alignment);
-            double top = OfficeTextPlacement.ResolveTopFromCenter(y, availableHeight, layout.Height, verticalAlignment);
-            double left = x - (availableWidth / 2D);
-            double blockTop = y - (availableHeight / 2D);
-
-            Color? backgroundColor = ResolveTextBackground(style, drawLabelBackground);
-            if (backgroundColor.HasValue) {
-                double padX = Math.Max(3D, fontSize * 0.22D);
-                double padY = Math.Max(2D, fontSize * 0.16D);
-                double backgroundLeft = OfficeTextPlacement.ResolveLeftFromAnchor(anchorX, layout.Width, alignment) - padX;
-                writer.WriteStartElement("rect", SvgNamespace);
-                writer.WriteAttributeString("data-officeimo-text-background", "true");
-                if (drawLabelBackground) {
-                    writer.WriteAttributeString("data-officeimo-connector-label-background", "true");
-                }
-
-                if (labelAdjusted) {
-                    writer.WriteAttributeString("data-officeimo-label-adjusted", "true");
-                }
-
-                writer.WriteNumberAttribute("x", backgroundLeft);
-                writer.WriteNumberAttribute("y", top - padY);
-                writer.WriteNumberAttribute("width", layout.Width + (padX * 2D));
-                writer.WriteNumberAttribute("height", layout.Height + (padY * 2D));
-                if (Math.Abs(rotateRadians) > 1e-9) {
-                    writer.WriteAttributeString("transform", FormatTextRotation(rotateRadians, x, y));
-                }
-
-                OfficeSvgFormatting.WriteColorAttribute(writer, "fill", backgroundColor.Value);
-                writer.WriteEndElement();
-            }
-
-            OfficeTextBlockRenderer.WriteSvgTextBlock(
-                writer,
-                layout,
-                left,
-                blockTop,
+            OfficeTextBlockRenderPlan plan = OfficeTextBlockRenderPlan.CreateFittedFromCenter(
+                text,
+                fontSize,
+                x,
+                y,
                 availableWidth,
                 availableHeight,
-                style?.Color ?? Color.FromRgb(17, 24, 39),
-                fontFamily,
+                (candidate, candidateFontSize) => MeasureSvgTextWidth(textMeasurer, candidate, candidateFontSize, fontFamily, fontStyle),
                 alignment,
                 verticalAlignment,
+                lineHeightFactor: 1.2D,
+                minimumFontSize: 5D);
+            fontSize = plan.Layout.FontSize;
+
+            Color? backgroundColor = ResolveTextBackground(style, drawLabelBackground);
+            double padX = Math.Max(3D, fontSize * 0.22D);
+            double padY = Math.Max(2D, fontSize * 0.16D);
+            OfficeTextBlockRenderer.WriteSvgTextBox(
+                writer,
+                plan,
+                style?.Color ?? Color.FromRgb(17, 24, 39),
+                fontFamily,
                 style?.Bold == true,
                 style?.Italic == true,
                 style?.Underline == true,
@@ -122,7 +92,11 @@ namespace OfficeIMO.Visio {
                 x,
                 y,
                 SvgNamespace,
-                labelAdjusted ? static textWriter => textWriter.WriteAttributeString("data-officeimo-label-adjusted", "true") : null);
+                backgroundColor,
+                padX,
+                padY,
+                labelAdjusted ? static textWriter => textWriter.WriteAttributeString("data-officeimo-label-adjusted", "true") : null,
+                backgroundWriter => ConfigureTextBackgroundAttributes(backgroundWriter, drawLabelBackground, labelAdjusted));
         }
 
         private static void WriteArrow(
@@ -194,6 +168,17 @@ namespace OfficeIMO.Visio {
             double clamped = Math.Max(0D, Math.Min(100D, transparency.Value));
             byte alpha = (byte)Math.Round(color.A * (1D - (clamped / 100D)));
             return Color.FromRgba(color.R, color.G, color.B, alpha);
+        }
+
+        private static void ConfigureTextBackgroundAttributes(XmlWriter writer, bool connectorLabel, bool labelAdjusted) {
+            writer.WriteAttributeString("data-officeimo-text-background", "true");
+            if (connectorLabel) {
+                writer.WriteAttributeString("data-officeimo-connector-label-background", "true");
+            }
+
+            if (labelAdjusted) {
+                writer.WriteAttributeString("data-officeimo-label-adjusted", "true");
+            }
         }
 
         private static string FormatTextRotation(double radians, double centerX, double centerY) =>

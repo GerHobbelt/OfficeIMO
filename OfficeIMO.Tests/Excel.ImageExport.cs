@@ -91,6 +91,79 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportUsesBuiltInNumberFormatIdsWithoutCustomFormatCodes() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("BuiltIns");
+            sheet.SetColumnWidth(1, 14);
+            sheet.SetColumnWidth(2, 14);
+            sheet.SetColumnWidth(3, 16);
+            sheet.SetColumnWidth(4, 14);
+            sheet.CellValue(1, 1, 0.1234);
+            sheet.CellValue(1, 2, -1234);
+            sheet.CellValue(1, 3, new DateTime(2026, 6, 24).ToOADate());
+            sheet.CellValue(1, 4, 1.5);
+            ApplyBuiltInNumberFormatId(document, sheet, "A1", 10U);
+            ApplyBuiltInNumberFormatId(document, sheet, "B1", 37U);
+            ApplyBuiltInNumberFormatId(document, sheet, "C1", 14U);
+            ApplyBuiltInNumberFormatId(document, sheet, "D1", 46U);
+
+            ExcelRange range = sheet.Range("A1:D1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+            string svg = range.ToSvg(options);
+
+            Assert.Equal("12.34%", snapshot.Cells.Single(cell => cell.Column == 1).Text);
+            Assert.Equal("(1,234)", snapshot.Cells.Single(cell => cell.Column == 2).Text);
+            Assert.Equal("6/24/2026", snapshot.Cells.Single(cell => cell.Column == 3).Text);
+            Assert.Equal("36:00:00", snapshot.Cells.Single(cell => cell.Column == 4).Text);
+            Assert.Contains("12.34%", svg, StringComparison.Ordinal);
+            Assert.Contains("(1,234)", svg, StringComparison.Ordinal);
+            Assert.Contains("6/24/2026", svg, StringComparison.Ordinal);
+            Assert.Contains("36:00:00", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+            Assert.NotNull(rendered);
+            foreach (ExcelVisualCell cell in snapshot.Cells) {
+                Assert.True(ContainsDarkPixel(rendered!, cell), $"Expected built-in formatted text pixels in R{cell.Row}C{cell.Column}.");
+            }
+        }
+
+        [Fact]
+        public void ExcelNumberFormatDisplayFallsBackToBuiltInCodesWhenFormatCodeIsMissing() {
+            Assert.Equal("12.34%", ExcelNumberFormatDisplay.FormatNumericText(0.1234D, 10U, null, "0.1234"));
+            Assert.Equal("(1,234)", ExcelNumberFormatDisplay.FormatNumericText(-1234D, 37U, null, "-1234"));
+            Assert.Equal("6/24/2026", ExcelNumberFormatDisplay.FormatNumericText(new DateTime(2026, 6, 24).ToOADate(), 14U, null, "46200"));
+            Assert.Equal("36:00:00", ExcelNumberFormatDisplay.FormatNumericText(1.5D, 46U, null, "1.5"));
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportUsesExcelGeneralAlignmentByValueKind() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("GeneralAlign");
+            sheet.SetColumnWidth(1, 14);
+            sheet.SetColumnWidth(2, 14);
+            sheet.SetColumnWidth(3, 16);
+            sheet.CellValue(1, 1, "Label");
+            sheet.CellValue(1, 2, 42);
+            sheet.Cell(1, 3, new DateTime(2026, 6, 24).ToOADate(), numberFormat: "m/d/yyyy");
+
+            ExcelRange range = sheet.Range("A1:C1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            string svg = range.ToSvg(options);
+
+            Assert.Equal(ExcelVisualCellValueKind.Text, snapshot.Cells.Single(cell => cell.Column == 1).ValueKind);
+            Assert.Equal(ExcelVisualCellValueKind.Number, snapshot.Cells.Single(cell => cell.Column == 2).ValueKind);
+            Assert.Equal(ExcelVisualCellValueKind.Date, snapshot.Cells.Single(cell => cell.Column == 3).ValueKind);
+            Assert.Contains("text-anchor=\"start\">Label</text>", svg, StringComparison.Ordinal);
+            Assert.Contains("text-anchor=\"end\">42</text>", svg, StringComparison.Ordinal);
+            Assert.Contains("text-anchor=\"end\">6/24/2026</text>", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportLaysOutMultilineCellTextThroughSharedDrawingLayout() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
@@ -114,6 +187,190 @@ namespace OfficeIMO.Tests {
             Assert.True(OfficePngReader.TryDecode(pngResult.Bytes, out OfficeRasterImage? rendered));
             Assert.NotNull(rendered);
             Assert.True(ContainsDarkPixel(rendered!, range.CreateVisualSnapshot(new ExcelImageExportOptions { ShowGridlines = false }).Cells[0]));
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportClipsOverflowingPlainTextWithoutInventingEllipsis() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Clip");
+            sheet.SetColumnWidth(1, 8);
+            sheet.SetRowHeight(1, 22);
+            sheet.CellValue(1, 1, "Overflowing cell text should clip");
+
+            ExcelRange range = sheet.Range("A1:A1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            string svg = System.Text.Encoding.UTF8.GetString(svgResult.Bytes);
+
+            Assert.Contains(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "Clip!A1");
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "Clip!A1");
+            Assert.Contains("Overflowing cell text should clip", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain("...", svg, StringComparison.Ordinal);
+            Assert.Contains("clip-path=\"url(#xl-text-1-1)\"", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportSpillsPlainTextIntoBlankNeighborCells() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Spill");
+            sheet.SetColumnWidth(1, 6);
+            sheet.SetColumnWidth(2, 24);
+            sheet.SetColumnWidth(3, 8);
+            sheet.SetRowHeight(1, 24);
+            sheet.CellValue(1, 1, "Plain text spills");
+            sheet.CellValue(1, 3, "Stop");
+
+            ExcelRange range = sheet.Range("A1:C1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, options);
+            string svg = System.Text.Encoding.UTF8.GetString(svgResult.Bytes);
+
+            ExcelVisualCell first = snapshot.Cells.Single(cell => cell.Column == 1);
+            ExcelVisualCell blankNeighbor = snapshot.Cells.Single(cell => cell.Column == 2);
+            double expectedWidth = first.Width + blankNeighbor.Width;
+            Assert.Equal(expectedWidth, ExtractSvgClipWidth(svg, "xl-text-1-1"), precision: 2);
+            Assert.DoesNotContain(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "Spill!A1");
+            Assert.DoesNotContain(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "Spill!A1");
+            Assert.Contains("Plain text spills", svg, StringComparison.Ordinal);
+            Assert.Contains("Stop", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain("...", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportDoesNotSpillThroughBlankCellsCoveredByDrawings() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("OverlaySpill");
+            sheet.SetColumnWidth(1, 6);
+            sheet.SetColumnWidth(2, 12);
+            sheet.SetColumnWidth(3, 12);
+            sheet.SetRowHeight(1, 28);
+            sheet.CellValue(1, 1, "Plain text stops before image overlay");
+            sheet.AddImage(1, 2, CreateSolidPng(24, 18, OfficeColor.FromRgb(37, 99, 235)), "image/png", widthPixels: 24, heightPixels: 18, name: "Overlay");
+
+            ExcelRange range = sheet.Range("A1:C1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, options);
+            string svg = System.Text.Encoding.UTF8.GetString(svgResult.Bytes);
+
+            ExcelVisualCell first = snapshot.Cells.Single(cell => cell.Column == 1);
+            Assert.Single(snapshot.Images);
+            Assert.Equal(first.Width, ExtractSvgClipWidth(svg, "xl-text-1-1"), precision: 2);
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "OverlaySpill!A1");
+            Assert.Contains(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "OverlaySpill!A1");
+            Assert.Contains("data:image/png;base64,", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportDoesNotSpillThroughBlankCellsCoveredByCharts() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("ChartSpill");
+            sheet.SetColumnWidth(1, 6);
+            sheet.SetColumnWidth(2, 14);
+            sheet.SetColumnWidth(3, 14);
+            sheet.SetRowHeight(1, 30);
+            sheet.SetRowHeight(2, 30);
+            sheet.CellValue(1, 1, "Plain text stops before chart overlay");
+            sheet.CellValue(3, 1, "Label");
+            sheet.CellValue(3, 2, "Value");
+            sheet.CellValue(4, 1, "North");
+            sheet.CellValue(4, 2, 12);
+            sheet.CellValue(5, 1, "South");
+            sheet.CellValue(5, 2, 18);
+            sheet.AddChartFromRange("A3:B5", row: 1, column: 2, widthPixels: 140, heightPixels: 70, type: ExcelChartType.ColumnClustered, title: "Overlay");
+
+            ExcelRange range = sheet.Range("A1:C2");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, options);
+            string svg = System.Text.Encoding.UTF8.GetString(svgResult.Bytes);
+
+            ExcelVisualCell first = snapshot.Cells.Single(cell => cell.Column == 1 && cell.Row == 1);
+            Assert.Single(snapshot.Charts);
+            Assert.Equal(first.Width, ExtractSvgClipWidth(svg, "xl-text-1-1"), precision: 2);
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "ChartSpill!A1");
+            Assert.Contains(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "ChartSpill!A1");
+            Assert.Contains("Overlay", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportDoesNotSpillFromCellsCoveredByDrawings() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("SourceOverlay");
+            sheet.SetColumnWidth(1, 10);
+            sheet.SetColumnWidth(2, 16);
+            sheet.SetRowHeight(1, 28);
+            sheet.CellValue(1, 1, "Text hidden by image should not spill");
+            sheet.AddImage(1, 1, CreateSolidPng(48, 18, OfficeColor.FromRgb(37, 99, 235)), "image/png", widthPixels: 48, heightPixels: 18, name: "SourceOverlay");
+
+            ExcelRange range = sheet.Range("A1:B1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, options);
+            string svg = System.Text.Encoding.UTF8.GetString(svgResult.Bytes);
+
+            ExcelVisualCell first = snapshot.Cells.Single(cell => cell.Column == 1);
+            Assert.Single(snapshot.Images);
+            Assert.Equal(first.Width, ExtractSvgClipWidth(svg, "xl-text-1-1"), precision: 2);
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "SourceOverlay!A1");
+            Assert.Contains(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "SourceOverlay!A1");
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportSuppressesTextWhenDrawingCoversTextAnchor() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("AnchorOverlay");
+            sheet.SetColumnWidth(1, 18);
+            sheet.SetRowHeight(1, 24);
+            sheet.CellValue(1, 1, "Covered anchor text should not show fragments");
+            sheet.AddImage(1, 1, CreateSolidPng(120, 32, OfficeColor.FromRgb(37, 99, 235)), "image/png", widthPixels: 120, heightPixels: 32, name: "AnchorOverlay");
+
+            ExcelRange range = sheet.Range("A1:A1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, options);
+            string svg = System.Text.Encoding.UTF8.GetString(svgResult.Bytes);
+
+            Assert.DoesNotContain("Covered anchor text", svg, StringComparison.Ordinal);
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextOccludedByDrawing && diagnostic.Source == "AnchorOverlay!A1");
+            Assert.Contains(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextOccludedByDrawing && diagnostic.Source == "AnchorOverlay!A1");
+            Assert.DoesNotContain(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "AnchorOverlay!A1");
+            Assert.DoesNotContain(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "AnchorOverlay!A1");
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportDoesNotSpillGeneralNumericTextIntoBlankNeighbors() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("NoNumberSpill");
+            sheet.SetColumnWidth(1, 6);
+            sheet.SetColumnWidth(2, 24);
+            sheet.SetRowHeight(1, 24);
+            sheet.CellValue(1, 1, 123456789);
+
+            ExcelRange range = sheet.Range("A1:B1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            string svg = System.Text.Encoding.UTF8.GetString(svgResult.Bytes);
+
+            ExcelVisualCell first = snapshot.Cells.Single(cell => cell.Column == 1);
+            Assert.Equal(ExcelVisualCellValueKind.Number, first.ValueKind);
+            Assert.Equal(first.Width, ExtractSvgClipWidth(svg, "xl-text-1-1"), precision: 2);
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "NoNumberSpill!A1");
+            Assert.Contains("text-anchor=\"end\">123456789</text>", svg, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -186,11 +443,17 @@ namespace OfficeIMO.Tests {
             Assert.Equal("FF0000FF", finalBar.ColorArgb);
             Assert.Equal(0D, finalBar.StartRatio);
             Assert.Equal(1D, finalBar.Ratio);
-            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetUnsupported);
-            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
+            Assert.Equal(3, snapshot.ConditionalIcons.Count);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 1 && icon.Column == 3 && icon.Kind == ExcelConditionalIconKind.RedCircle);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 2 && icon.Column == 3 && icon.Kind == ExcelConditionalIconKind.YellowCircle);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 3 && icon.Column == 3 && icon.Kind == ExcelConditionalIconKind.GreenCircle);
+            Assert.All(snapshot.ConditionalIcons, icon => Assert.True(icon.ShowValue));
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetApproximation);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Info, diagnostic.Severity);
             Assert.Equal("Conditional!C1:C3", diagnostic.Source);
             Assert.Contains("#FF0000", svg, StringComparison.Ordinal);
             Assert.Contains("#0000FF", svg, StringComparison.Ordinal);
+            Assert.Contains("#16A34A", svg, StringComparison.Ordinal);
             Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
             Assert.NotNull(rendered);
             ExcelVisualCell firstScaleCell = snapshot.Cells.Single(cell => cell.Row == 1 && cell.Column == 1);
@@ -200,12 +463,76 @@ namespace OfficeIMO.Tests {
                 (int)(firstScaleCell.Y + firstScaleCell.Height - 8),
                 OfficeColor.Red,
                 tolerance: 3);
-            AssertPixelNear(
-                rendered!,
-                (int)(finalBar.X + finalBar.Width - 8),
-                (int)(finalBar.Y + (finalBar.Height / 2D)),
-                OfficeColor.Blue,
-                tolerance: 3);
+            OfficeColor barPixel = rendered!.GetPixel((int)(finalBar.X + finalBar.Width - 8), (int)(finalBar.Y + (finalBar.Height / 2D)));
+            Assert.True(barPixel.B > 120 && barPixel.R < 40 && barPixel.G < 40, "Expected a blue data-bar pixel.");
+            ExcelVisualConditionalIcon finalIcon = snapshot.ConditionalIcons.Single(icon => icon.Row == 3 && icon.Column == 3);
+            Assert.True(CountGreenIconPixels(rendered!, finalIcon) > 4, "Expected visible green conditional-formatting icon pixels.");
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportHonorsConditionalIconSetHiddenValues() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("IconOnly");
+            sheet.CellValue(1, 1, 1);
+            sheet.CellValue(2, 1, 2);
+            sheet.CellValue(3, 1, 3);
+            sheet.SetColumnWidth(1, 12);
+            sheet.SetRowHeight(1, 24);
+            sheet.SetRowHeight(2, 24);
+            sheet.SetRowHeight(3, 24);
+            sheet.AddConditionalIconSet("A1:A3", IconSetValues.ThreeTrafficLights1, showValue: false, reverseIconOrder: false);
+
+            ExcelRange range = sheet.Range("A1:A3");
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot();
+            string svg = range.ToSvg(new ExcelImageExportOptions { ShowGridlines = false });
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, new ExcelImageExportOptions { ShowGridlines = false });
+
+            Assert.Equal(3, snapshot.ConditionalIcons.Count);
+            Assert.All(snapshot.ConditionalIcons, icon => Assert.False(icon.ShowValue));
+            Assert.DoesNotContain(">1<", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain(">2<", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain(">3<", svg, StringComparison.Ordinal);
+            Assert.Contains("#16A34A", svg, StringComparison.Ordinal);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetApproximation);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Info, diagnostic.Severity);
+            Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+            ExcelVisualConditionalIcon finalIcon = snapshot.ConditionalIcons.Single(icon => icon.Row == 3 && icon.Column == 1);
+            Assert.True(CountGreenIconPixels(rendered!, finalIcon) > 4, "Expected visible green conditional-formatting icon pixels.");
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRendersFiveIconConditionalSetsWithApproximationDiagnostic() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("FiveIcons");
+            for (int row = 1; row <= 5; row++) {
+                sheet.CellValue(row, 1, row);
+                sheet.SetRowHeight(row, 24);
+            }
+
+            sheet.SetColumnWidth(1, 12);
+            sheet.AddConditionalIconSet("A1:A5", IconSetValues.FiveArrows, showValue: true, reverseIconOrder: false);
+
+            ExcelRange range = sheet.Range("A1:A5");
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot();
+            string svg = range.ToSvg(new ExcelImageExportOptions { ShowGridlines = false });
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, new ExcelImageExportOptions { ShowGridlines = false });
+
+            Assert.Equal(5, snapshot.ConditionalIcons.Count);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 1 && icon.Kind == ExcelConditionalIconKind.RedDownArrow);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 2 && icon.Kind == ExcelConditionalIconKind.YellowDownArrow);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 3 && icon.Kind == ExcelConditionalIconKind.YellowSideArrow);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 4 && icon.Kind == ExcelConditionalIconKind.YellowUpArrow);
+            Assert.Contains(snapshot.ConditionalIcons, icon => icon.Row == 5 && icon.Kind == ExcelConditionalIconKind.GreenUpArrow);
+            Assert.Contains("#16A34A", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetUnsupported);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetApproximation);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Info, diagnostic.Severity);
+            Assert.Equal("FiveIcons!A1:A5", diagnostic.Source);
+            Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+            ExcelVisualConditionalIcon finalIcon = snapshot.ConditionalIcons.Single(icon => icon.Row == 5 && icon.Column == 1);
+            Assert.True(CountGreenIconPixels(rendered!, finalIcon) > 4, "Expected visible green conditional-formatting arrow pixels.");
         }
 
         [Fact]
@@ -253,16 +580,14 @@ namespace OfficeIMO.Tests {
             Assert.NotNull(rendered);
             ExcelVisualCell cellIsRendered = snapshot.Cells.Single(cell => cell.Row == 2 && cell.Column == 1);
             ExcelVisualCell formulaRendered = snapshot.Cells.Single(cell => cell.Row == 1 && cell.Column == 2);
-            AssertPixelNear(
+            AssertCellContainsPixelNear(
                 rendered!,
-                (int)(cellIsRendered.X + cellIsRendered.Width - 8),
-                (int)(cellIsRendered.Y + cellIsRendered.Height - 8),
+                cellIsRendered,
                 OfficeColor.FromRgb(198, 239, 206),
                 tolerance: 3);
-            AssertPixelNear(
+            AssertCellContainsPixelNear(
                 rendered!,
-                (int)(formulaRendered.X + formulaRendered.Width - 8),
-                (int)(formulaRendered.Y + formulaRendered.Height - 8),
+                formulaRendered,
                 OfficeColor.FromRgb(254, 226, 226),
                 tolerance: 3);
         }
@@ -280,7 +605,7 @@ namespace OfficeIMO.Tests {
             sheet.SetColumnWidth(2, 12);
             sheet.AddConditionalRule("A1:A2", ConditionalFormattingOperatorValues.Equal, "\"Hot\"", fillColor: "FEE2E2");
             sheet.AddConditionalFormulaRule("B1:B2", "MOD(B1,2)=0", fillColor: "C6EFCE");
-            AddUnsupportedTimePeriodRule(sheet, "B1:B2");
+            AddMalformedTimePeriodRuleWithFill(sheet, "B1:B2");
 
             ExcelRange range = sheet.Range("A1:B2");
             ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot();
@@ -290,13 +615,13 @@ namespace OfficeIMO.Tests {
             Assert.Null(snapshot.Cells.Single(cell => cell.Row == 1 && cell.Column == 2).Style.FillColorArgb);
             OfficeImageExportDiagnostic cellIs = Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.ConditionalCellIsUnsupported);
             OfficeImageExportDiagnostic formula = Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.ConditionalFormulaUnsupported);
-            OfficeImageExportDiagnostic rule = Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.ConditionalRuleUnsupported);
+            OfficeImageExportDiagnostic timePeriod = Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.ConditionalTimePeriodUnsupported);
             Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, cellIs.Severity);
             Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, formula.Severity);
-            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, rule.Severity);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, timePeriod.Severity);
             Assert.Equal("Unsupported!A1:A2", cellIs.Source);
             Assert.Equal("Unsupported!B1:B2", formula.Source);
-            Assert.Equal("Unsupported!B1:B2", rule.Source);
+            Assert.Equal("Unsupported!B1:B2", timePeriod.Source);
             Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Severity == OfficeImageExportDiagnosticSeverity.Error);
         }
 
@@ -556,28 +881,24 @@ namespace OfficeIMO.Tests {
             ExcelVisualCell bottomCell = snapshot.Cells.Single(cell => cell.Row == 3 && cell.Column == 2);
             ExcelVisualCell topPercentCell = snapshot.Cells.Single(cell => cell.Row == 2 && cell.Column == 3);
             ExcelVisualCell bottomPercentCell = snapshot.Cells.Single(cell => cell.Row == 2 && cell.Column == 4);
-            AssertPixelNear(
+            AssertCellContainsPixelNear(
                 rendered!,
-                (int)(topCell.X + topCell.Width - 8),
-                (int)(topCell.Y + topCell.Height - 8),
+                topCell,
                 OfficeColor.FromRgb(198, 239, 206),
                 tolerance: 3);
-            AssertPixelNear(
+            AssertCellContainsPixelNear(
                 rendered!,
-                (int)(bottomCell.X + bottomCell.Width - 8),
-                (int)(bottomCell.Y + bottomCell.Height - 8),
+                bottomCell,
                 OfficeColor.FromRgb(254, 226, 226),
                 tolerance: 3);
-            AssertPixelNear(
+            AssertCellContainsPixelNear(
                 rendered!,
-                (int)(topPercentCell.X + topPercentCell.Width - 8),
-                (int)(topPercentCell.Y + topPercentCell.Height - 8),
+                topPercentCell,
                 OfficeColor.FromRgb(252, 228, 214),
                 tolerance: 3);
-            AssertPixelNear(
+            AssertCellContainsPixelNear(
                 rendered!,
-                (int)(bottomPercentCell.X + bottomPercentCell.Width - 8),
-                (int)(bottomPercentCell.Y + bottomPercentCell.Height - 8),
+                bottomPercentCell,
                 OfficeColor.FromRgb(219, 234, 254),
                 tolerance: 3);
         }
@@ -650,6 +971,8 @@ namespace OfficeIMO.Tests {
             string svg = range.ToSvg(new ExcelImageExportOptions { ShowGridlines = false });
 
             ExcelVisualImage image = Assert.Single(snapshot.Images);
+            Assert.Equal(96D, image.SourceWidth);
+            Assert.Equal(24D, image.SourceHeight);
             Assert.True(image.X < 0D, "The overlapping image should keep its true negative X position relative to the exported range.");
             Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Severity == OfficeImageExportDiagnosticSeverity.Error);
             Assert.Contains("clip-path=\"url(#xl-image-clip-", svg, StringComparison.Ordinal);
@@ -723,6 +1046,8 @@ namespace OfficeIMO.Tests {
             ExcelVisualImage image = Assert.Single(snapshot.Images);
             Assert.Equal(0.25D, image.CropLeftRatio, precision: 3);
             Assert.Equal(0.25D, image.CropRightRatio, precision: 3);
+            Assert.True(image.SourceWidth > 0D);
+            Assert.True(image.SourceHeight > 0D);
             Assert.True(image.HasCrop);
             Assert.Contains("clip-path=\"url(#xl-image-clip-", svg, StringComparison.Ordinal);
             Assert.Contains("x=\"-", svg, StringComparison.Ordinal);
@@ -856,6 +1181,36 @@ namespace OfficeIMO.Tests {
             OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ImageRasterFormatUnsupported);
             Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
             Assert.Equal("Jpeg!PhotoJpeg", diagnostic.Source);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportReportsUnknownImageFormatWithStableCodeAndSource() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("UnknownImage");
+            sheet.CellValue(1, 1, "Image");
+            sheet.AddImage(1, 2, new byte[] { 1, 2, 3, 4, 5, 6 }, "image/bmp", widthPixels: 16, heightPixels: 12, name: "MysteryBitmap");
+
+            ExcelRange range = sheet.Range("A1:C3");
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot();
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png);
+            OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg);
+
+            ExcelVisualImage image = Assert.Single(snapshot.Images);
+            Assert.Equal(OfficeImageFormat.Unknown, image.DetectedFormat);
+            Assert.Equal("image/bmp", image.ContentType);
+
+            OfficeImageExportDiagnostic snapshotDiagnostic = Assert.Single(snapshot.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ImageFormatUnknown);
+            Assert.Equal("UnknownImage!MysteryBitmap", snapshotDiagnostic.Source);
+            Assert.Contains("image/bmp", snapshotDiagnostic.Message, StringComparison.Ordinal);
+
+            OfficeImageExportDiagnostic pngDiagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ImageRasterFormatUnsupported);
+            Assert.Equal("UnknownImage!MysteryBitmap", pngDiagnostic.Source);
+            Assert.Contains("declared content type 'image/bmp'", pngDiagnostic.Message, StringComparison.Ordinal);
+
+            OfficeImageExportDiagnostic svgDiagnostic = Assert.Single(svg.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ImageSvgFormatUnsupported);
+            Assert.Equal("UnknownImage!MysteryBitmap", svgDiagnostic.Source);
+            Assert.Contains("detected format 'Unknown'", svgDiagnostic.Message, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -2481,24 +2836,15 @@ namespace OfficeIMO.Tests {
             }
         }
 
-        private static void AddUnsupportedTimePeriodRule(ExcelSheet sheet, string range) {
-            Worksheet worksheet = sheet.WorksheetPart.Worksheet ?? throw new InvalidOperationException("Worksheet is missing.");
-            var conditional = new ConditionalFormatting {
-                SequenceOfReferences = new ListValue<StringValue> { InnerText = range }
-            };
-            conditional.Append(new ConditionalFormattingRule {
-                Type = ConditionalFormatValues.TimePeriod,
-                Priority = 99
-            });
-
-            SheetData? sheetData = worksheet.GetFirstChild<SheetData>();
-            if (sheetData == null) {
-                worksheet.Append(conditional);
-            } else {
-                worksheet.InsertAfter(conditional, sheetData);
-            }
-
-            worksheet.Save();
+        private static void AddMalformedTimePeriodRuleWithFill(ExcelSheet sheet, string range) {
+            sheet.AddConditionalTimePeriodRule(range, TimePeriodValues.Today, fillColor: "C6EFCE");
+            ConditionalFormattingRule rule = sheet.WorksheetPart.Worksheet!
+                .Elements<ConditionalFormatting>()
+                .Where(conditional => string.Equals(conditional.SequenceOfReferences?.InnerText, range, StringComparison.Ordinal))
+                .SelectMany(conditional => conditional.Elements<ConditionalFormattingRule>())
+                .First(item => item.Type?.Value == ConditionalFormatValues.TimePeriod);
+            rule.TimePeriod = null;
+            sheet.WorksheetPart.Worksheet.Save();
         }
 
         private static void MarkAboveAverageRuleAsStdDev(ExcelSheet sheet, string range, int stdDev) {
@@ -2725,6 +3071,28 @@ namespace OfficeIMO.Tests {
             stylesheet.Save();
         }
 
+        private static void ApplyBuiltInNumberFormatId(ExcelDocument document, ExcelSheet sheet, string cellReference, uint numberFormatId) {
+            document.EnsureWorkbookThemeAndStyles();
+            WorkbookPart workbookPart = document.WorkbookPartRoot;
+            Stylesheet stylesheet = workbookPart.WorkbookStylesPart!.Stylesheet!;
+            CellFormats formats = stylesheet.CellFormats ??= new CellFormats(new CellFormat());
+            uint styleIndex = (uint)formats.Elements<CellFormat>().Count();
+            formats.Append(new CellFormat {
+                NumberFormatId = numberFormatId,
+                FontId = 0U,
+                FillId = 0U,
+                BorderId = 0U,
+                FormatId = 0U,
+                ApplyNumberFormat = true
+            });
+            formats.Count = (uint)formats.Elements<CellFormat>().Count();
+
+            Worksheet worksheet = sheet.WorksheetPart.Worksheet ?? throw new InvalidOperationException("Worksheet is missing.");
+            Cell cell = worksheet.Descendants<Cell>().First(item => item.CellReference?.Value == cellReference);
+            cell.StyleIndex = styleIndex;
+            stylesheet.Save();
+        }
+
         private static void AssertPixelNear(OfficeRasterImage image, int x, int y, OfficeColor expected, int tolerance) {
             OfficeColor actual = image.GetPixel(x, y);
             Assert.True(
@@ -2732,6 +3100,37 @@ namespace OfficeIMO.Tests {
                 && Math.Abs(actual.G - expected.G) <= tolerance
                 && Math.Abs(actual.B - expected.B) <= tolerance,
                 $"Expected pixel {x},{y} near {expected}, got {actual}.");
+        }
+
+        private static void AssertCellContainsPixelNear(OfficeRasterImage image, ExcelVisualCell cell, OfficeColor expected, int tolerance) {
+            double inset = 3D;
+            bool hasExpectedPixel = ContainsPixelNear(
+                image,
+                cell.X + inset,
+                cell.Y + inset,
+                cell.X + cell.Width - inset,
+                cell.Y + cell.Height - inset,
+                expected,
+                tolerance);
+            Assert.True(hasExpectedPixel, $"Expected R{cell.Row}C{cell.Column} interior to contain a pixel near {expected}.");
+        }
+
+        private static int CountGreenIconPixels(OfficeRasterImage image, ExcelVisualConditionalIcon icon) {
+            int left = Math.Max(0, (int)Math.Floor(icon.X));
+            int top = Math.Max(0, (int)Math.Floor(icon.Y));
+            int right = Math.Min(image.Width, (int)Math.Ceiling(icon.X + icon.Width));
+            int bottom = Math.Min(image.Height, (int)Math.Ceiling(icon.Y + icon.Height));
+            int count = 0;
+            for (int y = top; y < bottom; y++) {
+                for (int x = left; x < right; x++) {
+                    OfficeColor pixel = image.GetPixel(x, y);
+                    if (pixel.G > 120 && pixel.R < 80 && pixel.B < 120) {
+                        count++;
+                    }
+                }
+            }
+
+            return count;
         }
 
         private static byte[] CreateMinimalJpegHeader() {
@@ -2883,6 +3282,18 @@ namespace OfficeIMO.Tests {
             Assert.True(end > start, "SVG font-size attribute was malformed.");
             string value = svg.Substring(start, end - start);
             return double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static double ExtractSvgClipWidth(string svg, string clipId) {
+            string marker = "id=\"" + clipId + "\"><rect";
+            int clipStart = svg.IndexOf(marker, StringComparison.Ordinal);
+            Assert.True(clipStart >= 0, "SVG did not contain clip path '" + clipId + "'.");
+            int widthStart = svg.IndexOf("width=\"", clipStart, StringComparison.Ordinal);
+            Assert.True(widthStart >= 0, "SVG clip path '" + clipId + "' did not contain a width attribute.");
+            widthStart += "width=\"".Length;
+            int widthEnd = svg.IndexOf('"', widthStart);
+            Assert.True(widthEnd > widthStart, "SVG clip path '" + clipId + "' width attribute was malformed.");
+            return double.Parse(svg.Substring(widthStart, widthEnd - widthStart), System.Globalization.CultureInfo.InvariantCulture);
         }
     }
 }

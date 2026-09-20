@@ -1,3 +1,4 @@
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using OfficeIMO.Drawing;
 using OfficeIMO.Excel;
@@ -94,6 +95,46 @@ namespace OfficeIMO.Tests {
                 pointerPixel.G >= 150 &&
                 pointerPixel.B <= 240,
                 $"Expected an anchored comment-body pointer pixel, but got {pointerPixel.A},{pointerPixel.R},{pointerPixel.G},{pointerPixel.B}.");
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportPlacesCommentBodyAwayFromChartWhenSpaceExists() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("CommentChart");
+            for (int column = 1; column <= 10; column++) {
+                sheet.SetColumnWidth(column, 10);
+            }
+
+            for (int row = 1; row <= 8; row++) {
+                sheet.SetRowHeight(row, 28);
+            }
+
+            sheet.CellValue(4, 1, "Month");
+            sheet.CellValue(4, 2, "Score");
+            sheet.CellValue(5, 1, "Jan");
+            sheet.CellValue(5, 2, 120);
+            sheet.CellValue(6, 1, "Feb");
+            sheet.CellValue(6, 2, 180);
+            sheet.CellValue(2, 4, "Review");
+            sheet.SetComment("D2", "This note should avoid the chart when rendered.", "Reviewer");
+            sheet.AddChartFromRange("A4:B6", row: 1, column: 5, widthPixels: 260, heightPixels: 120, type: ExcelChartType.ColumnClustered, title: "Trend");
+
+            var options = new ExcelImageExportOptions {
+                ShowGridlines = false,
+                ShowCommentBodies = true,
+                DefaultColumnWidthPixels = 70D,
+                DefaultRowHeightPixels = 28D
+            };
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("A1:J8").CreateVisualSnapshot(options);
+            OfficeImageExportResult svg = sheet.Range("A1:J8").ExportImage(OfficeImageExportFormat.Svg, options);
+
+            ExcelVisualCommentIndicator indicator = Assert.Single(snapshot.CommentIndicators);
+            ExcelVisualCommentBody body = Assert.Single(snapshot.CommentBodies);
+            ExcelVisualChart chart = Assert.Single(snapshot.Charts);
+            Assert.True(body.X < indicator.X, "The right-side placement overlaps the chart, so the body should move to available space on the left.");
+            Assert.False(Intersects(body.X, body.Y, body.Width, body.Height, chart.X, chart.Y, chart.Width, chart.Height));
+            Assert.Single(svg.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentBodyApproximation);
         }
 
         [Fact]
@@ -233,6 +274,51 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportResolvesThemedDrawingShapeColorsThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                document.EnsureWorkbookTheme();
+                ExcelSheet sheet = document.AddWorkSheet("ThemeShape");
+                sheet.CellValue(1, 1, "Name");
+                sheet.CellValue(2, 2, "Themed shape");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Themed shape",
+                "Theme text",
+                fillSchemeColor: "accent1",
+                fillLuminanceModulation: 60000,
+                fillLuminanceOffset: 40000,
+                strokeSchemeColor: "accent2",
+                textSchemeColor: "accent3");
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                string svg = range.ToSvg(options);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal("FF95B3D7", drawingObject.FillColorArgb);
+                Assert.Equal("FFC0504D", drawingObject.StrokeColorArgb);
+                Assert.Equal("FF9BBB59", drawingObject.TextColorArgb);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.Contains("#95B3D7", svg, StringComparison.Ordinal);
+                Assert.Contains("#C0504D", svg, StringComparison.Ordinal);
+                Assert.Contains("#9BBB59", svg, StringComparison.Ordinal);
+
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
+                Assert.True(CountPixelsNear(rendered!, OfficeColor.FromRgb(149, 179, 215)) > 100);
+            }
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportRendersSharedDrawingMlPresetShapesThroughSharedDrawing() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
@@ -347,6 +433,7 @@ namespace OfficeIMO.Tests {
                 ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
                 OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
                 OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
 
                 ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
                 Assert.Equal("RotatedText!B2", drawingObject.Source);
@@ -356,6 +443,383 @@ namespace OfficeIMO.Tests {
                 Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
                 Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextRotationApproximation);
                 Assert.Single(svg.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextRotationApproximation);
+                Assert.Contains("Rotated label", svgText, StringComparison.Ordinal);
+                Assert.Contains("transform=\"rotate(25", svgText, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportHonorsDrawingShapeTextAlignmentThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorkSheet("AlignedText");
+                sheet.CellValue(1, 1, "Name");
+                sheet.CellValue(2, 2, "Aligned label");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Aligned label",
+                "Aligned label",
+                paragraphAlignment: A.TextAlignmentTypeValues.Right,
+                verticalAlignment: A.TextAnchoringTypeValues.Bottom);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal("AlignedText!B2", drawingObject.Source);
+                Assert.Equal(OfficeTextAlignment.Right, drawingObject.TextAlignment);
+                Assert.Equal(OfficeTextVerticalAlignment.Bottom, drawingObject.TextVerticalAlignment);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.DoesNotContain(svg.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.Contains("Aligned label", svgText, StringComparison.Ordinal);
+                Assert.Contains("text-anchor=\"end\"", svgText, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportHonorsDrawingShapeTextColorThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorkSheet("TextColor");
+                sheet.CellValue(1, 1, "Name");
+                sheet.CellValue(2, 2, "Colored label");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Colored label",
+                "Colored label",
+                fillHex: "FEF3C7",
+                strokeHex: "D97706",
+                textColorHex: "B91C1C");
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal("FFB91C1C", drawingObject.TextColorArgb);
+                Assert.Contains("fill=\"#B91C1C\"", svgText, StringComparison.Ordinal);
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
+                Assert.True(CountPixelsNear(rendered!, OfficeColor.FromRgb(185, 28, 28)) > 0);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportHonorsDrawingShapeTextFontThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorkSheet("TextFont");
+                sheet.CellValue(1, 1, "Name");
+                sheet.CellValue(2, 2, "Styled label");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Styled label",
+                "Styled label",
+                fillHex: "DBEAFE",
+                strokeHex: "2563EB",
+                textColorHex: "111827",
+                textFontFamily: "Aptos",
+                textFontSize: 18D,
+                textBold: true,
+                textItalic: true,
+                textUnderline: true);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal("Aptos", drawingObject.TextFontFamily);
+                Assert.Equal(18D, drawingObject.TextFontSize);
+                Assert.True((drawingObject.TextFontStyle & OfficeFontStyle.Bold) == OfficeFontStyle.Bold);
+                Assert.True((drawingObject.TextFontStyle & OfficeFontStyle.Italic) == OfficeFontStyle.Italic);
+                Assert.True((drawingObject.TextFontStyle & OfficeFontStyle.Underline) == OfficeFontStyle.Underline);
+                Assert.Contains("font-family=\"Aptos\"", svgText, StringComparison.Ordinal);
+                Assert.Contains("font-size=\"18\"", svgText, StringComparison.Ordinal);
+                Assert.Contains("font-weight=\"700\"", svgText, StringComparison.Ordinal);
+                Assert.Contains("font-style=\"italic\"", svgText, StringComparison.Ordinal);
+                Assert.Contains("text-decoration=\"underline\"", svgText, StringComparison.Ordinal);
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
+                Assert.True(CountPixelsNear(rendered!, OfficeColor.FromRgb(17, 24, 39)) > 0);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportWrapsDrawingShapeTextThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                document.AddWorkSheet("TextWrap");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Wrapped label",
+                "Alpha beta gamma delta epsilon",
+                fillHex: "EFF6FF",
+                strokeHex: "2563EB",
+                paragraphAlignment: A.TextAlignmentTypeValues.Left,
+                verticalAlignment: A.TextAnchoringTypeValues.Top,
+                textColorHex: "111827",
+                textFontSize: 8D,
+                textWrap: true);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.True(drawingObject.TextWrap);
+                Assert.Equal(10D, drawingObject.TextInsetLeft);
+                Assert.Equal(5D, drawingObject.TextInsetTop);
+                Assert.Equal(10D, drawingObject.TextInsetRight);
+                Assert.Equal(5D, drawingObject.TextInsetBottom);
+                Assert.Contains("Alpha", svgText, StringComparison.Ordinal);
+                Assert.Contains("epsilon", svgText, StringComparison.Ordinal);
+                Assert.True(CountOccurrences(svgText, "<text") >= 2);
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
+                Assert.True(CountDarkPixels(rendered!) > 0);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportHonorsDrawingShapeTextInsetsThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                document.AddWorkSheet("TextInsets");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Inset label",
+                "Inset label",
+                fillHex: "F8FAFC",
+                strokeHex: "475569",
+                paragraphAlignment: A.TextAlignmentTypeValues.Left,
+                verticalAlignment: A.TextAnchoringTypeValues.Top,
+                textColorHex: "111827",
+                textFontSize: 12D,
+                textInsetLeftEmu: 0,
+                textInsetTopEmu: 0,
+                textInsetRightEmu: 0,
+                textInsetBottomEmu: 0);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal(0D, drawingObject.TextInsetLeft);
+                Assert.Equal(0D, drawingObject.TextInsetTop);
+                Assert.Equal(0D, drawingObject.TextInsetRight);
+                Assert.Equal(0D, drawingObject.TextInsetBottom);
+                Assert.Contains("Inset label", svgText, StringComparison.Ordinal);
+                Assert.Contains("x=\"0\"", svgText, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportShrinksDrawingShapeTextThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                document.AddWorkSheet("TextShrink");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Shrink label",
+                "Alpha beta gamma delta epsilon zeta",
+                fillHex: "F1F5F9",
+                strokeHex: "334155",
+                paragraphAlignment: A.TextAlignmentTypeValues.Left,
+                verticalAlignment: A.TextAnchoringTypeValues.Top,
+                textColorHex: "111827",
+                textFontSize: 24D,
+                textWrap: true,
+                textShrinkToFit: true);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                double fontSize = ExtractFirstSvgFontSize(svgText);
+                Assert.True(drawingObject.TextShrinkToFit);
+                Assert.True(fontSize < 24D, "Expected DrawingML normalAutoFit to shrink the rendered SVG font size.");
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
+                Assert.True(CountDarkPixels(rendered!) > 0);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportReportsDrawingShapeTextAutoFitUnsupported() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                document.AddWorkSheet("TextAutoFit");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "AutoFit label",
+                "Resize this shape to fit me",
+                fillHex: "F8FAFC",
+                strokeHex: "475569",
+                paragraphAlignment: A.TextAlignmentTypeValues.Left,
+                verticalAlignment: A.TextAnchoringTypeValues.Top,
+                textColorHex: "111827",
+                textFontSize: 14D,
+                textWrap: true,
+                textResizeShapeToFit: true);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.True(drawingObject.TextResizeShapeToFit);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextAutoFitUnsupported);
+                Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextAutoFitUnsupported && diagnostic.Source == "TextAutoFit!B2");
+                Assert.Single(svg.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextAutoFitUnsupported && diagnostic.Source == "TextAutoFit!B2");
+                Assert.Contains("Resize", svgText, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRendersSimpleDrawingShapeVerticalTextThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                document.AddWorkSheet("VerticalText");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Vertical label",
+                "Vertical label",
+                fillHex: "F8FAFC",
+                strokeHex: "475569",
+                paragraphAlignment: A.TextAlignmentTypeValues.Left,
+                verticalAlignment: A.TextAnchoringTypeValues.Top,
+                textColorHex: "111827",
+                textFontSize: 14D,
+                textOrientation: A.TextVerticalValues.Vertical);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal(ExcelDrawingTextOrientation.Vertical, drawingObject.TextOrientation);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported);
+                Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported);
+                Assert.DoesNotContain(svg.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported);
+                Assert.Equal("Vertical label", drawingObject.Text);
+                Assert.Contains("<text", svgText, StringComparison.Ordinal);
+                Assert.DoesNotContain(">Vertical label</text>", svgText, StringComparison.Ordinal);
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
+                Assert.True(CountDarkPixels(rendered!) > 0);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRendersVertical270DrawingShapeTextThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                document.AddWorkSheet("Vertical270");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Vertical 270 label",
+                "V270",
+                fillHex: "F8FAFC",
+                strokeHex: "475569",
+                paragraphAlignment: A.TextAlignmentTypeValues.Left,
+                verticalAlignment: A.TextAnchoringTypeValues.Top,
+                textColorHex: "111827",
+                textFontSize: 14D,
+                textOrientation: A.TextVerticalValues.Vertical270,
+                toColumn: 4,
+                toRow: 6);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:F8");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+                string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal(ExcelDrawingTextOrientation.Vertical270, drawingObject.TextOrientation);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported);
+                Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported);
+                Assert.DoesNotContain(svg.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported);
+                Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextRotationApproximation && diagnostic.Source == "Vertical270!B2");
+                Assert.Single(svg.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeTextRotationApproximation && diagnostic.Source == "Vertical270!B2");
+                Assert.Contains("V270", svgText, StringComparison.Ordinal);
+                Assert.Contains("transform=\"rotate(270", svgText, StringComparison.Ordinal);
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
             }
         }
 
@@ -446,7 +910,30 @@ namespace OfficeIMO.Tests {
             bool verticalFlip = false,
             double rotationDegrees = 0D,
             string fillHex = "E0F2FE",
-            string strokeHex = "0284C7") {
+            string strokeHex = "0284C7",
+            A.TextAlignmentTypeValues? paragraphAlignment = null,
+            A.TextAnchoringTypeValues? verticalAlignment = null,
+            string textColorHex = "1F2937",
+            string? fillSchemeColor = null,
+            int? fillLuminanceModulation = null,
+            int? fillLuminanceOffset = null,
+            string? strokeSchemeColor = null,
+            string? textSchemeColor = null,
+            string? textFontFamily = null,
+            double? textFontSize = null,
+            bool textBold = false,
+            bool textItalic = false,
+            bool textUnderline = false,
+            bool textWrap = false,
+            bool textShrinkToFit = false,
+            bool textResizeShapeToFit = false,
+            A.TextVerticalValues? textOrientation = null,
+            int? textInsetLeftEmu = null,
+            int? textInsetTopEmu = null,
+            int? textInsetRightEmu = null,
+            int? textInsetBottomEmu = null,
+            int toColumn = 3,
+            int toRow = 3) {
             using SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true);
             WorksheetPart worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
             DrawingsPart drawingsPart = worksheetPart.DrawingsPart ?? worksheetPart.AddNewPart<DrawingsPart>();
@@ -456,7 +943,7 @@ namespace OfficeIMO.Tests {
 
             drawingsPart.WorksheetDrawing ??= new Xdr.WorksheetDrawing();
             drawingsPart.WorksheetDrawing.Append(
-                CreateSupportedShapeAnchor(1, 1, 3, 3, 2U, name, text, preset, horizontalFlip, verticalFlip, rotationDegrees, fillHex, strokeHex));
+                CreateSupportedShapeAnchor(1, 1, toColumn, toRow, 2U, name, text, preset, horizontalFlip, verticalFlip, rotationDegrees, fillHex, strokeHex, paragraphAlignment, verticalAlignment, textColorHex, fillSchemeColor, fillLuminanceModulation, fillLuminanceOffset, strokeSchemeColor, textSchemeColor, textFontFamily, textFontSize, textBold, textItalic, textUnderline, textWrap, textShrinkToFit, textResizeShapeToFit, textOrientation, textInsetLeftEmu, textInsetTopEmu, textInsetRightEmu, textInsetBottomEmu));
             drawingsPart.WorksheetDrawing.Save();
             worksheetPart.Worksheet.Save();
         }
@@ -498,7 +985,28 @@ namespace OfficeIMO.Tests {
             bool verticalFlip = false,
             double rotationDegrees = 0D,
             string fillHex = "E0F2FE",
-            string strokeHex = "0284C7") {
+            string strokeHex = "0284C7",
+            A.TextAlignmentTypeValues? paragraphAlignment = null,
+            A.TextAnchoringTypeValues? verticalAlignment = null,
+            string textColorHex = "1F2937",
+            string? fillSchemeColor = null,
+            int? fillLuminanceModulation = null,
+            int? fillLuminanceOffset = null,
+            string? strokeSchemeColor = null,
+            string? textSchemeColor = null,
+            string? textFontFamily = null,
+            double? textFontSize = null,
+            bool textBold = false,
+            bool textItalic = false,
+            bool textUnderline = false,
+            bool textWrap = false,
+            bool textShrinkToFit = false,
+            bool textResizeShapeToFit = false,
+            A.TextVerticalValues? textOrientation = null,
+            int? textInsetLeftEmu = null,
+            int? textInsetTopEmu = null,
+            int? textInsetRightEmu = null,
+            int? textInsetBottomEmu = null) {
             var transform = new A.Transform2D {
                 HorizontalFlip = horizontalFlip,
                 VerticalFlip = verticalFlip
@@ -506,6 +1014,69 @@ namespace OfficeIMO.Tests {
             if (Math.Abs(rotationDegrees) > 0.0001D) {
                 transform.Rotation = (int)Math.Round(rotationDegrees * 60000D);
             }
+
+            var bodyProperties = new A.BodyProperties();
+            if (verticalAlignment.HasValue) {
+                bodyProperties.Anchor = verticalAlignment.Value;
+            }
+
+            if (textOrientation.HasValue) {
+                bodyProperties.Vertical = textOrientation.Value;
+            }
+
+            if (textWrap) {
+                bodyProperties.Wrap = A.TextWrappingValues.Square;
+            }
+
+            if (textShrinkToFit) {
+                bodyProperties.Append(new A.NormalAutoFit());
+            }
+
+            if (textResizeShapeToFit) {
+                bodyProperties.Append(new A.ShapeAutoFit());
+            }
+
+            if (textInsetLeftEmu.HasValue) {
+                bodyProperties.LeftInset = textInsetLeftEmu.Value;
+            }
+
+            if (textInsetTopEmu.HasValue) {
+                bodyProperties.TopInset = textInsetTopEmu.Value;
+            }
+
+            if (textInsetRightEmu.HasValue) {
+                bodyProperties.RightInset = textInsetRightEmu.Value;
+            }
+
+            if (textInsetBottomEmu.HasValue) {
+                bodyProperties.BottomInset = textInsetBottomEmu.Value;
+            }
+
+            var paragraph = new A.Paragraph();
+            if (paragraphAlignment.HasValue) {
+                paragraph.Append(new A.ParagraphProperties { Alignment = paragraphAlignment.Value });
+            }
+
+            var runProperties = new A.RunProperties {
+                Bold = textBold,
+                Italic = textItalic
+            };
+            if (textFontSize.HasValue) {
+                runProperties.FontSize = (int)Math.Round(textFontSize.Value * 100D);
+            }
+
+            if (textUnderline) {
+                runProperties.Underline = A.TextUnderlineValues.Single;
+            }
+
+            runProperties.Append(CreateSolidFill(textColorHex, textSchemeColor));
+            if (!string.IsNullOrWhiteSpace(textFontFamily)) {
+                runProperties.Append(new A.LatinFont { Typeface = textFontFamily });
+            }
+
+            paragraph.Append(new A.Run(
+                runProperties,
+                new A.Text(text ?? name)));
 
             return new Xdr.TwoCellAnchor(
                 new Xdr.FromMarker(
@@ -525,17 +1096,51 @@ namespace OfficeIMO.Tests {
                     new Xdr.ShapeProperties(
                         transform,
                         new A.PresetGeometry { Preset = preset ?? A.ShapeTypeValues.RoundRectangle },
-                        new A.SolidFill(new A.RgbColorModelHex { Val = fillHex }),
+                        CreateSolidFill(fillHex, fillSchemeColor, fillLuminanceModulation, fillLuminanceOffset),
                         new A.Outline(
-                            new A.SolidFill(new A.RgbColorModelHex { Val = strokeHex })) {
+                            CreateSolidFill(strokeHex, strokeSchemeColor)) {
                             Width = 12700
                         }),
                     new Xdr.TextBody(
-                        new A.BodyProperties(),
+                        bodyProperties,
                         new A.ListStyle(),
-                        new A.Paragraph(new A.Run(new A.Text(text ?? name))))),
+                        paragraph)),
                 new Xdr.ClientData());
         }
+
+        private static A.SolidFill CreateSolidFill(string rgbHex, string? schemeColor = null, int? luminanceModulation = null, int? luminanceOffset = null) {
+            var fill = new A.SolidFill();
+            OpenXmlCompositeElement color = string.IsNullOrWhiteSpace(schemeColor)
+                ? new A.RgbColorModelHex { Val = rgbHex }
+                : new A.SchemeColor { Val = ResolveSchemeColor(schemeColor!) };
+            if (luminanceModulation.HasValue) {
+                color.Append(new A.LuminanceModulation { Val = luminanceModulation.Value });
+            }
+
+            if (luminanceOffset.HasValue) {
+                color.Append(new A.LuminanceOffset { Val = luminanceOffset.Value });
+            }
+
+            fill.Append(color);
+            return fill;
+        }
+
+        private static A.SchemeColorValues ResolveSchemeColor(string value) =>
+            value switch {
+                "accent1" => A.SchemeColorValues.Accent1,
+                "accent2" => A.SchemeColorValues.Accent2,
+                "accent3" => A.SchemeColorValues.Accent3,
+                "accent4" => A.SchemeColorValues.Accent4,
+                "accent5" => A.SchemeColorValues.Accent5,
+                "accent6" => A.SchemeColorValues.Accent6,
+                "tx1" => A.SchemeColorValues.Text1,
+                "tx2" => A.SchemeColorValues.Text2,
+                "bg1" => A.SchemeColorValues.Background1,
+                "bg2" => A.SchemeColorValues.Background2,
+                "hlink" => A.SchemeColorValues.Hyperlink,
+                "folHlink" => A.SchemeColorValues.FollowedHyperlink,
+                _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unsupported DrawingML scheme color fixture value.")
+            };
 
         private static byte[] CreateSolidPng(int width, int height, OfficeColor color) {
             OfficeRasterImage image = new OfficeRasterImage(width, height, color);
@@ -568,6 +1173,30 @@ namespace OfficeIMO.Tests {
             return count;
         }
 
+        private static int CountDarkPixels(OfficeRasterImage image) {
+            int count = 0;
+            for (int y = 0; y < image.Height; y++) {
+                for (int x = 0; x < image.Width; x++) {
+                    OfficeColor color = image.GetPixel(x, y);
+                    if (color.A >= 248 && color.R < 90 && color.G < 100 && color.B < 120) {
+                        count++;
+                    }
+                }
+            }
+
+            return count;
+        }
+
+        private static double ExtractFirstSvgFontSize(string svg) {
+            const string attribute = "font-size=\"";
+            int start = svg.IndexOf(attribute, StringComparison.Ordinal);
+            Assert.True(start >= 0, "Expected SVG text output to include a font-size attribute.");
+            start += attribute.Length;
+            int end = svg.IndexOf('"', start);
+            Assert.True(end > start, "Expected SVG text output to include a valid font-size value.");
+            return double.Parse(svg.Substring(start, end - start), System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         private static int CountOccurrences(string text, string value) {
             int count = 0;
             int index = 0;
@@ -578,5 +1207,19 @@ namespace OfficeIMO.Tests {
 
             return count;
         }
+
+        private static bool Intersects(
+            double firstX,
+            double firstY,
+            double firstWidth,
+            double firstHeight,
+            double secondX,
+            double secondY,
+            double secondWidth,
+            double secondHeight) =>
+            firstX < secondX + secondWidth &&
+            firstX + firstWidth > secondX &&
+            firstY < secondY + secondHeight &&
+            firstY + firstHeight > secondY;
     }
 }

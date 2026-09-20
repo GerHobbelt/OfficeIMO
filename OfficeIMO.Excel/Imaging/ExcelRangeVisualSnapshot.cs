@@ -17,6 +17,7 @@ namespace OfficeIMO.Excel {
             IReadOnlyList<ExcelVisualRow> rows,
             IReadOnlyList<ExcelVisualCell> cells,
             IReadOnlyList<ExcelVisualConditionalDataBar> conditionalDataBars,
+            IReadOnlyList<ExcelVisualConditionalIcon> conditionalIcons,
             IReadOnlyList<ExcelVisualCommentIndicator> commentIndicators,
             IReadOnlyList<ExcelVisualCommentBody> commentBodies,
             IReadOnlyList<ExcelVisualSparkline> sparklines,
@@ -35,6 +36,7 @@ namespace OfficeIMO.Excel {
             Rows = rows;
             Cells = cells;
             ConditionalDataBars = conditionalDataBars;
+            ConditionalIcons = conditionalIcons;
             CommentIndicators = commentIndicators;
             CommentBodies = commentBodies;
             Sparklines = sparklines;
@@ -74,6 +76,9 @@ namespace OfficeIMO.Excel {
 
         /// <summary>Conditional-formatting data bars included in the snapshot.</summary>
         public IReadOnlyList<ExcelVisualConditionalDataBar> ConditionalDataBars { get; }
+
+        /// <summary>Conditional-formatting icons included in the snapshot.</summary>
+        public IReadOnlyList<ExcelVisualConditionalIcon> ConditionalIcons { get; }
 
         /// <summary>Cell comment indicators included in the snapshot.</summary>
         public IReadOnlyList<ExcelVisualCommentIndicator> CommentIndicators { get; }
@@ -161,7 +166,8 @@ namespace OfficeIMO.Excel {
             ExcelCellStyleSnapshot style,
             bool coveredByMerge,
             ExcelHyperlinkSnapshot? hyperlink = null,
-            IReadOnlyList<ExcelVisualTextRun>? richTextRuns = null) {
+            IReadOnlyList<ExcelVisualTextRun>? richTextRuns = null,
+            ExcelVisualCellValueKind valueKind = ExcelVisualCellValueKind.Text) {
             Row = row;
             Column = column;
             X = x;
@@ -173,6 +179,7 @@ namespace OfficeIMO.Excel {
             CoveredByMerge = coveredByMerge;
             Hyperlink = hyperlink;
             RichTextRuns = richTextRuns ?? Array.Empty<ExcelVisualTextRun>();
+            ValueKind = valueKind;
         }
 
         /// <summary>One-based source row.</summary>
@@ -207,17 +214,39 @@ namespace OfficeIMO.Excel {
 
         /// <summary>Rich text runs attached to this cell, when available.</summary>
         public IReadOnlyList<ExcelVisualTextRun> RichTextRuns { get; }
+
+        /// <summary>Value kind used for Excel visual policies such as default General alignment.</summary>
+        public ExcelVisualCellValueKind ValueKind { get; }
+    }
+
+    /// <summary>
+    /// Kind of value represented by an Excel visual cell.
+    /// </summary>
+    public enum ExcelVisualCellValueKind {
+        /// <summary>The cell has no value.</summary>
+        Blank,
+        /// <summary>The cell displays text.</summary>
+        Text,
+        /// <summary>The cell displays a number.</summary>
+        Number,
+        /// <summary>The cell displays a date or time serial.</summary>
+        Date,
+        /// <summary>The cell displays a Boolean value.</summary>
+        Boolean,
+        /// <summary>The cell displays an error value.</summary>
+        Error
     }
 
     /// <summary>
     /// Visual rich text run metadata in an Excel cell snapshot.
     /// </summary>
     public sealed class ExcelVisualTextRun {
-        internal ExcelVisualTextRun(string text, bool bold, bool italic, bool underline, string? fontColorArgb, string? fontName, double? fontSize) {
+        internal ExcelVisualTextRun(string text, bool bold, bool italic, bool underline, bool strikethrough, string? fontColorArgb, string? fontName, double? fontSize) {
             Text = text ?? string.Empty;
             Bold = bold;
             Italic = italic;
             Underline = underline;
+            Strikethrough = strikethrough;
             FontColorArgb = fontColorArgb;
             FontName = fontName;
             FontSize = fontSize;
@@ -234,6 +263,9 @@ namespace OfficeIMO.Excel {
 
         /// <summary>Whether the run is underlined.</summary>
         public bool Underline { get; }
+
+        /// <summary>Whether the run is struck through.</summary>
+        public bool Strikethrough { get; }
 
         /// <summary>Run font color in ARGB hexadecimal form, when specified.</summary>
         public string? FontColorArgb { get; }
@@ -287,6 +319,98 @@ namespace OfficeIMO.Excel {
 
         /// <summary>Bar width ratio inside the cell.</summary>
         public double Ratio { get; }
+    }
+
+    /// <summary>
+    /// Conditional-formatting icon overlay in an Excel range snapshot.
+    /// </summary>
+    public sealed class ExcelVisualConditionalIcon {
+        internal ExcelVisualConditionalIcon(int row, int column, double x, double y, double width, double height, ExcelConditionalIconKind kind, bool showValue) {
+            Row = row;
+            Column = column;
+            X = x;
+            Y = y;
+            Width = width;
+            Height = height;
+            Kind = kind;
+            ShowValue = showValue;
+        }
+
+        /// <summary>One-based source row.</summary>
+        public int Row { get; }
+
+        /// <summary>One-based source column.</summary>
+        public int Column { get; }
+
+        /// <summary>X position in CSS pixels.</summary>
+        public double X { get; }
+
+        /// <summary>Y position in CSS pixels.</summary>
+        public double Y { get; }
+
+        /// <summary>Cell width in CSS pixels.</summary>
+        public double Width { get; }
+
+        /// <summary>Cell height in CSS pixels.</summary>
+        public double Height { get; }
+
+        /// <summary>Rendered icon kind.</summary>
+        public ExcelConditionalIconKind Kind { get; }
+
+        /// <summary>Whether the formatted cell value should be rendered beside the icon.</summary>
+        public bool ShowValue { get; }
+    }
+
+    /// <summary>
+    /// Dependency-free icon shapes used for conditional-formatting icon sets.
+    /// </summary>
+    public enum ExcelConditionalIconKind {
+        /// <summary>Green upward arrow.</summary>
+        GreenUpArrow,
+        /// <summary>Yellow upward arrow.</summary>
+        YellowUpArrow,
+        /// <summary>Yellow sideways arrow.</summary>
+        YellowSideArrow,
+        /// <summary>Yellow downward arrow.</summary>
+        YellowDownArrow,
+        /// <summary>Red downward arrow.</summary>
+        RedDownArrow,
+        /// <summary>Green check mark.</summary>
+        GreenCheck,
+        /// <summary>Yellow exclamation mark.</summary>
+        YellowExclamation,
+        /// <summary>Red cross.</summary>
+        RedCross,
+        /// <summary>Green circle.</summary>
+        GreenCircle,
+        /// <summary>Light green circle.</summary>
+        LightGreenCircle,
+        /// <summary>Yellow circle.</summary>
+        YellowCircle,
+        /// <summary>Orange circle.</summary>
+        OrangeCircle,
+        /// <summary>Red circle.</summary>
+        RedCircle,
+        /// <summary>One filled rating bar.</summary>
+        RatingOne,
+        /// <summary>Two filled rating bars.</summary>
+        RatingTwo,
+        /// <summary>Three filled rating bars.</summary>
+        RatingThree,
+        /// <summary>Four filled rating bars.</summary>
+        RatingFour,
+        /// <summary>Five filled rating bars.</summary>
+        RatingFive,
+        /// <summary>Empty quarter-pie indicator.</summary>
+        QuarterEmpty,
+        /// <summary>One-quarter filled pie indicator.</summary>
+        QuarterOne,
+        /// <summary>Half-filled pie indicator.</summary>
+        QuarterTwo,
+        /// <summary>Three-quarter filled pie indicator.</summary>
+        QuarterThree,
+        /// <summary>Fully filled pie indicator.</summary>
+        QuarterFull
     }
 
     /// <summary>
@@ -425,6 +549,8 @@ namespace OfficeIMO.Excel {
             string? lowColorArgb,
             string? firstColorArgb,
             string? lastColorArgb,
+            double? scaleMinimum,
+            double? scaleMaximum,
             string source) {
             Row = row;
             Column = column;
@@ -449,6 +575,8 @@ namespace OfficeIMO.Excel {
             LowColorArgb = lowColorArgb;
             FirstColorArgb = firstColorArgb;
             LastColorArgb = lastColorArgb;
+            ScaleMinimum = scaleMinimum;
+            ScaleMaximum = scaleMaximum;
             Source = source ?? string.Empty;
         }
 
@@ -521,6 +649,12 @@ namespace OfficeIMO.Excel {
         /// <summary>Last point color in ARGB hexadecimal form, when specified.</summary>
         public string? LastColorArgb { get; }
 
+        /// <summary>Minimum value used to scale the rendered sparkline, usually resolved from its Excel group.</summary>
+        public double? ScaleMinimum { get; }
+
+        /// <summary>Maximum value used to scale the rendered sparkline, usually resolved from its Excel group.</summary>
+        public double? ScaleMaximum { get; }
+
         /// <summary>Source reference used by export diagnostics.</summary>
         public string Source { get; }
     }
@@ -545,6 +679,20 @@ namespace OfficeIMO.Excel {
             string? strokeColorArgb,
             double strokeWidth,
             string text,
+            OfficeTextAlignment textAlignment,
+            OfficeTextVerticalAlignment textVerticalAlignment,
+            string? textColorArgb,
+            string? textFontFamily,
+            double? textFontSize,
+            OfficeFontStyle textFontStyle,
+            bool textWrap,
+            bool textShrinkToFit,
+            bool textResizeShapeToFit,
+            ExcelDrawingTextOrientation textOrientation,
+            double textInsetLeft,
+            double textInsetTop,
+            double textInsetRight,
+            double textInsetBottom,
             string source) {
             Name = name ?? string.Empty;
             Order = order;
@@ -561,6 +709,20 @@ namespace OfficeIMO.Excel {
             StrokeColorArgb = strokeColorArgb;
             StrokeWidth = strokeWidth;
             Text = text ?? string.Empty;
+            TextAlignment = textAlignment;
+            TextVerticalAlignment = textVerticalAlignment;
+            TextColorArgb = textColorArgb;
+            TextFontFamily = textFontFamily;
+            TextFontSize = textFontSize;
+            TextFontStyle = textFontStyle;
+            TextWrap = textWrap;
+            TextShrinkToFit = textShrinkToFit;
+            TextResizeShapeToFit = textResizeShapeToFit;
+            TextOrientation = textOrientation;
+            TextInsetLeft = textInsetLeft;
+            TextInsetTop = textInsetTop;
+            TextInsetRight = textInsetRight;
+            TextInsetBottom = textInsetBottom;
             Source = source ?? string.Empty;
         }
 
@@ -611,6 +773,48 @@ namespace OfficeIMO.Excel {
 
         /// <summary>Plain text extracted from the drawing object.</summary>
         public string Text { get; }
+
+        /// <summary>Horizontal text alignment extracted from the drawing object's paragraph properties.</summary>
+        public OfficeTextAlignment TextAlignment { get; }
+
+        /// <summary>Vertical text alignment extracted from the drawing object's body properties.</summary>
+        public OfficeTextVerticalAlignment TextVerticalAlignment { get; }
+
+        /// <summary>Text color in ARGB hexadecimal form, when supported.</summary>
+        public string? TextColorArgb { get; }
+
+        /// <summary>Text font family, when specified on the drawing text run.</summary>
+        public string? TextFontFamily { get; }
+
+        /// <summary>Text font size in points, when specified on the drawing text run.</summary>
+        public double? TextFontSize { get; }
+
+        /// <summary>Text font style flags extracted from the drawing text run.</summary>
+        public OfficeFontStyle TextFontStyle { get; }
+
+        /// <summary>Whether text should wrap inside the drawing object's text box.</summary>
+        public bool TextWrap { get; }
+
+        /// <summary>Whether DrawingML normalAutoFit should shrink overflowing text inside the text box.</summary>
+        public bool TextShrinkToFit { get; }
+
+        /// <summary>Whether DrawingML shapeAutoFit requested resizing the shape to fit text.</summary>
+        public bool TextResizeShapeToFit { get; }
+
+        /// <summary>Text orientation requested by DrawingML body properties.</summary>
+        public ExcelDrawingTextOrientation TextOrientation { get; }
+
+        /// <summary>Left text inset in CSS pixels after DrawingML EMU conversion.</summary>
+        public double TextInsetLeft { get; }
+
+        /// <summary>Top text inset in CSS pixels after DrawingML EMU conversion.</summary>
+        public double TextInsetTop { get; }
+
+        /// <summary>Right text inset in CSS pixels after DrawingML EMU conversion.</summary>
+        public double TextInsetRight { get; }
+
+        /// <summary>Bottom text inset in CSS pixels after DrawingML EMU conversion.</summary>
+        public double TextInsetBottom { get; }
 
         /// <summary>Source reference used by export diagnostics.</summary>
         public string Source { get; }
@@ -693,6 +897,8 @@ namespace OfficeIMO.Excel {
             string contentType,
             OfficeImageFormat detectedFormat,
             byte[] bytes,
+            double sourceWidth,
+            double sourceHeight,
             double x,
             double y,
             double width,
@@ -710,6 +916,8 @@ namespace OfficeIMO.Excel {
             ContentType = contentType ?? string.Empty;
             DetectedFormat = detectedFormat;
             Bytes = bytes ?? Array.Empty<byte>();
+            SourceWidth = sourceWidth;
+            SourceHeight = sourceHeight;
             X = x;
             Y = y;
             Width = width;
@@ -735,6 +943,12 @@ namespace OfficeIMO.Excel {
 
         /// <summary>Image bytes.</summary>
         public byte[] Bytes { get; }
+
+        /// <summary>Intrinsic source image width in pixels, when it could be identified.</summary>
+        public double SourceWidth { get; }
+
+        /// <summary>Intrinsic source image height in pixels, when it could be identified.</summary>
+        public double SourceHeight { get; }
 
         /// <summary>X position in CSS pixels.</summary>
         public double X { get; }

@@ -19,58 +19,39 @@ namespace OfficeIMO.Visio {
             double pointSize = style?.Size ?? defaultSize;
             double pixelHeight = Math.Max(canvas.Supersampling * 7D, pointSize * canvas.Scale / 72D);
             Color color = style?.Color ?? Color.FromRgb(17, 24, 39);
-            OfficeTextBlockLayout layout = OfficeTextLayoutEngine.FitWrappedText(
-                text,
-                pixelHeight,
-                maxWidth,
-                maxHeight,
-                lineHeightFactor: 1.25D,
-                minimumFontSize: canvas.Supersampling * 5D,
-                canvas.MeasureText);
-            pixelHeight = layout.FontSize;
-
             OfficeTextAlignment alignment = VisioDrawingTextAlignment.ToOfficeTextAlignment(style?.HorizontalAlignment);
             OfficeTextVerticalAlignment verticalAlignment = VisioDrawingTextAlignment.ToOfficeTextVerticalAlignment(style?.VerticalAlignment);
-            double top = OfficeTextPlacement.ResolveTopFromCenter(centerY, maxHeight, layout.Height, verticalAlignment);
-            double anchorX = OfficeTextPlacement.ResolveAnchorXFromCenter(centerX, maxWidth, alignment);
-            Color? backgroundColor = ResolveTextBackground(style, drawLabelBackground);
-            if (backgroundColor.HasValue) {
-                double padX = Math.Max(canvas.Supersampling * 3D, pixelHeight * 0.22D);
-                double padY = Math.Max(canvas.Supersampling * 2D, pixelHeight * 0.16D);
-                double backgroundLeft = OfficeTextPlacement.ResolveLeftFromAnchor(anchorX, layout.Width, alignment) - padX;
-                double backgroundTop = top - padY;
-                double backgroundWidth = layout.Width + (padX * 2D);
-                double backgroundHeight = layout.Height + (padY * 2D);
-                if (Math.Abs(rotateRadians) < TextRotationEpsilon) {
-                    canvas.FillRectangle(backgroundLeft, backgroundTop, backgroundWidth, backgroundHeight, backgroundColor.Value);
-                } else {
-                    canvas.FillPolygon(new[] {
-                        OfficeGeometry.RotatePoint((backgroundLeft, backgroundTop), centerX, centerY, -rotateRadians),
-                        OfficeGeometry.RotatePoint((backgroundLeft + backgroundWidth, backgroundTop), centerX, centerY, -rotateRadians),
-                        OfficeGeometry.RotatePoint((backgroundLeft + backgroundWidth, backgroundTop + backgroundHeight), centerX, centerY, -rotateRadians),
-                        OfficeGeometry.RotatePoint((backgroundLeft, backgroundTop + backgroundHeight), centerX, centerY, -rotateRadians)
-                    }, backgroundColor.Value);
-                }
-            }
-
-            canvas.DrawTextBlock(
-                layout,
-                centerX - (maxWidth / 2D),
-                centerY - (maxHeight / 2D),
+            OfficeTextBlockRenderPlan plan = OfficeTextBlockRenderPlan.CreateFittedFromCenter(
+                text,
+                pixelHeight,
+                centerX,
+                centerY,
                 maxWidth,
                 maxHeight,
+                canvas.MeasureText,
+                alignment,
+                verticalAlignment,
+                lineHeightFactor: 1.25D,
+                minimumFontSize: canvas.Supersampling * 5D);
+            pixelHeight = plan.Layout.FontSize;
+
+            Color? backgroundColor = ResolveTextBackground(style, drawLabelBackground);
+            double padX = Math.Max(canvas.Supersampling * 3D, pixelHeight * 0.22D);
+            double padY = Math.Max(canvas.Supersampling * 2D, pixelHeight * 0.16D);
+
+            canvas.DrawTextBox(
+                plan,
                 color,
                 style?.Bold == true,
                 style?.Italic == true,
                 style?.Underline == true,
-                alignment,
-                verticalAlignment,
                 rotateRadians,
                 centerX,
-                centerY);
+                centerY,
+                backgroundColor,
+                padX,
+                padY);
         }
-
-        private const double TextRotationEpsilon = 1e-9;
 
         private static Color? ResolveTextBackground(VisioTextStyle? style, bool drawLabelBackground) {
             if (style?.BackgroundColor.HasValue == true) {

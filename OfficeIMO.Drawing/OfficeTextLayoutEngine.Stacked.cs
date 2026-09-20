@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 
 namespace OfficeIMO.Drawing;
 
@@ -116,7 +115,7 @@ public static partial class OfficeTextLayoutEngine {
         double lineFactor = NormalizePositive(lineHeightFactor, 1.2D);
         if (elements.Count == 0) {
             double lineHeight = Math.Max(1D, Math.Ceiling(lineFactor));
-            return new OfficeRichTextBlockLayout(new[] { new OfficeRichTextLine(Array.Empty<OfficeRichTextSegment>()) }, lineHeight, 0D, lineHeight);
+            return new OfficeRichTextBlockLayout(new[] { new OfficeRichTextLine(Array.Empty<OfficeRichTextSegment>(), lineHeight) }, lineHeight, 0D, lineHeight);
         }
 
         if (shrinkToFit) {
@@ -125,7 +124,7 @@ public static partial class OfficeTextLayoutEngine {
 
         double maxFontSize = ResolveMaxRichTextFontSize(elements);
         double resolvedLineHeight = Math.Max(1D, Math.Ceiling(maxFontSize * lineFactor));
-        List<OfficeRichTextLine> lines = CreateStackedRichTextLines(elements, measure);
+        List<OfficeRichTextLine> lines = CreateStackedRichTextLines(elements, measure, resolvedLineHeight);
         return ClipStackedRichTextBlockToHeight(lines, resolvedLineHeight, width, height, measure);
     }
 
@@ -247,7 +246,7 @@ public static partial class OfficeTextLayoutEngine {
         return true;
     }
 
-    private static List<OfficeRichTextLine> CreateStackedRichTextLines(IReadOnlyList<OfficeRichTextRun> elements, Func<string?, double, string?, double> measure) {
+    private static List<OfficeRichTextLine> CreateStackedRichTextLines(IReadOnlyList<OfficeRichTextRun> elements, Func<string?, double, string?, double> measure, double lineHeight) {
         var lines = new List<OfficeRichTextLine>(elements.Count);
         for (int i = 0; i < elements.Count; i++) {
             OfficeRichTextRun run = elements[i];
@@ -262,7 +261,7 @@ public static partial class OfficeTextLayoutEngine {
                     run.Underline,
                     run.FontFamily,
                     run.Strikethrough)
-            }));
+            }, lineHeight));
         }
 
         return lines;
@@ -291,18 +290,12 @@ public static partial class OfficeTextLayoutEngine {
         }
 
         double blockWidth = MeasureMaxRichTextLineWidth(lines);
-        double blockHeight = lines.Count * lineHeight;
+        double blockHeight = MeasureRichTextBlockHeight(lines, lineHeight);
         return new OfficeRichTextBlockLayout(lines, lineHeight, blockWidth, blockHeight, clipped);
     }
 
     private static IReadOnlyList<string> SplitTextElements(string text) {
-        var elements = new List<string>();
-        TextElementEnumerator enumerator = StringInfo.GetTextElementEnumerator(text);
-        while (enumerator.MoveNext()) {
-            elements.Add(enumerator.GetTextElement());
-        }
-
-        return elements.Count == 0 ? new[] { string.Empty } : elements;
+        return OfficeTextElements.Split(text, includeEmptyElement: true);
     }
 
     private static IReadOnlyList<OfficeRichTextRun> SplitRichTextElements(IReadOnlyList<OfficeRichTextRun> runs) {
@@ -314,10 +307,9 @@ public static partial class OfficeTextLayoutEngine {
                 continue;
             }
 
-            TextElementEnumerator enumerator = StringInfo.GetTextElementEnumerator(value);
-            while (enumerator.MoveNext()) {
+            foreach (string textElement in OfficeTextElements.Enumerate(value)) {
                 elements.Add(new OfficeRichTextRun(
-                    enumerator.GetTextElement(),
+                    textElement,
                     run.FontSize,
                     run.Color,
                     run.Bold,

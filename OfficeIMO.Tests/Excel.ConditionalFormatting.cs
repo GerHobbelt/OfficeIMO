@@ -158,7 +158,7 @@ namespace OfficeIMO.Tests {
                 Assert.Contains(rules, info => info.Type == "ContainsBlanks");
                 Assert.Contains(rules, info => info.Type == "NotContainsErrors");
                 Assert.Contains(rules, info => info.Type == "AboveAverage");
-                Assert.Contains(rules, info => info.Type == "TimePeriod");
+                Assert.Contains(rules, info => info.Type == "TimePeriod" && info.TimePeriod == nameof(TimePeriodValues.Today));
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -248,6 +248,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(IconSetValues.ThreeTrafficLights1, iconSet!.IconSetValue!.Value);
                 Assert.False(iconSet.ShowValue!.Value);
                 Assert.True(iconSet.Reverse!.Value);
+                Assert.Equal(3, iconSet.Elements<ConditionalFormatValueObject>().Count());
             }
 
             using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
@@ -256,6 +257,10 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("ThreeTrafficLights1", info.IconSet);
                 Assert.False(info.IconSetShowValue);
                 Assert.True(info.IconSetReverse);
+                Assert.Equal(3, info.IconSetThresholds.Count);
+                Assert.Equal("0", info.IconSetThresholds[0].Value);
+                Assert.Equal("33", info.IconSetThresholds[1].Value);
+                Assert.Equal("67", info.IconSetThresholds[2].Value);
                 Assert.Empty(document.ValidateOpenXml());
             }
         }

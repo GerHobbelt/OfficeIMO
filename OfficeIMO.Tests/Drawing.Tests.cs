@@ -72,6 +72,27 @@ public class DrawingTests {
     }
 
     [Fact]
+    public void OfficeImagePlacementCalculatesAspectRatioDistortion() {
+        double matching = OfficeImagePlacement.GetAspectRatioDistortionRatio(
+            sourceWidth: 200D,
+            sourceHeight: 100D,
+            targetWidth: 80D,
+            targetHeight: 40D);
+        double distorted = OfficeImagePlacement.GetAspectRatioDistortionRatio(
+            sourceWidth: 200D,
+            sourceHeight: 100D,
+            targetWidth: 80D,
+            targetHeight: 80D);
+
+        Assert.Equal(1D, matching);
+        Assert.Equal(2D, distorted);
+        Assert.False(OfficeImagePlacement.ExceedsAspectRatioDistortion(200D, 100D, 80D, 40D, 1.02D));
+        Assert.True(OfficeImagePlacement.ExceedsAspectRatioDistortion(200D, 100D, 80D, 80D, 1.02D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeImagePlacement.GetAspectRatioDistortionRatio(0D, 100D, 80D, 80D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeImagePlacement.ExceedsAspectRatioDistortion(200D, 100D, 80D, 80D, double.NaN));
+    }
+
+    [Fact]
     public void OfficeImageSourceCropExposesVisibleSourceRatios() {
         var crop = new OfficeImageSourceCrop(0.25D, 0.1D, 0.5D, 0.2D);
 
@@ -96,6 +117,21 @@ public class DrawingTests {
         Assert.Equal(0D, crop.Bottom);
         Assert.Equal(OfficeImageSourceCrop.MinimumVisibleRatio, crop.VisibleWidth);
         Assert.Equal(1D, crop.VisibleHeight);
+    }
+
+    [Fact]
+    public void OfficeImageSourceCropStrictFractionsRequireVisibleSourceArea() {
+        OfficeImageSourceCrop crop = OfficeImageSourceCrop.FromStrictFractions(
+            left: 0.25D,
+            top: 0.1D,
+            right: 0.25D,
+            bottom: 0.2D);
+
+        Assert.True(crop.HasVisibleSourceArea);
+        Assert.True(OfficeImageSourceCrop.LeavesVisibleSourceArea(0.25D, 0.1D, 0.25D, 0.2D));
+        Assert.False(new OfficeImageSourceCrop(0.75D, 0D, 0.25D, 0D).HasVisibleSourceArea);
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeImageSourceCrop.FromStrictFractions(0.75D, 0D, 0.25D, 0D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeImageSourceCrop.FromStrictFractions(0D, 0.6D, 0D, 0.4D));
     }
 
     [Fact]
@@ -124,6 +160,75 @@ public class DrawingTests {
         Assert.True(scaled.HasCrop);
         Assert.True(scaled.HasTransform);
         Assert.True(scaled.FlipHorizontal);
+    }
+
+    [Fact]
+    public void OfficeImageProjectionCreatesUnitSquareTransformForPlacementRotationAndFlips() {
+        OfficeTransform normal = new OfficeImageProjection(
+            new OfficeImagePlacement(30D, 90D, 60D, 30D))
+            .CreateUnitSquareTransform();
+        OfficeTransform rotated = new OfficeImageProjection(
+            new OfficeImagePlacement(30D, 90D, 60D, 30D),
+            rotationDegrees: 90D)
+            .CreateUnitSquareTransform();
+        OfficeTransform flipped = new OfficeImageProjection(
+            new OfficeImagePlacement(10D, 20D, 80D, 40D),
+            flipHorizontal: true)
+            .CreateUnitSquareTransform();
+        OfficeTransform customCenter = new OfficeImageProjection(
+            new OfficeImagePlacement(10D, 20D, 20D, 10D),
+            rotationDegrees: 90D,
+            rotationCenterX: 0D,
+            rotationCenterY: 0D)
+            .CreateUnitSquareTransform();
+
+        Assert.Equal(new OfficeTransform(60D, 0D, 0D, 30D, 30D, 90D), normal);
+        Assert.Equal(new OfficeTransform(0D, 60D, -30D, 0D, 75D, 75D), rotated);
+        Assert.Equal(new OfficeTransform(-80D, 0D, 0D, 40D, 90D, 20D), flipped);
+        Assert.Equal(new OfficeTransform(0D, 20D, -10D, 0D, -20D, 10D), customCenter);
+
+        Assert.Equal((30D, 90D, 90D, 120D), normal.TransformRectangleBounds(0D, 0D, 1D, 1D));
+        Assert.Equal((10D, 20D, 90D, 60D), new OfficeImageProjection(
+            new OfficeImagePlacement(10D, 20D, 80D, 40D),
+            flipHorizontal: true).GetDestinationBounds());
+    }
+
+    [Fact]
+    public void OfficeImageProjectionCreatesFrameTransformForDestinationCoordinates() {
+        OfficeImageFrameTransform plain = new OfficeImageProjection(
+            new OfficeImagePlacement(10D, 20D, 80D, 40D))
+            .CreateFrameTransform();
+        OfficeImageFrameTransform flipped = new OfficeImageProjection(
+            new OfficeImagePlacement(10D, 20D, 80D, 40D),
+            flipHorizontal: true)
+            .CreateFrameTransform();
+        OfficeImageFrameTransform rotated = new OfficeImageProjection(
+            new OfficeImagePlacement(10D, 20D, 80D, 40D),
+            rotationDegrees: 90D)
+            .CreateFrameTransform();
+
+        Assert.False(plain.HasTransform);
+        Assert.Equal((0D, 50D, 40D, false, false), plain.ToTuple());
+        Assert.Equal((0D, 50D, 40D, true, false), flipped.ToTuple());
+        Assert.True(flipped.HasFlip);
+        Assert.Equal(new OfficePoint(90D, 20D), flipped.CreateDestinationTransform().TransformPoint(new OfficePoint(10D, 20D)));
+        Assert.True(rotated.HasRotation);
+        Assert.Equal(new OfficePoint(70D, 40D), rotated.CreateDestinationTransform().TransformPoint(new OfficePoint(50D, 20D)));
+    }
+
+    [Fact]
+    public void OfficeTransformInvertsAffineMatrix() {
+        OfficeTransform transform = OfficeTransform.Translate(10D, 20D)
+            .Then(OfficeTransform.Scale(2D, 4D))
+            .Then(OfficeTransform.RotateDegrees(90D));
+
+        Assert.True(transform.TryInvert(out OfficeTransform inverse));
+        OfficePoint projected = transform.TransformPoint(new OfficePoint(3D, 5D));
+        OfficePoint restored = inverse.TransformPoint(projected);
+
+        Assert.Equal(3D, restored.X, precision: 10);
+        Assert.Equal(5D, restored.Y, precision: 10);
+        Assert.Throws<InvalidOperationException>(() => new OfficeTransform(0D, 0D, 0D, 0D, 0D, 0D).Invert());
     }
 
     [Fact]
@@ -773,6 +878,48 @@ public class DrawingTests {
     }
 
     [Fact]
+    public void OfficeDrawingSvgExporter_EmitsRotatedTextThroughSharedRenderer() {
+        var drawing = new OfficeDrawing(120, 80);
+        drawing.AddText(
+            "Tilt",
+            30,
+            24,
+            60,
+            20,
+            new OfficeFontInfo("Aptos", 10D),
+            OfficeColor.Black,
+            OfficeTextAlignment.Center,
+            rotationDegrees: 30D,
+            rotationCenterX: 60D,
+            rotationCenterY: 34D);
+
+        string svg = OfficeDrawingSvgExporter.ToSvg(drawing);
+
+        Assert.Contains("transform=\"rotate(30 60 34)\"", svg, StringComparison.Ordinal);
+        Assert.Contains(">Tilt</text>", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeDrawingSvgExporter_EmitsVerticallyAlignedTextThroughSharedRenderer() {
+        var drawing = new OfficeDrawing(120, 80);
+        drawing.AddText(
+            "Bottom",
+            10,
+            12,
+            80,
+            40,
+            new OfficeFontInfo("Aptos", 10D),
+            OfficeColor.Black,
+            OfficeTextAlignment.Right,
+            verticalAlignment: OfficeTextVerticalAlignment.Bottom);
+
+        string svg = OfficeDrawingSvgExporter.ToSvg(drawing);
+
+        Assert.Contains("text-anchor=\"end\"", svg, StringComparison.Ordinal);
+        Assert.Contains(">Bottom</text>", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OfficeDrawingSvgExporter_EmitsShapeShadowBehindForegroundShape() {
         var drawing = new OfficeDrawing(120, 80);
         var shape = OfficeShape.Rectangle(80, 30);
@@ -902,8 +1049,21 @@ public class DrawingTests {
         Assert.Equal(OfficePathCommand.MoveTo(0, 30), clone.Commands[0]);
         Assert.Equal(OfficePathCommand.QuadraticBezierTo(40, 0, 80, 30), clone.Commands[1]);
         Assert.Equal(OfficePathCommand.Close(), clone.Commands[2]);
+
+        OfficeClipPath scaled = clipPath.Scale(2D, 3D);
+        Assert.Equal(160, scaled.Width);
+        Assert.Equal(90, scaled.Height);
+        Assert.Equal(OfficePathCommand.MoveTo(0, 90), scaled.Commands[0]);
+        Assert.Equal(OfficePathCommand.QuadraticBezierTo(80, 0, 160, 90), scaled.Commands[1]);
+        Assert.Equal(OfficePathCommand.Close(), scaled.Commands[2]);
+
+        OfficeClipPath rounded = OfficeClipPath.RoundedRectangle(20, 10, 4).Scale(3D, 2D);
+        Assert.Equal(60, rounded.Width);
+        Assert.Equal(20, rounded.Height);
+        Assert.Equal(8, rounded.CornerRadius);
         Assert.Throws<ArgumentException>(() => OfficeClipPath.Path(OfficePathCommand.LineTo(10, 10)));
         Assert.Throws<ArgumentOutOfRangeException>(() => OfficeClipPath.Rectangle(double.NaN, 10));
+        Assert.Throws<ArgumentOutOfRangeException>(() => clipPath.Scale(0D, 1D));
     }
 
     [Fact]
@@ -1174,6 +1334,9 @@ public class DrawingTests {
         var matrixBuilder = new StringBuilder("<g");
         matrixBuilder.AppendMatrixTransformAttribute(matrixTransform, 40D, 50D).Append(">");
         Assert.Equal("<g transform=\"matrix(0 1 -1 0 55 55)\">", matrixBuilder.ToString());
+        Assert.Equal("rotate(45 50 40)", OfficeSvgFormatting.FormatImageFrameTransform(new OfficeImageFrameTransform(45D, 50D, 40D)));
+        Assert.Equal("translate(50 40) rotate(45) scale(-1 1) translate(-50 -40)", OfficeSvgFormatting.FormatImageFrameTransform(new OfficeImageFrameTransform(45D, 50D, 40D, flipHorizontal: true)));
+        Assert.Null(OfficeSvgFormatting.FormatImageFrameTransform(new OfficeImageFrameTransform(0D, 50D, 40D)));
 
         var writerBuilder = new StringBuilder();
         using (var writer = System.Xml.XmlWriter.Create(
@@ -1279,6 +1442,19 @@ public class DrawingTests {
     }
 
     [Fact]
+    public void OfficeSvgFormattingAppendsSharedPercentStipplePatternRectangle() {
+        var builder = new StringBuilder();
+
+        builder.AppendHatchPatternRectangle(0, 0, 8, 8, OfficeColor.FromRgb(10, 160, 30), 4, 1, OfficeHatchPatternKind.Percent12_5);
+
+        string svg = builder.ToString();
+        Assert.DoesNotContain("<line", svg, StringComparison.Ordinal);
+        Assert.Equal(8, CountOccurrences(svg, "<circle"));
+        Assert.Contains("fill=\"#0AA01E\"", svg, StringComparison.Ordinal);
+        Assert.Contains("cx=\"2.5\" cy=\"2.5\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OfficeSparklineRendererAppendsReusableSvgSparklines() {
         var builder = new StringBuilder();
 
@@ -1345,6 +1521,45 @@ public class DrawingTests {
     }
 
     [Fact]
+    public void OfficeConditionalIconRendererAppendsReusableSvgIcons() {
+        var circleBuilder = new StringBuilder();
+        var arrowBuilder = new StringBuilder();
+
+        OfficeConditionalIconRenderer.AppendSvg(circleBuilder, 1, 2, 16, OfficeConditionalIconKind.RedCircle, scale: 1D);
+        OfficeConditionalIconRenderer.AppendSvg(arrowBuilder, 1, 2, 16, OfficeConditionalIconKind.GreenUpArrow, scale: 1D);
+
+        string circleSvg = circleBuilder.ToString();
+        string arrowSvg = arrowBuilder.ToString();
+        Assert.Contains("<circle", circleSvg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#DC2626\"", circleSvg, StringComparison.Ordinal);
+        Assert.Contains("stroke=\"#B91C1C\"", circleSvg, StringComparison.Ordinal);
+        Assert.Contains("fill-opacity=", circleSvg, StringComparison.Ordinal);
+        Assert.Contains("<path", arrowSvg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#16A34A\"", arrowSvg, StringComparison.Ordinal);
+        Assert.Contains("stroke=\"#15803D\"", arrowSvg, StringComparison.Ordinal);
+        Assert.Contains("fill-opacity=", arrowSvg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeDataBarRendererResolvesReusableGeometryForNativeEmitters() {
+        OfficeDataBarGeometry bar = OfficeDataBarRenderer.Resolve(
+            10D,
+            20D,
+            80D,
+            30D,
+            startRatio: 0.25D,
+            ratio: 0.5D,
+            verticalInset: 3D,
+            minimumHeight: 0D);
+
+        Assert.Equal(30D, bar.X);
+        Assert.Equal(23D, bar.Y);
+        Assert.Equal(40D, bar.Width);
+        Assert.Equal(24D, bar.Height);
+        Assert.True(bar.IsVisible);
+    }
+
+    [Fact]
     public void OfficeSvgImageRendererAppendsCroppedImageProjection() {
         var builder = new StringBuilder();
 
@@ -1360,6 +1575,37 @@ public class DrawingTests {
         string svg = builder.ToString();
         Assert.Contains("<clipPath id=\"imgClip\"><rect x=\"10\" y=\"20\" width=\"80\" height=\"40\"/></clipPath>", svg, StringComparison.Ordinal);
         Assert.Contains("<image x=\"-30\" y=\"15\" width=\"160\" height=\"50\" clip-path=\"url(#imgClip)\" href=\"data:image/png;base64,AA==\"/>", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeSvgImageRendererAppendsImageInsideViewport() {
+        var uncropped = new StringBuilder();
+
+        OfficeSvgImageRenderer.AppendImageInViewport(
+            uncropped,
+            "data:image/png;base64,AA==",
+            new OfficeImageProjection(new OfficeImagePlacement(10, 20, 80, 40)),
+            "viewportClip",
+            new OfficeImagePlacement(0, 0, 120, 80));
+
+        string uncroppedSvg = uncropped.ToString();
+        Assert.Contains("<clipPath id=\"viewportClip\"><rect x=\"0\" y=\"0\" width=\"120\" height=\"80\"/></clipPath>", uncroppedSvg, StringComparison.Ordinal);
+        Assert.Contains("<image x=\"10\" y=\"20\" width=\"80\" height=\"40\" clip-path=\"url(#viewportClip)\" href=\"data:image/png;base64,AA==\"/>", uncroppedSvg, StringComparison.Ordinal);
+
+        var cropped = new StringBuilder();
+
+        OfficeSvgImageRenderer.AppendImageInViewport(
+            cropped,
+            "data:image/png;base64,AA==",
+            new OfficeImageProjection(
+                new OfficeImagePlacement(10, 20, 80, 40),
+                new OfficeImageSourceCrop(0.25D, 0.1D, 0.25D, 0.1D)),
+            "cropClip",
+            new OfficeImagePlacement(0, 0, 120, 80));
+
+        string croppedSvg = cropped.ToString();
+        Assert.Contains("<clipPath id=\"cropClip\"><rect x=\"10\" y=\"20\" width=\"80\" height=\"40\"/></clipPath>", croppedSvg, StringComparison.Ordinal);
+        Assert.Contains("<image x=\"-30\" y=\"15\" width=\"160\" height=\"50\" clip-path=\"url(#cropClip)\" href=\"data:image/png;base64,AA==\"/>", croppedSvg, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1466,6 +1712,53 @@ public class DrawingTests {
         Assert.Contains("preserveAspectRatio=\"xMidYMid meet\"", svg, StringComparison.Ordinal);
         Assert.Contains("transform=\"translate(50 40) rotate(45) scale(-1 1) translate(-50 -40)\"", svg, StringComparison.Ordinal);
         Assert.Contains("href=\"data:image/png;base64,AA==\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeSvgImageRendererWritesXmlCroppedImageProjection() {
+        var builder = new StringBuilder();
+        using (var writer = System.Xml.XmlWriter.Create(
+            new System.IO.StringWriter(builder, System.Globalization.CultureInfo.InvariantCulture),
+            new System.Xml.XmlWriterSettings { OmitXmlDeclaration = true, ConformanceLevel = System.Xml.ConformanceLevel.Fragment })) {
+            OfficeSvgImageRenderer.WriteImage(
+                writer,
+                "http://www.w3.org/2000/svg",
+                "data:image/png;base64,AA==",
+                new OfficeImageProjection(
+                    new OfficeImagePlacement(10, 20, 80, 40),
+                    new OfficeImageSourceCrop(0.25D, 0.1D, 0.25D, 0.1D)),
+                clipPathId: "xmlClip",
+                clipRectangle: new OfficeImagePlacement(10, 20, 80, 40));
+        }
+
+        string svg = builder.ToString();
+        Assert.Contains("<clipPath", svg, StringComparison.Ordinal);
+        Assert.Contains("id=\"xmlClip\"", svg, StringComparison.Ordinal);
+        Assert.Contains("<rect x=\"10\" y=\"20\" width=\"80\" height=\"40\"", svg, StringComparison.Ordinal);
+        Assert.Contains("<image x=\"-30\" y=\"15\" width=\"160\" height=\"50\" clip-path=\"url(#xmlClip)\" href=\"data:image/png;base64,AA==\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeSvgImageRendererWritesXmlImageInsideViewport() {
+        var builder = new StringBuilder();
+        using (var writer = System.Xml.XmlWriter.Create(
+            new System.IO.StringWriter(builder, System.Globalization.CultureInfo.InvariantCulture),
+            new System.Xml.XmlWriterSettings { OmitXmlDeclaration = true, ConformanceLevel = System.Xml.ConformanceLevel.Fragment })) {
+            OfficeSvgImageRenderer.WriteImageInViewport(
+                writer,
+                "http://www.w3.org/2000/svg",
+                "data:image/png;base64,AA==",
+                new OfficeImageProjection(new OfficeImagePlacement(10, 20, 80, 40)),
+                "xmlViewportClip",
+                new OfficeImagePlacement(0, 0, 120, 80),
+                preserveAspectRatio: "xMidYMid meet");
+        }
+
+        string svg = builder.ToString();
+        Assert.Contains("<clipPath", svg, StringComparison.Ordinal);
+        Assert.Contains("id=\"xmlViewportClip\"", svg, StringComparison.Ordinal);
+        Assert.Contains("<rect x=\"0\" y=\"0\" width=\"120\" height=\"80\"", svg, StringComparison.Ordinal);
+        Assert.Contains("<image x=\"10\" y=\"20\" width=\"80\" height=\"40\" clip-path=\"url(#xmlViewportClip)\" preserveAspectRatio=\"xMidYMid meet\" href=\"data:image/png;base64,AA==\"", svg, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1609,7 +1902,11 @@ public class DrawingTests {
 
         Assert.True(OfficeShapePresets.TryCreate("heart", 64, 56, horizontalFlip: true, verticalFlip: false, out OfficeShape? heart));
         Assert.NotNull(heart);
-        Assert.Equal(new OfficePoint(32, 56), heart!.PathCommands[0].Point);
+        AssertPointNear(new OfficePoint(heart!.Width, heart.Height), 58.88D, 52.08D);
+        AssertPointNear(heart.PathCommands[0].Point, 29.44D, 52.08D);
+        AssertPointNear(heart.PathCommands[1].Point, 57.6D, 17.36D);
+        AssertPointNear(heart.PathCommands[5].Point, 1.28D, 17.36D);
+        AssertPointNear(heart.PathCommands[3].Point, 29.44D, 14.56D);
 
         Assert.True(OfficeShapePresets.TryCreate("cube", 72, 60, out OfficeShape? cube));
         Assert.NotNull(cube);
@@ -1684,6 +1981,81 @@ public class DrawingTests {
     }
 
     [Fact]
+    public void OfficeGeometrySamplesBezierCurvesForSharedFlattening() {
+        List<OfficePoint> quadratic = OfficeGeometry.CreateQuadraticBezierPoints(
+            new OfficePoint(0D, 0D),
+            new OfficePoint(10D, 20D),
+            new OfficePoint(20D, 0D),
+            2);
+
+        Assert.Equal(2, quadratic.Count);
+        AssertPointNear(quadratic[0], 10D, 10D);
+        AssertPointNear(quadratic[1], 20D, 0D);
+
+        List<(double X, double Y)> cubic = OfficeGeometry.CreateCubicBezierPoints(
+            (0D, 0D),
+            (10D, 30D),
+            (20D, 30D),
+            (30D, 0D),
+            3);
+
+        Assert.Equal(3, cubic.Count);
+        AssertPointNear(new OfficePoint(cubic[0].X, cubic[0].Y), 10D, 20D);
+        AssertPointNear(new OfficePoint(cubic[1].X, cubic[1].Y), 20D, 20D);
+        AssertPointNear(new OfficePoint(cubic[2].X, cubic[2].Y), 30D, 0D);
+    }
+
+    [Fact]
+    public void OfficeGeometrySamplesEllipticalArcsForSharedRendering() {
+        List<OfficePoint> arc = OfficeGeometry.CreateEllipticalArcPoints(
+            centerX: 10D,
+            centerY: 20D,
+            radiusX: 8D,
+            radiusY: 4D,
+            startRadians: 0D,
+            sweepRadians: Math.PI / 2D,
+            segments: 2);
+
+        Assert.Equal(2, arc.Count);
+        AssertPointNear(arc[0], 10D + (Math.Sqrt(0.5D) * 8D), 20D + (Math.Sqrt(0.5D) * 4D));
+        AssertPointNear(arc[1], 10D, 24D);
+
+        List<(double X, double Y)> tuples = OfficeGeometry.CreateEllipticalArcPointsAsTuples(
+            centerX: 0D,
+            centerY: 0D,
+            radiusX: 10D,
+            radiusY: 10D,
+            startRadians: 0D,
+            sweepRadians: Math.PI,
+            segments: 2);
+
+        Assert.Equal(2, tuples.Count);
+        AssertPointNear(new OfficePoint(tuples[0].X, tuples[0].Y), 0D, 10D);
+        AssertPointNear(new OfficePoint(tuples[1].X, tuples[1].Y), -10D, 0D);
+    }
+
+    [Fact]
+    public void OfficeGeometryRotatesSampledEllipticalArcs() {
+        List<OfficePoint> arc = OfficeGeometry.CreateEllipticalArcPoints(
+            centerX: 1D,
+            centerY: 0D,
+            radiusX: 1D,
+            radiusY: 1D,
+            startRadians: 0D,
+            sweepRadians: Math.PI / 2D,
+            segments: 1,
+            rotationRadians: Math.PI / 2D,
+            rotationCenterX: 0D,
+            rotationCenterY: 0D);
+
+        Assert.Single(arc);
+        AssertPointNear(arc[0], -1D, 1D);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeGeometry.CreateEllipticalArcPoints(0D, 0D, 1D, 1D, 0D, Math.PI, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeGeometry.CreateEllipticalArcPoints(0D, 0D, 0D, 1D, 0D, Math.PI, 1));
+    }
+
+    [Fact]
     public void OfficeGeometryRotatesPointsAndConvertsAngles() {
         double radians = OfficeGeometry.DegreesToRadians(90D);
         Assert.Equal(90D, OfficeGeometry.RadiansToDegrees(radians), precision: 10);
@@ -1695,6 +2067,20 @@ public class DrawingTests {
         (double x, double y) = OfficeGeometry.RotatePoint((1D, 0D), 0D, 0D, -radians);
         Assert.Equal(0D, x, precision: 10);
         Assert.Equal(-1D, y, precision: 10);
+
+        (double left, double top, double right, double bottom) = OfficeGeometry.GetRotatedRectangleBounds(
+            x: 0D,
+            y: 0D,
+            width: 10D,
+            height: 20D,
+            rotationDegrees: 90D,
+            centerX: 5D,
+            centerY: 10D);
+
+        Assert.Equal(-5D, left, precision: 10);
+        Assert.Equal(5D, top, precision: 10);
+        Assert.Equal(15D, right, precision: 10);
+        Assert.Equal(15D, bottom, precision: 10);
     }
 
     [Fact]
@@ -2181,6 +2567,22 @@ public class DrawingTests {
         data[offset + 1] = (byte)((value >> 8) & 0xFF);
         data[offset + 2] = (byte)((value >> 16) & 0xFF);
         data[offset + 3] = (byte)((value >> 24) & 0xFF);
+    }
+
+    private static void AssertPointNear(OfficePoint actual, double expectedX, double expectedY) {
+        Assert.Equal(expectedX, actual.X, precision: 6);
+        Assert.Equal(expectedY, actual.Y, precision: 6);
+    }
+
+    private static int CountOccurrences(string value, string pattern) {
+        int count = 0;
+        int index = 0;
+        while ((index = value.IndexOf(pattern, index, StringComparison.Ordinal)) >= 0) {
+            count++;
+            index += pattern.Length;
+        }
+
+        return count;
     }
 
     private static void WritePlaceableWmfChecksum(byte[] data) {

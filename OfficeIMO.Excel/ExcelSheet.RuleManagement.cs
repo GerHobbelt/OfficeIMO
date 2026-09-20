@@ -30,6 +30,7 @@ namespace OfficeIMO.Excel {
                         Type = ReadConditionalFormatType(rule),
                         Operator = ReadConditionalFormatOperator(rule),
                         Text = rule.Text?.Value,
+                        TimePeriod = ReadConditionalTimePeriod(rule),
                         Priority = (int)(rule.Priority?.Value ?? 0),
                         StopIfTrue = rule.StopIfTrue?.Value ?? false,
                         DifferentialFormatId = differentialFormatId,
@@ -40,6 +41,7 @@ namespace OfficeIMO.Excel {
                         IconSet = ReadIconSetName(rule),
                         IconSetShowValue = ReadIconSetShowValue(rule),
                         IconSetReverse = ReadIconSetReverse(rule),
+                        IconSetThresholds = ReadIconSetThresholds(rule),
                         TopBottomRank = rule.Rank?.Value,
                         TopBottomBottom = rule.Bottom?.Value ?? false,
                         TopBottomPercent = rule.Percent?.Value ?? false,
@@ -103,6 +105,26 @@ namespace OfficeIMO.Excel {
             return rule.Operator.InnerText;
         }
 
+        private static string? ReadConditionalTimePeriod(ConditionalFormattingRule rule) {
+            if (rule.TimePeriod == null) {
+                return null;
+            }
+
+            TimePeriodValues value = rule.TimePeriod.Value;
+            if (value == TimePeriodValues.Yesterday) return nameof(TimePeriodValues.Yesterday);
+            if (value == TimePeriodValues.Today) return nameof(TimePeriodValues.Today);
+            if (value == TimePeriodValues.Tomorrow) return nameof(TimePeriodValues.Tomorrow);
+            if (value == TimePeriodValues.Last7Days) return nameof(TimePeriodValues.Last7Days);
+            if (value == TimePeriodValues.LastWeek) return nameof(TimePeriodValues.LastWeek);
+            if (value == TimePeriodValues.ThisWeek) return nameof(TimePeriodValues.ThisWeek);
+            if (value == TimePeriodValues.NextWeek) return nameof(TimePeriodValues.NextWeek);
+            if (value == TimePeriodValues.LastMonth) return nameof(TimePeriodValues.LastMonth);
+            if (value == TimePeriodValues.ThisMonth) return nameof(TimePeriodValues.ThisMonth);
+            if (value == TimePeriodValues.NextMonth) return nameof(TimePeriodValues.NextMonth);
+
+            return rule.TimePeriod.InnerText;
+        }
+
         private static IReadOnlyList<string> ReadColorScaleColors(ConditionalFormattingRule rule) {
             ColorScale? colorScale = rule.GetFirstChild<ColorScale>();
             if (colorScale == null) {
@@ -144,6 +166,20 @@ namespace OfficeIMO.Excel {
         private static bool ReadIconSetReverse(ConditionalFormattingRule rule) {
             IconSet? iconSet = rule.GetFirstChild<IconSet>();
             return iconSet?.Reverse?.Value ?? false;
+        }
+
+        private static IReadOnlyList<ExcelConditionalIconSetThreshold> ReadIconSetThresholds(ConditionalFormattingRule rule) {
+            IconSet? iconSet = rule.GetFirstChild<IconSet>();
+            if (iconSet == null) {
+                return Array.Empty<ExcelConditionalIconSetThreshold>();
+            }
+
+            return iconSet.Elements<ConditionalFormatValueObject>()
+                .Select(threshold => new ExcelConditionalIconSetThreshold {
+                    Type = threshold.Type?.InnerText ?? string.Empty,
+                    Value = threshold.Val?.Value
+                })
+                .ToArray();
         }
 
         /// <summary>
@@ -363,11 +399,11 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Adds a time-period conditional formatting rule.
         /// </summary>
-        public void AddConditionalTimePeriodRule(string range, TimePeriodValues timePeriod, bool stopIfTrue = false) {
+        public void AddConditionalTimePeriodRule(string range, TimePeriodValues timePeriod, bool stopIfTrue = false, string? fillColor = null) {
             string firstCell = GetFirstCellReference(range);
             AddConditionalRuleCore(range, ConditionalFormatValues.TimePeriod, rule => {
                 rule.TimePeriod = timePeriod;
-            }, new[] { BuildTimePeriodFormula(firstCell, timePeriod) }, stopIfTrue, fillColor: null);
+            }, new[] { BuildTimePeriodFormula(firstCell, timePeriod) }, stopIfTrue, fillColor);
         }
 
         /// <summary>

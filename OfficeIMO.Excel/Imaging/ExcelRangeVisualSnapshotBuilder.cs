@@ -68,7 +68,6 @@ namespace OfficeIMO.Excel {
 
             Dictionary<int, ExcelVisualColumn> columnsByIndex = columns.ToDictionary(column => column.Index);
             Dictionary<int, ExcelVisualRow> rowsByIndex = rows.ToDictionary(row => row.Index);
-            CommentVisuals commentVisuals = BuildCommentVisuals(sheet, options, firstRow, firstColumn, lastRow, lastColumn, columnsByIndex, rowsByIndex, x, y, diagnostics);
             var coveredByMerge = new HashSet<string>(StringComparer.Ordinal);
             var mergeOrigins = new Dictionary<string, (double Width, double Height)>(StringComparer.Ordinal);
             foreach (ExcelMergedRangeSnapshot merge in merges) {
@@ -115,9 +114,16 @@ namespace OfficeIMO.Excel {
                     }
 
                     ExcelCellStyleSnapshot style = sheet.GetCellStyle(row.Index, column.Index);
-                    string text = sheet.TryGetCellText(row.Index, column.Index, out string cellText)
-                        ? FormatCellDisplayText(cellText, style, sheet.Document.DateSystem)
+                    ExcelCellData valueData = covered
+                        ? new ExcelCellData(ExcelCellDataKind.Blank, null)
+                        : sheet.GetCellValueSnapshot(row.Index, column.Index);
+                    string rawText = sheet.TryGetCellText(row.Index, column.Index, out string cellText)
+                        ? cellText
                         : string.Empty;
+                    string text = string.IsNullOrEmpty(rawText)
+                        ? string.Empty
+                        : FormatCellDisplayText(rawText, style, sheet.Document.DateSystem);
+                    ExcelVisualCellValueKind valueKind = ResolveVisualCellValueKind(valueData, rawText, style);
                     IReadOnlyList<ExcelVisualTextRun> richTextRuns = covered
                         ? Array.Empty<ExcelVisualTextRun>()
                         : BuildRichTextRuns(sheet.GetRichText(row.Index, column.Index));
@@ -132,12 +138,13 @@ namespace OfficeIMO.Excel {
                         style,
                         covered,
                         hyperlink,
-                        richTextRuns));
+                        richTextRuns,
+                        valueKind));
                 }
             }
 
             ExcelConditionalVisualState conditionalVisuals = options.IncludeConditionalFormatting
-                ? ExcelConditionalVisualEvaluator.Evaluate(sheet, cells, range, diagnostics)
+                ? ExcelConditionalVisualEvaluator.Evaluate(sheet, cells, range, options.ConditionalFormattingDate ?? DateTime.Today, diagnostics)
                 : ExcelConditionalVisualState.Empty;
             if (conditionalVisuals.FillColors.Count > 0) {
                 cells = ApplyConditionalFills(cells, conditionalVisuals.FillColors);
@@ -147,6 +154,8 @@ namespace OfficeIMO.Excel {
             List<ExcelVisualDrawingObject> drawingObjects = BuildDrawingObjects(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
             List<ExcelVisualImage> images = BuildImages(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
             List<ExcelVisualChart> charts = BuildCharts(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
+            IReadOnlyList<ExcelVisualBounds> commentBodyObstacles = BuildCommentBodyObstacles(drawingObjects, images, charts);
+            CommentVisuals commentVisuals = BuildCommentVisuals(sheet, options, firstRow, firstColumn, lastRow, lastColumn, columnsByIndex, rowsByIndex, x, y, commentBodyObstacles, diagnostics);
             List<ExcelVisualDrawingLayer> drawingLayers = BuildDrawingLayers(drawingObjects, images, charts, commentVisuals.Bodies);
 
             return new ExcelRangeVisualSnapshot(
@@ -160,6 +169,7 @@ namespace OfficeIMO.Excel {
                 rows.AsReadOnly(),
                 cells.AsReadOnly(),
                 conditionalVisuals.DataBars,
+                conditionalVisuals.Icons,
                 commentVisuals.Indicators,
                 commentVisuals.Bodies,
                 sparklines.AsReadOnly(),
@@ -185,7 +195,8 @@ namespace OfficeIMO.Excel {
                         CloneStyleWithFill(cell.Style, fillColor),
                         cell.CoveredByMerge,
                         cell.Hyperlink,
-                        cell.RichTextRuns));
+                        cell.RichTextRuns,
+                        cell.ValueKind));
                     continue;
                 }
 
@@ -211,6 +222,7 @@ namespace OfficeIMO.Excel {
                     run.Bold,
                     run.Italic,
                     run.Underline,
+                    run.Strikethrough,
                     NormalizeRunColor(run.FontColor),
                     string.IsNullOrWhiteSpace(run.FontName) ? null : run.FontName,
                     run.FontSize));
@@ -309,6 +321,20 @@ namespace OfficeIMO.Excel {
                     drawing.StrokeColorArgb,
                     drawing.StrokeWidth,
                     drawing.Text,
+                    drawing.TextAlignment,
+                    drawing.TextVerticalAlignment,
+                    drawing.TextColorArgb,
+                    drawing.TextFontFamily,
+                    drawing.TextFontSize,
+                    drawing.TextFontStyle,
+                    drawing.TextWrap,
+                    drawing.TextShrinkToFit,
+                    drawing.TextResizeShapeToFit,
+                    drawing.TextOrientation,
+                    drawing.TextInsetLeft,
+                    drawing.TextInsetTop,
+                    drawing.TextInsetRight,
+                    drawing.TextInsetBottom,
                     GetDrawingDiagnosticSource(sheet, drawing)));
             }
 
@@ -403,14 +429,15 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                OfficeImageFormat detectedFormat = OfficeImageReader.TryIdentify(bytes, image.Name, out OfficeImageInfo info)
+                bool identifiedImage = OfficeImageReader.TryIdentify(bytes, image.Name, out OfficeImageInfo info);
+                OfficeImageFormat detectedFormat = identifiedImage
                     ? info.Format
                     : OfficeImageFormat.Unknown;
                 if (detectedFormat == OfficeImageFormat.Unknown) {
                     diagnostics.Add(new OfficeImageExportDiagnostic(
                         OfficeImageExportDiagnosticSeverity.Warning,
-                        "ExcelImageFormatUnknown",
-                        "Worksheet image bytes do not contain a recognized image header. Exporters may skip or approximate this image.",
+                        ExcelImageExportDiagnosticCodes.ImageFormatUnknown,
+                        "Worksheet image bytes do not contain a recognized image header. Declared content type: '" + image.ContentType + "'. Exporters may skip or approximate this image.",
                         source));
                 }
 
@@ -420,6 +447,8 @@ namespace OfficeIMO.Excel {
                     image.ContentType,
                     detectedFormat,
                     bytes,
+                    identifiedImage ? info.Width : 0D,
+                    identifiedImage ? info.Height : 0D,
                     x,
                     y,
                     width,
@@ -512,6 +541,33 @@ namespace OfficeIMO.Excel {
                 .ToList();
         }
 
+        private static IReadOnlyList<ExcelVisualBounds> BuildCommentBodyObstacles(
+            IReadOnlyList<ExcelVisualDrawingObject> drawingObjects,
+            IReadOnlyList<ExcelVisualImage> images,
+            IReadOnlyList<ExcelVisualChart> charts) {
+            var bounds = new List<ExcelVisualBounds>(drawingObjects.Count + images.Count + charts.Count);
+            foreach (ExcelVisualDrawingObject drawingObject in drawingObjects) {
+                AddCommentBodyObstacle(bounds, drawingObject.X, drawingObject.Y, drawingObject.Width, drawingObject.Height);
+            }
+
+            foreach (ExcelVisualImage image in images) {
+                AddCommentBodyObstacle(bounds, image.X, image.Y, image.Width, image.Height);
+            }
+
+            foreach (ExcelVisualChart chart in charts) {
+                AddCommentBodyObstacle(bounds, chart.X, chart.Y, chart.Width, chart.Height);
+            }
+
+            return bounds.AsReadOnly();
+        }
+
+        private static void AddCommentBodyObstacle(List<ExcelVisualBounds> bounds, double x, double y, double width, double height) {
+            var value = new ExcelVisualBounds(x, y, width, height);
+            if (!value.IsEmpty) {
+                bounds.Add(value);
+            }
+        }
+
         private static CommentVisuals BuildCommentVisuals(
             ExcelSheet sheet,
             ExcelImageExportOptions options,
@@ -523,6 +579,7 @@ namespace OfficeIMO.Excel {
             IReadOnlyDictionary<int, ExcelVisualRow> rowsByIndex,
             double snapshotWidth,
             double snapshotHeight,
+            IReadOnlyList<ExcelVisualBounds> bodyObstacles,
             List<OfficeImageExportDiagnostic> diagnostics) {
             var indicators = new Dictionary<string, ExcelVisualCommentIndicator>(StringComparer.OrdinalIgnoreCase);
             var bodies = new List<ExcelVisualCommentBody>();
@@ -542,6 +599,7 @@ namespace OfficeIMO.Excel {
                         snapshotHeight,
                         pair.Value.Author,
                         pair.Value.Text,
+                        bodyObstacles,
                         out ExcelVisualCommentBody body)) {
                         bodies.Add(body);
                     }
@@ -582,6 +640,7 @@ namespace OfficeIMO.Excel {
                         snapshotHeight,
                         ResolveThreadedCommentTitle(pair.Value),
                         FormatThreadedCommentBody(pair.Value),
+                        bodyObstacles,
                         out ExcelVisualCommentBody body)) {
                         bodies.Add(body);
                     }
@@ -643,6 +702,7 @@ namespace OfficeIMO.Excel {
             double snapshotHeight,
             string? title,
             string? text,
+            IReadOnlyList<ExcelVisualBounds> bodyObstacles,
             out ExcelVisualCommentBody body) {
             body = null!;
             if (snapshotWidth <= 0D || snapshotHeight <= 0D) {
@@ -658,25 +718,13 @@ namespace OfficeIMO.Excel {
             double height = EstimateCommentBodyHeight(resolvedTitle, resolvedText);
             height = Math.Min(height, Math.Max(48D, snapshotHeight - 8D));
 
-            double x = indicator.X + indicator.Width + 6D;
-            if (x + width > snapshotWidth - 4D) {
-                x = indicator.X - width - 6D;
-            }
-
-            if (x < 4D) {
-                x = Math.Max(4D, snapshotWidth - width - 4D);
-            }
-
-            double y = indicator.Y + 2D;
-            if (y + height > snapshotHeight - 4D) {
-                y = Math.Max(4D, snapshotHeight - height - 4D);
-            }
+            ExcelVisualBounds placement = ChooseCommentBodyPlacement(indicator, snapshotWidth, snapshotHeight, width, height, bodyObstacles);
 
             body = new ExcelVisualCommentBody(
                 indicator.Row,
                 indicator.Column,
-                x,
-                y,
+                placement.X,
+                placement.Y,
                 width,
                 height,
                 indicator.X + indicator.Width,
@@ -686,6 +734,71 @@ namespace OfficeIMO.Excel {
                 resolvedText,
                 indicator.Source);
             return true;
+        }
+
+        private static ExcelVisualBounds ChooseCommentBodyPlacement(
+            ExcelVisualCommentIndicator indicator,
+            double snapshotWidth,
+            double snapshotHeight,
+            double width,
+            double height,
+            IReadOnlyList<ExcelVisualBounds> bodyObstacles) {
+            double rightX = indicator.X + indicator.Width + 6D;
+            double leftX = indicator.X - width - 6D;
+            double sideY = indicator.Y + 2D;
+
+            var candidates = new[] {
+                CreateCommentBodyCandidate(rightX, sideY, width, height, snapshotWidth, snapshotHeight, 0),
+                CreateCommentBodyCandidate(leftX, sideY, width, height, snapshotWidth, snapshotHeight, 1),
+                CreateCommentBodyCandidate(rightX, indicator.Y + indicator.Height + 6D, width, height, snapshotWidth, snapshotHeight, 2),
+                CreateCommentBodyCandidate(leftX, indicator.Y + indicator.Height + 6D, width, height, snapshotWidth, snapshotHeight, 3),
+                CreateCommentBodyCandidate(indicator.X, indicator.Y + indicator.Height + 6D, width, height, snapshotWidth, snapshotHeight, 4),
+                CreateCommentBodyCandidate(indicator.X, indicator.Y - height - 6D, width, height, snapshotWidth, snapshotHeight, 5)
+            };
+
+            CommentBodyPlacementCandidate best = candidates[0];
+            double bestScore = ScoreCommentBodyPlacement(best.Bounds, bodyObstacles, best.Preference);
+            for (int i = 1; i < candidates.Length; i++) {
+                double score = ScoreCommentBodyPlacement(candidates[i].Bounds, bodyObstacles, candidates[i].Preference);
+                if (score < bestScore) {
+                    best = candidates[i];
+                    bestScore = score;
+                }
+            }
+
+            return best.Bounds;
+        }
+
+        private static CommentBodyPlacementCandidate CreateCommentBodyCandidate(
+            double x,
+            double y,
+            double width,
+            double height,
+            double snapshotWidth,
+            double snapshotHeight,
+            int preference) {
+            double resolvedX = ClampCommentBodyCoordinate(x, width, snapshotWidth);
+            double resolvedY = ClampCommentBodyCoordinate(y, height, snapshotHeight);
+            return new CommentBodyPlacementCandidate(new ExcelVisualBounds(resolvedX, resolvedY, width, height), preference);
+        }
+
+        private static double ClampCommentBodyCoordinate(double value, double length, double availableLength) {
+            double minimum = 4D;
+            double maximum = Math.Max(minimum, availableLength - length - 4D);
+            if (value < minimum) {
+                return minimum;
+            }
+
+            return value > maximum ? maximum : value;
+        }
+
+        private static double ScoreCommentBodyPlacement(ExcelVisualBounds bounds, IReadOnlyList<ExcelVisualBounds> bodyObstacles, int preference) {
+            double overlapArea = 0D;
+            foreach (ExcelVisualBounds obstacle in bodyObstacles) {
+                overlapArea += bounds.IntersectionArea(obstacle);
+            }
+
+            return overlapArea + (preference * 0.001D);
         }
 
         private static double EstimateCommentBodyHeight(string title, string text) {
@@ -727,6 +840,17 @@ namespace OfficeIMO.Excel {
         private static string NormalizeCommentBodyText(string text) =>
             text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
 
+        private readonly struct CommentBodyPlacementCandidate {
+            internal CommentBodyPlacementCandidate(ExcelVisualBounds bounds, int preference) {
+                Bounds = bounds;
+                Preference = preference;
+            }
+
+            internal ExcelVisualBounds Bounds { get; }
+
+            internal int Preference { get; }
+        }
+
         private sealed class CommentVisuals {
             internal CommentVisuals(IReadOnlyList<ExcelVisualCommentIndicator> indicators, IReadOnlyList<ExcelVisualCommentBody> bodies) {
                 Indicators = indicators;
@@ -748,7 +872,10 @@ namespace OfficeIMO.Excel {
             IReadOnlyDictionary<int, ExcelVisualRow> rowsByIndex,
             List<OfficeImageExportDiagnostic> diagnostics) {
             var visuals = new List<ExcelVisualSparkline>();
-            foreach (ExcelWorksheetSparklineInfo sparkline in ExcelWorksheetSparklineResolver.FindSparklines(sheet.WorksheetPart)) {
+            IReadOnlyList<ResolvedSparkline> resolvedSparklines = ResolveSparklines(sheet);
+            IReadOnlyDictionary<int, SparklineScaleRange> scaleRanges = ResolveSparklineScaleRanges(resolvedSparklines);
+            foreach (ResolvedSparkline resolvedSparkline in resolvedSparklines) {
+                ExcelWorksheetSparklineInfo sparkline = resolvedSparkline.Info;
                 if (!TryResolveVisibleExportCell(sparkline.CellReference, firstRow, firstColumn, lastRow, lastColumn, columnsByIndex, rowsByIndex, out string sourceCell)
                     || !A1.TryParseCellReferenceFast(sourceCell, out int row, out int column)
                     || !rowsByIndex.TryGetValue(row, out ExcelVisualRow? visualRow)
@@ -766,19 +893,18 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                if (!TryResolveSparklineDataRange(sheet.Name, sparkline.Formula, out string? dataRange, out bool externalRange) || dataRange == null) {
+                if (!resolvedSparkline.HasResolvedRange) {
                     diagnostics.Add(new OfficeImageExportDiagnostic(
                         OfficeImageExportDiagnosticSeverity.Warning,
-                        externalRange ? ExcelImageExportDiagnosticCodes.SparklineExternalRangeUnsupported : ExcelImageExportDiagnosticCodes.SparklineRangeUnsupported,
-                        externalRange
+                        resolvedSparkline.ExternalRange ? ExcelImageExportDiagnosticCodes.SparklineExternalRangeUnsupported : ExcelImageExportDiagnosticCodes.SparklineRangeUnsupported,
+                        resolvedSparkline.ExternalRange
                             ? "Worksheet sparkline references data on another sheet; cross-sheet sparkline image rendering is not supported yet."
                             : "Worksheet sparkline data range could not be resolved by the dependency-free image exporter.",
                         source));
                     continue;
                 }
 
-                IReadOnlyList<double> values = ReadSparklineValues(sheet, dataRange);
-                if (values.Count == 0) {
+                if (resolvedSparkline.Values.Count == 0) {
                     diagnostics.Add(new OfficeImageExportDiagnostic(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.SparklineDataMissing,
@@ -790,8 +916,9 @@ namespace OfficeIMO.Excel {
                 diagnostics.Add(new OfficeImageExportDiagnostic(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.SparklineRenderingApproximation,
-                    "Worksheet sparkline is rendered as a dependency-free approximation; Excel-specific group scaling, date axis, hidden-data, and empty-cell behavior may differ.",
+                    "Worksheet sparkline is rendered as a dependency-free approximation; Excel-specific date axis, hidden-data, and empty-cell behavior may differ.",
                     source));
+                scaleRanges.TryGetValue(sparkline.GroupIndex, out SparklineScaleRange scaleRange);
 
                 visuals.Add(new ExcelVisualSparkline(
                     row,
@@ -801,7 +928,7 @@ namespace OfficeIMO.Excel {
                     visualColumn.Width,
                     visualRow.Height,
                     sparkline.Kind,
-                    values,
+                    resolvedSparkline.Values,
                     sparkline.DisplayMarkers,
                     sparkline.DisplayHigh,
                     sparkline.DisplayLow,
@@ -817,10 +944,68 @@ namespace OfficeIMO.Excel {
                     sparkline.LowColorArgb,
                     sparkline.FirstColorArgb,
                     sparkline.LastColorArgb,
+                    scaleRange.Minimum,
+                    scaleRange.Maximum,
                     source));
             }
 
             return visuals;
+        }
+
+        private static IReadOnlyList<ResolvedSparkline> ResolveSparklines(ExcelSheet sheet) {
+            IReadOnlyList<ExcelWorksheetSparklineInfo> sparklines = ExcelWorksheetSparklineResolver.FindSparklines(sheet.WorksheetPart);
+            var resolved = new List<ResolvedSparkline>(sparklines.Count);
+            foreach (ExcelWorksheetSparklineInfo sparkline in sparklines) {
+                if (!TryResolveSparklineDataRange(sheet.Name, sparkline.Formula, out string? dataRange, out bool externalRange) || dataRange == null) {
+                    resolved.Add(new ResolvedSparkline(sparkline, Array.Empty<double>(), hasResolvedRange: false, externalRange));
+                    continue;
+                }
+
+                resolved.Add(new ResolvedSparkline(sparkline, ReadSparklineValues(sheet, dataRange), hasResolvedRange: true, externalRange: false));
+            }
+
+            return resolved.AsReadOnly();
+        }
+
+        private static IReadOnlyDictionary<int, SparklineScaleRange> ResolveSparklineScaleRanges(IReadOnlyList<ResolvedSparkline> sparklines) {
+            var ranges = new Dictionary<int, SparklineScaleRange>();
+            foreach (IGrouping<int, ResolvedSparkline> group in sparklines
+                .Where(sparkline => sparkline.HasResolvedRange && sparkline.Values.Count > 0)
+                .GroupBy(sparkline => sparkline.Info.GroupIndex)) {
+                double minimum = group.SelectMany(sparkline => sparkline.Values).Min();
+                double maximum = group.SelectMany(sparkline => sparkline.Values).Max();
+                ranges[group.Key] = new SparklineScaleRange(minimum, maximum);
+            }
+
+            return ranges;
+        }
+
+        private readonly struct ResolvedSparkline {
+            internal ResolvedSparkline(ExcelWorksheetSparklineInfo info, IReadOnlyList<double> values, bool hasResolvedRange, bool externalRange) {
+                Info = info;
+                Values = values;
+                HasResolvedRange = hasResolvedRange;
+                ExternalRange = externalRange;
+            }
+
+            internal ExcelWorksheetSparklineInfo Info { get; }
+
+            internal IReadOnlyList<double> Values { get; }
+
+            internal bool HasResolvedRange { get; }
+
+            internal bool ExternalRange { get; }
+        }
+
+        private readonly struct SparklineScaleRange {
+            internal SparklineScaleRange(double minimum, double maximum) {
+                Minimum = minimum;
+                Maximum = maximum;
+            }
+
+            internal double Minimum { get; }
+
+            internal double Maximum { get; }
         }
 
         private static bool IsSupportedSparklineKind(string kind) {
@@ -1250,6 +1435,41 @@ namespace OfficeIMO.Excel {
                 ? ExcelNumberFormatDisplay.FormatNumericText(value, style.NumberFormatId, style.NumberFormatCode, text, dateSystem)
                 : text;
         }
+
+        private static ExcelVisualCellValueKind ResolveVisualCellValueKind(ExcelCellData data, string rawText, ExcelCellStyleSnapshot style) {
+            switch (data.Kind) {
+                case ExcelCellDataKind.Blank:
+                    return ExcelVisualCellValueKind.Blank;
+                case ExcelCellDataKind.Boolean:
+                    return ExcelVisualCellValueKind.Boolean;
+                case ExcelCellDataKind.Error:
+                    return ExcelVisualCellValueKind.Error;
+                case ExcelCellDataKind.Text:
+                    return ExcelVisualCellValueKind.Text;
+                case ExcelCellDataKind.Number:
+                    return IsDateLikeNumericCell(style) ? ExcelVisualCellValueKind.Date : ExcelVisualCellValueKind.Number;
+                case ExcelCellDataKind.Formula:
+                    return TryResolveFormulaVisualValueKind(data, rawText, style, out ExcelVisualCellValueKind formulaKind)
+                        ? formulaKind
+                        : ExcelVisualCellValueKind.Text;
+                default:
+                    return ExcelVisualCellValueKind.Text;
+            }
+        }
+
+        private static bool TryResolveFormulaVisualValueKind(ExcelCellData data, string rawText, ExcelCellStyleSnapshot style, out ExcelVisualCellValueKind valueKind) {
+            string? cachedText = string.IsNullOrEmpty(data.CachedText) ? rawText : data.CachedText;
+            if (data.Value is double || double.TryParse(cachedText, NumberStyles.Float, CultureInfo.InvariantCulture, out _)) {
+                valueKind = IsDateLikeNumericCell(style) ? ExcelVisualCellValueKind.Date : ExcelVisualCellValueKind.Number;
+                return true;
+            }
+
+            valueKind = ExcelVisualCellValueKind.Text;
+            return false;
+        }
+
+        private static bool IsDateLikeNumericCell(ExcelCellStyleSnapshot style) =>
+            style.IsDateLike || ExcelNumberFormatDisplay.IsDateNumberFormat(style.NumberFormatId, style.NumberFormatCode);
 
         private static string GetImageDiagnosticSource(ExcelSheet sheet, ExcelImage image) {
             string name = string.IsNullOrWhiteSpace(image.Name) ? "Image" : image.Name;

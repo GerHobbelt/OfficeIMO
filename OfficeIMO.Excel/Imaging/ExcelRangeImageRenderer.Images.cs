@@ -22,7 +22,7 @@ namespace OfficeIMO.Excel {
                 diagnostics?.Add(new OfficeImageExportDiagnostic(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.ImageRasterFormatUnsupported,
-                    "Worksheet image format '" + image.DetectedFormat + "' cannot be rasterized to PNG by the dependency-free image renderer yet.",
+                    "Worksheet image " + DescribeImageFormat(image) + " cannot be rasterized to PNG by the dependency-free image renderer yet.",
                     image.Source));
                 return;
             }
@@ -45,31 +45,38 @@ namespace OfficeIMO.Excel {
                 diagnostics?.Add(new OfficeImageExportDiagnostic(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.ImageSvgFormatUnsupported,
-                    "Worksheet image format '" + image.DetectedFormat + "' cannot be embedded reliably in SVG output by the dependency-free image renderer yet.",
+                    "Worksheet image " + DescribeImageFormat(image) + " cannot be embedded reliably in SVG output by the dependency-free image renderer yet.",
                     image.Source));
                 return;
             }
 
             string clipId = "xl-image-clip-" + (++index).ToString(System.Globalization.CultureInfo.InvariantCulture);
             OfficeImageProjection projection = CreateImageProjection(image, scale);
-            OfficeImagePlacement clipRectangle = image.HasCrop
-                ? projection.Placement
-                : new OfficeImagePlacement(0D, 0D, snapshot.Width * scale, snapshot.Height * scale);
-
-            OfficeSvgImageRenderer.AppendImage(
+            OfficeSvgImageRenderer.AppendImageInViewport(
                 builder,
                 OfficeSvgImageRenderer.CreateDataUri(contentType, image.Bytes),
                 projection,
                 clipId,
-                clipRectangle);
+                new OfficeImagePlacement(0D, 0D, snapshot.Width * scale, snapshot.Height * scale));
         }
 
         private static OfficeImageProjection CreateImageProjection(ExcelVisualImage image, double scale) =>
-            new OfficeImageProjection(
-                new OfficeImagePlacement(image.X, image.Y, image.Width, image.Height),
-                image.SourceCrop,
+            OfficeImageRenderPlan.CreateTopLeft(
+                image.SourceWidth > 0D ? image.SourceWidth : image.Width,
+                image.SourceHeight > 0D ? image.SourceHeight : image.Height,
+                image.X,
+                image.Y,
+                image.Width,
+                image.Height,
+                OfficeImageFit.Stretch,
+                image.SourceCrop).ToVisibleProjection(
                 image.RotationDegrees,
                 flipHorizontal: image.FlipHorizontal,
                 flipVertical: image.FlipVertical).Scale(scale);
+
+        private static string DescribeImageFormat(ExcelVisualImage image) {
+            string contentType = string.IsNullOrWhiteSpace(image.ContentType) ? "none" : image.ContentType;
+            return "detected format '" + image.DetectedFormat + "' with declared content type '" + contentType + "'";
+        }
     }
 }

@@ -22,6 +22,7 @@ namespace OfficeIMO.Excel {
             OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
             double scale = options.Scale;
             Dictionary<string, ExcelVisualConditionalDataBar> dataBars = BuildDataBarMap(snapshot.ConditionalDataBars);
+            Dictionary<string, ExcelVisualCell> cellsByAddress = BuildCellMap(snapshot.Cells);
 
             foreach (ExcelVisualCell cell in snapshot.Cells) {
                 if (cell.CoveredByMerge) {
@@ -42,9 +43,17 @@ namespace OfficeIMO.Excel {
                 }
 
                 DrawBorders(canvas, cell, scale);
-                DrawRasterCellText(canvas, cell, snapshot, options, scale, diagnostics);
             }
 
+            foreach (ExcelVisualCell cell in snapshot.Cells) {
+                if (cell.CoveredByMerge) {
+                    continue;
+                }
+
+                DrawRasterCellText(canvas, cell, snapshot, options, scale, cellsByAddress, diagnostics);
+            }
+
+            RenderRasterConditionalIcons(canvas, snapshot, options);
             RenderRasterSparklines(canvas, snapshot, options);
             RenderRasterCommentIndicators(canvas, snapshot, options);
             RenderRasterDrawingLayers(canvas, snapshot, options, diagnostics);
@@ -67,6 +76,7 @@ namespace OfficeIMO.Excel {
             builder.AppendRectElement(0D, 0D, width, height, backgroundAttributes.ToString());
             OfficeRasterCanvas textMeasureCanvas = new OfficeRasterCanvas(new OfficeRasterImage(1, 1, OfficeColor.Transparent));
             Dictionary<string, ExcelVisualConditionalDataBar> dataBars = BuildDataBarMap(snapshot.ConditionalDataBars);
+            Dictionary<string, ExcelVisualCell> cellsByAddress = BuildCellMap(snapshot.Cells);
 
             foreach (ExcelVisualCell cell in snapshot.Cells) {
                 if (cell.CoveredByMerge) {
@@ -92,9 +102,17 @@ namespace OfficeIMO.Excel {
                 }
 
                 AppendSvgBorders(builder, cell, scale);
-                AppendSvgCellText(builder, cell, snapshot, options, textMeasureCanvas, diagnostics);
             }
 
+            foreach (ExcelVisualCell cell in snapshot.Cells) {
+                if (cell.CoveredByMerge) {
+                    continue;
+                }
+
+                AppendSvgCellText(builder, cell, snapshot, options, textMeasureCanvas, cellsByAddress, diagnostics);
+            }
+
+            AppendSvgConditionalIcons(builder, snapshot, options);
             AppendSvgSparklines(builder, snapshot, options);
             AppendSvgCommentIndicators(builder, snapshot, options);
             AppendSvgDrawingLayers(builder, snapshot, options, diagnostics, textMeasureCanvas);
@@ -135,6 +153,15 @@ namespace OfficeIMO.Excel {
             var resolved = new Dictionary<string, ExcelVisualConditionalDataBar>(StringComparer.Ordinal);
             foreach (ExcelVisualConditionalDataBar dataBar in dataBars) {
                 resolved[Key(dataBar.Row, dataBar.Column)] = dataBar;
+            }
+
+            return resolved;
+        }
+
+        private static Dictionary<string, ExcelVisualCell> BuildCellMap(IReadOnlyList<ExcelVisualCell> cells) {
+            var resolved = new Dictionary<string, ExcelVisualCell>(cells.Count, StringComparer.Ordinal);
+            foreach (ExcelVisualCell cell in cells) {
+                resolved[Key(cell.Row, cell.Column)] = cell;
             }
 
             return resolved;

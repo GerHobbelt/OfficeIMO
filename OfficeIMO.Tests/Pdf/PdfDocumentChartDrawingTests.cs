@@ -634,12 +634,14 @@ public class PdfDocumentChartDrawingTests {
             dataLabelNumberFormat: oversized,
             axisNumberFormat: oversized,
             horizontalAxisNumberFormat: oversized,
-            verticalAxisNumberFormat: oversized);
+            verticalAxisNumberFormat: oversized,
+            categoryAxisNumberFormat: oversized);
 
         Assert.Null(layout.DataLabelNumberFormat);
         Assert.Null(layout.AxisNumberFormat);
         Assert.Null(layout.HorizontalAxisNumberFormat);
         Assert.Null(layout.VerticalAxisNumberFormat);
+        Assert.Null(layout.CategoryAxisNumberFormat);
     }
 
     [Fact]
@@ -773,6 +775,9 @@ public class PdfDocumentChartDrawingTests {
         var labels = drawing.Elements.OfType<OfficeDrawingText>().Select(label => label.Text).ToList();
 
         Assert.Contains("0.0", labels);
+        Assert.Contains("500.0", labels);
+        Assert.Contains("1,000.0", labels);
+        Assert.Contains("1,500.0", labels);
         Assert.Contains("2,000.0", labels);
     }
 

@@ -8,6 +8,8 @@ using Xdr = DocumentFormat.OpenXml.Drawing.Spreadsheet;
 namespace OfficeIMO.Excel.Utilities {
     internal static class ExcelWorksheetDrawingObjectResolver {
         private const double EmusPerPixel = 9525D;
+        private const long DefaultLeftRightTextInsetEmu = 91440L;
+        private const long DefaultTopBottomTextInsetEmu = 45720L;
 
         internal static IReadOnlyList<ExcelWorksheetDrawingObjectInfo> FindDrawingObjects(WorksheetPart worksheetPart) {
             if (worksheetPart == null) {
@@ -19,13 +21,14 @@ namespace OfficeIMO.Excel.Utilities {
                 return Array.Empty<ExcelWorksheetDrawingObjectInfo>();
             }
 
+            WorkbookPart? workbookPart = worksheetPart.GetParentParts().OfType<WorkbookPart>().FirstOrDefault();
             var objects = new List<ExcelWorksheetDrawingObjectInfo>();
             for (int order = 0; order < worksheetDrawing.ChildElements.Count; order++) {
                 OpenXmlElement anchor = worksheetDrawing.ChildElements[order];
                 AnchorPosition position = GetAnchorPosition(anchor);
                 foreach (OpenXmlElement element in anchor.ChildElements) {
                     if (element is Xdr.Shape shape) {
-                        objects.Add(CreateShapeInfo(shape, position, order));
+                        objects.Add(CreateShapeInfo(shape, position, order, workbookPart));
                     } else if (IsUnsupportedDrawingElement(element)) {
                         objects.Add(CreateUnsupportedInfo(element, position, order, null));
                     }
@@ -40,7 +43,7 @@ namespace OfficeIMO.Excel.Utilities {
                 .Where(drawing => !drawing.IsRenderable)
                 .ToList();
 
-        private static ExcelWorksheetDrawingObjectInfo CreateShapeInfo(Xdr.Shape shape, AnchorPosition position, int order) {
+        private static ExcelWorksheetDrawingObjectInfo CreateShapeInfo(Xdr.Shape shape, AnchorPosition position, int order, WorkbookPart? workbookPart) {
             string name = GetDrawingName(shape, "shape");
             A.Transform2D? transform = shape.ShapeProperties?.GetFirstChild<A.Transform2D>();
             TryGetRotationDegrees(transform, out double rotationDegrees);
@@ -49,11 +52,11 @@ namespace OfficeIMO.Excel.Utilities {
                 return CreateUnsupportedInfo(shape, position, order, unsupportedReason);
             }
 
-            if (!TryGetFillColor(shape.ShapeProperties, out string? fillColorArgb, out unsupportedReason)) {
+            if (!TryGetFillColor(shape.ShapeProperties, workbookPart, out string? fillColorArgb, out unsupportedReason)) {
                 return CreateUnsupportedInfo(shape, position, order, unsupportedReason);
             }
 
-            if (!TryGetStroke(shape.ShapeProperties, out string? strokeColorArgb, out double strokeWidth, out unsupportedReason)) {
+            if (!TryGetStroke(shape.ShapeProperties, workbookPart, out string? strokeColorArgb, out double strokeWidth, out unsupportedReason)) {
                 return CreateUnsupportedInfo(shape, position, order, unsupportedReason);
             }
 
@@ -61,6 +64,15 @@ namespace OfficeIMO.Excel.Utilities {
                 .Elements<A.Paragraph>()
                 .Select(paragraph => string.Concat(paragraph.Descendants<A.Text>().Select(item => item.Text)))
                 .Where(line => !string.IsNullOrEmpty(line)) ?? Enumerable.Empty<string>());
+            OfficeTextAlignment textAlignment = ResolveTextAlignment(shape.TextBody);
+            A.BodyProperties? bodyProperties = shape.TextBody?.GetFirstChild<A.BodyProperties>();
+            OfficeTextVerticalAlignment textVerticalAlignment = ResolveTextVerticalAlignment(bodyProperties);
+            bool textWrap = ResolveTextWrap(bodyProperties);
+            bool textShrinkToFit = ResolveTextShrinkToFit(bodyProperties);
+            bool textResizeShapeToFit = ResolveTextResizeShapeToFit(bodyProperties);
+            ExcelDrawingTextOrientation textOrientation = ResolveTextOrientation(bodyProperties);
+            DrawingTextInsets textInsets = ResolveTextInsets(bodyProperties);
+            DrawingTextStyle textStyle = ResolveTextStyle(shape.TextBody, workbookPart);
 
             return new ExcelWorksheetDrawingObjectInfo(
                 name,
@@ -85,6 +97,20 @@ namespace OfficeIMO.Excel.Utilities {
                 strokeColorArgb,
                 strokeWidth,
                 text,
+                textAlignment,
+                textVerticalAlignment,
+                textStyle.ColorArgb,
+                textStyle.FontFamily,
+                textStyle.FontSize,
+                textStyle.FontStyle,
+                textWrap,
+                textShrinkToFit,
+                textResizeShapeToFit,
+                textOrientation,
+                textInsets.Left,
+                textInsets.Top,
+                textInsets.Right,
+                textInsets.Bottom,
                 unsupportedReason: null);
         }
 
@@ -114,7 +140,143 @@ namespace OfficeIMO.Excel.Utilities {
                 strokeColorArgb: null,
                 strokeWidth: 0D,
                 text: string.Empty,
+                textAlignment: OfficeTextAlignment.Center,
+                textVerticalAlignment: OfficeTextVerticalAlignment.Center,
+                textColorArgb: null,
+                textFontFamily: null,
+                textFontSize: null,
+                textFontStyle: OfficeFontStyle.Regular,
+                textWrap: false,
+                textShrinkToFit: false,
+                textResizeShapeToFit: false,
+                textOrientation: ExcelDrawingTextOrientation.Horizontal,
+                textInsetLeft: 0D,
+                textInsetTop: 0D,
+                textInsetRight: 0D,
+                textInsetBottom: 0D,
                 unsupportedReason: unsupportedReason);
+        }
+
+        private static OfficeTextAlignment ResolveTextAlignment(Xdr.TextBody? textBody) {
+            A.TextAlignmentTypeValues? alignment = textBody?
+                .Elements<A.Paragraph>()
+                .Select(paragraph => paragraph.GetFirstChild<A.ParagraphProperties>()?.Alignment?.Value)
+                .FirstOrDefault(value => value.HasValue);
+            if (alignment == A.TextAlignmentTypeValues.Right) {
+                return OfficeTextAlignment.Right;
+            }
+
+            if (alignment == A.TextAlignmentTypeValues.Left) {
+                return OfficeTextAlignment.Left;
+            }
+
+            return OfficeTextAlignment.Center;
+        }
+
+        private static OfficeTextVerticalAlignment ResolveTextVerticalAlignment(A.BodyProperties? bodyProperties) {
+            A.TextAnchoringTypeValues? anchor = bodyProperties?.Anchor?.Value;
+            if (anchor == A.TextAnchoringTypeValues.Top) {
+                return OfficeTextVerticalAlignment.Top;
+            }
+
+            if (anchor == A.TextAnchoringTypeValues.Bottom) {
+                return OfficeTextVerticalAlignment.Bottom;
+            }
+
+            return OfficeTextVerticalAlignment.Center;
+        }
+
+        private static bool ResolveTextWrap(A.BodyProperties? bodyProperties) {
+            if (bodyProperties == null) {
+                return false;
+            }
+
+            A.TextWrappingValues? wrap = bodyProperties.Wrap?.Value;
+            return wrap != A.TextWrappingValues.None;
+        }
+
+        private static bool ResolveTextShrinkToFit(A.BodyProperties? bodyProperties) =>
+            bodyProperties?.GetFirstChild<A.NormalAutoFit>() != null;
+
+        private static bool ResolveTextResizeShapeToFit(A.BodyProperties? bodyProperties) =>
+            bodyProperties?.GetFirstChild<A.ShapeAutoFit>() != null;
+
+        private static ExcelDrawingTextOrientation ResolveTextOrientation(A.BodyProperties? bodyProperties) {
+            A.TextVerticalValues? vertical = bodyProperties?.Vertical?.Value;
+            if (!vertical.HasValue || vertical == A.TextVerticalValues.Horizontal) {
+                return ExcelDrawingTextOrientation.Horizontal;
+            }
+
+            if (vertical == A.TextVerticalValues.Vertical) {
+                return ExcelDrawingTextOrientation.Vertical;
+            }
+
+            if (vertical == A.TextVerticalValues.Vertical270) {
+                return ExcelDrawingTextOrientation.Vertical270;
+            }
+
+            if (vertical == A.TextVerticalValues.EastAsianVetical) {
+                return ExcelDrawingTextOrientation.EastAsianVertical;
+            }
+
+            if (vertical == A.TextVerticalValues.MongolianVertical) {
+                return ExcelDrawingTextOrientation.MongolianVertical;
+            }
+
+            if (vertical == A.TextVerticalValues.WordArtVertical) {
+                return ExcelDrawingTextOrientation.WordArtVertical;
+            }
+
+            if (vertical == A.TextVerticalValues.WordArtLeftToRight) {
+                return ExcelDrawingTextOrientation.WordArtLeftToRight;
+            }
+
+            return ExcelDrawingTextOrientation.Unknown;
+        }
+
+        private static DrawingTextInsets ResolveTextInsets(A.BodyProperties? bodyProperties) {
+            if (bodyProperties == null) {
+                return DrawingTextInsets.None;
+            }
+
+            return new DrawingTextInsets(
+                ParseEmuPixels(bodyProperties.LeftInset?.Value ?? DefaultLeftRightTextInsetEmu),
+                ParseEmuPixels(bodyProperties.TopInset?.Value ?? DefaultTopBottomTextInsetEmu),
+                ParseEmuPixels(bodyProperties.RightInset?.Value ?? DefaultLeftRightTextInsetEmu),
+                ParseEmuPixels(bodyProperties.BottomInset?.Value ?? DefaultTopBottomTextInsetEmu));
+        }
+
+        private static DrawingTextStyle ResolveTextStyle(Xdr.TextBody? textBody, WorkbookPart? workbookPart) {
+            A.RunProperties? runProperties = textBody?
+                .Descendants<A.RunProperties>()
+                .FirstOrDefault();
+            if (runProperties == null) {
+                return DrawingTextStyle.Default;
+            }
+
+            string? colorArgb = ExcelThemeColorResolver.Resolve(runProperties.GetFirstChild<A.SolidFill>(), workbookPart);
+            string? fontFamily = NormalizeFontFamily(runProperties.GetFirstChild<A.LatinFont>()?.Typeface?.Value);
+            double? fontSize = runProperties.FontSize?.Value > 0
+                ? runProperties.FontSize.Value / 100D
+                : null;
+            OfficeFontStyle fontStyle = OfficeFontStyle.Regular;
+            if (runProperties.Bold?.Value == true) {
+                fontStyle |= OfficeFontStyle.Bold;
+            }
+
+            if (runProperties.Italic?.Value == true) {
+                fontStyle |= OfficeFontStyle.Italic;
+            }
+
+            if (runProperties.Underline?.Value != null && runProperties.Underline.Value != A.TextUnderlineValues.None) {
+                fontStyle |= OfficeFontStyle.Underline;
+            }
+
+            if (runProperties.Strike?.Value != null && runProperties.Strike.Value != A.TextStrikeValues.NoStrike) {
+                fontStyle |= OfficeFontStyle.Strikethrough;
+            }
+
+            return new DrawingTextStyle(colorArgb, fontFamily, fontSize, fontStyle);
         }
 
         private static AnchorPosition GetAnchorPosition(OpenXmlElement anchor) {
@@ -155,7 +317,7 @@ namespace OfficeIMO.Excel.Utilities {
             return true;
         }
 
-        private static bool TryGetFillColor(OpenXmlCompositeElement? properties, out string? fillColorArgb, out string? unsupportedReason) {
+        private static bool TryGetFillColor(OpenXmlCompositeElement? properties, WorkbookPart? workbookPart, out string? fillColorArgb, out string? unsupportedReason) {
             fillColorArgb = null;
             unsupportedReason = null;
             if (properties == null || properties.GetFirstChild<A.NoFill>() != null) {
@@ -168,16 +330,16 @@ namespace OfficeIMO.Excel.Utilities {
                 return false;
             }
 
-            fillColorArgb = NormalizeRgb(solidFill.GetFirstChild<A.RgbColorModelHex>()?.Val?.Value);
+            fillColorArgb = ExcelThemeColorResolver.Resolve(solidFill, workbookPart);
             if (fillColorArgb != null) {
                 return true;
             }
 
-            unsupportedReason = "shape fill uses a theme, system, or transformed color that is not rendered yet";
+            unsupportedReason = "shape fill color could not be resolved by the dependency-free exporter";
             return false;
         }
 
-        private static bool TryGetStroke(OpenXmlCompositeElement? properties, out string? strokeColorArgb, out double strokeWidth, out string? unsupportedReason) {
+        private static bool TryGetStroke(OpenXmlCompositeElement? properties, WorkbookPart? workbookPart, out string? strokeColorArgb, out double strokeWidth, out string? unsupportedReason) {
             strokeColorArgb = null;
             strokeWidth = 1D;
             unsupportedReason = null;
@@ -193,9 +355,9 @@ namespace OfficeIMO.Excel.Utilities {
                 return false;
             }
 
-            strokeColorArgb = NormalizeRgb(solidFill.GetFirstChild<A.RgbColorModelHex>()?.Val?.Value);
+            strokeColorArgb = ExcelThemeColorResolver.Resolve(solidFill, workbookPart);
             if (strokeColorArgb == null) {
-                unsupportedReason = "shape outline uses a theme, system, or transformed color that is not rendered yet";
+                unsupportedReason = "shape outline color could not be resolved by the dependency-free exporter";
                 return false;
             }
 
@@ -256,18 +418,8 @@ namespace OfficeIMO.Excel.Utilities {
             }
         }
 
-        private static string? NormalizeRgb(string? value) {
-            if (string.IsNullOrWhiteSpace(value)) {
-                return null;
-            }
-
-            string normalized = value!.Trim().TrimStart('#');
-            if (normalized.Length == 6) {
-                return "FF" + normalized.ToUpperInvariant();
-            }
-
-            return normalized.Length == 8 ? normalized.ToUpperInvariant() : null;
-        }
+        private static string? NormalizeFontFamily(string? value) =>
+            string.IsNullOrWhiteSpace(value) ? null : value!.Trim();
 
         private static int ParseOneBasedMarker(string? value) =>
             int.TryParse(value, out int zeroBased) && zeroBased >= 0 ? zeroBased + 1 : 0;
@@ -327,6 +479,44 @@ namespace OfficeIMO.Excel.Utilities {
 
             internal int ToOffsetYPixels { get; }
         }
+
+        private readonly struct DrawingTextStyle {
+            internal DrawingTextStyle(string? colorArgb, string? fontFamily, double? fontSize, OfficeFontStyle fontStyle) {
+                ColorArgb = colorArgb;
+                FontFamily = fontFamily;
+                FontSize = fontSize;
+                FontStyle = fontStyle;
+            }
+
+            internal static DrawingTextStyle Default => new DrawingTextStyle(null, null, null, OfficeFontStyle.Regular);
+
+            internal string? ColorArgb { get; }
+
+            internal string? FontFamily { get; }
+
+            internal double? FontSize { get; }
+
+            internal OfficeFontStyle FontStyle { get; }
+        }
+
+        private readonly struct DrawingTextInsets {
+            internal static DrawingTextInsets None { get; } = new DrawingTextInsets(0D, 0D, 0D, 0D);
+
+            internal DrawingTextInsets(double left, double top, double right, double bottom) {
+                Left = left;
+                Top = top;
+                Right = right;
+                Bottom = bottom;
+            }
+
+            internal double Left { get; }
+
+            internal double Top { get; }
+
+            internal double Right { get; }
+
+            internal double Bottom { get; }
+        }
     }
 
     internal sealed class ExcelWorksheetDrawingObjectInfo {
@@ -353,6 +543,20 @@ namespace OfficeIMO.Excel.Utilities {
             string? strokeColorArgb,
             double strokeWidth,
             string text,
+            OfficeTextAlignment textAlignment,
+            OfficeTextVerticalAlignment textVerticalAlignment,
+            string? textColorArgb,
+            string? textFontFamily,
+            double? textFontSize,
+            OfficeFontStyle textFontStyle,
+            bool textWrap,
+            bool textShrinkToFit,
+            bool textResizeShapeToFit,
+            ExcelDrawingTextOrientation textOrientation,
+            double textInsetLeft,
+            double textInsetTop,
+            double textInsetRight,
+            double textInsetBottom,
             string? unsupportedReason) {
             Name = name ?? string.Empty;
             Kind = kind ?? string.Empty;
@@ -376,6 +580,20 @@ namespace OfficeIMO.Excel.Utilities {
             StrokeColorArgb = strokeColorArgb;
             StrokeWidth = strokeWidth;
             Text = text ?? string.Empty;
+            TextAlignment = textAlignment;
+            TextVerticalAlignment = textVerticalAlignment;
+            TextColorArgb = textColorArgb;
+            TextFontFamily = textFontFamily;
+            TextFontSize = textFontSize;
+            TextFontStyle = textFontStyle;
+            TextWrap = textWrap;
+            TextShrinkToFit = textShrinkToFit;
+            TextResizeShapeToFit = textResizeShapeToFit;
+            TextOrientation = textOrientation;
+            TextInsetLeft = textInsetLeft;
+            TextInsetTop = textInsetTop;
+            TextInsetRight = textInsetRight;
+            TextInsetBottom = textInsetBottom;
             UnsupportedReason = unsupportedReason;
         }
 
@@ -422,6 +640,34 @@ namespace OfficeIMO.Excel.Utilities {
         internal double StrokeWidth { get; }
 
         internal string Text { get; }
+
+        internal OfficeTextAlignment TextAlignment { get; }
+
+        internal OfficeTextVerticalAlignment TextVerticalAlignment { get; }
+
+        internal string? TextColorArgb { get; }
+
+        internal string? TextFontFamily { get; }
+
+        internal double? TextFontSize { get; }
+
+        internal OfficeFontStyle TextFontStyle { get; }
+
+        internal bool TextWrap { get; }
+
+        internal bool TextShrinkToFit { get; }
+
+        internal bool TextResizeShapeToFit { get; }
+
+        internal ExcelDrawingTextOrientation TextOrientation { get; }
+
+        internal double TextInsetLeft { get; }
+
+        internal double TextInsetTop { get; }
+
+        internal double TextInsetRight { get; }
+
+        internal double TextInsetBottom { get; }
 
         internal string? UnsupportedReason { get; }
 

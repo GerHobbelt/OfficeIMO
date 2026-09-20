@@ -7,16 +7,18 @@ namespace OfficeIMO.Excel {
             ExcelSheet sheet,
             IReadOnlyList<ExcelVisualCell> cells,
             string range,
+            DateTime conditionalFormattingDate,
             List<OfficeImageExportDiagnostic> diagnostics) {
             IReadOnlyList<ExcelConditionalFormattingInfo> rules = sheet.GetConditionalFormattingRules(range);
             if (rules.Count == 0 || cells.Count == 0) {
                 return ExcelConditionalVisualState.Empty;
             }
 
-            ReportUnsupportedConditionalRules(sheet, cells, rules, diagnostics);
+            ReportUnsupportedConditionalRules(sheet, cells, rules, conditionalFormattingDate, diagnostics);
 
-            var fills = BuildConditionalFills(sheet, cells, rules);
+            var fills = BuildConditionalFills(sheet, cells, rules, conditionalFormattingDate);
             var dataBars = new List<ExcelVisualConditionalDataBar>();
+            var icons = BuildConditionalIcons(sheet, cells, rules, diagnostics);
 
             foreach (ExcelConditionalFormattingInfo rule in rules
                 .Where(rule => string.Equals(rule.Type, "DataBar", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(rule.DataBarColor))
@@ -47,24 +49,34 @@ namespace OfficeIMO.Excel {
                 }
             }
 
-            return fills.Count == 0 && dataBars.Count == 0
+            return fills.Count == 0 && dataBars.Count == 0 && icons.Count == 0
                 ? ExcelConditionalVisualState.Empty
-                : new ExcelConditionalVisualState(fills, dataBars);
+                : new ExcelConditionalVisualState(fills, dataBars, icons);
         }
 
         private static void ReportUnsupportedConditionalRules(
             ExcelSheet sheet,
             IReadOnlyList<ExcelVisualCell> cells,
             IReadOnlyList<ExcelConditionalFormattingInfo> rules,
+            DateTime conditionalFormattingDate,
             List<OfficeImageExportDiagnostic> diagnostics) {
             foreach (ExcelConditionalFormattingInfo rule in rules) {
                 string source = sheet.Name + "!" + rule.Range;
                 if (string.Equals(rule.Type, "IconSet", StringComparison.OrdinalIgnoreCase)) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
-                        OfficeImageExportDiagnosticSeverity.Warning,
-                        ExcelImageExportDiagnosticCodes.ConditionalIconSetUnsupported,
-                        "Conditional formatting icon sets are not rendered by Excel image export yet.",
-                        source));
+                    if (CanRenderIconSet(rule)) {
+                        diagnostics.Add(new OfficeImageExportDiagnostic(
+                            OfficeImageExportDiagnosticSeverity.Info,
+                            ExcelImageExportDiagnosticCodes.ConditionalIconSetApproximation,
+                            "Conditional formatting icon set is rendered as a deterministic dependency-free approximation; Excel-specific icon artwork and threshold semantics may differ.",
+                            source));
+                    } else {
+                        diagnostics.Add(new OfficeImageExportDiagnostic(
+                            OfficeImageExportDiagnosticSeverity.Warning,
+                            ExcelImageExportDiagnosticCodes.ConditionalIconSetUnsupported,
+                            "Conditional formatting icon set could not be rendered because this icon-set family is not supported yet.",
+                            source));
+                    }
+
                     continue;
                 }
 
@@ -188,6 +200,23 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
+                if (IsTimePeriodRule(rule)) {
+                    if (ReportUnsupportedDifferentialFormat(rule, diagnostics, source)) {
+                        continue;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(rule.DifferentialFillColorArgb) &&
+                        !CanEvaluateTimePeriodRule(sheet, cells, rule, conditionalFormattingDate)) {
+                        diagnostics.Add(new OfficeImageExportDiagnostic(
+                            OfficeImageExportDiagnosticSeverity.Warning,
+                            ExcelImageExportDiagnosticCodes.ConditionalTimePeriodUnsupported,
+                            "Conditional formatting time-period rule was not rendered because its time period is missing, unsupported, or no valid date cells were found.",
+                            source));
+                    }
+
+                    continue;
+                }
+
                 diagnostics.Add(new OfficeImageExportDiagnostic(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.ConditionalRuleUnsupported,
@@ -215,7 +244,8 @@ namespace OfficeIMO.Excel {
         private static Dictionary<string, string> BuildConditionalFills(
             ExcelSheet sheet,
             IReadOnlyList<ExcelVisualCell> cells,
-            IReadOnlyList<ExcelConditionalFormattingInfo> rules) {
+            IReadOnlyList<ExcelConditionalFormattingInfo> rules,
+            DateTime conditionalFormattingDate) {
             var fills = new Dictionary<string, string>(StringComparer.Ordinal);
             var stoppedCells = new HashSet<string>(StringComparer.Ordinal);
             foreach (ExcelConditionalFormattingInfo rule in rules.OrderBy(rule => NormalizePriority(rule.Priority))) {
@@ -234,7 +264,8 @@ namespace OfficeIMO.Excel {
                     !string.Equals(rule.Type, "DuplicateValues", StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(rule.Type, "UniqueValues", StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(rule.Type, "AboveAverage", StringComparison.OrdinalIgnoreCase) &&
-                    !IsTextRule(rule)) {
+                    !IsTextRule(rule) &&
+                    !IsTimePeriodRule(rule)) {
                     continue;
                 }
 
@@ -260,6 +291,11 @@ namespace OfficeIMO.Excel {
 
                 if (IsTextRule(rule)) {
                     ApplyTextRuleFill(cells, rule, fills, stoppedCells);
+                    continue;
+                }
+
+                if (IsTimePeriodRule(rule)) {
+                    ApplyTimePeriodFill(sheet, cells, rule, conditionalFormattingDate, fills, stoppedCells);
                     continue;
                 }
 
@@ -817,17 +853,22 @@ namespace OfficeIMO.Excel {
     internal sealed class ExcelConditionalVisualState {
         internal static readonly ExcelConditionalVisualState Empty = new ExcelConditionalVisualState(
             new Dictionary<string, string>(StringComparer.Ordinal),
-            Array.Empty<ExcelVisualConditionalDataBar>());
+            Array.Empty<ExcelVisualConditionalDataBar>(),
+            Array.Empty<ExcelVisualConditionalIcon>());
 
         internal ExcelConditionalVisualState(
             IReadOnlyDictionary<string, string> fillColors,
-            IReadOnlyList<ExcelVisualConditionalDataBar> dataBars) {
+            IReadOnlyList<ExcelVisualConditionalDataBar> dataBars,
+            IReadOnlyList<ExcelVisualConditionalIcon> icons) {
             FillColors = fillColors;
             DataBars = dataBars;
+            Icons = icons;
         }
 
         internal IReadOnlyDictionary<string, string> FillColors { get; }
 
         internal IReadOnlyList<ExcelVisualConditionalDataBar> DataBars { get; }
+
+        internal IReadOnlyList<ExcelVisualConditionalIcon> Icons { get; }
     }
 }

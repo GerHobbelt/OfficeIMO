@@ -17,47 +17,53 @@ namespace OfficeIMO.Excel {
             ExcelRangeVisualSnapshot snapshot,
             ExcelImageExportOptions options,
             double scale,
+            IReadOnlyDictionary<string, ExcelVisualCell> cellsByAddress,
             List<OfficeImageExportDiagnostic>? diagnostics) {
             if (string.IsNullOrEmpty(cell.Text)) {
                 return;
             }
 
-            double x = cell.X * scale;
-            double y = cell.Y * scale;
-            double w = cell.Width * scale;
-            double h = cell.Height * scale;
+            CellTextViewport viewport = ResolveCellTextViewport(cell, snapshot, scale, cellsByAddress);
+            if (TryGetConditionalIconForCell(snapshot, cell, out ExcelVisualConditionalIcon conditionalIcon)) {
+                if (!conditionalIcon.ShowValue) {
+                    return;
+                }
+
+                viewport = ReserveConditionalIconTextSpace(viewport, conditionalIcon, scale);
+            }
+
+            double x = viewport.X;
+            double y = viewport.Y;
+            double w = viewport.Width;
+            double h = viewport.Height;
             double paddingX = CellTextHorizontalPadding * scale;
             double paddingY = CellTextVerticalPadding * scale;
             double availableWidth = Math.Max(1D, w - (paddingX * 2D));
             double availableHeight = Math.Max(1D, h - (paddingY * 2D));
             double fontSize = ResolveCellFontSize(cell.Style, scale);
             double minimumFontSize = Math.Max(1D, scale);
+            if (IsCellTextAnchorOccludedByDrawingLayer(cell, snapshot)) {
+                AddCellTextOccludedByDrawingDiagnostic(snapshot, cell, diagnostics);
+                return;
+            }
+
             bool stacked = IsStackedTextRotation(cell.Style.TextRotation);
             double rotationDegrees = stacked ? 0D : ResolveExcelTextRotationDegrees(cell.Style.TextRotation, snapshot, cell, diagnostics);
             bool rotated = Math.Abs(rotationDegrees) > 0.0001D;
             bool richTextSupported = IsRichTextRenderingSupported(cell, rotated);
             string fontFamily = ResolveCellFontFamily(cell.Style);
-            OfficeTextBlockLayout layout = stacked
-                ? OfficeTextLayoutEngine.LayoutStackedTextBlock(
-                    cell.Text,
-                    fontSize,
-                    availableWidth,
-                    availableHeight,
-                    CellTextLineHeightFactor,
-                    minimumFontSize,
-                    (text, size) => canvas.MeasureText(text, size, fontFamily),
-                    shrinkToFit: cell.Style.ShrinkToFit)
-                : OfficeTextLayoutEngine.LayoutTextBlock(
-                    cell.Text,
-                    fontSize,
-                    rotated ? Math.Max(availableWidth, availableHeight) : availableWidth,
-                    rotated ? Math.Max(availableWidth, availableHeight) : availableHeight,
-                    CellTextLineHeightFactor,
-                    minimumFontSize,
-                    (text, size) => canvas.MeasureText(text, size, fontFamily),
-                    wrap: cell.Style.WrapText,
-                    forceSingleLine: rotated,
-                    shrinkToFit: cell.Style.ShrinkToFit);
+            OfficeTextBlockRenderPlan plan = CreateCellTextRenderPlan(
+                cell,
+                x + paddingX,
+                y + paddingY,
+                availableWidth,
+                availableHeight,
+                fontSize,
+                minimumFontSize,
+                rotationDegrees,
+                stacked,
+                (text, size) => canvas.MeasureText(text, size, fontFamily));
+            OfficeTextBlockLayout layout = plan.Layout;
             if (layout.Lines.Count == 0) {
                 return;
             }
@@ -83,14 +89,14 @@ namespace OfficeIMO.Excel {
                     AddRotatedTextApproximationDiagnostic(snapshot, cell, diagnostics);
                     OfficeTextBlockRenderer.DrawRasterTextBlock(
                         canvas,
-                        layout,
-                        x + paddingX,
-                        y + paddingY,
-                        availableWidth,
-                        availableHeight,
+                        plan.Layout,
+                        plan.Left,
+                        plan.Top,
+                        plan.Width,
+                        plan.Height,
                         ResolveCellTextColor(cell, options),
-                        OfficeTextAlignment.Center,
-                        ResolveTextVerticalAlignment(cell.Style.VerticalAlignment),
+                        plan.HorizontalAlignment,
+                        plan.VerticalAlignment,
                         cell.Style.Bold,
                         cell.Style.Italic,
                         ShouldUnderlineText(cell, options),
@@ -99,30 +105,38 @@ namespace OfficeIMO.Excel {
                 }
 
                 OfficeColor color = ResolveCellTextColor(cell, options);
-                OfficeTextAlignment alignment = ResolveTextAlignment(cell.Style.HorizontalAlignment);
                 bool bold = cell.Style.Bold;
                 bool italic = cell.Style.Italic;
                 bool underline = ShouldUnderlineText(cell, options);
                 if (rotated) {
                     AddRotatedTextApproximationDiagnostic(snapshot, cell, diagnostics);
-                    OfficeTextLine line = layout.Lines[0];
                     double centerX = x + (w / 2D);
                     double centerY = y + (h / 2D);
-                    double textTop = centerY - (layout.FontSize / 2D);
-                    canvas.DrawTextLine(line.Text, centerX, textTop, layout.FontSize, color, bold, italic, OfficeTextAlignment.Center, rotationDegrees, centerX, centerY, fontFamily: fontFamily);
+                    OfficeTextBlockRenderPlan rotatedPlan = CreateCenteredRotatedCellTextPlan(layout, centerX, centerY, plan.Width);
+                    OfficeTextBlockRenderer.DrawRasterTextBox(
+                        canvas,
+                        rotatedPlan,
+                        color,
+                        bold,
+                        italic,
+                        underline,
+                        rotationDegrees: rotationDegrees,
+                        rotationCenterX: centerX,
+                        rotationCenterY: centerY,
+                        fontFamily: fontFamily);
                     return;
                 }
 
                 OfficeTextBlockRenderer.DrawRasterTextBlock(
                     canvas,
-                    layout,
-                    x + paddingX,
-                    y + paddingY,
-                    availableWidth,
-                    availableHeight,
+                    plan.Layout,
+                    plan.Left,
+                    plan.Top,
+                    plan.Width,
+                    plan.Height,
                     color,
-                    alignment,
-                    ResolveTextVerticalAlignment(cell.Style.VerticalAlignment),
+                    plan.HorizontalAlignment,
+                    plan.VerticalAlignment,
                     bold,
                     italic,
                     underline,
@@ -136,48 +150,54 @@ namespace OfficeIMO.Excel {
             ExcelRangeVisualSnapshot snapshot,
             ExcelImageExportOptions options,
             OfficeRasterCanvas textMeasureCanvas,
+            IReadOnlyDictionary<string, ExcelVisualCell> cellsByAddress,
             List<OfficeImageExportDiagnostic>? diagnostics) {
             if (string.IsNullOrEmpty(cell.Text)) {
                 return;
             }
 
             double scale = options.Scale;
-            double x = cell.X * scale;
-            double y = cell.Y * scale;
-            double w = cell.Width * scale;
-            double h = cell.Height * scale;
+            CellTextViewport viewport = ResolveCellTextViewport(cell, snapshot, scale, cellsByAddress);
+            if (TryGetConditionalIconForCell(snapshot, cell, out ExcelVisualConditionalIcon conditionalIcon)) {
+                if (!conditionalIcon.ShowValue) {
+                    return;
+                }
+
+                viewport = ReserveConditionalIconTextSpace(viewport, conditionalIcon, scale);
+            }
+
+            double x = viewport.X;
+            double y = viewport.Y;
+            double w = viewport.Width;
+            double h = viewport.Height;
             double paddingX = CellTextHorizontalPadding * scale;
             double paddingY = CellTextVerticalPadding * scale;
             double availableWidth = Math.Max(1D, w - (paddingX * 2D));
             double availableHeight = Math.Max(1D, h - (paddingY * 2D));
             double fontSize = ResolveCellFontSize(cell.Style, scale);
             double minimumFontSize = Math.Max(1D, scale);
+            if (IsCellTextAnchorOccludedByDrawingLayer(cell, snapshot)) {
+                AddCellTextOccludedByDrawingDiagnostic(snapshot, cell, diagnostics);
+                return;
+            }
+
             bool stacked = IsStackedTextRotation(cell.Style.TextRotation);
             double rotationDegrees = stacked ? 0D : ResolveExcelTextRotationDegrees(cell.Style.TextRotation, snapshot, cell, diagnostics);
             bool rotated = Math.Abs(rotationDegrees) > 0.0001D;
             bool richTextSupported = IsRichTextRenderingSupported(cell, rotated);
             string fontFamily = ResolveCellFontFamily(cell.Style);
-            OfficeTextBlockLayout layout = stacked
-                ? OfficeTextLayoutEngine.LayoutStackedTextBlock(
-                    cell.Text,
-                    fontSize,
-                    availableWidth,
-                    availableHeight,
-                    CellTextLineHeightFactor,
-                    minimumFontSize,
-                    (text, size) => textMeasureCanvas.MeasureText(text, size, fontFamily),
-                    shrinkToFit: cell.Style.ShrinkToFit)
-                : OfficeTextLayoutEngine.LayoutTextBlock(
-                    cell.Text,
-                    fontSize,
-                    rotated ? Math.Max(availableWidth, availableHeight) : availableWidth,
-                    rotated ? Math.Max(availableWidth, availableHeight) : availableHeight,
-                    CellTextLineHeightFactor,
-                    minimumFontSize,
-                    (text, size) => textMeasureCanvas.MeasureText(text, size, fontFamily),
-                    wrap: cell.Style.WrapText,
-                    forceSingleLine: rotated,
-                    shrinkToFit: cell.Style.ShrinkToFit);
+            OfficeTextBlockRenderPlan plan = CreateCellTextRenderPlan(
+                cell,
+                x + paddingX,
+                y + paddingY,
+                availableWidth,
+                availableHeight,
+                fontSize,
+                minimumFontSize,
+                rotationDegrees,
+                stacked,
+                (text, size) => textMeasureCanvas.MeasureText(text, size, fontFamily));
+            OfficeTextBlockLayout layout = plan.Layout;
             if (layout.Lines.Count == 0) {
                 return;
             }
@@ -199,7 +219,6 @@ namespace OfficeIMO.Excel {
             AddCellFontFamilyFallbackDiagnosticIfNeeded(snapshot, cell, cell.Style.FontName, diagnostics);
             AddTextClippingDiagnosticIfNeeded(layout, snapshot, cell, diagnostics);
             OfficeColor color = ResolveCellTextColor(cell, options);
-            OfficeTextAlignment alignment = ResolveTextAlignment(cell.Style.HorizontalAlignment);
             string clipId = "xl-text-" + cell.Row.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + cell.Column.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
             builder.AppendRectClipPathDefinition(clipId, x, y, w, h);
@@ -207,15 +226,15 @@ namespace OfficeIMO.Excel {
             if (stacked) {
                 AddRotatedTextApproximationDiagnostic(snapshot, cell, diagnostics);
                 builder.AppendSvgTextBlock(
-                    layout,
-                    x + paddingX,
-                    y + paddingY,
-                    availableWidth,
-                    availableHeight,
+                    plan.Layout,
+                    plan.Left,
+                    plan.Top,
+                    plan.Width,
+                    plan.Height,
                     color,
                     fontFamily,
-                    OfficeTextAlignment.Center,
-                    ResolveTextVerticalAlignment(cell.Style.VerticalAlignment),
+                    plan.HorizontalAlignment,
+                    plan.VerticalAlignment,
                     cell.Style.Bold,
                     cell.Style.Italic,
                     ShouldUnderlineText(cell, options));
@@ -226,20 +245,19 @@ namespace OfficeIMO.Excel {
 
             if (rotated) {
                 AddRotatedTextApproximationDiagnostic(snapshot, cell, diagnostics);
-                OfficeTextLine line = layout.Lines[0];
                 double centerX = x + (w / 2D);
                 double centerY = y + (h / 2D);
-                double textTop = centerY - (layout.FontSize / 2D);
-                double baseline = textTop + (layout.FontSize * 0.84D);
-                builder.AppendSvgTextElement(
-                    line.Text,
-                    centerX,
-                    baseline,
-                    layout.LineHeight,
+                OfficeTextBlockRenderPlan rotatedPlan = CreateCenteredRotatedCellTextPlan(layout, centerX, centerY, plan.Width);
+                builder.AppendSvgTextBlock(
+                    rotatedPlan.Layout,
+                    rotatedPlan.Left,
+                    rotatedPlan.Top,
+                    rotatedPlan.Width,
+                    rotatedPlan.Height,
                     color,
                     fontFamily,
-                    layout.FontSize,
-                    OfficeTextAlignment.Center,
+                    rotatedPlan.HorizontalAlignment,
+                    rotatedPlan.VerticalAlignment,
                     cell.Style.Bold,
                     cell.Style.Italic,
                     ShouldUnderlineText(cell, options),
@@ -251,20 +269,77 @@ namespace OfficeIMO.Excel {
             }
 
             builder.AppendSvgTextBlock(
-                layout,
-                x + paddingX,
-                y + paddingY,
-                availableWidth,
-                availableHeight,
+                plan.Layout,
+                plan.Left,
+                plan.Top,
+                plan.Width,
+                plan.Height,
                 color,
                 fontFamily,
-                alignment,
-                ResolveTextVerticalAlignment(cell.Style.VerticalAlignment),
+                plan.HorizontalAlignment,
+                plan.VerticalAlignment,
                 cell.Style.Bold,
                 cell.Style.Italic,
                 ShouldUnderlineText(cell, options));
 
             builder.Append("</g>");
+        }
+
+        private static OfficeTextBlockRenderPlan CreateCellTextRenderPlan(
+            ExcelVisualCell cell,
+            double left,
+            double top,
+            double availableWidth,
+            double availableHeight,
+            double fontSize,
+            double minimumFontSize,
+            double rotationDegrees,
+            bool stacked,
+            Func<string?, double, double> measure) {
+            bool rotated = Math.Abs(rotationDegrees) > 0.0001D;
+            OfficeTextVerticalAlignment verticalAlignment = rotated
+                ? OfficeTextVerticalAlignment.Top
+                : ResolveTextVerticalAlignment(cell.Style.VerticalAlignment);
+            if (stacked) {
+                return OfficeTextBlockRenderPlan.CreateStackedTextBlockFromRectangle(
+                    cell.Text,
+                    fontSize,
+                    left,
+                    top,
+                    availableWidth,
+                    availableHeight,
+                    measure,
+                    OfficeTextAlignment.Center,
+                    verticalAlignment,
+                    CellTextLineHeightFactor,
+                    minimumFontSize,
+                    shrinkToFit: cell.Style.ShrinkToFit);
+            }
+
+            double lineHeight = Math.Ceiling(fontSize * CellTextLineHeightFactor);
+            double layoutWidth = rotated
+                ? OfficeTextLayoutEngine.ResolveRotatedTextWidthLimit(availableWidth, availableHeight, lineHeight, rotationDegrees)
+                : availableWidth;
+            double layoutHeight = rotated ? Math.Max(availableWidth, availableHeight) : availableHeight;
+            OfficeTextAlignment alignment = rotated
+                ? OfficeTextAlignment.Center
+                : ResolveCellTextAlignment(cell);
+            return OfficeTextBlockRenderPlan.CreateTextBlockFromRectangle(
+                cell.Text,
+                fontSize,
+                left,
+                top,
+                layoutWidth,
+                layoutHeight,
+                measure,
+                alignment,
+                verticalAlignment,
+                CellTextLineHeightFactor,
+                minimumFontSize,
+                wrap: cell.Style.WrapText,
+                forceSingleLine: rotated,
+                shrinkToFit: cell.Style.ShrinkToFit,
+                overflowBehavior: OfficeTextOverflowBehavior.Clip);
         }
 
         private static bool TryDrawRasterRichText(
@@ -290,7 +365,7 @@ namespace OfficeIMO.Excel {
 
             double centerX = x + (w / 2D);
             double centerY = y + (h / 2D);
-            OfficeTextAlignment alignment = (rotated || stacked) ? OfficeTextAlignment.Center : ResolveTextAlignment(cell.Style.HorizontalAlignment);
+            OfficeTextAlignment alignment = (rotated || stacked) ? OfficeTextAlignment.Center : ResolveCellTextAlignment(cell);
             double layoutWidth = rotated ? Math.Max(availableWidth, availableHeight) : availableWidth;
             double left = rotated ? centerX - (layoutWidth / 2D) : x + paddingX;
             double top = rotated ? centerY - (layout.Height / 2D) : y + paddingY;
@@ -334,12 +409,10 @@ namespace OfficeIMO.Excel {
 
             double centerX = x + (w / 2D);
             double centerY = y + (h / 2D);
-            OfficeTextAlignment alignment = (rotated || stacked) ? OfficeTextAlignment.Center : ResolveTextAlignment(cell.Style.HorizontalAlignment);
+            OfficeTextAlignment alignment = (rotated || stacked) ? OfficeTextAlignment.Center : ResolveCellTextAlignment(cell);
             double layoutWidth = rotated ? Math.Max(availableWidth, availableHeight) : availableWidth;
             double left = rotated ? centerX - (layoutWidth / 2D) : x + paddingX;
-            double top = rotated
-                ? centerY - (layout.Height / 2D)
-                : OfficeTextPlacement.ResolveTop(y + paddingY, availableHeight, layout.Height, ResolveTextVerticalAlignment(cell.Style.VerticalAlignment));
+            double top = rotated ? centerY - (layout.Height / 2D) : y + paddingY;
             string clipId = "xl-text-" + cell.Row.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + cell.Column.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
             builder.AppendRectClipPathDefinition(clipId, x, y, w, h);
@@ -349,23 +422,14 @@ namespace OfficeIMO.Excel {
             }
 
             builder.Append(">");
-            for (int lineIndex = 0; lineIndex < layout.Lines.Count; lineIndex++) {
-                OfficeRichTextLine line = layout.Lines[lineIndex];
-                if (line.Segments.Count == 0) {
-                    continue;
-                }
-
-                double lineTop = top + (lineIndex * layout.LineHeight);
-                double lineFontSize = Math.Max(1D, line.FontSize);
-                double textTop = lineTop + Math.Max(0D, (layout.LineHeight - lineFontSize) / 2D);
-                double baseline = textTop + (lineFontSize * 0.84D);
-                double cursor = OfficeTextPlacement.ResolveLineLeft(left, layoutWidth, line.Width, alignment);
-                for (int segmentIndex = 0; segmentIndex < line.Segments.Count; segmentIndex++) {
-                    OfficeRichTextSegment segment = line.Segments[segmentIndex];
-                    builder.AppendSvgRichTextSegment(segment, cursor, baseline);
-                    cursor += segment.Width;
-                }
-            }
+            builder.AppendSvgRichTextBlock(
+                layout,
+                left,
+                top,
+                layoutWidth,
+                rotated ? layout.Height : availableHeight,
+                alignment,
+                rotated ? OfficeTextVerticalAlignment.Top : ResolveTextVerticalAlignment(cell.Style.VerticalAlignment));
 
             builder.Append("</g>");
             return true;
@@ -395,7 +459,7 @@ namespace OfficeIMO.Excel {
                 bool bold = cell.Style.Bold || run.Bold;
                 bool italic = cell.Style.Italic || run.Italic;
                 bool underline = fallbackUnderline || run.Underline;
-                runs.Add(new OfficeRichTextRun(run.Text, fontSize, color, bold, italic, underline, ResolveRunFontFamily(run, cell.Style)));
+                runs.Add(new OfficeRichTextRun(run.Text, fontSize, color, bold, italic, underline, ResolveRunFontFamily(run, cell.Style), strikethrough: run.Strikethrough));
             }
 
             if (runs.Count == 0) {
@@ -418,7 +482,7 @@ namespace OfficeIMO.Excel {
 
             double estimatedLineHeight = Math.Ceiling(ResolveMaxRichTextRunFontSize(runs) * CellTextLineHeightFactor);
             double layoutWidth = rotated
-                ? ResolveRotatedTextWidthLimit(availableWidth, availableHeight, estimatedLineHeight, rotationDegrees)
+                ? OfficeTextLayoutEngine.ResolveRotatedTextWidthLimit(availableWidth, availableHeight, estimatedLineHeight, rotationDegrees)
                 : availableWidth;
             double layoutHeight = rotated ? Math.Max(availableWidth, availableHeight) : availableHeight;
             layout = OfficeTextLayoutEngine.LayoutRichTextBlock(
@@ -429,12 +493,233 @@ namespace OfficeIMO.Excel {
                 measure,
                 wrap: cell.Style.WrapText && !rotated,
                 shrinkToFit: cell.Style.ShrinkToFit || rotated,
-                minimumFontSize: Math.Max(1D, scale));
+                minimumFontSize: Math.Max(1D, scale),
+                overflowBehavior: OfficeTextOverflowBehavior.Clip);
             return layout.Lines.Count > 0;
         }
 
+        private static OfficeTextBlockRenderPlan CreateCenteredRotatedCellTextPlan(
+            OfficeTextBlockLayout layout,
+            double centerX,
+            double centerY,
+            double width) =>
+            OfficeTextBlockRenderPlan.CreateFromCenter(
+                layout,
+                centerX,
+                centerY,
+                Math.Max(1D, width),
+                Math.Max(1D, layout.Height),
+                OfficeTextAlignment.Center,
+                OfficeTextVerticalAlignment.Top);
+
         private static bool IsRichTextRenderingSupported(ExcelVisualCell cell, bool rotated) {
             return true;
+        }
+
+        private static bool TryGetConditionalIconForCell(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, out ExcelVisualConditionalIcon icon) {
+            for (int index = 0; index < snapshot.ConditionalIcons.Count; index++) {
+                ExcelVisualConditionalIcon candidate = snapshot.ConditionalIcons[index];
+                if (candidate.Row == cell.Row && candidate.Column == cell.Column) {
+                    icon = candidate;
+                    return true;
+                }
+            }
+
+            icon = null!;
+            return false;
+        }
+
+        private static CellTextViewport ReserveConditionalIconTextSpace(CellTextViewport viewport, ExcelVisualConditionalIcon icon, double scale) {
+            IconBounds bounds = GetConditionalIconBounds(icon, scale);
+            double reservedRight = Math.Min(
+                viewport.X + viewport.Width,
+                bounds.X + bounds.Size + Math.Max(CellTextHorizontalPadding * scale, 4D * scale));
+            double reservedWidth = Math.Max(0D, reservedRight - viewport.X);
+            if (reservedWidth <= 0D || reservedWidth >= viewport.Width - scale) {
+                return viewport;
+            }
+
+            return new CellTextViewport(
+                viewport.X + reservedWidth,
+                viewport.Y,
+                Math.Max(1D, viewport.Width - reservedWidth),
+                viewport.Height);
+        }
+
+        private static CellTextViewport ResolveCellTextViewport(
+            ExcelVisualCell cell,
+            ExcelRangeVisualSnapshot snapshot,
+            double scale,
+            IReadOnlyDictionary<string, ExcelVisualCell> cellsByAddress) {
+            double x = cell.X * scale;
+            double y = cell.Y * scale;
+            double width = cell.Width * scale;
+            double height = cell.Height * scale;
+            if (!CanCellTextSpillRight(cell, snapshot)) {
+                return new CellTextViewport(x, y, width, height);
+            }
+
+            double unscaledRight = cell.X + cell.Width;
+            for (int column = cell.Column + 1; column <= snapshot.LastColumn; column++) {
+                if (!cellsByAddress.TryGetValue(Key(cell.Row, column), out ExcelVisualCell? neighbor) ||
+                    !CanSpillThroughNeighbor(neighbor, snapshot)) {
+                    break;
+                }
+
+                unscaledRight = neighbor.X + neighbor.Width;
+            }
+
+            return new CellTextViewport(x, y, Math.Max(width, (unscaledRight - cell.X) * scale), height);
+        }
+
+        private static bool CanCellTextSpillRight(ExcelVisualCell cell, ExcelRangeVisualSnapshot snapshot) {
+            if (cell.CoveredByMerge ||
+                cell.Style.WrapText ||
+                cell.Style.ShrinkToFit ||
+                IsStackedTextRotation(cell.Style.TextRotation) ||
+                cell.Style.TextRotation.GetValueOrDefault() != 0 ||
+                IsCellCoveredByDrawingLayer(cell, snapshot) ||
+                cell.Text.IndexOf('\n') >= 0 ||
+                cell.Text.IndexOf('\r') >= 0) {
+                return false;
+            }
+
+            string? alignment = cell.Style.HorizontalAlignment;
+            if (string.Equals(alignment, "left", StringComparison.OrdinalIgnoreCase)) {
+                return true;
+            }
+
+            return (string.IsNullOrWhiteSpace(alignment) || string.Equals(alignment, "general", StringComparison.OrdinalIgnoreCase)) &&
+                cell.ValueKind == ExcelVisualCellValueKind.Text;
+        }
+
+        private static bool CanSpillThroughNeighbor(ExcelVisualCell neighbor, ExcelRangeVisualSnapshot snapshot) {
+            return !neighbor.CoveredByMerge &&
+                string.IsNullOrEmpty(neighbor.Text) &&
+                neighbor.RichTextRuns.Count == 0 &&
+                !IsCellCoveredByDrawingLayer(neighbor, snapshot);
+        }
+
+        private static bool IsCellCoveredByDrawingLayer(ExcelVisualCell cell, ExcelRangeVisualSnapshot snapshot) {
+            for (int index = 0; index < snapshot.DrawingLayers.Count; index++) {
+                if (TryGetDrawingLayerBounds(snapshot.DrawingLayers[index], out double x, out double y, out double width, out double height) &&
+                    RectanglesIntersect(cell.X, cell.Y, cell.Width, cell.Height, x, y, width, height)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsCellTextAnchorOccludedByDrawingLayer(ExcelVisualCell cell, ExcelRangeVisualSnapshot snapshot) {
+            if (!TryGetCellTextAnchorProbe(cell, out double x, out double y, out double width, out double height)) {
+                return false;
+            }
+
+            for (int index = 0; index < snapshot.DrawingLayers.Count; index++) {
+                if (TryGetDrawingLayerBounds(snapshot.DrawingLayers[index], out double layerX, out double layerY, out double layerWidth, out double layerHeight) &&
+                    RectanglesIntersect(x, y, width, height, layerX, layerY, layerWidth, layerHeight)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryGetCellTextAnchorProbe(ExcelVisualCell cell, out double x, out double y, out double width, out double height) {
+            if (cell.Width <= 0D || cell.Height <= 0D) {
+                x = 0D;
+                y = 0D;
+                width = 0D;
+                height = 0D;
+                return false;
+            }
+
+            const double probeSize = 1D;
+            double paddingX = Math.Min(CellTextHorizontalPadding, Math.Max(0D, cell.Width / 2D));
+            OfficeTextAlignment alignment = ResolveCellTextAlignment(cell);
+            double anchorX = alignment == OfficeTextAlignment.Right
+                ? cell.X + cell.Width - paddingX
+                : alignment == OfficeTextAlignment.Center
+                    ? cell.X + (cell.Width / 2D)
+                    : cell.X + paddingX;
+
+            x = anchorX - (probeSize / 2D);
+            y = cell.Y + (cell.Height / 2D) - (probeSize / 2D);
+            width = probeSize;
+            height = probeSize;
+            return true;
+        }
+
+        private static bool TryGetDrawingLayerBounds(ExcelVisualDrawingLayer layer, out double x, out double y, out double width, out double height) {
+            switch (layer.Kind) {
+                case ExcelVisualDrawingLayerKind.DrawingObject when layer.DrawingObject != null:
+                    x = layer.DrawingObject.X;
+                    y = layer.DrawingObject.Y;
+                    width = layer.DrawingObject.Width;
+                    height = layer.DrawingObject.Height;
+                    return width > 0D && height > 0D;
+                case ExcelVisualDrawingLayerKind.Image when layer.Image != null:
+                    x = layer.Image.X;
+                    y = layer.Image.Y;
+                    width = layer.Image.Width;
+                    height = layer.Image.Height;
+                    return width > 0D && height > 0D;
+                case ExcelVisualDrawingLayerKind.Chart when layer.Chart != null:
+                    x = layer.Chart.X;
+                    y = layer.Chart.Y;
+                    width = layer.Chart.Width;
+                    height = layer.Chart.Height;
+                    return width > 0D && height > 0D;
+                case ExcelVisualDrawingLayerKind.CommentBody when layer.CommentBody != null:
+                    x = layer.CommentBody.X;
+                    y = layer.CommentBody.Y;
+                    width = layer.CommentBody.Width;
+                    height = layer.CommentBody.Height;
+                    return width > 0D && height > 0D;
+                default:
+                    x = 0D;
+                    y = 0D;
+                    width = 0D;
+                    height = 0D;
+                    return false;
+            }
+        }
+
+        private static bool RectanglesIntersect(double left, double top, double width, double height, double otherLeft, double otherTop, double otherWidth, double otherHeight) {
+            if (width <= 0D || height <= 0D || otherWidth <= 0D || otherHeight <= 0D) {
+                return false;
+            }
+
+            return left < otherLeft + otherWidth &&
+                left + width > otherLeft &&
+                top < otherTop + otherHeight &&
+                top + height > otherTop;
+        }
+
+        private static OfficeTextAlignment ResolveCellTextAlignment(ExcelVisualCell cell) {
+            string? alignment = cell.Style.HorizontalAlignment;
+            if (string.Equals(alignment, "center", StringComparison.OrdinalIgnoreCase)) {
+                return OfficeTextAlignment.Center;
+            }
+
+            if (string.Equals(alignment, "right", StringComparison.OrdinalIgnoreCase)) {
+                return OfficeTextAlignment.Right;
+            }
+
+            if (string.Equals(alignment, "left", StringComparison.OrdinalIgnoreCase)) {
+                return OfficeTextAlignment.Left;
+            }
+
+            if (!string.IsNullOrWhiteSpace(alignment) && !string.Equals(alignment, "general", StringComparison.OrdinalIgnoreCase)) {
+                return ResolveTextAlignment(alignment);
+            }
+
+            return cell.ValueKind == ExcelVisualCellValueKind.Number || cell.ValueKind == ExcelVisualCellValueKind.Date
+                ? OfficeTextAlignment.Right
+                : cell.ValueKind == ExcelVisualCellValueKind.Boolean || cell.ValueKind == ExcelVisualCellValueKind.Error
+                    ? OfficeTextAlignment.Center
+                    : OfficeTextAlignment.Left;
         }
 
         private static double ResolveMaxRichTextRunFontSize(IReadOnlyList<OfficeRichTextRun> runs) {
@@ -444,30 +729,6 @@ namespace OfficeIMO.Excel {
             }
 
             return max;
-        }
-
-        private static double ResolveRotatedTextWidthLimit(double availableWidth, double availableHeight, double lineHeight, double rotationDegrees) {
-            double width = Math.Max(1D, availableWidth);
-            double height = Math.Max(1D, availableHeight);
-            double radians = Math.Abs(rotationDegrees) * Math.PI / 180D;
-            double cos = Math.Abs(Math.Cos(radians));
-            double sin = Math.Abs(Math.Sin(radians));
-            double estimatedHeight = Math.Max(1D, lineHeight);
-            double limit = Math.Max(width, height);
-
-            if (cos > 0.000001D) {
-                limit = Math.Min(limit, (width - (estimatedHeight * sin)) / cos);
-            }
-
-            if (sin > 0.000001D) {
-                limit = Math.Min(limit, (height - (estimatedHeight * cos)) / sin);
-            }
-
-            if (double.IsNaN(limit) || double.IsInfinity(limit)) {
-                return Math.Max(width, height);
-            }
-
-            return Math.Max(1D, limit);
         }
 
         private static double ResolveRunFontSize(ExcelVisualTextRun run, ExcelCellStyleSnapshot style, double scale) {
@@ -604,6 +865,14 @@ namespace OfficeIMO.Excel {
                 GetCellDiagnosticSource(snapshot, cell)));
         }
 
+        private static void AddCellTextOccludedByDrawingDiagnostic(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, List<OfficeImageExportDiagnostic>? diagnostics) {
+            diagnostics?.Add(new OfficeImageExportDiagnostic(
+                OfficeImageExportDiagnosticSeverity.Warning,
+                ExcelImageExportDiagnosticCodes.CellTextOccludedByDrawing,
+                "Cell text was suppressed because its text anchor is covered by a later drawing layer in the exported range.",
+                GetCellDiagnosticSource(snapshot, cell)));
+        }
+
         private static void AddRichTextLayoutApproximationDiagnostic(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, List<OfficeImageExportDiagnostic>? diagnostics) {
             diagnostics?.Add(new OfficeImageExportDiagnostic(
                 OfficeImageExportDiagnosticSeverity.Warning,
@@ -614,6 +883,23 @@ namespace OfficeIMO.Excel {
 
         private static string GetCellDiagnosticSource(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell) =>
             snapshot.SheetName + "!" + A1.ColumnIndexToLetters(cell.Column) + cell.Row.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        private readonly struct CellTextViewport {
+            internal CellTextViewport(double x, double y, double width, double height) {
+                X = x;
+                Y = y;
+                Width = width;
+                Height = height;
+            }
+
+            internal double X { get; }
+
+            internal double Y { get; }
+
+            internal double Width { get; }
+
+            internal double Height { get; }
+        }
 
     }
 }

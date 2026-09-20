@@ -448,6 +448,232 @@ public static class OfficeGeometry {
     }
 
     /// <summary>
+    /// Samples a quadratic Bezier curve into straight-line points, excluding the start point and including the end point.
+    /// </summary>
+    /// <param name="start">Curve start point.</param>
+    /// <param name="control">Quadratic control point.</param>
+    /// <param name="end">Curve end point.</param>
+    /// <param name="segments">Number of line segments used to approximate the curve.</param>
+    public static List<OfficePoint> CreateQuadraticBezierPoints(OfficePoint start, OfficePoint control, OfficePoint end, int segments) {
+        EnsurePositiveSegmentCount(segments);
+        var points = new List<OfficePoint>(segments);
+        for (int i = 1; i <= segments; i++) {
+            double t = i / (double)segments;
+            double inverse = 1D - t;
+            double x = (inverse * inverse * start.X) + (2D * inverse * t * control.X) + (t * t * end.X);
+            double y = (inverse * inverse * start.Y) + (2D * inverse * t * control.Y) + (t * t * end.Y);
+            points.Add(new OfficePoint(x, y));
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// Samples a tuple quadratic Bezier curve into straight-line points, excluding the start point and including the end point.
+    /// </summary>
+    /// <param name="start">Curve start point.</param>
+    /// <param name="control">Quadratic control point.</param>
+    /// <param name="end">Curve end point.</param>
+    /// <param name="segments">Number of line segments used to approximate the curve.</param>
+    public static List<(double X, double Y)> CreateQuadraticBezierPoints(
+        (double X, double Y) start,
+        (double X, double Y) control,
+        (double X, double Y) end,
+        int segments) {
+        List<OfficePoint> sampled = CreateQuadraticBezierPoints(
+            new OfficePoint(start.X, start.Y),
+            new OfficePoint(control.X, control.Y),
+            new OfficePoint(end.X, end.Y),
+            segments);
+        var points = new List<(double X, double Y)>(sampled.Count);
+        for (int i = 0; i < sampled.Count; i++) {
+            points.Add((sampled[i].X, sampled[i].Y));
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// Samples a cubic Bezier curve into straight-line points, excluding the start point and including the end point.
+    /// </summary>
+    /// <param name="start">Curve start point.</param>
+    /// <param name="control1">First cubic control point.</param>
+    /// <param name="control2">Second cubic control point.</param>
+    /// <param name="end">Curve end point.</param>
+    /// <param name="segments">Number of line segments used to approximate the curve.</param>
+    public static List<OfficePoint> CreateCubicBezierPoints(OfficePoint start, OfficePoint control1, OfficePoint control2, OfficePoint end, int segments) {
+        EnsurePositiveSegmentCount(segments);
+        var points = new List<OfficePoint>(segments);
+        for (int i = 1; i <= segments; i++) {
+            double t = i / (double)segments;
+            double inverse = 1D - t;
+            double inverseSquared = inverse * inverse;
+            double tSquared = t * t;
+            double x = (inverseSquared * inverse * start.X) +
+                       (3D * inverseSquared * t * control1.X) +
+                       (3D * inverse * tSquared * control2.X) +
+                       (tSquared * t * end.X);
+            double y = (inverseSquared * inverse * start.Y) +
+                       (3D * inverseSquared * t * control1.Y) +
+                       (3D * inverse * tSquared * control2.Y) +
+                       (tSquared * t * end.Y);
+            points.Add(new OfficePoint(x, y));
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// Samples a tuple cubic Bezier curve into straight-line points, excluding the start point and including the end point.
+    /// </summary>
+    /// <param name="start">Curve start point.</param>
+    /// <param name="control1">First cubic control point.</param>
+    /// <param name="control2">Second cubic control point.</param>
+    /// <param name="end">Curve end point.</param>
+    /// <param name="segments">Number of line segments used to approximate the curve.</param>
+    public static List<(double X, double Y)> CreateCubicBezierPoints(
+        (double X, double Y) start,
+        (double X, double Y) control1,
+        (double X, double Y) control2,
+        (double X, double Y) end,
+        int segments) {
+        List<OfficePoint> sampled = CreateCubicBezierPoints(
+            new OfficePoint(start.X, start.Y),
+            new OfficePoint(control1.X, control1.Y),
+            new OfficePoint(control2.X, control2.Y),
+            new OfficePoint(end.X, end.Y),
+            segments);
+        var points = new List<(double X, double Y)>(sampled.Count);
+        for (int i = 0; i < sampled.Count; i++) {
+            points.Add((sampled[i].X, sampled[i].Y));
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// Samples an elliptical arc into straight-line points, excluding the start point and including the end point.
+    /// </summary>
+    /// <param name="centerX">Arc center X coordinate.</param>
+    /// <param name="centerY">Arc center Y coordinate.</param>
+    /// <param name="radiusX">Horizontal radius before optional rotation.</param>
+    /// <param name="radiusY">Vertical radius before optional rotation.</param>
+    /// <param name="startRadians">Start angle in radians.</param>
+    /// <param name="sweepRadians">Sweep angle in radians.</param>
+    /// <param name="segments">Number of line segments used to approximate the arc.</param>
+    /// <param name="rotationRadians">Optional rotation angle in radians.</param>
+    /// <param name="rotationCenterX">Rotation center X coordinate.</param>
+    /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
+    public static List<OfficePoint> CreateEllipticalArcPoints(
+        double centerX,
+        double centerY,
+        double radiusX,
+        double radiusY,
+        double startRadians,
+        double sweepRadians,
+        int segments,
+        double rotationRadians = 0D,
+        double rotationCenterX = 0D,
+        double rotationCenterY = 0D) {
+        EnsurePositiveSegmentCount(segments);
+        if (!IsFinite(radiusX) || radiusX <= 0D || !IsFinite(radiusY) || radiusY <= 0D) {
+            throw new ArgumentOutOfRangeException(nameof(radiusX), "Arc radii must be positive finite values.");
+        }
+
+        var points = new List<OfficePoint>(segments);
+        for (int i = 1; i <= segments; i++) {
+            double t = i / (double)segments;
+            double angle = startRadians + (sweepRadians * t);
+            OfficePoint point = new(
+                centerX + (Math.Cos(angle) * radiusX),
+                centerY + (Math.Sin(angle) * radiusY));
+            points.Add(Math.Abs(rotationRadians) > 0.000001D
+                ? RotatePoint(point, rotationCenterX, rotationCenterY, rotationRadians)
+                : point);
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// Samples a tuple elliptical arc into straight-line points, excluding the start point and including the end point.
+    /// </summary>
+    /// <param name="centerX">Arc center X coordinate.</param>
+    /// <param name="centerY">Arc center Y coordinate.</param>
+    /// <param name="radiusX">Horizontal radius before optional rotation.</param>
+    /// <param name="radiusY">Vertical radius before optional rotation.</param>
+    /// <param name="startRadians">Start angle in radians.</param>
+    /// <param name="sweepRadians">Sweep angle in radians.</param>
+    /// <param name="segments">Number of line segments used to approximate the arc.</param>
+    /// <param name="rotationRadians">Optional rotation angle in radians.</param>
+    /// <param name="rotationCenterX">Rotation center X coordinate.</param>
+    /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
+    public static List<(double X, double Y)> CreateEllipticalArcPointsAsTuples(
+        double centerX,
+        double centerY,
+        double radiusX,
+        double radiusY,
+        double startRadians,
+        double sweepRadians,
+        int segments,
+        double rotationRadians = 0D,
+        double rotationCenterX = 0D,
+        double rotationCenterY = 0D) {
+        List<OfficePoint> sampled = CreateEllipticalArcPoints(
+            centerX,
+            centerY,
+            radiusX,
+            radiusY,
+            startRadians,
+            sweepRadians,
+            segments,
+            rotationRadians,
+            rotationCenterX,
+            rotationCenterY);
+        var points = new List<(double X, double Y)>(sampled.Count);
+        for (int i = 0; i < sampled.Count; i++) {
+            points.Add((sampled[i].X, sampled[i].Y));
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// Calculates axis-aligned bounds for a rectangle after rotation around a supplied center.
+    /// </summary>
+    /// <param name="x">Rectangle left coordinate.</param>
+    /// <param name="y">Rectangle top coordinate.</param>
+    /// <param name="width">Rectangle width.</param>
+    /// <param name="height">Rectangle height.</param>
+    /// <param name="rotationDegrees">Rotation angle in degrees.</param>
+    /// <param name="centerX">Rotation center X coordinate.</param>
+    /// <param name="centerY">Rotation center Y coordinate.</param>
+    /// <returns>Axis-aligned bounds of the rotated rectangle.</returns>
+    public static (double Left, double Top, double Right, double Bottom) GetRotatedRectangleBounds(
+        double x,
+        double y,
+        double width,
+        double height,
+        double rotationDegrees,
+        double centerX,
+        double centerY) {
+        if (Math.Abs(rotationDegrees) <= 0.000001D) {
+            return (x, y, x + width, y + height);
+        }
+
+        double radians = DegreesToRadians(rotationDegrees);
+        OfficePoint topLeft = RotatePoint(new OfficePoint(x, y), centerX, centerY, radians);
+        OfficePoint topRight = RotatePoint(new OfficePoint(x + width, y), centerX, centerY, radians);
+        OfficePoint bottomRight = RotatePoint(new OfficePoint(x + width, y + height), centerX, centerY, radians);
+        OfficePoint bottomLeft = RotatePoint(new OfficePoint(x, y + height), centerX, centerY, radians);
+        double left = Math.Min(Math.Min(topLeft.X, topRight.X), Math.Min(bottomRight.X, bottomLeft.X));
+        double top = Math.Min(Math.Min(topLeft.Y, topRight.Y), Math.Min(bottomRight.Y, bottomLeft.Y));
+        double right = Math.Max(Math.Max(topLeft.X, topRight.X), Math.Max(bottomRight.X, bottomLeft.X));
+        double bottom = Math.Max(Math.Max(topLeft.Y, topRight.Y), Math.Max(bottomRight.Y, bottomLeft.Y));
+        return (left, top, right, bottom);
+    }
+
+    /// <summary>
     /// Converts degrees to radians.
     /// </summary>
     /// <param name="degrees">Angle in degrees.</param>
@@ -606,6 +832,12 @@ public static class OfficeGeometry {
         }
 
         return position > 1D ? 1D : position;
+    }
+
+    private static void EnsurePositiveSegmentCount(int segments) {
+        if (segments <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(segments), "Curve segment count must be positive.");
+        }
     }
 
     private static double NormalizeNonNegative(double value) =>

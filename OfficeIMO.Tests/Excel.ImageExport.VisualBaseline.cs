@@ -9,9 +9,10 @@ using Xdr = DocumentFormat.OpenXml.Drawing.Spreadsheet;
 using Xunit;
 
 namespace OfficeIMO.Tests {
-    public class ExcelImageExportVisualBaselineTests {
+    public partial class ExcelImageExportVisualBaselineTests {
         private const string BaselineName = "officeimo-excel-image-premium-range";
         private const string ConditionalBaselineName = "officeimo-excel-image-conditional-formatting";
+        private const string ExpandedIconSetBaselineName = "officeimo-excel-image-expanded-icon-sets";
         private const string SparklineBaselineName = "officeimo-excel-image-sparklines";
         private const string ImageClippingBaselineName = "officeimo-excel-image-clipped-image";
         private const string TwoCellImageBaselineName = "officeimo-excel-image-two-cell-image";
@@ -19,6 +20,7 @@ namespace OfficeIMO.Tests {
         private const string RotatedImageBaselineName = "officeimo-excel-image-rotated-image";
         private const string TransformedImageBaselineName = "officeimo-excel-image-transformed-image";
         private const string DrawingObjectBaselineName = "officeimo-excel-image-drawing-object";
+        private const string CommentBodyBaselineName = "officeimo-excel-image-comment-body";
         private const string RichTextBaselineName = "officeimo-excel-image-rich-text";
         private const string StackedTextBaselineName = "officeimo-excel-image-stacked-text";
         private const string PatternFillBaselineName = "officeimo-excel-image-pattern-fills";
@@ -28,13 +30,17 @@ namespace OfficeIMO.Tests {
             using ExcelBaselineFixture fixture = CreatePremiumBaselineWorkbook();
             ExcelRange range = fixture.Sheet.Range("A1:H8");
             ExcelImageExportOptions options = CreateBaselineOptions();
+            options.ShowCommentBodies = true;
 
             OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
             OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
 
-            Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentUnsupported);
+            OfficeImageExportDiagnostic commentDiagnostic = Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentBodyApproximation);
+            Assert.Equal("Premium!D7", commentDiagnostic.Source);
+            Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentUnsupported);
             Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Severity == OfficeImageExportDiagnosticSeverity.Error);
             Assert.DoesNotContain(svg.Diagnostics, diagnostic => diagnostic.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            AssertDiagnosticsBaseline(BaselineName + ".diagnostics.txt", png.Diagnostics);
             AssertRasterBaseline(BaselineName + ".png", png.Bytes);
             AssertTextBaseline(BaselineName + ".svg", System.Text.Encoding.UTF8.GetString(svg.Bytes));
         }
@@ -48,15 +54,39 @@ namespace OfficeIMO.Tests {
             OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
             OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
 
-            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetUnsupported);
-            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetApproximation);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Info, diagnostic.Severity);
             Assert.Equal("Signals!F3:F7", diagnostic.Source);
             Assert.DoesNotContain(png.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
             Assert.DoesNotContain(svg.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
             Assert.Contains("#63B3ED", System.Text.Encoding.UTF8.GetString(svg.Bytes), StringComparison.Ordinal);
             Assert.Contains("#7C3AED", System.Text.Encoding.UTF8.GetString(svg.Bytes), StringComparison.Ordinal);
+            Assert.Contains("#16A34A", System.Text.Encoding.UTF8.GetString(svg.Bytes), StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(ConditionalBaselineName + ".diagnostics.txt", png.Diagnostics);
             AssertRasterBaseline(ConditionalBaselineName + ".png", png.Bytes);
             AssertTextBaseline(ConditionalBaselineName + ".svg", System.Text.Encoding.UTF8.GetString(svg.Bytes));
+        }
+
+        [Fact]
+        public void ExpandedIconSetImageExportMatchesApprovedBaselines() {
+            using ExcelBaselineFixture fixture = CreateExpandedIconSetBaselineWorkbook();
+            ExcelRange range = fixture.Sheet.Range("A1:G7");
+            ExcelImageExportOptions options = CreateBaselineOptions();
+
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+            OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+            Assert.Equal(4, png.Diagnostics.Count(item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetApproximation));
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalIconSetUnsupported);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.DoesNotContain(svg.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.Contains("#16A34A", svgText, StringComparison.Ordinal);
+            Assert.Contains("#F59E0B", svgText, StringComparison.Ordinal);
+            Assert.Contains("#F97316", svgText, StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(ExpandedIconSetBaselineName + ".diagnostics.txt", png.Diagnostics);
+            AssertRasterBaseline(ExpandedIconSetBaselineName + ".png", png.Bytes);
+            AssertTextBaseline(ExpandedIconSetBaselineName + ".svg", svgText);
         }
 
         [Fact]
@@ -78,6 +108,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("#2563EB", svgText, StringComparison.Ordinal);
             Assert.Contains("#16A34A", svgText, StringComparison.Ordinal);
             Assert.Contains("#DC2626", svgText, StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(SparklineBaselineName + ".diagnostics.txt", png.Diagnostics);
             AssertRasterBaseline(SparklineBaselineName + ".png", png.Bytes);
             AssertTextBaseline(SparklineBaselineName + ".svg", svgText);
         }
@@ -94,8 +125,11 @@ namespace OfficeIMO.Tests {
 
             Assert.DoesNotContain(png.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
             Assert.DoesNotContain(svg.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.Contains(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellTextOccludedByDrawing && item.Source == "ImageClip!B2");
+            Assert.Contains(svg.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellTextOccludedByDrawing && item.Source == "ImageClip!B2");
             Assert.Contains("clip-path=\"url(#xl-image-clip-", svgText, StringComparison.Ordinal);
             Assert.Contains("x=\"-", svgText, StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(ImageClippingBaselineName + ".diagnostics.txt", png.Diagnostics);
             AssertRasterBaseline(ImageClippingBaselineName + ".png", png.Bytes);
             AssertTextBaseline(ImageClippingBaselineName + ".svg", svgText);
         }
@@ -194,9 +228,34 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void CommentBodyImageExportMatchesApprovedBaselines() {
+            using ExcelBaselineFixture fixture = CreateCommentBodyBaselineWorkbook();
+            ExcelRange range = fixture.Sheet.Range("A1:G7");
+            ExcelImageExportOptions options = CreateBaselineOptions();
+            options.ShowCommentBodies = true;
+
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+            OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+            Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellCommentBodyApproximation);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellCommentUnsupported);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellTextOccludedByDrawing);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.DoesNotContain(svg.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.Contains("Ready for leadership review", svgText, StringComparison.Ordinal);
+            Assert.Contains("#FFFBE6", svgText, StringComparison.Ordinal);
+            Assert.Contains("#FFF2CC", svgText, StringComparison.Ordinal);
+            Assert.Contains("#C00000", svgText, StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(CommentBodyBaselineName + ".diagnostics.txt", png.Diagnostics);
+            AssertRasterBaseline(CommentBodyBaselineName + ".png", png.Bytes);
+            AssertTextBaseline(CommentBodyBaselineName + ".svg", svgText);
+        }
+
+        [Fact]
         public void RichTextImageExportMatchesApprovedBaselines() {
             using ExcelBaselineFixture fixture = CreateRichTextBaselineWorkbook();
-            ExcelRange range = fixture.Sheet.Range("A1:B7");
+            ExcelRange range = fixture.Sheet.Range("A1:B8");
             ExcelImageExportOptions options = CreateBaselineOptions();
 
             OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
@@ -207,6 +266,7 @@ namespace OfficeIMO.Tests {
             Assert.DoesNotContain(svg.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
             Assert.Contains(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && item.Source == "RichText!B6");
             Assert.Contains(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellTextRotationApproximation && item.Source == "RichText!B7");
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && item.Source == "RichText!B8");
             Assert.DoesNotContain(png.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
             Assert.DoesNotContain(svg.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
             Assert.Contains("Single", svgText, StringComparison.Ordinal);
@@ -215,6 +275,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("Shrink", svgText, StringComparison.Ordinal);
             Assert.Contains("Clip", svgText, StringComparison.Ordinal);
             Assert.Contains("Tilt", svgText, StringComparison.Ordinal);
+            Assert.Contains("tiny line stays visible", svgText, StringComparison.Ordinal);
             Assert.Contains("transform=\"rotate(-45", svgText, StringComparison.Ordinal);
             Assert.Contains("#0F766E", svgText, StringComparison.Ordinal);
             Assert.Contains("#7C3AED", svgText, StringComparison.Ordinal);
@@ -222,6 +283,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("font-weight=\"700\"", svgText, StringComparison.Ordinal);
             Assert.Contains("font-style=\"italic\"", svgText, StringComparison.Ordinal);
             Assert.Contains("text-decoration=\"underline\"", svgText, StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(RichTextBaselineName + ".diagnostics.txt", png.Diagnostics);
             AssertRasterBaseline(RichTextBaselineName + ".png", png.Bytes);
             AssertTextBaseline(RichTextBaselineName + ".svg", svgText);
         }
@@ -250,6 +312,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("font-style=\"italic\"", svgText, StringComparison.Ordinal);
             Assert.Contains("text-decoration=\"underline\"", svgText, StringComparison.Ordinal);
             Assert.DoesNotContain("rotate(", svgText, StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(StackedTextBaselineName + ".diagnostics.txt", png.Diagnostics);
             AssertRasterBaseline(StackedTextBaselineName + ".png", png.Bytes);
             AssertTextBaseline(StackedTextBaselineName + ".svg", svgText);
         }
@@ -270,6 +333,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("stroke=\"#C00000\"", svgText, StringComparison.Ordinal);
             Assert.Contains("stroke=\"#1F4E79\"", svgText, StringComparison.Ordinal);
             Assert.Contains("fill=\"#70AD47\"", svgText, StringComparison.Ordinal);
+            AssertDiagnosticsBaseline(PatternFillBaselineName + ".diagnostics.txt", png.Diagnostics);
             AssertRasterBaseline(PatternFillBaselineName + ".png", png.Bytes);
             AssertTextBaseline(PatternFillBaselineName + ".svg", svgText);
         }
@@ -283,6 +347,7 @@ namespace OfficeIMO.Tests {
                 using ExcelBaselineFixture fixture = CreatePremiumBaselineWorkbook();
                 ExcelRange range = fixture.Sheet.Range("A1:H8");
                 ExcelImageExportOptions options = CreateBaselineOptions();
+                options.ShowCommentBodies = true;
                 AssertRasterBaseline(BaselineName + ".png", range.ExportImage(OfficeImageExportFormat.Png, options).Bytes);
                 AssertTextBaseline(BaselineName + ".svg", System.Text.Encoding.UTF8.GetString(range.ExportImage(OfficeImageExportFormat.Svg, options).Bytes));
             }
@@ -317,6 +382,8 @@ namespace OfficeIMO.Tests {
             Assert.Contains("<clipPath", svg, StringComparison.Ordinal);
             Assert.Contains("<polygon", svg, StringComparison.Ordinal);
             Assert.Contains("#C00000", svg, StringComparison.Ordinal);
+            Assert.Contains("Reviewer", svg, StringComparison.Ordinal);
+            Assert.Contains("Ready for leadership review", svg, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -465,6 +532,39 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ApprovedExpandedIconSetBaselinesAreRenderableAndNonBlank() {
+            string baselineDirectory = BaselineDirectory;
+            string pngPath = Path.Combine(baselineDirectory, ExpandedIconSetBaselineName + ".png");
+            string svgPath = Path.Combine(baselineDirectory, ExpandedIconSetBaselineName + ".svg");
+            if (UpdateBaselines) {
+                using ExcelBaselineFixture fixture = CreateExpandedIconSetBaselineWorkbook();
+                ExcelRange range = fixture.Sheet.Range("A1:G7");
+                ExcelImageExportOptions options = CreateBaselineOptions();
+                AssertRasterBaseline(ExpandedIconSetBaselineName + ".png", range.ExportImage(OfficeImageExportFormat.Png, options).Bytes);
+                AssertTextBaseline(ExpandedIconSetBaselineName + ".svg", System.Text.Encoding.UTF8.GetString(range.ExportImage(OfficeImageExportFormat.Svg, options).Bytes));
+            }
+
+            Assert.True(File.Exists(pngPath), "Missing approved expanded-icon-set PNG baseline: " + pngPath);
+            Assert.True(File.Exists(svgPath), "Missing approved expanded-icon-set SVG baseline: " + svgPath);
+
+            OfficeRasterImage image = VisualBaselineTestSupport.DecodePng(File.ReadAllBytes(pngPath), "Approved expanded-icon-set PNG baseline is not a supported PNG file.");
+            Assert.True(image.Width >= 600, "Expanded-icon-set PNG baseline width is unexpectedly small.");
+            Assert.True(image.Height >= 250, "Expanded-icon-set PNG baseline height is unexpectedly small.");
+            int greenPixels = CountPixelsNear(image, OfficeColor.FromRgb(22, 163, 74));
+            int orangePixels = CountPixelsNear(image, OfficeColor.FromRgb(249, 115, 22));
+            Assert.True(greenPixels > 20, "Expanded-icon-set PNG baseline does not contain enough green icon pixels.");
+            Assert.True(orangePixels > 20, "Expanded-icon-set PNG baseline does not contain enough orange icon pixels.");
+
+            string svg = File.ReadAllText(svgPath);
+            Assert.Contains("<svg", svg, StringComparison.Ordinal);
+            Assert.Contains("Expanded Icon Sets", svg, StringComparison.Ordinal);
+            Assert.Contains("Five arrows", svg, StringComparison.Ordinal);
+            Assert.Contains("Four traffic", svg, StringComparison.Ordinal);
+            Assert.Contains("#F59E0B", svg, StringComparison.Ordinal);
+            Assert.Contains("#F97316", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ApprovedDrawingObjectBaselinesAreRenderableAndNonBlank() {
             string baselineDirectory = BaselineDirectory;
             string pngPath = Path.Combine(baselineDirectory, DrawingObjectBaselineName + ".png");
@@ -491,6 +591,38 @@ namespace OfficeIMO.Tests {
             Assert.Contains("Premium shape", svg, StringComparison.Ordinal);
             Assert.Contains("#E0F2FE", svg, StringComparison.Ordinal);
             Assert.Contains("#0284C7", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ApprovedCommentBodyBaselinesAreRenderableAndNonBlank() {
+            string baselineDirectory = BaselineDirectory;
+            string pngPath = Path.Combine(baselineDirectory, CommentBodyBaselineName + ".png");
+            string svgPath = Path.Combine(baselineDirectory, CommentBodyBaselineName + ".svg");
+            if (UpdateBaselines) {
+                using ExcelBaselineFixture fixture = CreateCommentBodyBaselineWorkbook();
+                ExcelRange range = fixture.Sheet.Range("A1:G7");
+                ExcelImageExportOptions options = CreateBaselineOptions();
+                options.ShowCommentBodies = true;
+                AssertRasterBaseline(CommentBodyBaselineName + ".png", range.ExportImage(OfficeImageExportFormat.Png, options).Bytes);
+                AssertTextBaseline(CommentBodyBaselineName + ".svg", System.Text.Encoding.UTF8.GetString(range.ExportImage(OfficeImageExportFormat.Svg, options).Bytes));
+            }
+
+            Assert.True(File.Exists(pngPath), "Missing approved comment-body PNG baseline: " + pngPath);
+            Assert.True(File.Exists(svgPath), "Missing approved comment-body SVG baseline: " + svgPath);
+
+            OfficeRasterImage image = VisualBaselineTestSupport.DecodePng(File.ReadAllBytes(pngPath), "Approved comment-body PNG baseline is not a supported PNG file.");
+            Assert.True(image.Width >= 700, "Comment-body PNG baseline width is unexpectedly small.");
+            Assert.True(image.Height >= 250, "Comment-body PNG baseline height is unexpectedly small.");
+            Assert.True(CountPixelsNear(image, OfficeColor.FromRgb(255, 251, 230)) > 500, "Comment-body PNG baseline does not contain enough callout fill pixels.");
+            Assert.True(CountPixelsNear(image, OfficeColor.FromRgb(255, 242, 204)) > 100, "Comment-body PNG baseline does not contain enough callout header pixels.");
+
+            string svg = File.ReadAllText(svgPath);
+            Assert.Contains("<svg", svg, StringComparison.Ordinal);
+            Assert.Contains("Comment Body Fidelity", svg, StringComparison.Ordinal);
+            Assert.Contains("Ready for leadership review", svg, StringComparison.Ordinal);
+            Assert.Contains("#FFFBE6", svg, StringComparison.Ordinal);
+            Assert.Contains("#FFF2CC", svg, StringComparison.Ordinal);
+            Assert.Contains("<polygon", svg, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -698,7 +830,6 @@ namespace OfficeIMO.Tests {
             sheet.CellAt(3, 2).Percent(0);
             sheet.CellValue(3, 3, "Ready");
             sheet.CellAt(3, 3).Success();
-            sheet.SetComment("C3", "Ready for leadership review", "Reviewer");
             sheet.CellValue(3, 4, "Wrapped cell text stays centered and readable");
             sheet.WrapCells(3, 3, 4);
             sheet.CellVerticalAlign(3, 4, VerticalAlignmentValues.Center);
@@ -709,8 +840,10 @@ namespace OfficeIMO.Tests {
             sheet.CellAt(4, 2).Percent(0);
             sheet.CellValue(4, 3, "Watch");
             sheet.CellAt(4, 3).Warning();
-            sheet.CellValue(4, 4, "Long text intentionally clips with a diagnostic when the cell is too small");
+            sheet.CellValue(4, 4, "Narrative stays bounded beside the chart");
             sheet.CellAt(4, 4).MutedText();
+            sheet.WrapCells(4, 4, 4);
+            sheet.CellVerticalAlign(4, 4, VerticalAlignmentValues.Center);
 
             sheet.CellValue(5, 1, "South");
             sheet.CellValue(5, 2, 0.82);
@@ -725,6 +858,13 @@ namespace OfficeIMO.Tests {
                 new ExcelRichTextRun(" text") { Italic = true, Underline = true, FontColor = "7C3AED", FontSize = 12D });
             sheet.CellAt(6, 4).SetBorder(BorderStyleValues.Thin, "CBD5E1");
             sheet.CellAt(6, 4).SetFillColor("F8FAFC");
+            sheet.CellValue(7, 4, "Review note");
+            sheet.CellAt(7, 4).SetBorder(BorderStyleValues.Thin, "CBD5E1");
+            sheet.CellAt(7, 4).SetFillColor("FFF7ED");
+            sheet.CellAt(7, 4).SetFontColor("92400E");
+            sheet.CellAlign(7, 4, HorizontalAlignmentValues.Center);
+            sheet.CellVerticalAlign(7, 4, VerticalAlignmentValues.Center);
+            sheet.SetComment("D7", "Ready for leadership review", "Reviewer");
 
             sheet.SetColumnWidth(1, 14);
             sheet.SetColumnWidth(2, 10);
@@ -735,9 +875,10 @@ namespace OfficeIMO.Tests {
             sheet.SetColumnWidth(7, 16);
             sheet.SetColumnWidth(8, 16);
             sheet.SetRowHeight(3, 54);
-            sheet.SetRowHeight(4, 24);
+            sheet.SetRowHeight(4, 36);
             sheet.SetRowHeight(5, 40);
             sheet.SetRowHeight(6, 32);
+            sheet.SetRowHeight(7, 32);
 
             for (int row = 2; row <= 5; row++) {
                 for (int column = 1; column <= 4; column++) {
@@ -747,6 +888,61 @@ namespace OfficeIMO.Tests {
 
             sheet.AddImage(6, 2, CreateMarkerPng(), "image/png", widthPixels: 36, heightPixels: 22, name: "QualityMarker");
             sheet.AddChartFromRange("A2:B5", row: 2, column: 6, widthPixels: 230, heightPixels: 135, type: ExcelChartType.ColumnClustered, title: "Revenue Trend");
+            return new ExcelBaselineFixture(document, sheet);
+        }
+
+        private static ExcelBaselineFixture CreateCommentBodyBaselineWorkbook() {
+            string filePath = Path.Combine(Path.GetTempPath(), "OfficeIMO-ExcelCommentBodyBaseline-" + Guid.NewGuid().ToString("N") + ".xlsx");
+            ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("CommentBodies");
+
+            sheet.CellValue(1, 1, "Comment Body Fidelity");
+            sheet.Range("A1:G1").Merge();
+            sheet.Range("A1:G1").SetFillColor("0F172A").SetFontColor("FFFFFF").SetBold();
+            sheet.CellAlign(1, 1, HorizontalAlignmentValues.Center);
+            sheet.CellVerticalAlign(1, 1, VerticalAlignmentValues.Center);
+
+            sheet.CellValue(2, 1, "Region");
+            sheet.CellValue(2, 2, "Status");
+            sheet.CellValue(2, 3, "Owner");
+            sheet.CellValue(2, 4, "Note");
+            sheet.Range("A2:D2").SetFillColor("E2E8F0").SetFontColor("0F172A").SetBold();
+
+            sheet.CellValue(3, 1, "North");
+            sheet.CellValue(3, 2, "Ready");
+            sheet.CellAt(3, 2).Success();
+            sheet.CellValue(3, 3, "Reviewer");
+            sheet.CellValue(3, 4, "Open");
+            sheet.SetComment("D3", "Ready for leadership review.\nCallout stays readable without hiding the table.", "Reviewer");
+
+            sheet.CellValue(4, 1, "West");
+            sheet.CellValue(4, 2, "Watch");
+            sheet.CellAt(4, 2).Warning();
+            sheet.CellValue(4, 3, "Planner");
+
+            sheet.CellValue(5, 1, "South");
+            sheet.CellValue(5, 2, "Risk");
+            sheet.CellAt(5, 2).Error();
+            sheet.CellValue(5, 3, "Owner");
+
+            sheet.SetColumnWidth(1, 14);
+            sheet.SetColumnWidth(2, 13);
+            sheet.SetColumnWidth(3, 16);
+            sheet.SetColumnWidth(4, 10);
+            sheet.SetColumnWidth(5, 18);
+            sheet.SetColumnWidth(6, 18);
+            sheet.SetColumnWidth(7, 18);
+            sheet.SetRowHeight(1, 28);
+            for (int row = 2; row <= 7; row++) {
+                sheet.SetRowHeight(row, row == 3 ? 32 : 28);
+                for (int column = 1; column <= 7; column++) {
+                    sheet.CellAt(row, column).SetBorder(BorderStyleValues.Thin, "CBD5E1");
+                    sheet.CellVerticalAlign(row, column, VerticalAlignmentValues.Center);
+                }
+            }
+
+            sheet.Range("A3:D5").SetFillColor("F8FAFC");
+            sheet.Range("E2:G7").SetFillColor("FFFFFF");
             return new ExcelBaselineFixture(document, sheet);
         }
 
@@ -761,7 +957,7 @@ namespace OfficeIMO.Tests {
             sheet.CellAlign(1, 1, HorizontalAlignmentValues.Center);
             sheet.CellVerticalAlign(1, 1, VerticalAlignmentValues.Center);
 
-            string[] labels = { "Single", "Hard break", "Wrapped", "Shrink", "Clipped", "Rotated" };
+            string[] labels = { "Single", "Hard break", "Wrapped", "Shrink", "Clipped", "Rotated", "Mixed size" };
             for (int i = 0; i < labels.Length; i++) {
                 int row = i + 2;
                 sheet.CellValue(row, 1, labels[i]);
@@ -793,7 +989,7 @@ namespace OfficeIMO.Tests {
                     new ExcelRichTextRun(" to fit") { Italic = true, FontColor = "7C3AED", FontSize = 18D });
 
             sheet.CellAt(6, 2).SetRichText(
-                new ExcelRichTextRun("Clipped rich text should ellipsize at the cell edge") { Bold = true, FontColor = "DC2626", FontSize = 12D });
+                new ExcelRichTextRun("Rich text stays bounded     hidden overflow") { Bold = true, FontColor = "DC2626", FontSize = 12D });
 
             sheet.CellAt(7, 2)
                 .SetTextRotation(45)
@@ -801,6 +997,10 @@ namespace OfficeIMO.Tests {
                     new ExcelRichTextRun("Tilt") { Bold = true, FontColor = "0F766E", FontSize = 14D },
                     new ExcelRichTextRun(" rich") { Italic = true, FontColor = "7C3AED", FontSize = 13D },
                     new ExcelRichTextRun(" text") { Underline = true, FontColor = "2563EB", FontSize = 13D });
+
+            sheet.CellAt(8, 2).SetRichText(
+                new ExcelRichTextRun("Large line") { Bold = true, FontColor = "0F766E", FontSize = 18D },
+                new ExcelRichTextRun("\ntiny line stays visible") { Italic = true, FontColor = "7C3AED", FontSize = 8D });
 
             sheet.SetColumnWidth(1, 14);
             sheet.SetColumnWidth(2, 18);
@@ -811,7 +1011,8 @@ namespace OfficeIMO.Tests {
             sheet.SetRowHeight(5, 28);
             sheet.SetRowHeight(6, 24);
             sheet.SetRowHeight(7, 48);
-            for (int row = 1; row <= 7; row++) {
+            sheet.SetRowHeight(8, 36);
+            for (int row = 1; row <= 8; row++) {
                 for (int column = 1; column <= 2; column++) {
                     sheet.CellAt(row, column).SetBorder(BorderStyleValues.Thin, "CBD5E1");
                 }
@@ -1023,6 +1224,57 @@ namespace OfficeIMO.Tests {
             sheet.AddConditionalDataBar("D3:D7", OfficeColor.FromRgb(124, 58, 237));
             sheet.AddConditionalIconSet("F3:F7");
             sheet.AddConditionalRule("G3:G7", ConditionalFormattingOperatorValues.GreaterThan, "15", fillColor: "C6EFCE");
+            return new ExcelBaselineFixture(document, sheet);
+        }
+
+        private static ExcelBaselineFixture CreateExpandedIconSetBaselineWorkbook() {
+            string filePath = Path.Combine(Path.GetTempPath(), "OfficeIMO-ExcelExpandedIconSetBaseline-" + Guid.NewGuid().ToString("N") + ".xlsx");
+            ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("IconSets");
+
+            sheet.CellValue(1, 1, "Expanded Icon Sets");
+            sheet.Range("A1:G1").Merge();
+            sheet.Range("A1:E1").SetFillColor("0F172A").SetFontColor("FFFFFF").SetBold();
+            sheet.CellAlign(1, 1, HorizontalAlignmentValues.Center);
+            sheet.CellVerticalAlign(1, 1, VerticalAlignmentValues.Center);
+            sheet.SetRowHeight(1, 26);
+
+            string[] headers = { "Tier", "Five arrows", "Arrow value", "Four traffic", "Traffic value", "Five rating", "Five quarters" };
+            for (int column = 1; column <= headers.Length; column++) {
+                sheet.CellValue(2, column, headers[column - 1]);
+                sheet.CellAt(2, column).SetFillColor("E2E8F0").SetFontColor("1F2937").SetBold();
+                sheet.CellVerticalAlign(2, column, VerticalAlignmentValues.Center);
+            }
+
+            string[] tiers = { "Lowest", "Low", "Middle", "High", "Highest" };
+            for (int i = 0; i < tiers.Length; i++) {
+                int row = i + 3;
+                sheet.CellValue(row, 1, tiers[i]);
+                sheet.CellValue(row, 2, i + 1);
+                sheet.CellValue(row, 3, i + 1);
+                sheet.CellValue(row, 4, Math.Min(i + 1, 4));
+                sheet.CellValue(row, 5, Math.Min(i + 1, 4));
+                sheet.CellValue(row, 6, i + 1);
+                sheet.CellValue(row, 7, i + 1);
+            }
+
+            for (int column = 1; column <= 7; column++) {
+                sheet.SetColumnWidth(column, column == 1 ? 13 : 12);
+            }
+
+            for (int row = 2; row <= 7; row++) {
+                sheet.SetRowHeight(row, 24);
+                for (int column = 1; column <= 7; column++) {
+                    sheet.CellAt(row, column).SetBorder(BorderStyleValues.Thin, "CBD5E1");
+                    sheet.CellVerticalAlign(row, column, VerticalAlignmentValues.Center);
+                    sheet.CellAlign(row, column, column == 1 ? HorizontalAlignmentValues.Left : HorizontalAlignmentValues.Center);
+                }
+            }
+
+            sheet.AddConditionalIconSet("B3:B7", IconSetValues.FiveArrows, showValue: true, reverseIconOrder: false);
+            sheet.AddConditionalIconSet("D3:D7", IconSetValues.FourTrafficLights, showValue: true, reverseIconOrder: false);
+            sheet.AddConditionalIconSet("F3:F7", IconSetValues.FiveRating, showValue: true, reverseIconOrder: false);
+            sheet.AddConditionalIconSet("G3:G7", IconSetValues.FiveQuarters, showValue: true, reverseIconOrder: false);
             return new ExcelBaselineFixture(document, sheet);
         }
 
@@ -1684,6 +1936,52 @@ namespace OfficeIMO.Tests {
             File.WriteAllText(Path.Combine(artifactDirectory, "actual-" + baselineName), normalizedActual, new System.Text.UTF8Encoding(false));
             File.Copy(expectedPath, Path.Combine(artifactDirectory, "expected-" + baselineName), overwrite: true);
             throw new Xunit.Sdk.XunitException("Excel image SVG baseline changed for '" + baselineName + "'. Artifacts: " + artifactDirectory + ".");
+        }
+
+        private static void AssertDiagnosticsBaseline(string baselineName, IReadOnlyList<OfficeImageExportDiagnostic> diagnostics) {
+            string expectedPath = Path.Combine(BaselineDirectory, baselineName);
+            string normalizedActual = CreateDiagnosticsBaselineText(diagnostics);
+            if (UpdateBaselines) {
+                Directory.CreateDirectory(Path.GetDirectoryName(expectedPath)!);
+                File.WriteAllText(expectedPath, normalizedActual, new System.Text.UTF8Encoding(false));
+                return;
+            }
+
+            if (!File.Exists(expectedPath)) {
+                throw new FileNotFoundException(
+                    "Excel image diagnostics baseline missing. Set OFFICEIMO_UPDATE_EXCEL_IMAGE_BASELINES=1 and re-run this test to generate it.",
+                    expectedPath);
+            }
+
+            string expectedText = VisualBaselineTestSupport.NormalizeText(File.ReadAllText(expectedPath));
+            if (string.Equals(expectedText, normalizedActual, StringComparison.Ordinal)) {
+                return;
+            }
+
+            string artifactDirectory = VisualBaselineTestSupport.CreateArtifactDirectory("OfficeIMO.ExcelImageBaselines");
+            File.WriteAllText(Path.Combine(artifactDirectory, "actual-" + baselineName), normalizedActual, new System.Text.UTF8Encoding(false));
+            File.Copy(expectedPath, Path.Combine(artifactDirectory, "expected-" + baselineName), overwrite: true);
+            throw new Xunit.Sdk.XunitException("Excel image diagnostics baseline changed for '" + baselineName + "'. Artifacts: " + artifactDirectory + ".");
+        }
+
+        private static string CreateDiagnosticsBaselineText(IReadOnlyList<OfficeImageExportDiagnostic> diagnostics) {
+            var builder = new System.Text.StringBuilder();
+            foreach (OfficeImageExportDiagnostic diagnostic in diagnostics
+                         .OrderBy(item => item.Source ?? string.Empty, StringComparer.Ordinal)
+                         .ThenBy(item => item.Code, StringComparer.Ordinal)
+                         .ThenBy(item => item.Message, StringComparer.Ordinal)) {
+                builder
+                    .Append(diagnostic.Severity)
+                    .Append('|')
+                    .Append(diagnostic.Code)
+                    .Append('|')
+                    .Append(diagnostic.Source ?? string.Empty)
+                    .Append('|')
+                    .Append(VisualBaselineTestSupport.NormalizeText(diagnostic.Message).Replace("\n", "\\n", StringComparison.Ordinal))
+                    .Append('\n');
+            }
+
+            return builder.ToString();
         }
 
         private static string BaselineDirectory =>

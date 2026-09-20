@@ -19,6 +19,8 @@ namespace OfficeIMO.Excel {
 
         private static void RenderRasterDrawingObject(OfficeRasterCanvas canvas, ExcelVisualDrawingObject drawingObject, ExcelImageExportOptions options, List<OfficeImageExportDiagnostic>? diagnostics) {
             AddRotatedTextApproximationDiagnostic(drawingObject, diagnostics);
+            AddTextAutoFitUnsupportedDiagnostic(drawingObject, diagnostics);
+            AddTextVerticalOrientationUnsupportedDiagnostic(drawingObject, diagnostics);
             double scale = options.Scale;
             DrawingObjectScene scene = CreateOfficeDrawing(drawingObject, scale);
             OfficeRasterImage drawingImage = OfficeDrawingRasterRenderer.Render(scene.Drawing);
@@ -32,6 +34,8 @@ namespace OfficeIMO.Excel {
 
         private static void AppendSvgDrawingObject(StringBuilder builder, ExcelVisualDrawingObject drawingObject, ExcelImageExportOptions options, List<OfficeImageExportDiagnostic>? diagnostics) {
             AddRotatedTextApproximationDiagnostic(drawingObject, diagnostics);
+            AddTextAutoFitUnsupportedDiagnostic(drawingObject, diagnostics);
+            AddTextVerticalOrientationUnsupportedDiagnostic(drawingObject, diagnostics);
             double scale = options.Scale;
             double x = drawingObject.X * scale;
             double y = drawingObject.Y * scale;
@@ -62,22 +66,43 @@ namespace OfficeIMO.Excel {
             drawing.AddShape(shape, offsetX, offsetY);
 
             if (!string.IsNullOrWhiteSpace(drawingObject.Text)) {
-                double padding = Math.Min(8D * scale, Math.Max(2D, Math.Min(width, height) / 8D));
-                double textWidth = Math.Max(1D, width - (padding * 2D));
-                double textHeight = Math.Max(1D, height - (padding * 2D));
-                double fontSize = Math.Max(7D, Math.Min(11D * scale, textHeight * 0.55D));
+                double insetLeft = Math.Max(0D, drawingObject.TextInsetLeft * scale);
+                double insetTop = Math.Max(0D, drawingObject.TextInsetTop * scale);
+                double insetRight = Math.Max(0D, drawingObject.TextInsetRight * scale);
+                double insetBottom = Math.Max(0D, drawingObject.TextInsetBottom * scale);
+                double textWidth = Math.Max(1D, width - insetLeft - insetRight);
+                double textHeight = Math.Max(1D, height - insetTop - insetBottom);
+                OfficeFontInfo font = ResolveDrawingTextFont(drawingObject, scale, textHeight);
+                double textRotationDegrees = ResolveDrawingTextRotationDegrees(drawingObject);
                 drawing.AddText(
                     drawingObject.Text,
-                    offsetX + padding,
-                    offsetY + padding,
+                    offsetX + insetLeft,
+                    offsetY + insetTop,
                     textWidth,
                     textHeight,
-                    new OfficeFontInfo("Calibri", fontSize),
-                    OfficeColor.FromRgb(31, 41, 55),
-                    OfficeTextAlignment.Center);
+                    font,
+                    ResolveArgb(drawingObject.TextColorArgb) ?? OfficeColor.FromRgb(31, 41, 55),
+                    drawingObject.TextAlignment,
+                    verticalAlignment: drawingObject.TextVerticalAlignment,
+                    rotationDegrees: textRotationDegrees,
+                    rotationCenterX: offsetX + width / 2D,
+                    rotationCenterY: offsetY + height / 2D,
+                    wrapText: drawingObject.TextWrap,
+                    shrinkToFit: drawingObject.TextShrinkToFit,
+                    stackedText: IsSupportedStackedTextOrientation(drawingObject));
             }
 
             return new DrawingObjectScene(drawing, offsetX, offsetY);
+        }
+
+        private static OfficeFontInfo ResolveDrawingTextFont(ExcelVisualDrawingObject drawingObject, double scale, double textHeight) {
+            string family = string.IsNullOrWhiteSpace(drawingObject.TextFontFamily)
+                ? "Calibri"
+                : drawingObject.TextFontFamily!;
+            double fontSize = drawingObject.TextFontSize.HasValue && drawingObject.TextFontSize.Value > 0D
+                ? Math.Max(1D, drawingObject.TextFontSize.Value * scale)
+                : Math.Max(7D, Math.Min(11D * scale, textHeight * 0.55D));
+            return new OfficeFontInfo(family, fontSize, drawingObject.TextFontStyle);
         }
 
         private static OfficeShape CreateOfficeShape(ExcelVisualDrawingObject drawingObject, double width, double height) =>
@@ -92,24 +117,81 @@ namespace OfficeIMO.Excel {
                 : OfficeShape.Rectangle(width, height);
 
         private static void AddRotatedTextApproximationDiagnostic(ExcelVisualDrawingObject drawingObject, List<OfficeImageExportDiagnostic>? diagnostics) {
-            if (diagnostics == null || !drawingObject.HasRotation || string.IsNullOrWhiteSpace(drawingObject.Text)) {
+            if (diagnostics == null || !UsesDrawingTextRotation(drawingObject) || string.IsNullOrWhiteSpace(drawingObject.Text)) {
                 return;
             }
 
             diagnostics.Add(new OfficeImageExportDiagnostic(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.DrawingShapeTextRotationApproximation,
-                "Worksheet drawing object text is rendered without Excel-exact rotation metrics.",
+                "Worksheet drawing object text is rendered through shared Drawing rotation without Excel-exact text-box metrics.",
+                drawingObject.Source));
+        }
+
+        private static void AddTextVerticalOrientationUnsupportedDiagnostic(ExcelVisualDrawingObject drawingObject, List<OfficeImageExportDiagnostic>? diagnostics) {
+            if (diagnostics == null || IsSupportedTextOrientation(drawingObject) || string.IsNullOrWhiteSpace(drawingObject.Text)) {
+                return;
+            }
+
+            diagnostics.Add(new OfficeImageExportDiagnostic(
+                OfficeImageExportDiagnosticSeverity.Warning,
+                ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported,
+                "Worksheet drawing object text requested a non-horizontal orientation; image export renders it as horizontal text inside the authored shape bounds.",
+                drawingObject.Source));
+        }
+
+        private static bool IsSupportedTextOrientation(ExcelVisualDrawingObject drawingObject) =>
+            drawingObject.TextOrientation == ExcelDrawingTextOrientation.Horizontal ||
+            drawingObject.TextOrientation == ExcelDrawingTextOrientation.Vertical270 ||
+            IsSupportedStackedTextOrientation(drawingObject);
+
+        private static bool IsSupportedStackedTextOrientation(ExcelVisualDrawingObject drawingObject) =>
+            drawingObject.TextOrientation == ExcelDrawingTextOrientation.Vertical;
+
+        private static bool UsesDrawingTextRotation(ExcelVisualDrawingObject drawingObject) =>
+            drawingObject.HasRotation ||
+            drawingObject.TextOrientation == ExcelDrawingTextOrientation.Vertical270;
+
+        private static double ResolveDrawingTextRotationDegrees(ExcelVisualDrawingObject drawingObject) {
+            double rotation = drawingObject.RotationDegrees;
+            if (drawingObject.TextOrientation == ExcelDrawingTextOrientation.Vertical270) {
+                rotation += 270D;
+            }
+
+            return NormalizeRotationDegrees(rotation);
+        }
+
+        private static double NormalizeRotationDegrees(double rotationDegrees) {
+            double normalized = rotationDegrees % 360D;
+            return normalized < 0D
+                ? normalized + 360D
+                : normalized;
+        }
+
+        private static void AddTextAutoFitUnsupportedDiagnostic(ExcelVisualDrawingObject drawingObject, List<OfficeImageExportDiagnostic>? diagnostics) {
+            if (diagnostics == null || !drawingObject.TextResizeShapeToFit || string.IsNullOrWhiteSpace(drawingObject.Text)) {
+                return;
+            }
+
+            diagnostics.Add(new OfficeImageExportDiagnostic(
+                OfficeImageExportDiagnosticSeverity.Warning,
+                ExcelImageExportDiagnosticCodes.DrawingShapeTextAutoFitUnsupported,
+                "Worksheet drawing object text requested resizing the shape to fit text; image export keeps the authored shape bounds and renders text inside them.",
                 drawingObject.Source));
         }
 
         private static void ExpandRotatedShapeBounds(double width, double height, double rotationDegrees, double strokeWidth, out double offsetX, out double offsetY) {
-            double radians = OfficeGeometry.DegreesToRadians(rotationDegrees);
-            double rotatedWidth = (Math.Abs(width * Math.Cos(radians)) + Math.Abs(height * Math.Sin(radians)));
-            double rotatedHeight = (Math.Abs(width * Math.Sin(radians)) + Math.Abs(height * Math.Cos(radians)));
+            (double left, double top, double right, double bottom) = OfficeGeometry.GetRotatedRectangleBounds(
+                0D,
+                0D,
+                width,
+                height,
+                rotationDegrees,
+                width / 2D,
+                height / 2D);
             double strokePadding = strokeWidth > 0D ? strokeWidth : 0D;
-            offsetX = Math.Max(0D, (rotatedWidth - width) / 2D) + strokePadding;
-            offsetY = Math.Max(0D, (rotatedHeight - height) / 2D) + strokePadding;
+            offsetX = Math.Max(0D, Math.Max(-left, right - width)) + strokePadding;
+            offsetY = Math.Max(0D, Math.Max(-top, bottom - height)) + strokePadding;
         }
 
         private readonly struct DrawingObjectScene {

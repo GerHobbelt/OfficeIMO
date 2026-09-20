@@ -341,11 +341,21 @@ public sealed partial class OfficeRasterCanvas {
         }
 
         int segments = Math.Max(4, (int)Math.Ceiling(Math.Abs(sweep) / 10D));
+        double startRadians = OfficeGeometry.DegreesToRadians(startDegrees);
+        double sweepRadians = OfficeGeometry.DegreesToRadians(sweep);
         double rotationRadians = OfficeGeometry.DegreesToRadians(rotationDegrees);
-        OfficePoint previous = ArcPoint(centerX, centerY, radiusX, radiusY, startDegrees, rotationRadians, rotationCenterX, rotationCenterY);
-        for (int i = 1; i <= segments; i++) {
-            double degrees = startDegrees + (sweep * i / segments);
-            OfficePoint current = ArcPoint(centerX, centerY, radiusX, radiusY, degrees, rotationRadians, rotationCenterX, rotationCenterY);
+        OfficePoint previous = CreateArcStartPoint(centerX, centerY, radiusX, radiusY, startRadians, rotationRadians, rotationCenterX, rotationCenterY);
+        foreach (OfficePoint current in OfficeGeometry.CreateEllipticalArcPoints(
+            centerX,
+            centerY,
+            radiusX,
+            radiusY,
+            startRadians,
+            sweepRadians,
+            segments,
+            rotationRadians,
+            rotationCenterX,
+            rotationCenterY)) {
             DrawLine(previous.X, previous.Y, current.X, current.Y, color, thickness);
             previous = current;
         }
@@ -516,16 +526,24 @@ public sealed partial class OfficeRasterCanvas {
             return;
         }
 
-        double radians = OfficeGeometry.DegreesToRadians(rotationDegrees);
-        bool rotated = Math.Abs(rotationDegrees) >= 0.0001D;
-        OfficePoint topLeft = rotated ? OfficeGeometry.RotatePoint(new OfficePoint(x, y), rotationCenterX, rotationCenterY, radians) : new OfficePoint(x, y);
-        OfficePoint topRight = rotated ? OfficeGeometry.RotatePoint(new OfficePoint(x + width, y), rotationCenterX, rotationCenterY, radians) : new OfficePoint(x + width, y);
-        OfficePoint bottomRight = rotated ? OfficeGeometry.RotatePoint(new OfficePoint(x + width, y + height), rotationCenterX, rotationCenterY, radians) : new OfficePoint(x + width, y + height);
-        OfficePoint bottomLeft = rotated ? OfficeGeometry.RotatePoint(new OfficePoint(x, y + height), rotationCenterX, rotationCenterY, radians) : new OfficePoint(x, y + height);
-        double minX = Math.Min(Math.Min(topLeft.X, topRight.X), Math.Min(bottomRight.X, bottomLeft.X));
-        double maxX = Math.Max(Math.Max(topLeft.X, topRight.X), Math.Max(bottomRight.X, bottomLeft.X));
-        double minY = Math.Min(Math.Min(topLeft.Y, topRight.Y), Math.Min(bottomRight.Y, bottomLeft.Y));
-        double maxY = Math.Max(Math.Max(topLeft.Y, topRight.Y), Math.Max(bottomRight.Y, bottomLeft.Y));
+        var projection = new OfficeImageProjection(
+            new OfficeImagePlacement(x, y, width, height),
+            new OfficeImageSourceCrop(
+                sourceLeft,
+                sourceTop,
+                Math.Max(0D, 1D - sourceLeft - sourceWidth),
+                Math.Max(0D, 1D - sourceTop - sourceHeight)),
+            rotationDegrees,
+            rotationCenterX,
+            rotationCenterY,
+            flipHorizontal,
+            flipVertical);
+        OfficeTransform imageTransform = projection.CreateUnitSquareTransform();
+        if (!imageTransform.TryInvert(out OfficeTransform inverseTransform)) {
+            return;
+        }
+
+        (double minX, double minY, double maxX, double maxY) = projection.GetDestinationBounds();
         int left = Clamp((int)Math.Floor(minX), 0, Width - 1);
         int top = Clamp((int)Math.Floor(minY), 0, Height - 1);
         int right = Clamp((int)Math.Ceiling(maxX), 0, Width - 1);
@@ -533,21 +551,11 @@ public sealed partial class OfficeRasterCanvas {
         bool cropped = sourceLeft > 0D || sourceTop > 0D || sourceWidth < 1D || sourceHeight < 1D;
         for (int py = top; py <= bottom; py++) {
             for (int px = left; px <= right; px++) {
-                OfficePoint local = rotated
-                    ? OfficeGeometry.RotatePoint(new OfficePoint(px + 0.5D, py + 0.5D), rotationCenterX, rotationCenterY, -radians)
-                    : new OfficePoint(px + 0.5D, py + 0.5D);
-                double u = (local.X - x) / width;
-                double v = (local.Y - y) / height;
+                OfficePoint unit = inverseTransform.TransformPoint(new OfficePoint(px + 0.5D, py + 0.5D));
+                double u = unit.X;
+                double v = unit.Y;
                 if (u < 0D || u >= 1D || v < 0D || v >= 1D) {
                     continue;
-                }
-
-                if (flipHorizontal) {
-                    u = 1D - u;
-                }
-
-                if (flipVertical) {
-                    v = 1D - v;
                 }
 
                 double sourceX;
@@ -811,17 +819,42 @@ public sealed partial class OfficeRasterCanvas {
         OfficeColor c10 = image.GetPixel(x1, y0);
         OfficeColor c01 = image.GetPixel(x0, y1);
         OfficeColor c11 = image.GetPixel(x1, y1);
+        double w00 = (1D - tx) * (1D - ty);
+        double w10 = tx * (1D - ty);
+        double w01 = (1D - tx) * ty;
+        double w11 = tx * ty;
+        double alpha = (c00.A * w00) + (c10.A * w10) + (c01.A * w01) + (c11.A * w11);
+        if (alpha <= 0D) {
+            return OfficeColor.Transparent;
+        }
+
         return OfficeColor.FromRgba(
-            InterpolateChannel(c00.R, c10.R, c01.R, c11.R, tx, ty),
-            InterpolateChannel(c00.G, c10.G, c01.G, c11.G, tx, ty),
-            InterpolateChannel(c00.B, c10.B, c01.B, c11.B, tx, ty),
-            InterpolateChannel(c00.A, c10.A, c01.A, c11.A, tx, ty));
+            SamplePremultipliedChannel(c00.R, c00.A, w00, c10.R, c10.A, w10, c01.R, c01.A, w01, c11.R, c11.A, w11, alpha),
+            SamplePremultipliedChannel(c00.G, c00.A, w00, c10.G, c10.A, w10, c01.G, c01.A, w01, c11.G, c11.A, w11, alpha),
+            SamplePremultipliedChannel(c00.B, c00.A, w00, c10.B, c10.A, w10, c01.B, c01.A, w01, c11.B, c11.A, w11, alpha),
+            (byte)Math.Round(Clamp(alpha, 0D, 255D)));
     }
 
-    private static byte InterpolateChannel(byte c00, byte c10, byte c01, byte c11, double tx, double ty) {
-        double top = c00 + ((c10 - c00) * tx);
-        double bottom = c01 + ((c11 - c01) * tx);
-        return (byte)Math.Round(Clamp(top + ((bottom - top) * ty), 0D, 255D));
+    private static byte SamplePremultipliedChannel(
+        byte c00,
+        byte a00,
+        double w00,
+        byte c10,
+        byte a10,
+        double w10,
+        byte c01,
+        byte a01,
+        double w01,
+        byte c11,
+        byte a11,
+        double w11,
+        double alpha) {
+        double premultiplied =
+            (c00 * a00 * w00) +
+            (c10 * a10 * w10) +
+            (c01 * a01 * w01) +
+            (c11 * a11 * w11);
+        return (byte)Math.Round(Clamp(premultiplied / alpha, 0D, 255D));
     }
 
     private static double DistanceToSegment(double px, double py, double x1, double y1, double x2, double y2) {
@@ -849,10 +882,9 @@ public sealed partial class OfficeRasterCanvas {
         return Math.Sqrt((dx * dx) + (dy * dy));
     }
 
-    private static OfficePoint ArcPoint(double centerX, double centerY, double radiusX, double radiusY, double degrees, double rotationRadians, double rotationCenterX, double rotationCenterY) {
-        double radians = OfficeGeometry.DegreesToRadians(degrees);
-        OfficePoint point = new OfficePoint(centerX + (Math.Cos(radians) * radiusX), centerY + (Math.Sin(radians) * radiusY));
-        return Math.Abs(rotationRadians) > 0.0001D
+    private static OfficePoint CreateArcStartPoint(double centerX, double centerY, double radiusX, double radiusY, double startRadians, double rotationRadians, double rotationCenterX, double rotationCenterY) {
+        OfficePoint point = new OfficePoint(centerX + (Math.Cos(startRadians) * radiusX), centerY + (Math.Sin(startRadians) * radiusY));
+        return Math.Abs(rotationRadians) > 0.000001D
             ? OfficeGeometry.RotatePoint(point, rotationCenterX, rotationCenterY, rotationRadians)
             : point;
     }

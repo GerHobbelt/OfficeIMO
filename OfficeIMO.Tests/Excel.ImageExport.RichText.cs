@@ -15,23 +15,30 @@ namespace OfficeIMO.Tests {
             sheet.SetRowHeight(1, 28);
             sheet.CellAt(1, 1).SetRichText(
                 new ExcelRichTextRun("Strong") { Bold = true, FontColor = "FF0000" },
-                new ExcelRichTextRun(" note") { Italic = true, Underline = true, FontColor = "0563C1", FontSize = 13D });
+                new ExcelRichTextRun(" note") { Italic = true, Underline = true, FontColor = "0563C1", FontSize = 13D },
+                new ExcelRichTextRun(" gone") { Strikethrough = true, FontColor = "6B7280", FontSize = 12D });
 
             ExcelRange range = sheet.Range("A1:A1");
             ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot();
             OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, new ExcelImageExportOptions { ShowGridlines = false });
             string svg = Encoding.UTF8.GetString(svgResult.Bytes);
 
-            Assert.Equal(2, snapshot.Cells[0].RichTextRuns.Count);
+            Assert.Equal(3, snapshot.Cells[0].RichTextRuns.Count);
             Assert.Equal("Strong", snapshot.Cells[0].RichTextRuns[0].Text);
             Assert.Equal(" note", snapshot.Cells[0].RichTextRuns[1].Text);
+            Assert.True(snapshot.Cells[0].RichTextRuns[2].Strikethrough);
             Assert.DoesNotContain(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
             Assert.Contains("#FF0000", svg, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("#0563C1", svg, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("#6B7280", svg, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("text-anchor=\"start\"", svg, StringComparison.Ordinal);
+            Assert.Contains("xml:space=\"preserve\"", svg, StringComparison.Ordinal);
+            Assert.Contains("> note</text>", svg, StringComparison.Ordinal);
+            Assert.Contains("> gone</text>", svg, StringComparison.Ordinal);
             Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
             Assert.Contains("font-style=\"italic\"", svg, StringComparison.Ordinal);
             Assert.Contains("text-decoration=\"underline\"", svg, StringComparison.Ordinal);
+            Assert.Contains("text-decoration=\"line-through\"", svg, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -112,6 +119,69 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportClipsOverflowingRichTextWithoutInventingEllipsis() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("RichClip");
+            sheet.SetColumnWidth(1, 8);
+            sheet.SetRowHeight(1, 24);
+            sheet.CellAt(1, 1).SetRichText(
+                new ExcelRichTextRun("Overflowing") { Bold = true, FontColor = "DC2626", FontSize = 12D },
+                new ExcelRichTextRun(" rich text should clip") { Italic = true, FontColor = "2563EB", FontSize = 12D });
+
+            ExcelRange range = sheet.Range("A1:A1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            string svg = Encoding.UTF8.GetString(svgResult.Bytes);
+
+            Assert.Contains(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "RichClip!A1");
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "RichClip!A1");
+            Assert.DoesNotContain(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.DoesNotContain(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.Contains("Overflowing", svg, StringComparison.Ordinal);
+            Assert.Contains(" rich text should clip", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain("...", svg, StringComparison.Ordinal);
+            Assert.Contains("clip-path=\"url(#xl-text-1-1)\"", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportSpillsRichTextIntoBlankNeighborCells() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("RichSpill");
+            sheet.SetColumnWidth(1, 6);
+            sheet.SetColumnWidth(2, 24);
+            sheet.SetColumnWidth(3, 8);
+            sheet.SetRowHeight(1, 26);
+            sheet.CellAt(1, 1).SetRichText(
+                new ExcelRichTextRun("Rich") { Bold = true, FontColor = "0F766E", FontSize = 12D },
+                new ExcelRichTextRun(" text spills") { Italic = true, FontColor = "7C3AED", FontSize = 12D });
+            sheet.CellValue(1, 3, "Stop");
+
+            ExcelRange range = sheet.Range("A1:C1");
+            ExcelImageExportOptions options = new() { ShowGridlines = false };
+            ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, options);
+            string svg = Encoding.UTF8.GetString(svgResult.Bytes);
+
+            ExcelVisualCell first = snapshot.Cells.Single(cell => cell.Column == 1);
+            ExcelVisualCell blankNeighbor = snapshot.Cells.Single(cell => cell.Column == 2);
+            double expectedWidth = first.Width + blankNeighbor.Width;
+            Assert.Equal(expectedWidth, ExtractSvgClipWidth(svg, "xl-text-1-1"), precision: 2);
+            Assert.DoesNotContain(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.DoesNotContain(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.DoesNotContain(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "RichSpill!A1");
+            Assert.DoesNotContain(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextClipped && diagnostic.Source == "RichSpill!A1");
+            Assert.Contains("Rich", svg, StringComparison.Ordinal);
+            Assert.Contains("text spills", svg, StringComparison.Ordinal);
+            Assert.Contains("Stop", svg, StringComparison.Ordinal);
+            Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
+            Assert.Contains("font-style=\"italic\"", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportPreservesRotatedRichTextRunsWithApproximationDiagnostic() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
@@ -181,6 +251,18 @@ namespace OfficeIMO.Tests {
             Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
             Assert.Contains("font-style=\"italic\"", svg, StringComparison.Ordinal);
             Assert.Contains("text-decoration=\"underline\"", svg, StringComparison.Ordinal);
+        }
+
+        private static double ExtractSvgClipWidth(string svg, string clipId) {
+            string marker = "id=\"" + clipId + "\"><rect";
+            int clipStart = svg.IndexOf(marker, StringComparison.Ordinal);
+            Assert.True(clipStart >= 0, "SVG did not contain clip path '" + clipId + "'.");
+            int widthStart = svg.IndexOf("width=\"", clipStart, StringComparison.Ordinal);
+            Assert.True(widthStart >= 0, "SVG clip path '" + clipId + "' did not contain a width attribute.");
+            widthStart += "width=\"".Length;
+            int widthEnd = svg.IndexOf('"', widthStart);
+            Assert.True(widthEnd > widthStart, "SVG clip path '" + clipId + "' width attribute was malformed.");
+            return double.Parse(svg.Substring(widthStart, widthEnd - widthStart), System.Globalization.CultureInfo.InvariantCulture);
         }
     }
 }

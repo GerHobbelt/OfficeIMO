@@ -65,6 +65,21 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeRasterCanvas_DrawsSharedPercentStipplePatterns() {
+            OfficeRasterImage sparse = new OfficeRasterImage(16, 16, OfficeColor.Transparent);
+            OfficeRasterImage denser = new OfficeRasterImage(16, 16, OfficeColor.Transparent);
+
+            new OfficeRasterCanvas(sparse).DrawHatchPatternRectangle(0, 0, 16, 16, OfficeColor.Green, 4, 2, OfficeHatchPatternKind.Percent6_25);
+            new OfficeRasterCanvas(denser).DrawHatchPatternRectangle(0, 0, 16, 16, OfficeColor.Green, 4, 2, OfficeHatchPatternKind.Percent12_5);
+
+            int sparsePixels = CountPaintedPixels(sparse);
+            int denserPixels = CountPaintedPixels(denser);
+            Assert.InRange(sparsePixels, 16, 80);
+            Assert.InRange(denserPixels, sparsePixels + 1, 120);
+            Assert.True(denserPixels > sparsePixels);
+        }
+
+        [Fact]
         public void OfficeSparklineRenderer_DrawsRasterLineAndColumnSparklines() {
             OfficeRasterImage lineImage = new OfficeRasterImage(80, 28, OfficeColor.Transparent);
             OfficeSparklineRenderer.DrawRaster(
@@ -112,6 +127,39 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeSparklineRenderer_UsesExplicitScaleDomainForColumnHeights() {
+            var autoBuilder = new System.Text.StringBuilder();
+            OfficeSparklineRenderer.AppendSvg(
+                autoBuilder,
+                0,
+                0,
+                80,
+                28,
+                new[] { 5D },
+                OfficeSparklineKind.Column,
+                new OfficeSparklineStyle { Padding = 0D });
+
+            var scaledBuilder = new System.Text.StringBuilder();
+            OfficeSparklineRenderer.AppendSvg(
+                scaledBuilder,
+                0,
+                0,
+                80,
+                28,
+                new[] { 5D },
+                OfficeSparklineKind.Column,
+                new OfficeSparklineStyle {
+                    Padding = 0D,
+                    MinimumValue = 0D,
+                    MaximumValue = 10D
+                });
+
+            double autoHeight = ExtractSvgRectHeight(autoBuilder.ToString());
+            double scaledHeight = ExtractSvgRectHeight(scaledBuilder.ToString());
+            Assert.True(autoHeight > scaledHeight * 1.8D, $"Expected explicit scale domain to reduce bar height. Auto={autoHeight}; Scaled={scaledHeight}.");
+        }
+
+        [Fact]
         public void OfficeDataBarRenderer_DrawsResolvedRasterDataBar() {
             OfficeRasterImage image = new OfficeRasterImage(40, 16, OfficeColor.Transparent);
 
@@ -122,6 +170,88 @@ namespace OfficeIMO.Tests {
             Assert.True(image.GetPixel(24, 7).B > 180);
             Assert.Equal(0, image.GetPixel(27, 7).A);
             Assert.Equal(0, image.GetPixel(10, 4).A);
+        }
+
+        [Fact]
+        public void OfficeConditionalIconRenderer_DrawsReusableRasterIcons() {
+            OfficeRasterImage circle = new OfficeRasterImage(24, 24, OfficeColor.Transparent);
+            OfficeRasterImage arrow = new OfficeRasterImage(24, 24, OfficeColor.Transparent);
+            OfficeRasterImage rating = new OfficeRasterImage(24, 24, OfficeColor.Transparent);
+            OfficeRasterImage quarter = new OfficeRasterImage(24, 24, OfficeColor.Transparent);
+
+            OfficeConditionalIconRenderer.DrawRaster(new OfficeRasterCanvas(circle), 3, 3, 18, OfficeConditionalIconKind.RedCircle, scale: 1D);
+            OfficeConditionalIconRenderer.DrawRaster(new OfficeRasterCanvas(arrow), 3, 3, 18, OfficeConditionalIconKind.GreenUpArrow, scale: 1D);
+            OfficeConditionalIconRenderer.DrawRaster(new OfficeRasterCanvas(rating), 3, 3, 18, OfficeConditionalIconKind.RatingFive, scale: 1D);
+            OfficeConditionalIconRenderer.DrawRaster(new OfficeRasterCanvas(quarter), 3, 3, 18, OfficeConditionalIconKind.QuarterOne, scale: 1D);
+
+            Assert.True(CountPixelsNear(circle, OfficeColor.FromRgb(220, 38, 38)) > 40);
+            Assert.True(CountPixelsNear(arrow, OfficeColor.FromRgb(22, 163, 74)) > 30);
+            Assert.True(CountPixelsNear(rating, OfficeColor.FromRgb(22, 163, 74)) > 45);
+            Assert.True(CountPixelsNear(quarter, OfficeColor.FromRgb(249, 115, 22)) > 20);
+            Assert.True(CountPixelsNearAlpha(circle, OfficeColor.FromRgb(15, 23, 42), 8, 10, 70) > 0);
+            Assert.True(CountPixelsNearAlpha(arrow, OfficeColor.FromRgb(15, 23, 42), 8, 10, 70) > 0);
+            Assert.Equal(0, circle.GetPixel(0, 0).A);
+            Assert.Equal(0, arrow.GetPixel(0, 0).A);
+            Assert.Equal(0, rating.GetPixel(0, 0).A);
+            Assert.Equal(0, quarter.GetPixel(0, 0).A);
+        }
+
+        [Fact]
+        public void OfficeConditionalIconRenderer_AppendsReusableRatingAndQuarterSvgIcons() {
+            var builder = new System.Text.StringBuilder();
+
+            OfficeConditionalIconRenderer.AppendSvg(builder, 2, 3, 18, OfficeConditionalIconKind.RatingThree, scale: 1D);
+            OfficeConditionalIconRenderer.AppendSvg(builder, 24, 3, 18, OfficeConditionalIconKind.QuarterTwo, scale: 1D);
+            string svg = builder.ToString();
+
+            Assert.Contains("<rect", svg, StringComparison.Ordinal);
+            Assert.Contains("<polygon", svg, StringComparison.Ordinal);
+            Assert.Contains("#F59E0B", svg, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void OfficeCalloutRenderer_DrawsSharedRasterAndSvgCallouts() {
+            var callout = new OfficeCallout(
+                x: 36D,
+                y: 18D,
+                width: 132D,
+                height: 74D,
+                anchorX: 20D,
+                anchorY: 34D,
+                title: "Reviewer",
+                text: "Ready for leadership review");
+            var style = new OfficeCalloutStyle {
+                AccentColor = OfficeColor.FromRgb(124, 58, 237)
+            };
+            OfficeRasterImage image = new OfficeRasterImage(220, 120, OfficeColor.Transparent);
+            OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
+
+            OfficeCalloutRenderer.DrawRaster(canvas, callout, style);
+
+            Assert.True(CountPixelsNear(image, style.FillColor) > 1000);
+            Assert.True(CountPixelsNear(image, style.HeaderFillColor) > 400);
+            Assert.True(CountPixelsNear(image, style.AccentColor) > 120);
+            Assert.True(CountPixelsNearAlpha(image, style.ShadowColor, 8, 10, 80) > 100);
+            Assert.True(CountPaintedPixels(image) > 3000);
+
+            var builder = new System.Text.StringBuilder();
+            OfficeCalloutRenderer.AppendSvg(
+                builder,
+                callout,
+                style,
+                canvas.MeasureText,
+                idPrefix: "review-callout");
+            string svg = builder.ToString();
+
+            Assert.Contains("review-callout-body", svg, StringComparison.Ordinal);
+            Assert.Contains("review-callout-text", svg, StringComparison.Ordinal);
+            Assert.Contains("fill-opacity=", svg, StringComparison.Ordinal);
+            Assert.Contains("fill=\"#FFFBE6\"", svg, StringComparison.Ordinal);
+            Assert.Contains("fill=\"#0F172A\"", svg, StringComparison.Ordinal);
+            Assert.Contains("fill=\"#7C3AED\"", svg, StringComparison.Ordinal);
+            Assert.Contains(">Reviewer</text>", svg, StringComparison.Ordinal);
+            Assert.Contains("Ready", svg, StringComparison.Ordinal);
+            Assert.Contains("leadership", svg, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -167,6 +297,19 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeTextLayoutEngine_BreaksLongWordsAtTextElementBoundaries() {
+            static double Measure(string? value, double size) => string.IsNullOrEmpty(value) ? 0D : value!.Length * size;
+            string eAcute = "e\u0301";
+            string smile = char.ConvertFromUtf32(0x1F600);
+
+            IReadOnlyList<OfficeTextLine> lines = OfficeTextLayoutEngine.WrapLines("A" + eAcute + smile + "B", 1D, 2D, Measure);
+
+            Assert.Equal(new[] { "A", eAcute, smile, "B" }, lines.Select(line => line.Text).ToArray());
+            Assert.DoesNotContain(lines, line => line.Text == "\u0301");
+            Assert.DoesNotContain(lines, line => line.Text.Length == 1 && char.IsSurrogate(line.Text[0]));
+        }
+
+        [Fact]
         public void OfficeTextLayoutEngine_TrimsSingleLineWithEllipsisWhenNeeded() {
             double Measure(string? value, double size) => (value?.Length ?? 0) * size;
 
@@ -183,6 +326,57 @@ namespace OfficeIMO.Tests {
             Assert.True(wasStartClipped);
             Assert.Equal("...FG", startClipped.Text);
             Assert.Equal(5D, startClipped.Width);
+        }
+
+        [Fact]
+        public void OfficeTextLayoutEngine_TrimsSingleLineAtTextElementBoundaries() {
+            static double Measure(string? value, double size) => string.IsNullOrEmpty(value) ? 0D : value!.Length * size;
+            string eAcute = "e\u0301";
+            string smile = char.ConvertFromUtf32(0x1F600);
+
+            OfficeTextLine endTrimmed = OfficeTextLayoutEngine.TrimLineToWidth("A" + eAcute + smile + "BC", 1D, 6D, Measure, out bool endClipped);
+            OfficeTextLine startTrimmed = OfficeTextLayoutEngine.TrimLineStartToWidth("XA" + eAcute + smile + "B", 1D, 6D, Measure, out bool startClipped);
+
+            Assert.True(endClipped);
+            Assert.True(startClipped);
+            Assert.Equal("A" + eAcute + "...", endTrimmed.Text);
+            Assert.Equal("..." + smile + "B", startTrimmed.Text);
+            Assert.Contains(eAcute, endTrimmed.Text, StringComparison.Ordinal);
+            Assert.Contains(smile, startTrimmed.Text, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void OfficeTextLayoutEngine_CanKeepOverflowingTextForCallerClipping() {
+            double Measure(string? value, double size) => (value?.Length ?? 0) * size;
+
+            OfficeTextBlockLayout ellipsis = OfficeTextLayoutEngine.LayoutTextBlock(
+                "ABCDEFG",
+                1D,
+                6D,
+                10D,
+                lineHeightFactor: 1.2D,
+                minimumFontSize: 1D,
+                Measure,
+                wrap: false);
+            OfficeTextBlockLayout clipped = OfficeTextLayoutEngine.LayoutTextBlock(
+                "ABCDEFG",
+                1D,
+                6D,
+                10D,
+                lineHeightFactor: 1.2D,
+                minimumFontSize: 1D,
+                Measure,
+                wrap: false,
+                forceSingleLine: false,
+                shrinkToFit: false,
+                overflowBehavior: OfficeTextOverflowBehavior.Clip);
+
+            Assert.True(ellipsis.Clipped);
+            Assert.Equal("ABC...", ellipsis.Lines[0].Text);
+            Assert.Equal(6D, ellipsis.Width);
+            Assert.True(clipped.Clipped);
+            Assert.Equal("ABCDEFG", clipped.Lines[0].Text);
+            Assert.Equal(7D, clipped.Width);
         }
 
         [Fact]
@@ -221,6 +415,51 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeDrawingSceneText_ShrinksWrappedTextThroughSharedRenderer() {
+            var drawing = new OfficeDrawing(90D, 36D)
+                .AddText(
+                    "Alpha beta gamma delta epsilon",
+                    0D,
+                    0D,
+                    90D,
+                    36D,
+                    new OfficeFontInfo("Aptos", 18D),
+                    OfficeColor.Black,
+                    wrapText: true,
+                    shrinkToFit: true);
+
+            string svg = OfficeDrawingSvgExporter.ToSvg(drawing);
+            double fontSize = ExtractFirstSvgFontSize(svg);
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.True(fontSize < 18D, "Expected scene text SVG output to shrink the authored font size.");
+            Assert.True(CountPixelsNear(image, OfficeColor.Black) > 0, "Expected shrunken scene text to render in PNG output.");
+        }
+
+        [Fact]
+        public void OfficeDrawingSceneText_RendersStackedTextThroughSharedRenderer() {
+            var drawing = new OfficeDrawing(36D, 90D)
+                .AddText(
+                    "Stacked",
+                    0D,
+                    0D,
+                    36D,
+                    90D,
+                    new OfficeFontInfo("Aptos", 12D),
+                    OfficeColor.Black,
+                    OfficeTextAlignment.Center,
+                    verticalAlignment: OfficeTextVerticalAlignment.Top,
+                    shrinkToFit: true,
+                    stackedText: true);
+
+            string svg = OfficeDrawingSvgExporter.ToSvg(drawing);
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.True(CountOccurrences(svg, "<text") >= 7);
+            Assert.True(CountPixelsNear(image, OfficeColor.Black) > 0, "Expected stacked scene text to render in PNG output.");
+        }
+
+        [Fact]
         public void OfficeTextLayoutEngine_ClipsTextBlockToVisibleHeightWithEllipsis() {
             double Measure(string? value, double size) => (value?.Length ?? 0) * size;
             IReadOnlyList<OfficeTextLine> lines = new[] {
@@ -255,6 +494,19 @@ namespace OfficeIMO.Tests {
             Assert.Equal(10D, unchanged);
             Assert.InRange(fitted, 4.99D, 5.01D);
             Assert.Equal(2D, floored);
+        }
+
+        [Fact]
+        public void OfficeTextLayoutEngine_ResolvesRotatedTextWidthLimitInsideBounds() {
+            double unrotated = OfficeTextLayoutEngine.ResolveRotatedTextWidthLimit(80D, 40D, 12D, 0D);
+            double diagonal = OfficeTextLayoutEngine.ResolveRotatedTextWidthLimit(80D, 40D, 12D, 45D);
+            double vertical = OfficeTextLayoutEngine.ResolveRotatedTextWidthLimit(80D, 40D, 12D, 90D);
+            double tiny = OfficeTextLayoutEngine.ResolveRotatedTextWidthLimit(6D, 6D, 20D, 45D);
+
+            Assert.Equal(80D, unrotated);
+            Assert.InRange(diagonal, 44D, 45D);
+            Assert.Equal(40D, vertical, precision: 10);
+            Assert.Equal(1D, tiny);
         }
 
         [Fact]
@@ -353,6 +605,73 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeTextLayoutEngine_CanKeepOverflowingRichTextForCallerClipping() {
+            double Measure(string? value, double size) => (value?.Length ?? 0) * size;
+            OfficeRichTextRun strong = new OfficeRichTextRun("Overflowing", 1D, OfficeColor.Red, bold: true);
+            OfficeRichTextRun accent = new OfficeRichTextRun(" rich", 1D, OfficeColor.Blue, italic: true);
+
+            OfficeRichTextBlockLayout ellipsis = OfficeTextLayoutEngine.LayoutRichTextBlock(
+                new[] { strong, accent },
+                10D,
+                10D,
+                lineHeightFactor: 1.2D,
+                Measure,
+                wrap: false);
+            OfficeRichTextBlockLayout clipped = OfficeTextLayoutEngine.LayoutRichTextBlock(
+                new[] { strong, accent },
+                10D,
+                10D,
+                lineHeightFactor: 1.2D,
+                Measure,
+                wrap: false,
+                shrinkToFit: false,
+                minimumFontSize: 1D,
+                overflowBehavior: OfficeTextOverflowBehavior.Clip);
+
+            Assert.True(ellipsis.Clipped);
+            Assert.Equal("Overflo...", string.Concat(ellipsis.Lines[0].Segments.Select(segment => segment.Text)));
+            Assert.True(ellipsis.Width <= 10.01D);
+            Assert.True(clipped.Clipped);
+            Assert.Equal("Overflowing rich", string.Concat(clipped.Lines[0].Segments.Select(segment => segment.Text)));
+            Assert.True(clipped.Width > 10D);
+            Assert.True(clipped.Lines[0].Segments[0].Bold);
+            Assert.True(clipped.Lines[0].Segments[1].Italic);
+        }
+
+        [Fact]
+        public void OfficeTextLayoutEngine_LayoutsRichTextAtTextElementBoundaries() {
+            double Measure(string? value, double size) => (value?.Length ?? 0) * size;
+            string eAcute = "e\u0301";
+            string smile = char.ConvertFromUtf32(0x1F600);
+
+            OfficeRichTextBlockLayout wrapped = OfficeTextLayoutEngine.LayoutRichTextBlock(
+                new[] { new OfficeRichTextRun("A" + smile + "B", 1D, OfficeColor.Red, bold: true) },
+                2D,
+                10D,
+                lineHeightFactor: 1D,
+                Measure,
+                wrap: true,
+                shrinkToFit: false,
+                minimumFontSize: 1D,
+                overflowBehavior: OfficeTextOverflowBehavior.Clip);
+            OfficeRichTextBlockLayout ellipsis = OfficeTextLayoutEngine.LayoutRichTextBlock(
+                new[] { new OfficeRichTextRun("A" + eAcute + smile + "BC", 1D, OfficeColor.Blue, italic: true) },
+                6D,
+                10D,
+                lineHeightFactor: 1D,
+                Measure,
+                wrap: false);
+
+            Assert.Equal(new[] { "A", smile, "B" }, wrapped.Lines.Select(line => string.Concat(line.Segments.Select(segment => segment.Text))).ToArray());
+            Assert.True(wrapped.Lines.All(line => line.Segments.All(segment => segment.Bold)));
+            Assert.True(ellipsis.Clipped);
+            Assert.Equal("A" + eAcute + "...", string.Concat(ellipsis.Lines[0].Segments.Select(segment => segment.Text)));
+            Assert.Contains(eAcute, ellipsis.Lines[0].Segments[0].Text, StringComparison.Ordinal);
+            Assert.DoesNotContain(smile, ellipsis.Lines[0].Segments[0].Text, StringComparison.Ordinal);
+            Assert.True(ellipsis.Lines[0].Segments.Last().Italic);
+        }
+
+        [Fact]
         public void OfficeTextLayoutEngine_LayoutsRichTextRunsWithFontFamilyAwareMeasurement() {
             double Measure(string? value, double size, string? family) {
                 double factor = string.Equals(family, "Wide", StringComparison.Ordinal) ? 10D : 1D;
@@ -374,6 +693,33 @@ namespace OfficeIMO.Tests {
             Assert.Equal(40D, layout.Lines[0].Segments[0].Width);
             Assert.Equal(4D, layout.Lines[0].Segments[1].Width);
             Assert.Equal(44D, layout.Width);
+        }
+
+        [Fact]
+        public void OfficeTextLayoutEngine_UsesPerLineHeightsForMixedSizeRichText() {
+            double Measure(string? value, double size) => (value?.Length ?? 0) * size;
+
+            OfficeRichTextBlockLayout layout = OfficeTextLayoutEngine.LayoutRichTextBlock(
+                new[] {
+                    new OfficeRichTextRun("Big ", 20D, OfficeColor.Black),
+                    new OfficeRichTextRun("small", 8D, OfficeColor.Blue)
+                },
+                75D,
+                34D,
+                lineHeightFactor: 1.2D,
+                Measure,
+                wrap: true,
+                shrinkToFit: false,
+                minimumFontSize: 1D,
+                overflowBehavior: OfficeTextOverflowBehavior.Clip);
+
+            Assert.False(layout.Clipped);
+            Assert.Equal(2, layout.Lines.Count);
+            Assert.Equal(24D, layout.LineHeight);
+            Assert.Equal(24D, layout.Lines[0].LineHeight);
+            Assert.Equal(10D, layout.Lines[1].LineHeight);
+            Assert.Equal(34D, layout.Height);
+            Assert.Equal(new[] { "Big", "small" }, layout.Lines.Select(line => string.Concat(line.Segments.Select(segment => segment.Text))).ToArray());
         }
 
         [Fact]
@@ -408,6 +754,109 @@ namespace OfficeIMO.Tests {
             Assert.InRange(rotated.X, -0.0001D, 0.0001D);
             Assert.InRange(rotated.Y, 9.9999D, 10.0001D);
             Assert.Equal(new OfficePoint(5D, 7D), OfficeTextPlacement.RotatePoint(new OfficePoint(5D, 7D), 0D, 0D, 0D));
+        }
+
+        [Fact]
+        public void OfficeTextBlockRenderPlan_ResolvesCenteredPlacementAndBackgroundBounds() {
+            var layout = new OfficeTextBlockLayout(
+                new[] { new OfficeTextLine("Shared", 30D) },
+                fontSize: 10D,
+                lineHeight: 12D,
+                width: 30D,
+                height: 12D);
+
+            OfficeTextBlockRenderPlan plan = OfficeTextBlockRenderPlan.CreateFromCenter(
+                layout,
+                centerX: 100D,
+                centerY: 50D,
+                width: 80D,
+                height: 40D,
+                OfficeTextAlignment.Right,
+                OfficeTextVerticalAlignment.Bottom);
+
+            Assert.Equal(60D, plan.Left);
+            Assert.Equal(30D, plan.Top);
+            Assert.Equal(140D, plan.AnchorX);
+            Assert.Equal(110D, plan.TextLeft);
+            Assert.Equal(58D, plan.TextTop);
+
+            OfficeTextBlockBackgroundBounds background = plan.CreateBackgroundBounds(4D, 2D);
+            Assert.Equal(106D, background.Left);
+            Assert.Equal(56D, background.Top);
+            Assert.Equal(38D, background.Width);
+            Assert.Equal(16D, background.Height);
+
+            OfficePoint[] corners = background.GetRotatedCorners(90D, 100D, 50D);
+            Assert.Equal(4, corners.Length);
+            Assert.InRange(corners[0].X, 93.999D, 94.001D);
+            Assert.InRange(corners[0].Y, 55.999D, 56.001D);
+        }
+
+        [Fact]
+        public void OfficeTextBlockRenderPlan_FitsTextBeforeResolvingPlacement() {
+            static double Measure(string? value, double size) => (value?.Length ?? 0) * size * 0.5D;
+
+            OfficeTextBlockRenderPlan plan = OfficeTextBlockRenderPlan.CreateFittedFromCenter(
+                "alpha beta gamma",
+                fontSize: 12D,
+                centerX: 100D,
+                centerY: 80D,
+                width: 48D,
+                height: 30D,
+                Measure,
+                OfficeTextAlignment.Center,
+                OfficeTextVerticalAlignment.Center,
+                lineHeightFactor: 1.2D,
+                minimumFontSize: 6D);
+
+            Assert.Equal(76D, plan.Left);
+            Assert.Equal(65D, plan.Top);
+            Assert.Equal(100D, plan.AnchorX);
+            Assert.True(plan.Layout.Width <= 48D);
+            Assert.True(plan.Layout.Height <= 30D);
+        }
+
+        [Fact]
+        public void OfficeTextBlockRenderPlan_CreatesRectangleBasedTextAndStackedLayouts() {
+            static double Measure(string? value, double size) => (value?.Length ?? 0) * size * 0.8D;
+
+            OfficeTextBlockRenderPlan wrapped = OfficeTextBlockRenderPlan.CreateTextBlockFromRectangle(
+                "alpha beta",
+                fontSize: 10D,
+                left: 20D,
+                top: 30D,
+                width: 44D,
+                height: 50D,
+                Measure,
+                OfficeTextAlignment.Right,
+                OfficeTextVerticalAlignment.Bottom,
+                lineHeightFactor: 1.2D,
+                minimumFontSize: 6D,
+                wrap: true);
+
+            Assert.Equal(20D, wrapped.Left);
+            Assert.Equal(30D, wrapped.Top);
+            Assert.Equal(64D, wrapped.AnchorX);
+            Assert.Equal(56D, wrapped.TextTop);
+            Assert.Equal(2, wrapped.Layout.Lines.Count);
+            Assert.Equal("alpha", wrapped.Layout.Lines[0].Text);
+            Assert.Equal("beta", wrapped.Layout.Lines[1].Text);
+
+            OfficeTextBlockRenderPlan stacked = OfficeTextBlockRenderPlan.CreateStackedTextBlockFromRectangle(
+                "AB",
+                fontSize: 10D,
+                left: 5D,
+                top: 7D,
+                width: 20D,
+                height: 30D,
+                Measure,
+                OfficeTextAlignment.Center,
+                OfficeTextVerticalAlignment.Center);
+
+            Assert.Equal(15D, stacked.AnchorX);
+            Assert.Equal(2, stacked.Layout.Lines.Count);
+            Assert.Equal("A", stacked.Layout.Lines[0].Text);
+            Assert.Equal("B", stacked.Layout.Lines[1].Text);
         }
 
         [Fact]
@@ -618,6 +1067,53 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeDrawingRasterRenderer_RendersRotatedTextThroughSharedTextRenderer() {
+            OfficeDrawing drawing = new OfficeDrawing(96, 64);
+            drawing.AddText(
+                "Tilt",
+                24,
+                18,
+                48,
+                20,
+                new OfficeFontInfo("Aptos", 14D),
+                OfficeColor.Red,
+                OfficeTextAlignment.Center,
+                rotationDegrees: 35D,
+                rotationCenterX: 48D,
+                rotationCenterY: 28D);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+
+            Assert.True(CountPixelsNear(image, OfficeColor.Red) > 20);
+            Assert.True(AnyAlpha(image, 30, 10, 66, 46));
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_RendersVerticallyAlignedTextThroughSharedTextRenderer() {
+            OfficeDrawing drawing = new OfficeDrawing(96, 64);
+            drawing.AddText(
+                "Bottom",
+                8,
+                8,
+                80,
+                44,
+                new OfficeFontInfo("Aptos", 12D),
+                OfficeColor.Blue,
+                OfficeTextAlignment.Right,
+                verticalAlignment: OfficeTextVerticalAlignment.Bottom);
+
+            OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing);
+            var painted = Enumerable.Range(0, image.Width * image.Height)
+                .Where(index => image.GetPixel(index % image.Width, index / image.Width).A > 0)
+                .Select(index => (X: index % image.Width, Y: index / image.Width))
+                .ToList();
+
+            Assert.NotEmpty(painted);
+            Assert.True(painted.Min(pixel => pixel.Y) > 28, "Expected bottom vertical alignment to place text in the lower part of the text box.");
+            Assert.True(painted.Max(pixel => pixel.X) > 68, "Expected right horizontal alignment to place text near the right side of the text box.");
+        }
+
+        [Fact]
         public void OfficeDrawingRasterRenderer_FlattensBezierPathCommands() {
             OfficeDrawing drawing = new OfficeDrawing(64, 48);
             OfficeShape quadratic = OfficeShape.Path(
@@ -815,6 +1311,22 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeRasterCanvas_ScalesTransparentImageEdgesWithoutDarkeningColor() {
+            OfficeRasterImage source = new OfficeRasterImage(2, 2, OfficeColor.Transparent);
+            source.SetPixel(0, 0, OfficeColor.FromRgb(0, 255, 0));
+            OfficeRasterImage target = new OfficeRasterImage(8, 8, OfficeColor.Transparent);
+            OfficeRasterCanvas canvas = new OfficeRasterCanvas(target);
+
+            canvas.DrawImage(source, 0, 0, 8, 8);
+
+            OfficeColor edge = target.GetPixel(4, 0);
+            Assert.InRange(edge.A, 1, 254);
+            Assert.True(edge.G > 220, "Expected transparent-edge image scaling to preserve premultiplied source color instead of blending toward transparent black.");
+            Assert.True(edge.R < 10);
+            Assert.True(edge.B < 10);
+        }
+
+        [Fact]
         public void OfficeRasterCanvas_DrawsRotatedImagesAroundCenter() {
             OfficeRasterImage source = new OfficeRasterImage(8, 2, OfficeColor.FromRgb(34, 197, 94));
             OfficeRasterImage target = new OfficeRasterImage(32, 32, OfficeColor.Transparent);
@@ -967,6 +1479,26 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeRasterCanvas_DrawTextTrimsAtTextElementBoundaries() {
+            if (OfficeTrueTypeFont.TryLoadDefault() == null) {
+                return;
+            }
+
+            string eAcute = "e\u0301";
+            string smile = char.ConvertFromUtf32(0x1F600);
+            const double fontSize = 20D;
+            double availableWidth = Math.Ceiling(new OfficeRasterCanvas(new OfficeRasterImage(1, 1, OfficeColor.Transparent)).MeasureText("A" + eAcute + "...", fontSize)) + 0.5D;
+            double boxWidth = availableWidth + 6D;
+            OfficeRasterImage clipped = new OfficeRasterImage(120, 40, OfficeColor.Transparent);
+            OfficeRasterImage expected = new OfficeRasterImage(120, 40, OfficeColor.Transparent);
+
+            new OfficeRasterCanvas(clipped).DrawText("A" + eAcute + smile + "BC", 0D, 0D, boxWidth, 32D, OfficeColor.Black, fontSize);
+            new OfficeRasterCanvas(expected).DrawText("A" + eAcute + "...", 0D, 0D, boxWidth, 32D, OfficeColor.Black, fontSize);
+
+            AssertRasterImagesEqual(expected, clipped);
+        }
+
+        [Fact]
         public void OfficeTextBlockRenderer_DrawsRasterTextBlockWithAlignmentAndUnderline() {
             OfficeRasterImage image = new OfficeRasterImage(120, 72, OfficeColor.Transparent);
             OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
@@ -1002,6 +1534,36 @@ namespace OfficeIMO.Tests {
             Assert.True(painted.Min(pixel => pixel.Y) >= 24, "Expected bottom vertical alignment to keep text in the lower part of the rectangle.");
             Assert.True(painted.Max(pixel => pixel.X) > 80, "Expected right horizontal alignment to place ink near the right side of the rectangle.");
             Assert.True(CountPaintedPixels(image) > 80);
+        }
+
+        [Fact]
+        public void OfficeTextBlockRenderer_DrawsRasterTextBoxWithBackground() {
+            OfficeRasterImage image = new OfficeRasterImage(140, 80, OfficeColor.Transparent);
+            OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
+            OfficeTextBlockRenderPlan plan = OfficeTextBlockRenderPlan.CreateFittedFromCenter(
+                "Shared text",
+                12D,
+                centerX: 70D,
+                centerY: 40D,
+                width: 90D,
+                height: 36D,
+                canvas.MeasureText,
+                OfficeTextAlignment.Center,
+                OfficeTextVerticalAlignment.Center,
+                lineHeightFactor: 1.2D,
+                minimumFontSize: 8D);
+
+            OfficeTextBlockRenderer.DrawRasterTextBox(
+                canvas,
+                plan,
+                OfficeColor.Black,
+                bold: true,
+                backgroundColor: OfficeColor.FromRgb(255, 230, 128),
+                backgroundPaddingX: 4D,
+                backgroundPaddingY: 3D);
+
+            Assert.True(CountPixelsNear(image, OfficeColor.FromRgb(255, 230, 128)) > 100, "Expected the shared text-box helper to paint the background.");
+            Assert.True(CountPixelsNear(image, OfficeColor.Black) > 40, "Expected the shared text-box helper to paint text.");
         }
 
         [Fact]
@@ -1102,7 +1664,7 @@ namespace OfficeIMO.Tests {
                 rotationCenterY: 20D);
 
             string svg = builder.ToString();
-            Assert.Equal("<text x=\"50\" y=\"12\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"middle\" fill=\"#010203\" fill-opacity=\"0.502\" font-weight=\"700\" font-style=\"italic\" text-decoration=\"underline line-through\" transform=\"rotate(15 50 20)\">A&amp;B<tspan x=\"50\" dy=\"14\">Beta</tspan></text>", svg);
+            Assert.Equal("<text x=\"50\" y=\"12\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"middle\" fill=\"#010203\" fill-opacity=\"0.502\" xml:space=\"preserve\" font-weight=\"700\" font-style=\"italic\" text-decoration=\"underline line-through\" transform=\"rotate(15 50 20)\">A&amp;B<tspan x=\"50\" dy=\"14\">Beta</tspan></text>", svg);
         }
 
         [Fact]
@@ -1122,6 +1684,67 @@ namespace OfficeIMO.Tests {
             builder.AppendSvgRichTextSegment(segment, 5D, 12D);
 
             Assert.Equal("<text x=\"5\" y=\"12\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"start\" fill=\"#010203\" fill-opacity=\"0.502\" font-weight=\"700\" font-style=\"italic\" text-decoration=\"underline line-through\">A&amp;B</text>", builder.ToString());
+        }
+
+        [Fact]
+        public void OfficeTextBlockRenderer_AppendsSvgRichTextSegmentWithPreservedBoundaryWhitespace() {
+            var builder = new System.Text.StringBuilder();
+            var segment = new OfficeRichTextSegment(
+                " spaced",
+                width: 34D,
+                fontSize: 10D,
+                color: OfficeColor.Blue,
+                bold: false,
+                italic: true,
+                underline: false,
+                fontFamily: "Aptos");
+
+            builder.AppendSvgRichTextSegment(segment, 5D, 12D);
+
+            string svg = builder.ToString();
+            Assert.Contains("xml:space=\"preserve\"", svg);
+            Assert.Contains("> spaced</text>", svg);
+        }
+
+        [Fact]
+        public void OfficeTextBlockRenderer_AppendsSvgRichTextBlockWithSharedPlacement() {
+            var builder = new System.Text.StringBuilder();
+            var firstLine = new OfficeRichTextLine(new[] {
+                new OfficeRichTextSegment("Red", width: 20D, fontSize: 10D, color: OfficeColor.Red, bold: true, italic: false, underline: true, fontFamily: "Aptos"),
+                new OfficeRichTextSegment("Blue", width: 30D, fontSize: 10D, color: OfficeColor.Blue, bold: false, italic: true, underline: false, fontFamily: "Aptos", strikethrough: true)
+            });
+            var secondLine = new OfficeRichTextLine(new[] {
+                new OfficeRichTextSegment("Tail", width: 12D, fontSize: 8D, color: OfficeColor.FromRgb(1, 2, 3), bold: false, italic: false, underline: false, fontFamily: "Aptos")
+            });
+            var layout = new OfficeRichTextBlockLayout(
+                new[] { firstLine, secondLine },
+                lineHeight: 14D,
+                width: firstLine.Width,
+                height: 28D);
+
+            builder.AppendSvgRichTextBlock(
+                layout,
+                left: 0D,
+                top: 0D,
+                width: 100D,
+                height: 50D,
+                OfficeTextAlignment.Center,
+                OfficeTextVerticalAlignment.Bottom,
+                rotationDegrees: 15D,
+                rotationCenterX: 50D,
+                rotationCenterY: 25D);
+
+            string svg = builder.ToString();
+            Assert.Contains("x=\"25\" y=\"32.4\"", svg);
+            Assert.Contains("x=\"45\" y=\"32.4\"", svg);
+            Assert.Contains("x=\"44\" y=\"45.72\"", svg);
+            Assert.Contains("font-weight=\"700\"", svg);
+            Assert.Contains("font-style=\"italic\"", svg);
+            Assert.Contains("text-decoration=\"line-through\"", svg);
+            Assert.Contains("transform=\"rotate(15 50 25)\"", svg);
+            Assert.Contains(">Red</text>", svg);
+            Assert.Contains(">Blue</text>", svg);
+            Assert.Contains(">Tail</text>", svg);
         }
 
         [Fact]
@@ -1181,6 +1804,61 @@ namespace OfficeIMO.Tests {
             Assert.Contains(">Beta</tspan>", svg);
         }
 
+        [Fact]
+        public void OfficeTextBlockRenderer_WritesSvgTextBoxWithBackgroundAndAdapterAttributes() {
+            var layout = new OfficeTextBlockLayout(
+                new[] {
+                    new OfficeTextLine("Shared", 36D)
+                },
+                fontSize: 10D,
+                lineHeight: 12D,
+                width: 36D,
+                height: 12D);
+            OfficeTextBlockRenderPlan plan = OfficeTextBlockRenderPlan.CreateFromCenter(
+                layout,
+                centerX: 50D,
+                centerY: 25D,
+                width: 80D,
+                height: 30D,
+                OfficeTextAlignment.Center,
+                OfficeTextVerticalAlignment.Center);
+            var builder = new System.Text.StringBuilder();
+            using (var writer = System.Xml.XmlWriter.Create(
+                builder,
+                new System.Xml.XmlWriterSettings {
+                    ConformanceLevel = System.Xml.ConformanceLevel.Fragment,
+                    OmitXmlDeclaration = true
+                })) {
+                OfficeTextBlockRenderer.WriteSvgTextBox(
+                    writer,
+                    plan,
+                    OfficeColor.FromRgb(1, 2, 3),
+                    "Aptos",
+                    bold: true,
+                    rotationDegrees: 12D,
+                    rotationCenterX: 50D,
+                    rotationCenterY: 25D,
+                    svgNamespace: "http://www.w3.org/2000/svg",
+                    backgroundColor: OfficeColor.FromRgba(255, 230, 128, 200),
+                    backgroundPaddingX: 4D,
+                    backgroundPaddingY: 3D,
+                    configureTextAttributes: textWriter => textWriter.WriteAttributeString("data-officeimo-text", "true"),
+                    configureBackgroundAttributes: backgroundWriter => backgroundWriter.WriteAttributeString("data-officeimo-background", "true"));
+            }
+
+            string svg = builder.ToString();
+            Assert.Contains("<rect", svg);
+            Assert.Contains("data-officeimo-background=\"true\"", svg);
+            Assert.Contains("fill=\"#FFE680\"", svg);
+            Assert.Contains("fill-opacity=\"0.784\"", svg);
+            Assert.Contains("transform=\"rotate(12 50 25)\"", svg);
+            Assert.Contains("<text", svg);
+            Assert.Contains("data-officeimo-text=\"true\"", svg);
+            Assert.Contains("font-family=\"Aptos\"", svg);
+            Assert.Contains("font-weight=\"700\"", svg);
+            Assert.Contains(">Shared</tspan>", svg);
+        }
+
         private static int CountPaintedPixels(OfficeRasterImage image) =>
             Enumerable.Range(0, image.Width * image.Height)
                 .Count(index => image.GetPixel(index % image.Width, index / image.Width).A > 0);
@@ -1195,6 +1873,48 @@ namespace OfficeIMO.Tests {
                         color.A > 0;
                 });
 
+        private static int CountPixelsNearAlpha(OfficeRasterImage image, OfficeColor expected, int tolerance, byte minimumAlpha, byte maximumAlpha) =>
+            Enumerable.Range(0, image.Width * image.Height)
+                .Count(index => {
+                    OfficeColor color = image.GetPixel(index % image.Width, index / image.Width);
+                    return Math.Abs(color.R - expected.R) <= tolerance &&
+                        Math.Abs(color.G - expected.G) <= tolerance &&
+                        Math.Abs(color.B - expected.B) <= tolerance &&
+                        color.A >= minimumAlpha &&
+                        color.A <= maximumAlpha;
+                });
+
+        private static double ExtractSvgRectHeight(string svg) {
+            const string attribute = "height=\"";
+            int start = svg.IndexOf(attribute, StringComparison.Ordinal);
+            Assert.True(start >= 0, "Expected SVG output to contain a rectangle height.");
+            start += attribute.Length;
+            int end = svg.IndexOf('"', start);
+            Assert.True(end > start, "Expected SVG rectangle height to be a valid number.");
+            return double.Parse(svg.Substring(start, end - start), System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static int CountOccurrences(string value, string pattern) {
+            int count = 0;
+            int index = 0;
+            while ((index = value.IndexOf(pattern, index, StringComparison.Ordinal)) >= 0) {
+                count++;
+                index += pattern.Length;
+            }
+
+            return count;
+        }
+
+        private static double ExtractFirstSvgFontSize(string svg) {
+            const string attribute = "font-size=\"";
+            int start = svg.IndexOf(attribute, StringComparison.Ordinal);
+            Assert.True(start >= 0, "Expected SVG text output to include a font-size attribute.");
+            start += attribute.Length;
+            int end = svg.IndexOf('"', start);
+            Assert.True(end > start, "Expected SVG text output to include a valid font-size value.");
+            return double.Parse(svg.Substring(start, end - start), System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         private static void AssertColorNear(OfficeColor actual, OfficeColor expected) {
             Assert.True(
                 Math.Abs(actual.R - expected.R) <= 8 &&
@@ -1202,6 +1922,20 @@ namespace OfficeIMO.Tests {
                 Math.Abs(actual.B - expected.B) <= 8 &&
                 actual.A > 0,
                 $"Expected ARGB near {expected.A},{expected.R},{expected.G},{expected.B} but got {actual.A},{actual.R},{actual.G},{actual.B}.");
+        }
+
+        private static void AssertRasterImagesEqual(OfficeRasterImage expected, OfficeRasterImage actual) {
+            Assert.Equal(expected.Width, actual.Width);
+            Assert.Equal(expected.Height, actual.Height);
+            for (int y = 0; y < expected.Height; y++) {
+                for (int x = 0; x < expected.Width; x++) {
+                    OfficeColor expectedPixel = expected.GetPixel(x, y);
+                    OfficeColor actualPixel = actual.GetPixel(x, y);
+                    Assert.True(
+                        expectedPixel.Equals(actualPixel),
+                        $"Pixel mismatch at {x},{y}. Expected {expectedPixel.A},{expectedPixel.R},{expectedPixel.G},{expectedPixel.B}; actual {actualPixel.A},{actualPixel.R},{actualPixel.G},{actualPixel.B}.");
+                }
+            }
         }
 
     }

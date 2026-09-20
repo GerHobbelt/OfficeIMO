@@ -12,6 +12,9 @@ public static class ExcelImageExportDiagnosticCodes {
     /// <summary>Cell text was clipped or ellipsized to fit rendered bounds.</summary>
     public const string CellTextClipped = "ExcelCellTextClipped";
 
+    /// <summary>Cell text was suppressed because a later drawing layer covers the text anchor.</summary>
+    public const string CellTextOccludedByDrawing = "ExcelCellTextOccludedByDrawing";
+
     /// <summary>Cell text rotation was rendered through an approximate path.</summary>
     public const string CellTextRotationApproximation = "ExcelCellTextRotationApproximation";
 
@@ -39,6 +42,9 @@ public static class ExcelImageExportDiagnosticCodes {
     /// <summary>Unsupported conditional formatting icon set.</summary>
     public const string ConditionalIconSetUnsupported = "ExcelConditionalIconSetUnsupported";
 
+    /// <summary>Conditional formatting icon sets are rendered as deterministic dependency-free approximations.</summary>
+    public const string ConditionalIconSetApproximation = "ExcelConditionalIconSetApproximation";
+
     /// <summary>Unsupported conditional formatting color scale variant.</summary>
     public const string ConditionalColorScaleUnsupported = "ExcelConditionalColorScaleUnsupported";
 
@@ -60,6 +66,9 @@ public static class ExcelImageExportDiagnosticCodes {
     /// <summary>Unsupported conditional formatting text-rule variant.</summary>
     public const string ConditionalTextRuleUnsupported = "ExcelConditionalTextRuleUnsupported";
 
+    /// <summary>Unsupported conditional formatting time-period variant.</summary>
+    public const string ConditionalTimePeriodUnsupported = "ExcelConditionalTimePeriodUnsupported";
+
     /// <summary>Unsupported conditional formatting differential-format feature.</summary>
     public const string ConditionalDifferentialFormatUnsupported = "ExcelConditionalDifferentialFormatUnsupported";
 
@@ -74,6 +83,9 @@ public static class ExcelImageExportDiagnosticCodes {
 
     /// <summary>Worksheet image bytes could not be read.</summary>
     public const string ImageBytesMissing = "ExcelImageBytesMissing";
+
+    /// <summary>Worksheet image bytes did not contain a recognized image header.</summary>
+    public const string ImageFormatUnknown = "ExcelImageFormatUnknown";
 
     /// <summary>Worksheet image was omitted because its anchor row or column is hidden.</summary>
     public const string ImageAnchorHidden = "ExcelImageAnchorHidden";
@@ -107,6 +119,12 @@ public static class ExcelImageExportDiagnosticCodes {
 
     /// <summary>Worksheet drawing shape text is rendered through an approximate rotation path.</summary>
     public const string DrawingShapeTextRotationApproximation = "ExcelDrawingShapeTextRotationApproximation";
+
+    /// <summary>Worksheet drawing shape text requested resizing the shape to fit text, which image export does not support yet.</summary>
+    public const string DrawingShapeTextAutoFitUnsupported = "ExcelDrawingShapeTextAutoFitUnsupported";
+
+    /// <summary>Worksheet drawing shape text requested a non-horizontal orientation, which image export does not support yet.</summary>
+    public const string DrawingShapeTextVerticalOrientationUnsupported = "ExcelDrawingShapeTextVerticalOrientationUnsupported";
 
     /// <summary>Worksheet chart could not be converted to a renderable snapshot.</summary>
     public const string ChartSnapshotUnavailable = "ExcelChartSnapshotUnavailable";
@@ -200,6 +218,12 @@ public static class ExcelImageExportDiagnosticCodes {
 
     /// <summary>Requested worksheet header/footer font family could not be loaded exactly by the dependency-free exporter.</summary>
     public const string HeaderFooterFontFamilyFallback = "ExcelHeaderFooterFontFamilyFallback";
+
+    /// <summary>Worksheet header/footer image was rendered through an approximate image-export path.</summary>
+    public const string HeaderFooterImageApproximation = "ExcelHeaderFooterImageApproximation";
+
+    /// <summary>Worksheet header/footer image could not be rendered by the requested image export format.</summary>
+    public const string HeaderFooterImageUnsupported = "ExcelHeaderFooterImageUnsupported";
 
     /// <summary>Sparkline kind is not rendered by the image exporter yet.</summary>
     public const string SparklineKindUnsupported = "ExcelSparklineKindUnsupported";
