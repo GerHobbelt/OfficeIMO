@@ -148,6 +148,51 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Keeps_Paragraph_KeepWithNext_Chains_Together() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeKeepWithNextChain.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeKeepWithNextChain.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "ChainKeepWithNext";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Chain Keep With Next" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleParagraphProperties(new KeepNext()))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph intro = document.AddParagraph("ChainIntro");
+                intro.LineSpacingAfterPoints = 100;
+                document.AddParagraph("ChainLead").SetStyleId(styleId);
+                document.AddParagraph("ChainBridge").SetStyleId(styleId);
+                document.AddParagraph("ChainTarget");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(260, 220),
+                    Margins = OfficeIMO.Pdf.PageMargins.Uniform(30),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+
+            Assert.Equal(2, pdf.NumberOfPages);
+            Assert.Contains("ChainIntro", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ChainLead", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ChainBridge", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ChainTarget", pdf.GetPage(1).Text);
+            Assert.Contains("ChainLead", pdf.GetPage(2).Text);
+            Assert.Contains("ChainBridge", pdf.GetPage(2).Text);
+            Assert.Contains("ChainTarget", pdf.GetPage(2).Text);
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Applies_Inherited_PageBreakBefore() {
             string docPath = Path.Combine(_directoryWithFiles, "PdfNativeInheritedPageBreakBefore.docx");
             string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeInheritedPageBreakBefore.pdf");
@@ -515,6 +560,43 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Honors_Paragraph_Border_Space_As_Panel_Padding() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphBorderSpace.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphBorderSpace.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordParagraph tight = document.AddParagraph("TightSpace");
+                tight.Borders.LeftStyle = BorderValues.Single;
+                tight.Borders.LeftColorHex = "444444";
+                tight.Borders.LeftSize = 8;
+                tight.Borders.LeftSpace = 0;
+                tight.LineSpacingAfterPoints = 4;
+
+                WordParagraph wide = document.AddParagraph("WideSpace");
+                wide.Borders.LeftStyle = BorderValues.Single;
+                wide.Borders.LeftColorHex = "444444";
+                wide.Borders.LeftSize = 8;
+                wide.Borders.LeftSpace = 24;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(360, 220),
+                    Margins = OfficeIMO.Pdf.PageMargins.Uniform(30),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            var tightWord = Assert.Single(words, word => word.Text == "TightSpace");
+            var wideWord = Assert.Single(words, word => word.Text == "WideSpace");
+
+            Assert.True(wideWord.BoundingBox.Left > tightWord.BoundingBox.Left + 18D,
+                $"Expected Word paragraph border space to move text away from the border. Tight x: {tightWord.BoundingBox.Left:0.##}; wide x: {wideWord.BoundingBox.Left:0.##}.");
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Renders_Paragraph_Tab_Leaders() {
             string docPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphTabs.docx");
             string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphTabs.pdf");
@@ -792,6 +874,62 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Renders_BiDi_Paragraphs_Right_Aligned() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeBiDiParagraphAlignment.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeBiDiParagraphAlignment.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordParagraph bidi = document.AddParagraph("BidiRightMarker");
+                bidi.BiDi = true;
+                document.AddParagraph("LeftMarker");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(300, 180),
+                    Margins = PageMargins.Uniform(30),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            Assert.True(File.Exists(pdfPath));
+            byte[] bytes = File.ReadAllBytes(pdfPath);
+            using PdfPigDocument pdf = PdfPigDocument.Open(bytes);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            var bidiWord = Assert.Single(words, word => word.Text == "BidiRightMarker");
+            var leftWord = Assert.Single(words, word => word.Text == "LeftMarker");
+
+            Assert.True(bidiWord.BoundingBox.Left > leftWord.BoundingBox.Left + 90D, $"Expected BiDi paragraph text to use Word-style right alignment. BiDi x: {bidiWord.BoundingBox.Left:0.##}; left x: {leftWord.BoundingBox.Left:0.##}.");
+
+            PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+            Assert.Equal("R2L", info.ViewerPreferences?.GetValue("Direction"));
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Preserves_Configured_Viewer_Direction_For_BiDi_Documents() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeBiDiConfiguredViewerDirection.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeBiDiConfiguredViewerDirection.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordParagraph bidi = document.AddParagraph("ConfiguredBidiMarker");
+                bidi.BiDi = true;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PdfOptions = new PdfOptions {
+                        ViewerPreferences = new PdfViewerPreferencesOptions {
+                            Direction = PdfViewerDirection.LeftToRight
+                        }
+                    }
+                });
+            }
+
+            PdfDocumentInfo info = PdfInspector.Inspect(File.ReadAllBytes(pdfPath));
+            Assert.Equal("L2R", info.ViewerPreferences?.GetValue("Direction"));
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Maps_Paragraph_Style_Run_Formatting() {
             using WordDocument document = WordDocument.Create(Path.Combine(_directoryWithFiles, "PdfNativeParagraphStyleRunFormatting.docx"));
             const string styleId = "NativeStyleRunFormatting";
@@ -880,6 +1018,98 @@ namespace OfficeIMO.Tests {
             string raw = Encoding.ASCII.GetString(bytes);
             Assert.Contains("0.753 0 0 rg", raw);
             Assert.Matches(new Regex(@"/F\d+ 14 Tf"), raw);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Omits_Hidden_Body_Text_Runs() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeHiddenBodyText.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeHiddenBodyText.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string hiddenStyleId = "NativeHiddenRunStyle";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native Hidden Run Style" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleRunProperties(new Vanish()))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = hiddenStyleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph mixed = document.AddParagraph();
+                mixed.AddText("VisibleStart");
+                WordParagraph hiddenRun = mixed.AddText("HiddenBodyRun");
+                hiddenRun._run!.RunProperties ??= new RunProperties();
+                hiddenRun._run.RunProperties.Vanish = new Vanish();
+                mixed.AddText("VisibleEnd");
+
+                WordParagraph hiddenOnly = document.AddParagraph("HiddenOnlyParagraph");
+                hiddenOnly._run!.RunProperties ??= new RunProperties();
+                hiddenOnly._run.RunProperties.Vanish = new Vanish();
+
+                WordParagraph hiddenByStyle = document.AddParagraph("HiddenByStyle");
+                hiddenByStyle.SetStyleId(hiddenStyleId);
+
+                document.AddParagraph("VisibleAfterHiddenText");
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            string text = string.Concat(pdf.GetPages().Select(page => page.Text));
+            Assert.Contains("VisibleStart", text);
+            Assert.Contains("VisibleEnd", text);
+            Assert.Contains("VisibleAfterHiddenText", text);
+            Assert.DoesNotContain("HiddenBodyRun", text);
+            Assert.DoesNotContain("HiddenOnlyParagraph", text);
+            Assert.DoesNotContain("HiddenByStyle", text);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Renders_Caps_Body_Text_Runs() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeCapsBodyText.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeCapsBodyText.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string capsStyleId = "NativeCapsRunStyle";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native Caps Run Style" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleRunProperties(new Caps()))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = capsStyleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph direct = document.AddParagraph();
+                direct.AddText("beforeCaps ");
+                WordParagraph capsRun = direct.AddText("capsBodyRun");
+                capsRun._run!.RunProperties ??= new RunProperties();
+                capsRun._run.RunProperties.Caps = new Caps();
+                direct.AddText(" afterCaps");
+
+                WordParagraph styled = document.AddParagraph("capsStyleRun");
+                styled.SetStyleId(capsStyleId);
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            string text = string.Concat(pdf.GetPages().Select(page => page.Text));
+            Assert.Contains("beforeCaps", text);
+            Assert.Contains("CAPSBODYRUN", text);
+            Assert.Contains("CAPSSTYLERUN", text);
+            Assert.DoesNotContain("capsBodyRun", text);
+            Assert.DoesNotContain("capsStyleRun", text);
         }
 
         private static IReadOnlyList<(double X, double Y, double Width, double Height)> ExtractFilledRectangles(string rawPdf, string colorOperator) {
@@ -1075,6 +1305,46 @@ namespace OfficeIMO.Tests {
             double atLeastGap = atLeastFirstY - atLeastSecondY;
 
             Assert.True(atLeastGap > exactGap + 14D, $"Expected Word atLeast line spacing to preserve natural line advance instead of exact compressed leading. Exact gap: {exactGap:0.##}; atLeast gap: {atLeastGap:0.##}.");
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Uses_Character_Style_Font_Size_For_Exact_Line_Spacing() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeCharacterStyleExactLineSpacing.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeCharacterStyleExactLineSpacing.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeExactLineCharacterStyle";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native Exact Line Character Style" },
+                    new StyleRunProperties(new FontSize { Val = "64" }))
+                {
+                    Type = StyleValues.Character,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph paragraph = document.AddParagraph();
+                paragraph.AddText("CharExactFirst").SetCharacterStyleId(styleId);
+                paragraph.AddBreak();
+                paragraph.AddText("CharExactSecond").SetCharacterStyleId(styleId);
+                paragraph.LineSpacingAfterPoints = 0;
+                paragraph.LineSpacingPoints = 18;
+                paragraph.LineSpacingRule = LineSpacingRuleValues.Exact;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            double firstY = Assert.Single(words, word => word.Text == "CharExactFirst").BoundingBox.Bottom;
+            double secondY = Assert.Single(words, word => word.Text == "CharExactSecond").BoundingBox.Bottom;
+
+            Assert.InRange(firstY - secondY, 16D, 22D);
         }
 
         [Fact]

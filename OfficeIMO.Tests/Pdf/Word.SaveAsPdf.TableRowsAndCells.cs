@@ -42,6 +42,138 @@ public partial class Word {
     }
 
     [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Omits_Hidden_Table_Cell_Text_Runs() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeHiddenTableCellText.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeHiddenTableCellText.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordTable table = document.AddTable(1, 2);
+            table.LayoutType = TableLayoutValues.Fixed;
+            table.Rows[0].Cells[0].Width = 2400;
+            table.Rows[0].Cells[1].Width = 2400;
+
+            WordParagraph mixed = table.Rows[0].Cells[0].Paragraphs[0];
+            mixed.Text = string.Empty;
+            mixed.AddText("CellVisibleStart");
+            WordParagraph hiddenRun = mixed.AddText("HiddenCellRun");
+            hiddenRun._run!.RunProperties ??= new RunProperties();
+            hiddenRun._run.RunProperties.Vanish = new Vanish();
+            mixed.AddText("CellVisibleEnd");
+
+            WordParagraph hiddenOnly = table.Rows[0].Cells[1].Paragraphs[0];
+            hiddenOnly.Text = "HiddenOnlyCell";
+            hiddenOnly._run!.RunProperties ??= new RunProperties();
+            hiddenOnly._run.RunProperties.Vanish = new Vanish();
+
+            document.AddParagraph("AfterHiddenCellText");
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        string text = string.Concat(pdf.GetPages().Select(page => page.Text));
+        Assert.Contains("CellVisibleStart", text);
+        Assert.Contains("CellVisibleEnd", text);
+        Assert.Contains("AfterHiddenCellText", text);
+        Assert.DoesNotContain("HiddenCellRun", text);
+        Assert.DoesNotContain("HiddenOnlyCell", text);
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Renders_Caps_Table_Cell_Text_Runs() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeCapsTableCellText.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeCapsTableCellText.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            const string styleId = "NativeCapsTableStyle";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Native Caps Table Style" },
+                new StyleRunProperties(new Caps()))
+            {
+                Type = StyleValues.Table,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordTable table = document.AddTable(1, 2);
+            table.LayoutType = TableLayoutValues.Fixed;
+            table._tableProperties!.TableStyle = new TableStyle { Val = styleId };
+            table.Rows[0].Cells[0].Width = 2400;
+            table.Rows[0].Cells[1].Width = 2400;
+
+            WordParagraph direct = table.Rows[0].Cells[0].Paragraphs[0];
+            direct.Text = string.Empty;
+            direct.AddText("cellBeforeCaps ");
+            WordParagraph capsRun = direct.AddText("capsCellRun");
+            capsRun._run!.RunProperties ??= new RunProperties();
+            capsRun._run.RunProperties.Caps = new Caps();
+
+            table.Rows[0].Cells[1].Paragraphs[0].Text = "capsTableStyle";
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        string text = string.Concat(pdf.GetPages().Select(page => page.Text));
+        Assert.Contains("CELLBEFORECAPS", text);
+        Assert.Contains("CAPSCELLRUN", text);
+        Assert.Contains("CAPSTABLESTYLE", text);
+        Assert.DoesNotContain("cellBeforeCaps", text);
+        Assert.DoesNotContain("capsCellRun", text);
+        Assert.DoesNotContain("capsTableStyle", text);
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Maps_Table_Style_Baseline_Run_Properties() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableStyleBaselineRun.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableStyleBaselineRun.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            const string styleId = "NativeBaselineTableStyle";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Native Baseline Table Style" },
+                new StyleRunProperties(
+                    new FontSize { Val = "40" },
+                    new VerticalTextAlignment { Val = VerticalPositionValues.Subscript }))
+            {
+                Type = StyleValues.Table,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordTable table = document.AddTable(1, 1);
+            table.LayoutType = TableLayoutValues.Fixed;
+            table._tableProperties!.TableStyle = new TableStyle { Val = styleId };
+            table.Rows[0].Cells[0].Width = 3600;
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "TableStyledSub";
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new OfficeIMO.Pdf.PageSize(360, 220),
+                Margins = OfficeIMO.Pdf.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        byte[] bytes = File.ReadAllBytes(pdfPath);
+        string content = ReadPdfPageContent(bytes);
+        using (PdfPigDocument pdf = PdfPigDocument.Open(bytes)) {
+            string pageText = string.Concat(pdf.GetPages().Select(page => page.Text));
+
+            Assert.Equal(1, CountOccurrences(pageText, "TableStyledSub"));
+        }
+
+        Assert.Matches(@"-3\.6\s+Ts", content);
+    }
+
+    [Fact]
     public void SaveAsPdf_OfficeIMOEngine_Renders_Table_NonUniform_Row_Heights() {
         string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableNonUniformRowHeights.docx");
         string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableNonUniformRowHeights.pdf");
@@ -73,6 +205,66 @@ public partial class Word {
         double firstGap = shortA.BoundingBox.Bottom - tallB.BoundingBox.Bottom;
         double secondGap = tallB.BoundingBox.Bottom - shortC.BoundingBox.Bottom;
         Assert.True(secondGap > firstGap + 35D, $"Expected non-uniform Word row height to push the third row down. ShortA/TallB gap: {firstGap}; TallB/ShortC gap: {secondGap}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Measures_Table_Blocks_Inside_KeepWithNext_Chains() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphTableKeepWithNextChain.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphTableKeepWithNextChain.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            const string styleId = "ParagraphTableChainKeepWithNext";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Paragraph Table Chain Keep With Next" },
+                new BasedOn { Val = "Normal" },
+                new StyleParagraphProperties(new KeepNext()))
+            {
+                Type = StyleValues.Paragraph,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordParagraph intro = document.AddParagraph("ParagraphTableChainIntro");
+            intro.LineSpacingAfterPoints = 100;
+            document.AddParagraph("ParagraphTableChainLead").SetStyleId(styleId);
+            WordTable table = document.AddTable(3, 1);
+            table._tableProperties!.TableStyle?.Remove();
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "ParagraphTableChainFirst";
+            table.Rows[1].Cells[0].Paragraphs[0].Text = "ParagraphTableChainSecond";
+            table.Rows[2].Cells[0].Paragraphs[0].Text = "ParagraphTableChainThird";
+            document.AddParagraph("ParagraphTableChainTarget");
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new OfficeIMO.Pdf.PageSize(260, 260),
+                Margins = OfficeIMO.Pdf.PageMargins.Uniform(30),
+                FontFamily = "Helvetica",
+                PdfOptions = new PdfCore.PdfOptions {
+                    DefaultTableStyle = new PdfCore.PdfTableStyle {
+                        KeepWithNext = true,
+                        CellPaddingX = 4,
+                        CellPaddingY = 3
+                    }
+                }
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+
+        Assert.Equal(2, pdf.NumberOfPages);
+        Assert.Contains("ParagraphTableChainIntro", pdf.GetPage(1).Text);
+        Assert.DoesNotContain("ParagraphTableChainLead", pdf.GetPage(1).Text);
+        Assert.DoesNotContain("ParagraphTableChainFirst", pdf.GetPage(1).Text);
+        Assert.DoesNotContain("ParagraphTableChainSecond", pdf.GetPage(1).Text);
+        Assert.DoesNotContain("ParagraphTableChainThird", pdf.GetPage(1).Text);
+        Assert.DoesNotContain("ParagraphTableChainTarget", pdf.GetPage(1).Text);
+        Assert.Contains("ParagraphTableChainLead", pdf.GetPage(2).Text);
+        Assert.Contains("ParagraphTableChainFirst", pdf.GetPage(2).Text);
+        Assert.Contains("ParagraphTableChainSecond", pdf.GetPage(2).Text);
+        Assert.Contains("ParagraphTableChainThird", pdf.GetPage(2).Text);
+        Assert.Contains("ParagraphTableChainTarget", pdf.GetPage(2).Text);
     }
 
     [Fact]
@@ -130,6 +322,22 @@ public partial class Word {
         double atLeastGap = RenderNativeTableStyleLineSpacingGap("PdfNativeTableStyleAtLeastRenderedLineSpacing", LineSpacingRuleValues.AtLeast);
 
         Assert.True(atLeastGap > exactGap + 14D, $"Expected Word table-style atLeast line spacing to preserve natural table line advance instead of exact compressed leading. Exact gap: {exactGap:0.##}; atLeast gap: {atLeastGap:0.##}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Direct_Line_Spacing_In_Table_Cell_Paragraphs() {
+        double compactGap = RenderNativeTableCellDirectLineSpacingGap("PdfNativeTableCellCompactDirectLineSpacing", lineSpacingPoints: 12D);
+        double tallGap = RenderNativeTableCellDirectLineSpacingGap("PdfNativeTableCellTallDirectLineSpacing", lineSpacingPoints: 30D);
+
+        Assert.True(tallGap > compactGap + 12D,
+            $"Expected direct Word table-cell paragraph line spacing to increase wrapped native PDF line pitch. Compact gap: {compactGap:0.##}; tall gap: {tallGap:0.##}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Character_Style_Font_Size_For_Table_Cell_Exact_Line_Spacing() {
+        double gap = RenderNativeTableCellCharacterStyleExactLineSpacingGap();
+
+        Assert.InRange(gap, 16D, 22D);
     }
 
     private double RenderNativeTableRowHeightRuleGap(string fileNamePrefix, HeightRuleValues heightRule, string followingRowText) {
@@ -195,6 +403,96 @@ public partial class Word {
 
         Assert.InRange(left.BoundingBox.Left, 42D, 55D);
         Assert.True(right.BoundingBox.Left > 195D, $"Expected a 100% Word table to expand to the content frame. RightColumn left: {right.BoundingBox.Left}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Honors_Table_Row_GridBefore_Offsets() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableRowGridBefore.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableRowGridBefore.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordTable table = document.AddTable(2, 3);
+            table.Width = 4320;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            table.GridColumnWidth = new List<int> { 1440, 1440, 1440 };
+            foreach (WordTableRow row in table.Rows) {
+                foreach (WordTableCell cell in row.Cells) {
+                    cell.Width = 1440;
+                    cell.WidthType = TableWidthUnitValues.Dxa;
+                }
+            }
+
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "GBLeft";
+            table.Rows[0].Cells[1].Paragraphs[0].Text = "GBMid";
+            table.Rows[0].Cells[2].Paragraphs[0].Text = "GBRight";
+            table.Rows[1].Cells[0].Paragraphs[0].Text = "GBOffset";
+            table.Rows[1].Cells[1].Paragraphs[0].Text = "GBEnd";
+            table.Rows[1].Cells[2].Remove();
+            table.Rows[1]._tableRow.TableRowProperties ??= new TableRowProperties();
+            table.Rows[1]._tableRow.TableRowProperties.Append(new GridBefore { Val = 1 });
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(420, 260),
+                Margins = PdfCore.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        var left = Assert.Single(words, word => word.Text == "GBLeft");
+        var middle = Assert.Single(words, word => word.Text == "GBMid");
+        var offset = Assert.Single(words, word => word.Text == "GBOffset");
+        var end = Assert.Single(words, word => word.Text == "GBEnd");
+
+        Assert.True(offset.BoundingBox.Left > left.BoundingBox.Left + 55D,
+            $"Expected Word gridBefore to offset the second row into the middle grid column. Left x: {left.BoundingBox.Left:0.##}; offset x: {offset.BoundingBox.Left:0.##}.");
+        Assert.InRange(Math.Abs(offset.BoundingBox.Left - middle.BoundingBox.Left), 0D, 8D);
+        Assert.True(end.BoundingBox.Left > offset.BoundingBox.Left + 55D,
+            $"Expected the second physical cell after gridBefore to land in the right grid column. Offset x: {offset.BoundingBox.Left:0.##}; end x: {end.BoundingBox.Left:0.##}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Honors_Table_Row_GridAfter_Offsets() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableRowGridAfter.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableRowGridAfter.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordTable table = document.AddTable(1, 3);
+            table.Width = 4320;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            table.GridColumnWidth = new List<int> { 1440, 1440, 1440 };
+            foreach (WordTableCell cell in table.Rows[0].Cells) {
+                cell.Width = 1440;
+                cell.WidthType = TableWidthUnitValues.Dxa;
+            }
+
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "GALeft";
+            table.Rows[0].Cells[1].Paragraphs[0].Text = "GAMid";
+            table.Rows[0].Cells[2].Remove();
+            table.Rows[0]._tableRow.TableRowProperties ??= new TableRowProperties();
+            table.Rows[0]._tableRow.TableRowProperties.Append(new GridAfter { Val = 1 });
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(420, 220),
+                Margins = PdfCore.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        var left = Assert.Single(words, word => word.Text == "GALeft");
+        var middle = Assert.Single(words, word => word.Text == "GAMid");
+
+        double gap = middle.BoundingBox.Left - left.BoundingBox.Left;
+        Assert.InRange(gap, 55D, 95D);
     }
 
     [Fact]
@@ -354,6 +652,94 @@ public partial class Word {
             paragraph.Text = firstMarker;
             paragraph.AddBreak();
             paragraph.AddText(secondMarker);
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(360, 260),
+                Margins = PdfCore.PageMargins.Uniform(36),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        double firstY = Assert.Single(words, word => word.Text == firstMarker).BoundingBox.Bottom;
+        double secondY = Assert.Single(words, word => word.Text == secondMarker).BoundingBox.Bottom;
+        return firstY - secondY;
+    }
+
+    private double RenderNativeTableCellDirectLineSpacingGap(string fileNamePrefix, double lineSpacingPoints) {
+        const string firstMarker = "Alpha";
+        const string secondMarker = "Beta";
+        string docPath = Path.Combine(_directoryWithFiles, fileNamePrefix + ".docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, fileNamePrefix + ".pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordTable table = document.AddTable(1, 1);
+            table.Width = 900;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            WordTableCell cell = table.Rows[0].Cells[0];
+            cell.Width = 900;
+            cell.WidthType = TableWidthUnitValues.Dxa;
+
+            WordParagraph paragraph = cell.Paragraphs[0];
+            paragraph.Text = firstMarker + " " + secondMarker;
+            paragraph.LineSpacingAfterPoints = 0D;
+            paragraph.LineSpacingPoints = lineSpacingPoints;
+            paragraph.LineSpacingRule = LineSpacingRuleValues.Exact;
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(360, 260),
+                Margins = PdfCore.PageMargins.Uniform(36),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        double firstY = Assert.Single(words, word => word.Text == firstMarker).BoundingBox.Bottom;
+        double secondY = Assert.Single(words, word => word.Text == secondMarker).BoundingBox.Bottom;
+        return firstY - secondY;
+    }
+
+    private double RenderNativeTableCellCharacterStyleExactLineSpacingGap() {
+        const string firstMarker = "Alpha";
+        const string secondMarker = "Beta";
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellCharacterStyleExactLineSpacing.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellCharacterStyleExactLineSpacing.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            const string styleId = "NativeTableCellExactLineCharacterStyle";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Native Table Cell Exact Line Character Style" },
+                new StyleRunProperties(new FontSize { Val = "64" }))
+            {
+                Type = StyleValues.Character,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordTable table = document.AddTable(1, 1);
+            table.Width = 3000;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            WordTableCell cell = table.Rows[0].Cells[0];
+            cell.Width = 3000;
+            cell.WidthType = TableWidthUnitValues.Dxa;
+
+            WordParagraph paragraph = cell.Paragraphs[0];
+            paragraph.Text = string.Empty;
+            paragraph.AddText(firstMarker).SetCharacterStyleId(styleId);
+            paragraph.AddBreak();
+            paragraph.AddText(secondMarker).SetCharacterStyleId(styleId);
+            paragraph.LineSpacingAfterPoints = 0D;
+            paragraph.LineSpacingPoints = 18D;
+            paragraph.LineSpacingRule = LineSpacingRuleValues.Exact;
 
             document.Save();
             document.SaveAsPdf(pdfPath, new PdfSaveOptions {
@@ -600,6 +986,202 @@ public partial class Word {
     }
 
     [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Table_Style_Conditional_Line_Spacing_For_Cell_Paragraphs() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableStyleConditionalLineSpacing.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableStyleConditionalLineSpacing.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            const string styleId = "NativeTableConditionalLineSpacing";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Native Table Conditional Line Spacing" },
+                new TableStyleProperties(
+                    new StyleParagraphProperties(
+                        new SpacingBetweenLines {
+                            After = "0",
+                            Line = "600",
+                            LineRule = LineSpacingRuleValues.Exact
+                        }))
+                { Type = TableStyleOverrideValues.FirstRow })
+            {
+                Type = StyleValues.Table,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordTable table = document.AddTable(2, 1);
+            table.Width = 900;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            table._tableProperties!.TableStyle = new TableStyle { Val = styleId };
+            table.ConditionalFormattingFirstRow = true;
+            foreach (WordTableRow row in table.Rows) {
+                row.Cells[0].Width = 900;
+                row.Cells[0].WidthType = TableWidthUnitValues.Dxa;
+            }
+
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "TallA TallB";
+            table.Rows[1].Cells[0].Paragraphs[0].Text = "PlainA PlainB";
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(360, 260),
+                Margins = PdfCore.PageMargins.Uniform(36),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        double styledGap = Assert.Single(words, word => word.Text == "TallA").BoundingBox.Bottom -
+            Assert.Single(words, word => word.Text == "TallB").BoundingBox.Bottom;
+        double plainGap = Assert.Single(words, word => word.Text == "PlainA").BoundingBox.Bottom -
+            Assert.Single(words, word => word.Text == "PlainB").BoundingBox.Bottom;
+
+        Assert.True(styledGap > plainGap + 12D,
+            $"Expected first-row table style line spacing to increase wrapped native PDF line pitch. Styled gap: {styledGap:0.##}; plain gap: {plainGap:0.##}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Table_Style_Conditional_Paragraph_Indentation_For_Cells() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableStyleConditionalParagraphIndentation.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableStyleConditionalParagraphIndentation.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            const string styleId = "NativeTableConditionalParagraphIndentation";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Native Table Conditional Paragraph Indentation" },
+                new TableStyleProperties(
+                    new StyleParagraphProperties(
+                        new Indentation {
+                            Left = "720"
+                        }))
+                { Type = TableStyleOverrideValues.FirstRow })
+            {
+                Type = StyleValues.Table,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordTable table = document.AddTable(2, 1);
+            table.Width = 3600;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            table._tableProperties!.TableStyle = new TableStyle { Val = styleId };
+            table.ConditionalFormattingFirstRow = true;
+            foreach (WordTableRow row in table.Rows) {
+                row.Cells[0].Width = 3600;
+                row.Cells[0].WidthType = TableWidthUnitValues.Dxa;
+            }
+
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "StyledIndent";
+            table.Rows[1].Cells[0].Paragraphs[0].Text = "PlainIndent";
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(360, 240),
+                Margins = PdfCore.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        var styled = Assert.Single(words, word => word.Text == "StyledIndent");
+        var plain = Assert.Single(words, word => word.Text == "PlainIndent");
+
+        Assert.True(styled.BoundingBox.Left > plain.BoundingBox.Left + 30D,
+            $"Expected first-row table style paragraph indentation to move native PDF cell text right. Styled x: {styled.BoundingBox.Left:0.##}; plain x: {plain.BoundingBox.Left:0.##}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Table_Cell_Paragraph_Indentation() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellParagraphIndentation.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellParagraphIndentation.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordTable table = document.AddTable(2, 1);
+            table.Width = 3000;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            foreach (WordTableRow row in table.Rows) {
+                row.Cells[0].Width = 3000;
+                row.Cells[0].WidthType = TableWidthUnitValues.Dxa;
+            }
+
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "PlainCellIndent";
+            WordParagraph indented = table.Rows[1].Cells[0].Paragraphs[0];
+            indented.Text = "IndentedCellIndent";
+            indented.IndentationBeforePoints = 42D;
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(360, 240),
+                Margins = PdfCore.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        var plain = Assert.Single(words, word => word.Text == "PlainCellIndent");
+        var indentedWord = Assert.Single(words, word => word.Text == "IndentedCellIndent");
+
+        Assert.True(indentedWord.BoundingBox.Left > plain.BoundingBox.Left + 35D,
+            $"Expected Word table-cell paragraph indentation to move native PDF cell text right. Plain x: {plain.BoundingBox.Left:0.##}; indented x: {indentedWord.BoundingBox.Left:0.##}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Renders_Table_Cell_Paragraph_Tab_Leaders() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellParagraphTabs.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellParagraphTabs.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            WordTable table = document.AddTable(1, 1);
+            table.Width = 5200;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            table.Rows[0].Cells[0].Width = 5200;
+            table.Rows[0].Cells[0].WidthType = TableWidthUnitValues.Dxa;
+
+            WordParagraph paragraph = table.Rows[0].Cells[0].Paragraphs[0];
+            paragraph.Text = "CellTabRevenue\t42";
+            paragraph.AddTabStop(3600, TabStopValues.Right, TabStopLeaderCharValues.Dot);
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(420, 180),
+                Margins = PdfCore.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var page = pdf.GetPage(1);
+        Assert.Contains("CellTabRevenue", page.Text);
+        Assert.Contains("42", page.Text);
+        int dotCount = page.Letters.Count(letter => letter.Value == ".");
+
+        Assert.True(dotCount >= 15,
+            $"Expected Word table-cell paragraph tab leader dots to render across the tab gap. Dot count: {dotCount}.");
+    }
+
+    [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Document_Default_Tab_Stop_In_Table_Cell_Paragraphs() {
+        (double narrowLeftX, double narrowRightX) = RenderNativeTableCellDefaultTabStop(720, "PdfNativeTableCellDefaultTabStopNarrow");
+        (double wideLeftX, double wideRightX) = RenderNativeTableCellDefaultTabStop(2880, "PdfNativeTableCellDefaultTabStopWide");
+
+        Assert.InRange(Math.Abs(wideLeftX - narrowLeftX), 0D, 0.75D);
+        Assert.True(wideRightX > narrowRightX + 70D,
+            $"Expected wider Word document default tab stop to move implicit table-cell tab text right. Narrow x: {narrowRightX:0.##}; wide x: {wideRightX:0.##}.");
+    }
+
+    [Fact]
     public void SaveAsPdf_OfficeIMOEngine_Uses_DocDefaults_For_Table_Cell_Paragraph_Spacing() {
         string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellParagraphSpacing.docx");
         string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellParagraphSpacing.pdf");
@@ -683,6 +1265,13 @@ public partial class Word {
     }
 
     [Fact]
+    public void SaveAsPdf_OfficeIMOEngine_Uses_Character_Style_Font_Size_For_Table_Cell_Line_Unit_Spacing() {
+        double gap = RenderNativeTableCellCharacterStyleLineUnitSpacingGap();
+
+        Assert.InRange(gap, 65D, 90D);
+    }
+
+    [Fact]
     public void SaveAsPdf_OfficeIMOEngine_Honors_Table_Cell_Paragraph_Contextual_Spacing() {
         double spacedGap = RenderNativeTableCellContextualParagraphSpacingGap("PdfNativeTableCellContextualOff", contextualSpacing: false);
         double contextualGap = RenderNativeTableCellContextualParagraphSpacingGap("PdfNativeTableCellContextualOn", contextualSpacing: true);
@@ -749,6 +1338,36 @@ public partial class Word {
         Assert.InRange(secondGap, 13D, 18D);
     }
 
+    private (double LeftX, double RightX) RenderNativeTableCellDefaultTabStop(int defaultTabStopTwips, string fileName) {
+        string docPath = Path.Combine(_directoryWithFiles, fileName + ".docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, fileName + ".pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            document.Settings.DefaultTabStop = defaultTabStopTwips;
+            WordTable table = document.AddTable(1, 1);
+            table.Width = 5200;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            table.LayoutType = TableLayoutValues.Fixed;
+            table.Rows[0].Cells[0].Width = 5200;
+            table.Rows[0].Cells[0].WidthType = TableWidthUnitValues.Dxa;
+            table.Rows[0].Cells[0].Paragraphs[0].Text = "WWW\tDefaultCellTab";
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(420, 180),
+                Margins = PdfCore.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        return (
+            Assert.Single(words, word => word.Text == "WWW").BoundingBox.Left,
+            Assert.Single(words, word => word.Text == "DefaultCellTab").BoundingBox.Left);
+    }
+
     private double RenderNativeTableCellParagraphSpacingGap(string fileNamePrefix, double firstSpacingAfter, double secondSpacingBefore) {
         const string firstMarker = "CellFirst";
         const string secondMarker = "CellSecond";
@@ -772,6 +1391,55 @@ public partial class Word {
                 IncludePageNumbers = false,
                 PageSize = new PdfCore.PageSize(360, 260),
                 Margins = PdfCore.PageMargins.Uniform(40),
+                FontFamily = "Helvetica"
+            });
+        }
+
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        var words = pdf.GetPage(1).GetWords().ToList();
+        double firstY = Assert.Single(words, word => word.Text == firstMarker).BoundingBox.Bottom;
+        double secondY = Assert.Single(words, word => word.Text == secondMarker).BoundingBox.Bottom;
+        return firstY - secondY;
+    }
+
+    private double RenderNativeTableCellCharacterStyleLineUnitSpacingGap() {
+        const string firstMarker = "Alpha";
+        const string secondMarker = "Beta";
+        string docPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellCharacterStyleLineUnitSpacing.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeTableCellCharacterStyleLineUnitSpacing.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            const string styleId = "NativeTableCellLineUnitCharacterStyle";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Native Table Cell Line Unit Character Style" },
+                new StyleRunProperties(new FontSize { Val = "64" }))
+            {
+                Type = StyleValues.Character,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordTable table = document.AddTable(1, 1);
+            table._tableProperties!.TableStyle?.Remove();
+            table.Width = 3200;
+            table.WidthType = TableWidthUnitValues.Dxa;
+            WordTableCell cell = table.Rows[0].Cells[0];
+            cell.Width = 3200;
+            cell.WidthType = TableWidthUnitValues.Dxa;
+            cell.Paragraphs[0].AddText(firstMarker).SetCharacterStyleId(styleId);
+            cell.Paragraphs[0].LineSpacingAfterPoints = 0D;
+            WordParagraph second = cell.AddParagraph(string.Empty);
+            second._paragraph.ParagraphProperties ??= new ParagraphProperties();
+            second._paragraph.ParagraphProperties.Append(new SpacingBetweenLines { BeforeLines = 100 });
+            second.AddText(secondMarker).SetCharacterStyleId(styleId);
+            second.LineSpacingAfterPoints = 0D;
+
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                IncludePageNumbers = false,
+                PageSize = new PdfCore.PageSize(360, 260),
+                Margins = PdfCore.PageMargins.Uniform(36),
                 FontFamily = "Helvetica"
             });
         }

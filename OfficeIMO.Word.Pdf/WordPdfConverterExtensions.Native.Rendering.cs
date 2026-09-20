@@ -137,7 +137,9 @@ namespace OfficeIMO.Word.Pdf {
             RenderNativeRunCharts(pdf, runs, objectAlign, options, paragraph._run);
 
             string content = paragraph.IsHyperLink && paragraph.Hyperlink != null ? paragraph.Hyperlink.Text : AppendNativeTextWithEquation(paragraph.Text, paragraph);
-            bool hasRenderableRuns = runs.Any(run => !run.IsImage && !string.IsNullOrEmpty(run.Text));
+            bool hasRenderableRuns = runs.Any(run => IsNativeRenderableTextRun(run, paragraph));
+            bool shouldRenderDirectContent = ShouldRenderNativeDirectText(paragraph, runs, content);
+            string renderContent = hasRenderableRuns || shouldRenderDirectContent ? content : string.Empty;
             List<int> paragraphFootnoteNumbers = GetNativeParagraphFootnoteNumbers(paragraph, runs, footnoteNumbers, footnoteNumbersById);
             PdfCore.PdfParagraphStyle style = CreateNativeParagraphStyle(paragraph, nativeDefaults);
             if (ShouldSuppressNativeContextualSpacingAfter(paragraph, nextParagraph)) {
@@ -146,13 +148,13 @@ namespace OfficeIMO.Word.Pdf {
 
             if (marker == null &&
                 paragraphFootnoteNumbers.Count == 0 &&
-                IsNativeHorizontalRuleParagraph(paragraph, runs, content) &&
+                IsNativeHorizontalRuleParagraph(paragraph, runs, renderContent) &&
                 CreateNativeHorizontalRuleStyle(paragraph, style) is { } horizontalRuleStyle) {
                 pdf.HR(style: horizontalRuleStyle);
                 return;
             }
 
-            if (!hasRenderableRuns && string.IsNullOrEmpty(content) && marker == null && paragraphFootnoteNumbers.Count == 0 && checkboxControls.Count == 0 && formFieldControls.Count == 0 && repeatingSectionControls.Count == 0) {
+            if (!hasRenderableRuns && string.IsNullOrEmpty(renderContent) && marker == null && paragraphFootnoteNumbers.Count == 0 && checkboxControls.Count == 0 && formFieldControls.Count == 0 && repeatingSectionControls.Count == 0) {
                 RenderNativeEmptyParagraph(pdf, paragraph, style, nativeDefaults, renderSpacingOnlyEmptyParagraphLineBox);
                 return;
             }
@@ -177,7 +179,7 @@ namespace OfficeIMO.Word.Pdf {
                     pdf.Bookmark(generatedDestinationName);
                 }
 
-                string headingText = GetNativeHeadingText(content, runs);
+                string headingText = GetNativeHeadingText(renderContent, runs, paragraph);
                 RenderNativeHeading(pdf, headingLevel, headingText, objectAlign, headingColor, paragraph, paragraphStyle, nativeFontMap, headingLink.LinkUri, headingLink.LinkDestinationName, headingLink.LinkContents);
                 if (CreateNativeBottomBorderRuleStyle(paragraph, paragraphStyle) is { } headingRuleStyle) {
                     pdf.HR(style: headingRuleStyle);
@@ -192,7 +194,7 @@ namespace OfficeIMO.Word.Pdf {
             PdfCore.PanelStyle? panelStyle = CreateNativeParagraphPanelStyle(paragraph, paragraphStyle);
             if (panelStyle != null) {
                 pdf.PanelParagraph(builder => {
-                    AddNativeParagraphContent(builder, paragraph, marker, runs, hasRenderableRuns, content, paragraphFootnoteNumbers, options, nativeDefaults);
+                    AddNativeParagraphContent(builder, paragraph, marker, runs, hasRenderableRuns, renderContent, paragraphFootnoteNumbers, options, nativeDefaults);
                 }, panelStyle, align, defaultColor);
                 RenderNativeFormFields(pdf, formFieldControls, objectAlign);
                 RenderNativeCheckBoxes(pdf, checkboxControls, objectAlign);
@@ -209,9 +211,9 @@ namespace OfficeIMO.Word.Pdf {
                 paragraphStyle.SpacingAfter = 0;
             }
 
-            if (hasRenderableRuns || !string.IsNullOrEmpty(content) || marker != null || paragraphFootnoteNumbers.Count > 0) {
+            if (hasRenderableRuns || !string.IsNullOrEmpty(renderContent) || marker != null || paragraphFootnoteNumbers.Count > 0) {
                 pdf.Paragraph(builder => {
-                    AddNativeParagraphContent(builder, paragraph, marker, runs, hasRenderableRuns, content, paragraphFootnoteNumbers, options, nativeDefaults);
+                    AddNativeParagraphContent(builder, paragraph, marker, runs, hasRenderableRuns, renderContent, paragraphFootnoteNumbers, options, nativeDefaults);
                 }, align, defaultColor, paragraphStyle);
             }
 
@@ -464,6 +466,10 @@ namespace OfficeIMO.Word.Pdf {
                         continue;
                     }
 
+                    if (IsNativeHiddenTextRun(run, paragraph)) {
+                        continue;
+                    }
+
                     if (IsNativeTextWrappingBreak(run) && string.IsNullOrEmpty(run.Text)) {
                         builder.LineBreak();
                         tabIndex = 0;
@@ -477,7 +483,7 @@ namespace OfficeIMO.Word.Pdf {
                 if (!string.IsNullOrEmpty(supplementalText)) {
                     AddNativeText(builder, supplementalText!, paragraph, tabStops, ref tabIndex, nativeDefaults);
                 }
-            } else if (paragraph.IsHyperLink && paragraph.Hyperlink != null) {
+            } else if (paragraph.IsHyperLink && paragraph.Hyperlink != null && !IsNativeHiddenTextRun(paragraph) && !string.IsNullOrEmpty(paragraph.Hyperlink.Text)) {
                 ApplyNativeTextStyle(builder, paragraph, nativeDefaults: nativeDefaults);
                 AddNativeHyperLinkRun(builder, paragraph.Hyperlink.Text, paragraph.Hyperlink, tabStops, ref tabIndex);
                 ResetNativeTextStyle(builder);
@@ -602,9 +608,10 @@ namespace OfficeIMO.Word.Pdf {
 
                     List<WordParagraph> runs = GetNativeRuns(paragraph);
                     string content = paragraph.IsHyperLink && paragraph.Hyperlink != null ? paragraph.Hyperlink.Text : paragraph.Text;
-                    bool hasRenderableRuns = runs.Any(run => !run.IsImage && !string.IsNullOrEmpty(run.Text));
+                    bool hasRenderableRuns = runs.Any(run => IsNativeRenderableTextRun(run, paragraph));
+                    string renderContent = hasRenderableRuns || ShouldRenderNativeDirectText(paragraph, runs, content) ? content : string.Empty;
                     List<int> paragraphFootnoteNumbers = GetNativeParagraphFootnoteNumbers(paragraph, runs, Array.Empty<int>(), footnoteNumbersById);
-                    AddNativeParagraphContent(builder, paragraph, null, runs, hasRenderableRuns, content, paragraphFootnoteNumbers, options, nativeDefaults);
+                    AddNativeParagraphContent(builder, paragraph, null, runs, hasRenderableRuns, renderContent, paragraphFootnoteNumbers, options, nativeDefaults);
                 }
             }, style, defaultTextAlign);
         }
@@ -623,11 +630,12 @@ namespace OfficeIMO.Word.Pdf {
 
         private static bool HasNativeRenderableTextBoxText(IEnumerable<WordParagraph> paragraphs) {
             foreach (WordParagraph paragraph in paragraphs) {
-                if (!string.IsNullOrWhiteSpace(paragraph.Text)) {
+                List<WordParagraph> runs = GetNativeRuns(paragraph);
+                if (runs.Count == 0 && !IsNativeHiddenTextRun(paragraph) && !string.IsNullOrWhiteSpace(paragraph.Text)) {
                     return true;
                 }
 
-                if (GetNativeRuns(paragraph).Any(run => !run.IsImage && !string.IsNullOrWhiteSpace(run.Text))) {
+                if (runs.Any(run => IsNativeRenderableTextRun(run, paragraph) && !string.IsNullOrWhiteSpace(run.Text))) {
                     return true;
                 }
             }
@@ -685,15 +693,19 @@ namespace OfficeIMO.Word.Pdf {
             pdf.Heading(level, normalizedText, align, color, style, linkUri, linkDestinationName, linkContents);
         }
 
-        private static string GetNativeHeadingText(string content, IReadOnlyList<WordParagraph> runs) {
+        private static string GetNativeHeadingText(string content, IReadOnlyList<WordParagraph> runs, WordParagraph paragraph) {
             string normalizedContent = NormalizeNativeDirectText(content);
             if (!string.IsNullOrWhiteSpace(normalizedContent)) {
-                return normalizedContent;
+                return ApplyNativeTextTransform(normalizedContent, paragraph);
             }
 
             var builder = new StringBuilder();
             foreach (WordParagraph run in runs) {
                 if (run.IsImage) {
+                    continue;
+                }
+
+                if (IsNativeHiddenTextRun(run, paragraph)) {
                     continue;
                 }
 
@@ -705,12 +717,22 @@ namespace OfficeIMO.Word.Pdf {
                 }
 
                 if (!string.IsNullOrEmpty(run.Text)) {
-                    builder.Append(run.Text);
+                    builder.Append(ApplyNativeTextTransform(run.Text, run, paragraph));
                 }
             }
 
             return NormalizeNativeDirectText(builder.ToString());
         }
+
+        private static bool IsNativeRenderableTextRun(WordParagraph run, WordParagraph? fallback = null) =>
+            !run.IsImage &&
+            !string.IsNullOrEmpty(run.Text) &&
+            !IsNativeHiddenTextRun(run, fallback);
+
+        private static bool ShouldRenderNativeDirectText(WordParagraph paragraph, IReadOnlyList<WordParagraph> runs, string content) =>
+            runs.Count == 0 &&
+            !string.IsNullOrEmpty(content) &&
+            !IsNativeHiddenTextRun(paragraph);
 
         private static string NormalizeNativeDirectText(string? text) {
             if (string.IsNullOrEmpty(text)) {
@@ -725,6 +747,7 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static PdfCore.PdfHeadingStyle CreateNativeWordHeadingStyle(int level, WordParagraph paragraph, PdfCore.PdfParagraphStyle paragraphStyle, NativeFontMap nativeFontMap) {
+            NativeParagraphStyleDefaults styleDefaults = GetNativeParagraphStyleDefaults(paragraph);
             double fontSize = level switch {
                 1 => 16D,
                 2 => 13D,
@@ -740,6 +763,23 @@ namespace OfficeIMO.Word.Pdf {
                 ApplySpacingBeforeAtTop = true,
                 KeepWithNext = true
             };
+            if (ResolveNativeHeadingDeclaredFontSize(paragraph, styleDefaults) is { } declaredFontSize) {
+                style.FontSize = declaredFontSize;
+            }
+
+            if (HasNativeHeadingDeclaredLineHeight(paragraph, styleDefaults) && paragraphStyle.LineHeight.HasValue) {
+                style.LineHeight = paragraphStyle.LineHeight.Value;
+            }
+
+            if (HasNativeHeadingDeclaredSpacingBefore(paragraph, styleDefaults)) {
+                style.SpacingBefore = paragraphStyle.SpacingBefore;
+            }
+
+            if (HasNativeHeadingDeclaredSpacingAfter(paragraph, styleDefaults)) {
+                style.SpacingAfter = paragraphStyle.SpacingAfter;
+            }
+
+            style.KeepWithNext = ReadNativeDirectParagraphOnOff<W.KeepNext>(paragraph) ?? styleDefaults.KeepWithNext ?? true;
             string? headingFontFamily = ResolveNativeParagraphStyleFontFamily(paragraph._document, paragraph.StyleId);
             if (nativeFontMap.TryGetFontSlot(headingFontFamily, out PdfCore.PdfStandardFont headingFont)) {
                 style.Font = headingFont;
@@ -747,6 +787,30 @@ namespace OfficeIMO.Word.Pdf {
 
             return style;
         }
+
+        private static double? ResolveNativeHeadingDeclaredFontSize(WordParagraph paragraph, NativeParagraphStyleDefaults styleDefaults) {
+            if (paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0D) {
+                return paragraph.FontSize.Value;
+            }
+
+            if (styleDefaults.FontSize.HasValue && styleDefaults.FontSize.Value > 0D) {
+                return styleDefaults.FontSize.Value;
+            }
+
+            return null;
+        }
+
+        private static bool HasNativeHeadingDeclaredLineHeight(WordParagraph paragraph, NativeParagraphStyleDefaults styleDefaults) =>
+            paragraph.LineSpacing.HasValue ||
+            paragraph.LineSpacingPoints.HasValue ||
+            styleDefaults.LineHeight.HasValue ||
+            styleDefaults.LineSpacingPoints.HasValue;
+
+        private static bool HasNativeHeadingDeclaredSpacingBefore(WordParagraph paragraph, NativeParagraphStyleDefaults styleDefaults) =>
+            paragraph.LineSpacingBeforePoints.HasValue || styleDefaults.SpacingBefore.HasValue;
+
+        private static bool HasNativeHeadingDeclaredSpacingAfter(WordParagraph paragraph, NativeParagraphStyleDefaults styleDefaults) =>
+            paragraph.LineSpacingAfterPoints.HasValue || styleDefaults.SpacingAfter.HasValue;
 
         private static (string? LinkUri, string? LinkDestinationName, string? LinkContents) GetNativeHeadingLink(WordParagraph paragraph) {
             if (!paragraph.IsHyperLink || paragraph.Hyperlink == null) {
@@ -781,19 +845,30 @@ namespace OfficeIMO.Word.Pdf {
             ref int tabIndex,
             PdfSaveOptions? options,
             NativeDocumentDefaults nativeDefaults) {
-            if (string.IsNullOrEmpty(run.Text)) {
+            if (string.IsNullOrEmpty(run.Text) || IsNativeHiddenTextRun(run, paragraphStyleFallback)) {
                 return;
             }
 
             ApplyNativeTextStyle(builder, run, paragraphStyleFallback, nativeDefaults);
 
             if (run.IsHyperLink && run.Hyperlink != null) {
-                AddNativeHyperLinkRun(builder, run.Text, run.Hyperlink, tabStops, ref tabIndex);
+                AddNativeHyperLinkRun(builder, ApplyNativeTextTransform(run.Text, run, paragraphStyleFallback), run.Hyperlink, tabStops, ref tabIndex);
             } else {
-                AddNativeRunText(builder, run.Text, tabStops, ref tabIndex);
+                AddNativeRunText(builder, ApplyNativeTextTransform(run.Text, run, paragraphStyleFallback), tabStops, ref tabIndex);
             }
 
             ResetNativeTextStyle(builder);
+        }
+
+        private static bool IsNativeHiddenTextRun(WordParagraph paragraph, WordParagraph? fallback = null) {
+            WordParagraph styleSource = fallback ?? paragraph;
+            W.RunProperties? runProperties = GetNativeRunProperties(paragraph);
+            NativeCharacterStyleDefaults characterStyleDefaults = GetNativeCharacterStyleDefaults(paragraph._document, runProperties);
+            NativeParagraphStyleDefaults styleDefaults = GetNativeParagraphStyleDefaults(styleSource);
+            return ReadNativeOnOff(runProperties?.GetFirstChild<W.Vanish>()) ??
+                   characterStyleDefaults.Hidden ??
+                   styleDefaults.Hidden ??
+                   false;
         }
 
         private readonly record struct NativeResolvedTextStyle(
@@ -801,6 +876,8 @@ namespace OfficeIMO.Word.Pdf {
             bool Underline,
             bool Italic,
             bool Strike,
+            bool AllCaps,
+            PdfCore.PdfTextBaseline Baseline,
             double? FontSize,
             PdfCore.PdfStandardFont? Font,
             PdfCore.PdfColor? Color,
@@ -814,9 +891,14 @@ namespace OfficeIMO.Word.Pdf {
             ref int tabIndex,
             NativeDocumentDefaults nativeDefaults) {
             ApplyNativeTextStyle(builder, paragraph, nativeDefaults: nativeDefaults);
-            AddNativeRunText(builder, text, tabStops, ref tabIndex);
+            AddNativeRunText(builder, ApplyNativeTextTransform(text, paragraph), tabStops, ref tabIndex);
             ResetNativeTextStyle(builder);
         }
+
+        private static string ApplyNativeTextTransform(string text, WordParagraph paragraph, WordParagraph? fallback = null, NativeTableRunStyleDefaults tableRunStyleDefaults = default, NativeDocumentDefaults? nativeDefaults = null) =>
+            ResolveNativeTextRunStyle(paragraph, fallback, tableRunStyleDefaults, nativeDefaults).AllCaps
+                ? text.ToUpperInvariant()
+                : text;
 
         private static void ApplyNativeTextStyle(PdfCore.PdfParagraphBuilder builder, WordParagraph paragraph, WordParagraph? fallback = null, NativeDocumentDefaults? nativeDefaults = null) {
             NativeResolvedTextStyle style = ResolveNativeTextRunStyle(paragraph, fallback, nativeDefaults: nativeDefaults);
@@ -824,7 +906,7 @@ namespace OfficeIMO.Word.Pdf {
             builder.Italic(style.Italic);
             builder.Underline(style.Underline);
             builder.Strike(style.Strike);
-            builder.Baseline(GetNativeTextBaseline(paragraph));
+            builder.Baseline(style.Baseline);
             if (style.FontSize.HasValue) {
                 builder.FontSize(style.FontSize.Value);
             }
@@ -847,37 +929,59 @@ namespace OfficeIMO.Word.Pdf {
             NativeDocumentDefaults resolvedNativeDefaults = nativeDefaults ?? GetNativeDocumentDefaults(styleSource._document);
             NativeParagraphStyleDefaults styleDefaults = GetNativeParagraphStyleDefaults(styleSource);
             W.RunProperties? runProperties = GetNativeRunProperties(paragraph);
+            NativeCharacterStyleDefaults characterStyleDefaults = GetNativeCharacterStyleDefaults(paragraph._document, runProperties);
 
-            bool bold = ReadNativeOnOff(runProperties?.GetFirstChild<W.Bold>()) ?? styleDefaults.Bold ?? tableRunStyleDefaults.Bold ?? false;
-            bool italic = ReadNativeOnOff(runProperties?.GetFirstChild<W.Italic>()) ?? styleDefaults.Italic ?? tableRunStyleDefaults.Italic ?? false;
-            bool underline = ReadNativeUnderline(runProperties?.GetFirstChild<W.Underline>()) ?? styleDefaults.Underline ?? tableRunStyleDefaults.Underline ?? false;
+            bool bold = ReadNativeOnOff(runProperties?.GetFirstChild<W.Bold>()) ?? characterStyleDefaults.Bold ?? styleDefaults.Bold ?? tableRunStyleDefaults.Bold ?? false;
+            bool italic = ReadNativeOnOff(runProperties?.GetFirstChild<W.Italic>()) ?? characterStyleDefaults.Italic ?? styleDefaults.Italic ?? tableRunStyleDefaults.Italic ?? false;
+            bool underline = ReadNativeUnderline(runProperties?.GetFirstChild<W.Underline>()) ?? characterStyleDefaults.Underline ?? styleDefaults.Underline ?? tableRunStyleDefaults.Underline ?? false;
             bool strike =
                 ReadNativeOnOff(runProperties?.GetFirstChild<W.Strike>()) ??
                 ReadNativeOnOff(runProperties?.GetFirstChild<W.DoubleStrike>()) ??
+                characterStyleDefaults.Strike ??
                 styleDefaults.Strike ??
                 tableRunStyleDefaults.Strike ??
                 false;
+            bool allCaps =
+                ReadNativeOnOff(runProperties?.GetFirstChild<W.Caps>()) ??
+                ReadNativeOnOff(runProperties?.GetFirstChild<W.SmallCaps>()) ??
+                characterStyleDefaults.AllCaps ??
+                styleDefaults.AllCaps ??
+                tableRunStyleDefaults.AllCaps ??
+                false;
+            PdfCore.PdfTextBaseline baseline = MapNativeTextBaseline(
+                runProperties?.GetFirstChild<W.VerticalTextAlignment>()?.Val?.Value ??
+                characterStyleDefaults.Baseline ??
+                styleDefaults.Baseline ??
+                tableRunStyleDefaults.Baseline);
             double? fontSize = paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0
                 ? paragraph.FontSize.Value
-                : styleDefaults.FontSize ?? tableRunStyleDefaults.FontSize;
-            PdfCore.PdfStandardFont? font = ResolveNativeTextRunFont(paragraph, fallback, styleDefaults, tableRunStyleDefaults, resolvedNativeDefaults);
+                : characterStyleDefaults.FontSize ?? styleDefaults.FontSize ?? tableRunStyleDefaults.FontSize;
+            PdfCore.PdfStandardFont? font = ResolveNativeTextRunFont(paragraph, fallback, characterStyleDefaults, styleDefaults, tableRunStyleDefaults, resolvedNativeDefaults);
 
             PdfCore.PdfColor? color = TryGetNativeRunColor(runProperties, out PdfCore.PdfColor? directColor)
                 ? directColor
-                : ParseNativeColor(styleDefaults.ColorHex) ?? tableRunStyleDefaults.Color ?? ParseNativeColor(tableRunStyleDefaults.ColorHex);
+                : ParseNativeColor(characterStyleDefaults.ColorHex) ?? ParseNativeColor(styleDefaults.ColorHex) ?? tableRunStyleDefaults.Color ?? ParseNativeColor(tableRunStyleDefaults.ColorHex);
             PdfCore.PdfColor? background = TryGetNativeRunHighlight(runProperties, out PdfCore.PdfColor? directBackground)
                 ? directBackground
-                : MapNativeHighlight(styleDefaults.Highlight) ?? MapNativeHighlight(tableRunStyleDefaults.Highlight);
+                : MapNativeHighlight(characterStyleDefaults.Highlight) ?? MapNativeHighlight(styleDefaults.Highlight) ?? MapNativeHighlight(tableRunStyleDefaults.Highlight);
 
-            return new NativeResolvedTextStyle(bold, underline, italic, strike, fontSize, font, color, background);
+            return new NativeResolvedTextStyle(bold, underline, italic, strike, allCaps, baseline, fontSize, font, color, background);
         }
+
+        private static PdfCore.PdfTextBaseline MapNativeTextBaseline(W.VerticalPositionValues? baseline) =>
+            baseline == W.VerticalPositionValues.Superscript
+                ? PdfCore.PdfTextBaseline.Superscript
+                : baseline == W.VerticalPositionValues.Subscript
+                    ? PdfCore.PdfTextBaseline.Subscript
+                    : PdfCore.PdfTextBaseline.Normal;
 
         private static W.RunProperties? GetNativeRunProperties(WordParagraph paragraph) =>
             paragraph.IsHyperLink ? paragraph.Hyperlink?._runProperties : paragraph._runProperties;
 
-        private static PdfCore.PdfStandardFont? ResolveNativeTextRunFont(WordParagraph paragraph, WordParagraph? fallback, NativeParagraphStyleDefaults styleDefaults, NativeTableRunStyleDefaults tableRunStyleDefaults, NativeDocumentDefaults nativeDefaults) {
+        private static PdfCore.PdfStandardFont? ResolveNativeTextRunFont(WordParagraph paragraph, WordParagraph? fallback, NativeCharacterStyleDefaults characterStyleDefaults, NativeParagraphStyleDefaults styleDefaults, NativeTableRunStyleDefaults tableRunStyleDefaults, NativeDocumentDefaults nativeDefaults) {
             if (TryResolveNativeDirectRunFont(paragraph, out PdfCore.PdfStandardFont font) ||
                 (fallback != null && TryResolveNativeDirectRunFont(fallback, out font)) ||
+                PdfCore.PdfStandardFontMapper.TryMapFontFamily(characterStyleDefaults.FontFamily, out font) ||
                 PdfCore.PdfStandardFontMapper.TryMapFontFamily(styleDefaults.FontFamily, out font) ||
                 PdfCore.PdfStandardFontMapper.TryMapFontFamily(tableRunStyleDefaults.FontFamily, out font) ||
                 PdfCore.PdfStandardFontMapper.TryMapFontFamily(nativeDefaults.FontFamily, out font)) {

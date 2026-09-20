@@ -4,16 +4,16 @@ using PdfCore = OfficeIMO.Pdf;
 
 namespace OfficeIMO.Word.Pdf {
     public static partial class WordPdfConverterExtensions {
-        private readonly record struct NativeTableStyleDefaults(PdfCore.PdfCellPadding? CellPadding, PdfCore.PdfColor? CellFill, PdfCore.PdfCellVerticalAlign? CellVerticalAlignment, (PdfCore.PdfColor Color, double Width)? TableBorder, W.TableBorders? Borders, W.TableWidth? PreferredWidth, W.TableLayoutValues? Layout, double? LeftIndent, double? CellSpacing, W.TableRowAlignmentValues? Alignment, double? ParagraphLineHeight, double? ParagraphLineSpacingPoints, W.LineSpacingRuleValues? ParagraphLineSpacingRule, double? ParagraphSpacingBefore, double? ParagraphSpacingAfter, W.JustificationValues? ParagraphAlignment, NativeTableRunStyleDefaults RunStyle, NativeTableConditionalStyleDefaults FirstRowStyle, NativeTableConditionalStyleDefaults LastRowStyle, NativeTableConditionalStyleDefaults FirstColumnStyle, NativeTableConditionalStyleDefaults LastColumnStyle, NativeTableConditionalStyleDefaults Band1HorizontalStyle, NativeTableConditionalStyleDefaults Band1VerticalStyle) {
-            public static NativeTableStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, NativeTableRunStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty);
+        private readonly record struct NativeTableStyleDefaults(PdfCore.PdfCellPadding? CellPadding, PdfCore.PdfColor? CellFill, PdfCore.PdfCellVerticalAlign? CellVerticalAlignment, (PdfCore.PdfColor Color, double Width)? TableBorder, W.TableBorders? Borders, W.TableWidth? PreferredWidth, W.TableLayoutValues? Layout, double? LeftIndent, double? CellSpacing, W.TableRowAlignmentValues? Alignment, double? ParagraphLineHeight, double? ParagraphLineSpacingPoints, W.LineSpacingRuleValues? ParagraphLineSpacingRule, double? ParagraphSpacingBefore, double? ParagraphSpacingAfter, W.JustificationValues? ParagraphAlignment, double? ParagraphLeftIndent, double? ParagraphRightIndent, double? ParagraphFirstLineIndent, NativeTableRunStyleDefaults RunStyle, NativeTableConditionalStyleDefaults FirstRowStyle, NativeTableConditionalStyleDefaults LastRowStyle, NativeTableConditionalStyleDefaults FirstColumnStyle, NativeTableConditionalStyleDefaults LastColumnStyle, NativeTableConditionalStyleDefaults Band1HorizontalStyle, NativeTableConditionalStyleDefaults Band1VerticalStyle) {
+            public static NativeTableStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, NativeTableRunStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty, NativeTableConditionalStyleDefaults.Empty);
         }
 
-        private readonly record struct NativeTableRunStyleDefaults(double? FontSize, string? FontFamily, bool? Bold, bool? Italic, bool? Underline, bool? Strike, string? ColorHex, W.HighlightColorValues? Highlight, PdfCore.PdfColor? Color) {
-            public static NativeTableRunStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null);
+        private readonly record struct NativeTableRunStyleDefaults(double? FontSize, string? FontFamily, bool? Bold, bool? Italic, bool? Underline, bool? Strike, bool? AllCaps, W.VerticalPositionValues? Baseline, string? ColorHex, W.HighlightColorValues? Highlight, PdfCore.PdfColor? Color) {
+            public static NativeTableRunStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null);
         }
 
-        private readonly record struct NativeTableConditionalStyleDefaults(PdfCore.PdfColor? CellFill, W.TableCellBorders? CellBorders, PdfCore.PdfCellPadding? CellPadding, PdfCore.PdfCellVerticalAlign? CellVerticalAlignment, PdfCore.PdfColor? TextColor, double? FontSize, bool? Bold, bool? Italic, bool? Underline, bool? Strike, W.HighlightColorValues? Highlight, double? ParagraphLineHeight, double? ParagraphLineSpacingPoints, W.LineSpacingRuleValues? ParagraphLineSpacingRule, double? ParagraphSpacingBefore, double? ParagraphSpacingAfter, W.JustificationValues? ParagraphAlignment) {
-            public static NativeTableConditionalStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        private readonly record struct NativeTableConditionalStyleDefaults(PdfCore.PdfColor? CellFill, W.TableCellBorders? CellBorders, PdfCore.PdfCellPadding? CellPadding, PdfCore.PdfCellVerticalAlign? CellVerticalAlignment, PdfCore.PdfColor? TextColor, double? FontSize, bool? Bold, bool? Italic, bool? Underline, bool? Strike, bool? AllCaps, W.VerticalPositionValues? Baseline, W.HighlightColorValues? Highlight, double? ParagraphLineHeight, double? ParagraphLineSpacingPoints, W.LineSpacingRuleValues? ParagraphLineSpacingRule, double? ParagraphSpacingBefore, double? ParagraphSpacingAfter, W.JustificationValues? ParagraphAlignment, double? ParagraphLeftIndent, double? ParagraphRightIndent, double? ParagraphFirstLineIndent) {
+            public static NativeTableConditionalStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
 
         private static NativeTableStyleDefaults GetNativeTableStyleDefaults(WordTable table, NativeDocumentDefaults nativeDefaults, bool ignoreFallbackTableStyle) {
@@ -46,12 +46,17 @@ namespace OfficeIMO.Word.Pdf {
             double? paragraphSpacingBefore = null;
             double? paragraphSpacingAfter = null;
             W.JustificationValues? paragraphAlignment = null;
+            double? paragraphLeftIndent = null;
+            double? paragraphRightIndent = null;
+            double? paragraphFirstLineIndent = null;
             double? fontSize = null;
             string? fontFamily = null;
             bool? bold = null;
             bool? italic = null;
             bool? underline = null;
             bool? strike = null;
+            bool? allCaps = null;
+            W.VerticalPositionValues? baseline = null;
             string? colorHex = null;
             W.HighlightColorValues? highlight = null;
             NativeTableConditionalStyleDefaults firstRowStyle = NativeTableConditionalStyleDefaults.Empty;
@@ -69,6 +74,8 @@ namespace OfficeIMO.Word.Pdf {
                 italic = ReadNativeOnOff(runProperties?.GetFirstChild<W.Italic>()) ?? italic;
                 underline = ReadNativeUnderline(runProperties?.GetFirstChild<W.Underline>()) ?? underline;
                 strike = ReadNativeOnOff(runProperties?.GetFirstChild<W.Strike>()) ?? ReadNativeOnOff(runProperties?.GetFirstChild<W.DoubleStrike>()) ?? strike;
+                allCaps = ReadNativeOnOff(runProperties?.GetFirstChild<W.Caps>()) ?? ReadNativeOnOff(runProperties?.GetFirstChild<W.SmallCaps>()) ?? allCaps;
+                baseline = runProperties?.GetFirstChild<W.VerticalTextAlignment>()?.Val?.Value ?? baseline;
                 colorHex = runProperties?.GetFirstChild<W.Color>()?.Val?.Value ?? colorHex;
                 highlight = runProperties?.GetFirstChild<W.Highlight>()?.Val?.Value ?? highlight;
 
@@ -111,6 +118,20 @@ namespace OfficeIMO.Word.Pdf {
                 }
 
                 W.StyleParagraphProperties? paragraphProperties = style.GetFirstChild<W.StyleParagraphProperties>();
+                W.Indentation? indentation = paragraphProperties?.GetFirstChild<W.Indentation>();
+                if (indentation != null) {
+                    paragraphLeftIndent = ConvertNativeTwipsToPoints(indentation.Left?.Value) ?? paragraphLeftIndent;
+                    paragraphRightIndent = ConvertNativeTwipsToPoints(indentation.Right?.Value) ?? paragraphRightIndent;
+
+                    double? firstLine = ConvertNativeTwipsToPoints(indentation.FirstLine?.Value);
+                    double? hanging = ConvertNativeTwipsToPoints(indentation.Hanging?.Value);
+                    if (hanging.HasValue) {
+                        paragraphFirstLineIndent = -hanging.Value;
+                    } else if (firstLine.HasValue) {
+                        paragraphFirstLineIndent = firstLine.Value;
+                    }
+                }
+
                 W.SpacingBetweenLines? spacing = paragraphProperties?.GetFirstChild<W.SpacingBetweenLines>();
                 if (spacing != null) {
                     double? styleParagraphLineHeight = GetNativeTableStyleParagraphLineHeight(spacing);
@@ -165,6 +186,9 @@ namespace OfficeIMO.Word.Pdf {
                 paragraphSpacingBefore,
                 paragraphSpacingAfter,
                 paragraphAlignment,
+                paragraphLeftIndent,
+                paragraphRightIndent,
+                paragraphFirstLineIndent,
                 new NativeTableRunStyleDefaults(
                     fontSize,
                     fontFamily,
@@ -172,6 +196,8 @@ namespace OfficeIMO.Word.Pdf {
                     italic,
                     underline,
                     strike,
+                    allCaps,
+                    baseline,
                     colorHex,
                     highlight,
                     null),
@@ -199,6 +225,8 @@ namespace OfficeIMO.Word.Pdf {
                 bool? italic = ReadNativeOnOff(runProperties?.GetFirstChild<W.Italic>());
                 bool? underline = ReadNativeUnderline(runProperties?.GetFirstChild<W.Underline>());
                 bool? strike = ReadNativeOnOff(runProperties?.GetFirstChild<W.Strike>()) ?? ReadNativeOnOff(runProperties?.GetFirstChild<W.DoubleStrike>());
+                bool? allCaps = ReadNativeOnOff(runProperties?.GetFirstChild<W.Caps>()) ?? ReadNativeOnOff(runProperties?.GetFirstChild<W.SmallCaps>());
+                W.VerticalPositionValues? baseline = runProperties?.GetFirstChild<W.VerticalTextAlignment>()?.Val?.Value;
                 W.HighlightColorValues? highlight = runProperties?.GetFirstChild<W.Highlight>()?.Val?.Value;
 
                 W.StyleParagraphProperties? paragraphProperties = properties.GetFirstChild<W.StyleParagraphProperties>();
@@ -208,6 +236,23 @@ namespace OfficeIMO.Word.Pdf {
                 W.LineSpacingRuleValues? paragraphLineSpacingRule = null;
                 double? paragraphSpacingBefore = null;
                 double? paragraphSpacingAfter = null;
+                double? paragraphLeftIndent = null;
+                double? paragraphRightIndent = null;
+                double? paragraphFirstLineIndent = null;
+                W.Indentation? indentation = paragraphProperties?.GetFirstChild<W.Indentation>();
+                if (indentation != null) {
+                    paragraphLeftIndent = ConvertNativeTwipsToPoints(indentation.Left?.Value);
+                    paragraphRightIndent = ConvertNativeTwipsToPoints(indentation.Right?.Value);
+
+                    double? firstLine = ConvertNativeTwipsToPoints(indentation.FirstLine?.Value);
+                    double? hanging = ConvertNativeTwipsToPoints(indentation.Hanging?.Value);
+                    if (hanging.HasValue) {
+                        paragraphFirstLineIndent = -hanging.Value;
+                    } else if (firstLine.HasValue) {
+                        paragraphFirstLineIndent = firstLine.Value;
+                    }
+                }
+
                 if (spacing != null) {
                     paragraphLineHeight = GetNativeTableStyleParagraphLineHeight(spacing);
                     paragraphLineSpacingPoints = GetNativeTableStyleParagraphLineSpacingPoints(spacing);
@@ -235,13 +280,18 @@ namespace OfficeIMO.Word.Pdf {
                     italic ?? result.Italic,
                     underline ?? result.Underline,
                     strike ?? result.Strike,
+                    allCaps ?? result.AllCaps,
+                    baseline ?? result.Baseline,
                     highlight ?? result.Highlight,
                     paragraphLineHeight ?? result.ParagraphLineHeight,
                     paragraphLineSpacingPoints ?? result.ParagraphLineSpacingPoints,
                     paragraphLineSpacingRule ?? result.ParagraphLineSpacingRule,
                     paragraphSpacingBefore ?? result.ParagraphSpacingBefore,
                     paragraphSpacingAfter ?? result.ParagraphSpacingAfter,
-                    paragraphAlignment ?? result.ParagraphAlignment);
+                    paragraphAlignment ?? result.ParagraphAlignment,
+                    paragraphLeftIndent ?? result.ParagraphLeftIndent,
+                    paragraphRightIndent ?? result.ParagraphRightIndent,
+                    paragraphFirstLineIndent ?? result.ParagraphFirstLineIndent);
             }
 
             return result;

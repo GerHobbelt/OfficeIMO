@@ -14,7 +14,8 @@ namespace OfficeIMO.Word.Html {
         public static HtmlToWordOptions CreateOfficeIMOProfile() {
             var options = new HtmlToWordOptions {
                 ImageProcessing = ImageProcessingMode.Embed,
-                MaxTableCells = null
+                MaxTableCells = null,
+                ConversionProfile = HtmlConversionProfile.Document
             };
             options.AllowedImageUriSchemes.Add(Uri.UriSchemeFile);
             return options;
@@ -42,7 +43,8 @@ namespace OfficeIMO.Word.Html {
                 MaxTotalCssBytes = 512L * 1024L,
                 MaxTableCells = 50000,
                 EnableAccessibilityDiagnostics = true,
-                UnsupportedCssHandling = HtmlUnsupportedCssHandling.Warn
+                UnsupportedCssHandling = HtmlUnsupportedCssHandling.Warn,
+                ConversionProfile = HtmlConversionProfile.Semantic
             };
 
             options.AllowedImageUriSchemes.Clear();
@@ -64,7 +66,8 @@ namespace OfficeIMO.Word.Html {
         public static HtmlToWordOptions CreateTrustedDocumentProfile() {
             var options = new HtmlToWordOptions {
                 ImageProcessing = ImageProcessingMode.Embed,
-                AllowDocumentStylesheetLinks = true
+                AllowDocumentStylesheetLinks = true,
+                ConversionProfile = HtmlConversionProfile.Document
             };
             options.AllowedImageUriSchemes.Add(Uri.UriSchemeFile);
             return options;
@@ -135,6 +138,12 @@ namespace OfficeIMO.Word.Html {
         /// Shared URL policy applied before imported HTML anchors are materialized as Word hyperlinks.
         /// </summary>
         public HtmlUrlPolicy HyperlinkUrlPolicy { get; set; } = HtmlUrlPolicy.CreateHyperlinkProfile();
+
+        /// <summary>
+        /// Shared OfficeIMO HTML conversion profile represented by this options instance.
+        /// The value is surfaced in gallery manifests, diagnostics, and downstream tooling.
+        /// </summary>
+        public HtmlConversionProfile ConversionProfile { get; set; } = HtmlConversionProfile.Semantic;
 
         /// <summary>
         /// Controls how images are processed during conversion.
@@ -283,6 +292,14 @@ namespace OfficeIMO.Word.Html {
         public List<HtmlConversionDiagnostic> Diagnostics { get; } = new List<HtmlConversionDiagnostic>();
 
         /// <summary>
+        /// Shared OfficeIMO HTML diagnostic report populated during conversion.
+        /// Prefer this report for cross-package tooling, gallery manifests, and adapters that aggregate
+        /// diagnostics from multiple OfficeIMO HTML workflows. The legacy <see cref="Diagnostics"/>
+        /// collection is still populated for existing callers.
+        /// </summary>
+        public HtmlDiagnosticReport ConversionReport { get; } = new HtmlDiagnosticReport();
+
+        /// <summary>
         /// Optional callback invoked whenever a conversion diagnostic is produced.
         /// </summary>
         public Action<HtmlConversionDiagnostic>? DiagnosticHandler { get; set; }
@@ -354,8 +371,8 @@ namespace OfficeIMO.Word.Html {
         /// </summary>
         /// <remarks>
         /// Configuration values, allow-lists, configured stylesheets, and the diagnostic callback are copied.
-        /// The runtime <see cref="Diagnostics"/> collection starts empty on the clone so diagnostics from one
-        /// conversion are not carried into the next.
+        /// Runtime diagnostic collections such as <see cref="Diagnostics"/> and <see cref="ConversionReport"/>
+        /// start empty on the clone so diagnostics from one conversion are not carried into the next.
         /// </remarks>
         /// <returns>A new <see cref="HtmlToWordOptions"/> with the same configuration values.</returns>
         public HtmlToWordOptions Clone() {
@@ -372,6 +389,7 @@ namespace OfficeIMO.Word.Html {
                 NoteReferenceType = NoteReferenceType,
                 LinkNoteUrls = LinkNoteUrls,
                 HyperlinkUrlPolicy = HyperlinkUrlPolicy?.Clone() ?? HtmlUrlPolicy.CreateHyperlinkProfile(),
+                ConversionProfile = ConversionProfile,
                 ImageProcessing = ImageProcessing,
                 HttpClient = HttpClient,
                 ResourceTimeout = ResourceTimeout,

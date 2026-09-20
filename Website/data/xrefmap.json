@@ -28420,23 +28420,23 @@
       ]
     },
     {
-      "uid": "M:OfficeIMO.Markdown.MarkdownDoc.SaveHtml(System.String,OfficeIMO.Markdown.HtmlOptions)",
-      "name": "MarkdownDoc.SaveHtml",
-      "href": "/api/markdown/officeimo-markdown-markdowndoc/#method-savehtml-string-officeimo-markdown-htmloptions",
+      "uid": "M:OfficeIMO.Markdown.MarkdownDoc.SaveAsHtml(System.String,OfficeIMO.Markdown.HtmlOptions)",
+      "name": "MarkdownDoc.SaveAsHtml",
+      "href": "/api/markdown/officeimo-markdown-markdowndoc/#method-saveashtml-string-officeimo-markdown-htmloptions",
       "aliases": [
-        "global::OfficeIMO.Markdown.MarkdownDoc.SaveHtml",
-        "OfficeIMO.Markdown.MarkdownDoc.SaveHtml",
-        "OfficeIMO.Markdown.MarkdownDoc.SaveHtml(System.String,OfficeIMO.Markdown.HtmlOptions)"
+        "global::OfficeIMO.Markdown.MarkdownDoc.SaveAsHtml",
+        "OfficeIMO.Markdown.MarkdownDoc.SaveAsHtml",
+        "OfficeIMO.Markdown.MarkdownDoc.SaveAsHtml(System.String,OfficeIMO.Markdown.HtmlOptions)"
       ]
     },
     {
-      "uid": "M:OfficeIMO.Markdown.MarkdownDoc.SaveHtmlAsync(System.String,OfficeIMO.Markdown.HtmlOptions)",
-      "name": "MarkdownDoc.SaveHtmlAsync",
-      "href": "/api/markdown/officeimo-markdown-markdowndoc/#method-savehtmlasync-string-officeimo-markdown-htmloptions",
+      "uid": "M:OfficeIMO.Markdown.MarkdownDoc.SaveAsHtmlAsync(System.String,OfficeIMO.Markdown.HtmlOptions)",
+      "name": "MarkdownDoc.SaveAsHtmlAsync",
+      "href": "/api/markdown/officeimo-markdown-markdowndoc/#method-saveashtmlasync-string-officeimo-markdown-htmloptions",
       "aliases": [
-        "global::OfficeIMO.Markdown.MarkdownDoc.SaveHtmlAsync",
-        "OfficeIMO.Markdown.MarkdownDoc.SaveHtmlAsync",
-        "OfficeIMO.Markdown.MarkdownDoc.SaveHtmlAsync(System.String,OfficeIMO.Markdown.HtmlOptions)"
+        "global::OfficeIMO.Markdown.MarkdownDoc.SaveAsHtmlAsync",
+        "OfficeIMO.Markdown.MarkdownDoc.SaveAsHtmlAsync",
+        "OfficeIMO.Markdown.MarkdownDoc.SaveAsHtmlAsync(System.String,OfficeIMO.Markdown.HtmlOptions)"
       ]
     },
     {

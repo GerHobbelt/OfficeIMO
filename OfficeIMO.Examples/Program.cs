@@ -192,6 +192,11 @@ namespace OfficeIMO.Examples {
                 return;
             }
 
+            if (HasArgument(args, "--word-market-readiness")) {
+                Word.MarketReadinessProofGallery.Example_GenerateWordMarketReadinessProof(folderPath, HasArgument(args, "--open-word"));
+                return;
+            }
+
             if (HasArgument(args, "--visio-premium") || HasArgument(args, "--premium-visio")) {
                 Visio.PremiumVisioShowcase.Example_PremiumVisioShowcase(folderPath, HasArgument(args, "--open-visio") || HasArgument(args, "--visio-open"));
                 return;
@@ -319,6 +324,10 @@ namespace OfficeIMO.Examples {
             // Excel.ReadPresetsAndHelpers.Example(folderPath, false);
             // // Excel/Read for PowerShell consumption (emits JSON rows)
             // Excel.ReadForPowerShell.Example(folderPath, false);
+            // // Excel/Feature preflight for read/edit/template/PDF workflow routing
+            // Excel.FeaturePreflight.Example(folderPath, false);
+            // // Excel/Report workflow with template, formulas, chart, pivot, preflight, and PDF
+            // Excel.ReportWorkflow.Example(folderPath, false);
             // // Excel/PowerShell-style round trip: write → read → modify → write → JSON
             // Excel.PowerShellRoundTrip.Example(folderPath, false);
             // // Excel/Headers + Footers + Properties
@@ -348,6 +357,8 @@ namespace OfficeIMO.Examples {
             // Markdown.Markdown04_TocLayoutsAndThemes.Example_Toc_ScrollSpy_Long_IndigoTheme(folderPath, false);
             // // Markdown: Built-in HTML style gallery
             // Markdown.Markdown05_ThemesGallery.Example_Themes(folderPath, false);
+            // // Markdown: One shared visual theme across Markdown, HTML, PDF, and Word
+            // Markdown.Markdown10_VisualThemesAcrossFormats.Example_SharedVisualTheme(folderPath, false);
             // // Markdown: Custom parser/AST/HTML extensions
             // Markdown.Markdown07_Custom_Extensions.Example_Custom_Extensions(folderPath, false);
             // // Markdown: Delegate-based custom block parser extensions
@@ -624,6 +635,7 @@ namespace OfficeIMO.Examples {
             // // Word/MailMerge
             // Word.MailMerge.Example_MailMergeAdvanced(folderPath, false);
             // Word.MailMerge.Example_MailMergeSimple(folderPath, false);
+            // Word.MarketReadinessProofGallery.Example_GenerateWordMarketReadinessProof(folderPath, false);
             // // Word/PageBreaks
             // Word.PageBreaks.Example_PageBreaks(folderPath, false);
             // Word.PageBreaks.Example_PageBreaks1(folderPath, false);

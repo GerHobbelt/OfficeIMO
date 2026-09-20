@@ -644,7 +644,7 @@ internal static partial class PdfWriter {
         PdfFileVersion effectiveFileVersion = requiresPdf16FileVersion
             ? PdfFileAssembler.RequireAtLeast(opts.FileVersion, PdfFileVersion.Pdf16)
             : opts.FileVersion;
-        return PdfFileAssembler.Assemble(objects, catalogId, infoId, effectiveFileVersion);
+        return PdfFileAssembler.Assemble(objects, catalogId, infoId, effectiveFileVersion, opts.EncryptionSnapshot);
     }
 
     private static string ReplaceInlineImageDrawTokens(string content, IReadOnlyList<PageImage> images) {
@@ -854,7 +854,8 @@ internal static partial class PdfWriter {
                         elementChildIds,
                         element.TableHeaderScope,
                         element.TableColumnSpan,
-                        element.TableRowSpan);
+                        element.TableRowSpan,
+                        element.AlternativeText);
                 }
 
                 ReplaceObject(objects, element.ObjectId, structElement);

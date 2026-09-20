@@ -177,6 +177,113 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Uses_Character_Style_Font_Size_For_List_Exact_Line_Spacing() {
+            double gap = RenderNativeListCharacterStyleExactLineSpacingGap();
+
+            Assert.InRange(gap, 16D, 22D);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Keeps_List_KeepWithNext_Chains_Together() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListKeepWithNextChain.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListKeepWithNextChain.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "ListChainKeepWithNext";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "List Chain Keep With Next" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleParagraphProperties(new KeepNext()))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph intro = document.AddParagraph("ListChainIntro");
+                intro.LineSpacingAfterPoints = 120;
+
+                WordList bulletList = document.AddList(WordListStyle.Bulleted);
+                bulletList.AddItem("ListChainFirst").SetStyleId(styleId);
+                bulletList.AddItem("ListChainSecond").SetStyleId(styleId);
+                document.AddParagraph("ListChainBridge").SetStyleId(styleId);
+                document.AddParagraph("ListChainTarget");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(260, 260),
+                    Margins = OfficeIMO.Pdf.PageMargins.Uniform(30),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+
+            Assert.Equal(2, pdf.NumberOfPages);
+            Assert.Contains("ListChainIntro", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ListChainFirst", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ListChainSecond", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ListChainBridge", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ListChainTarget", pdf.GetPage(1).Text);
+            Assert.Contains("ListChainFirst", pdf.GetPage(2).Text);
+            Assert.Contains("ListChainSecond", pdf.GetPage(2).Text);
+            Assert.Contains("ListChainBridge", pdf.GetPage(2).Text);
+            Assert.Contains("ListChainTarget", pdf.GetPage(2).Text);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Measures_List_Blocks_Inside_KeepWithNext_Chains() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphListKeepWithNextChain.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphListKeepWithNextChain.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "ParagraphListChainKeepWithNext";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Paragraph List Chain Keep With Next" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleParagraphProperties(new KeepNext()))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph intro = document.AddParagraph("ParagraphListChainIntro");
+                intro.LineSpacingAfterPoints = 120;
+                document.AddParagraph("ParagraphListChainLead").SetStyleId(styleId);
+
+                WordList bulletList = document.AddList(WordListStyle.Bulleted);
+                bulletList.AddItem("ParagraphListChainFirst").SetStyleId(styleId);
+                bulletList.AddItem("ParagraphListChainSecond").SetStyleId(styleId);
+                document.AddParagraph("ParagraphListChainTarget");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(260, 260),
+                    Margins = OfficeIMO.Pdf.PageMargins.Uniform(30),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+
+            Assert.Equal(2, pdf.NumberOfPages);
+            Assert.Contains("ParagraphListChainIntro", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ParagraphListChainLead", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ParagraphListChainFirst", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ParagraphListChainSecond", pdf.GetPage(1).Text);
+            Assert.DoesNotContain("ParagraphListChainTarget", pdf.GetPage(1).Text);
+            Assert.Contains("ParagraphListChainLead", pdf.GetPage(2).Text);
+            Assert.Contains("ParagraphListChainFirst", pdf.GetPage(2).Text);
+            Assert.Contains("ParagraphListChainSecond", pdf.GetPage(2).Text);
+            Assert.Contains("ParagraphListChainTarget", pdf.GetPage(2).Text);
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Renders_Custom_And_Nested_Word_List_Markers() {
             string docPath = Path.Combine(_directoryWithFiles, "PdfNativeCustomNestedListMarkers.docx");
             string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeCustomNestedListMarkers.pdf");
@@ -221,6 +328,34 @@ namespace OfficeIMO.Tests {
             Assert.True(nestedLine[0].StartBaseLine.X > alphaLine[0].StartBaseLine.X + 30D, "Expected nested Word list marker to render with deeper indentation.");
         }
 
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Renders_Word_Alphabetic_List_Markers_After_Z() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeAlphabeticListMarkersAfterZ.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeAlphabeticListMarkersAfterZ.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordList lowerList = document.AddCustomList();
+                lowerList.Numbering.AddLevel(new WordListLevel(WordListLevelKind.LowerLetterDot).SetStartNumberingValue(27));
+                lowerList.AddItem("Lower alphabetic wrap item");
+
+                WordList upperList = document.AddCustomList();
+                upperList.Numbering.AddLevel(new WordListLevel(WordListLevelKind.UpperLetterDot).SetStartNumberingValue(28));
+                upperList.AddItem("Upper alphabetic wrap item");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            string text = pdf.GetPage(1).Text;
+            Assert.Contains("aa.Lower alphabetic wrap item", text, StringComparison.Ordinal);
+            Assert.Contains("AB.Upper alphabetic wrap item", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("{.Lower alphabetic wrap item", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("\\.Upper alphabetic wrap item", text, StringComparison.Ordinal);
+        }
+
         private double RenderNativeListStyleSpacingGap(string fileNamePrefix, string spacingAfterTwips, bool contextualSpacing) {
             const string firstMarker = "FirstListGapMarker";
             const string secondMarker = "SecondListGapMarker";
@@ -253,6 +388,49 @@ namespace OfficeIMO.Tests {
                 document.SaveAsPdf(pdfPath, new PdfSaveOptions {
                     IncludePageNumbers = false,
                     PageSize = new OfficeIMO.Pdf.PageSize(320, 240),
+                    Margins = PageMargins.Uniform(36),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            double firstY = Assert.Single(words, word => word.Text == firstMarker).BoundingBox.Bottom;
+            double secondY = Assert.Single(words, word => word.Text == secondMarker).BoundingBox.Bottom;
+            return firstY - secondY;
+        }
+
+        private double RenderNativeListCharacterStyleExactLineSpacingGap() {
+            const string firstMarker = "Alpha";
+            const string secondMarker = "Beta";
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListCharacterStyleExactLineSpacing.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListCharacterStyleExactLineSpacing.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeListExactLineCharacterStyle";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native List Exact Line Character Style" },
+                    new StyleRunProperties(new FontSize { Val = "64" }))
+                {
+                    Type = StyleValues.Character,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordList bulletList = document.AddList(WordListStyle.Bulleted);
+                WordParagraph item = bulletList.AddItem(string.Empty);
+                item.AddText(firstMarker).SetCharacterStyleId(styleId);
+                item.AddBreak();
+                item.AddText(secondMarker).SetCharacterStyleId(styleId);
+                item.LineSpacingAfterPoints = 0D;
+                item.LineSpacingPoints = 18D;
+                item.LineSpacingRule = LineSpacingRuleValues.Exact;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(360, 260),
                     Margins = PageMargins.Uniform(36),
                     FontFamily = "Helvetica"
                 });
@@ -508,6 +686,38 @@ namespace OfficeIMO.Tests {
             Assert.Contains(listItems, item => item.Marker == "1" && item.Text == "LevelMarkerRunPropertiesBody");
             Assert.Equal(1, CountOccurrences(content, "0.753 0 0 rg"));
             Assert.Equal(1, Regex.Matches(content, @"/F19\s+11\s+Tf").Count);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Maps_Numbering_Level_Font_Size_To_List_Marker() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeListLevelMarkerFontSize.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeListLevelMarkerFontSize.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordList numberedList = document.AddCustomList();
+                numberedList.Numbering.AddLevel(new WordListLevel(WordListLevelKind.DecimalDot));
+                numberedList.Numbering.Levels[0]._level.NumberingSymbolRunProperties = new NumberingSymbolRunProperties(
+                    new FontSize { Val = "40" });
+                numberedList.AddItem("LevelMarkerFontSizeBody");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            byte[] bytes = File.ReadAllBytes(pdfPath);
+            string content = ReadPdfPageContent(bytes);
+            var listItems = PdfTextExtractor.ExtractListItemsByPage(bytes)
+                .SelectMany(page => page.ListItems)
+                .ToList();
+
+            Assert.Contains(listItems, item => item.Marker == "1" && item.Text == "LevelMarkerFontSizeBody");
+            Assert.Equal(1, Regex.Matches(content, @"/F\d+\s+20\s+Tf").Count);
+            Assert.True(
+                Regex.Matches(content, @"/F\d+\s+11\s+Tf").Count >= 1,
+                "Expected the list body text to keep the normal paragraph font size while only the marker uses the numbering level font size.");
         }
 
         [Fact]

@@ -111,6 +111,21 @@ namespace OfficeIMO.Word.Pdf {
             return resolvedColor;
         }
 
+        private static double? ResolveNativeHeaderFooterFontSize(params WordHeaderFooter?[] headerFooters) {
+            double? resolvedFontSize = null;
+            foreach (WordHeaderFooter? headerFooter in headerFooters) {
+                foreach (double fontSize in EnumerateNativeHeaderFooterFontSizes(headerFooter)) {
+                    if (resolvedFontSize.HasValue && !NullableDoubleEquals(resolvedFontSize.Value, fontSize)) {
+                        return null;
+                    }
+
+                    resolvedFontSize = fontSize;
+                }
+            }
+
+            return resolvedFontSize;
+        }
+
         private static PdfCore.PdfStandardFont ResolveNativeHeaderFooterBaseFont(WordDocument document, PdfSaveOptions? options, bool isHeader) {
             if (options?.PdfOptions != null) {
                 return PdfCore.PdfStandardFontMapper.GetFontFamily(isHeader ? options.PdfOptions.HeaderFont : options.PdfOptions.FooterFont);
@@ -175,6 +190,18 @@ namespace OfficeIMO.Word.Pdf {
             foreach (WordElement element in CollapseNativeParagraphElements(headerFooter.Elements)) {
                 foreach (string familyName in EnumerateNativeHeaderFooterElementFontFamilies(element)) {
                     yield return familyName;
+                }
+            }
+        }
+
+        private static IEnumerable<double> EnumerateNativeHeaderFooterFontSizes(WordHeaderFooter? headerFooter) {
+            if (headerFooter == null) {
+                yield break;
+            }
+
+            foreach (WordElement element in CollapseNativeParagraphElements(headerFooter.Elements)) {
+                foreach (double fontSize in EnumerateNativeHeaderFooterElementFontSizes(element)) {
+                    yield return fontSize;
                 }
             }
         }
@@ -263,6 +290,40 @@ namespace OfficeIMO.Word.Pdf {
             }
         }
 
+        private static IEnumerable<double> EnumerateNativeHeaderFooterElementFontSizes(WordElement element) {
+            if (element is WordParagraph paragraph) {
+                foreach (NativeResolvedTextStyle style in EnumerateNativeParagraphTextStyles(paragraph)) {
+                    if (style.FontSize.HasValue && style.FontSize.Value > 0D) {
+                        yield return style.FontSize.Value;
+                    }
+                }
+
+                yield break;
+            }
+
+            if (element is not WordTable table) {
+                yield break;
+            }
+
+            foreach (WordTableRow row in table.Rows) {
+                foreach (WordTableCell cell in row.Cells) {
+                    foreach (WordParagraph cellParagraph in cell.Paragraphs) {
+                        foreach (NativeResolvedTextStyle style in EnumerateNativeParagraphTextStyles(cellParagraph)) {
+                            if (style.FontSize.HasValue && style.FontSize.Value > 0D) {
+                                yield return style.FontSize.Value;
+                            }
+                        }
+                    }
+
+                    foreach (WordTable nestedTable in cell.NestedTables) {
+                        foreach (double fontSize in EnumerateNativeHeaderFooterElementFontSizes(nestedTable)) {
+                            yield return fontSize;
+                        }
+                    }
+                }
+            }
+        }
+
         private static IEnumerable<PdfCore.PdfColor> EnumerateNativeHeaderFooterElementColors(WordElement element) {
             if (element is WordParagraph paragraph) {
                 foreach (PdfCore.PdfColor color in EnumerateNativeParagraphColors(paragraph)) {
@@ -320,6 +381,11 @@ namespace OfficeIMO.Word.Pdf {
                 yield return styleFamily!;
             }
 
+            string? characterStyleFamily = GetNativeCharacterStyleDefaults(paragraph._document, GetNativeRunProperties(paragraph)).FontFamily;
+            if (!string.IsNullOrWhiteSpace(characterStyleFamily)) {
+                yield return characterStyleFamily!;
+            }
+
             foreach (WordParagraph run in GetNativeRuns(paragraph)) {
                 if (run.IsImage || string.IsNullOrWhiteSpace(run.Text)) {
                     continue;
@@ -327,6 +393,11 @@ namespace OfficeIMO.Word.Pdf {
 
                 foreach (string familyName in EnumerateNativeParagraphOwnFontFamilies(run)) {
                     yield return familyName;
+                }
+
+                string? runCharacterStyleFamily = GetNativeCharacterStyleDefaults(run._document, GetNativeRunProperties(run)).FontFamily;
+                if (!string.IsNullOrWhiteSpace(runCharacterStyleFamily)) {
+                    yield return runCharacterStyleFamily!;
                 }
             }
         }
@@ -342,6 +413,11 @@ namespace OfficeIMO.Word.Pdf {
                 yield return styleColor.Value;
             }
 
+            PdfCore.PdfColor? characterStyleColor = ParseNativeColor(GetNativeCharacterStyleDefaults(paragraph._document, GetNativeRunProperties(paragraph)).ColorHex);
+            if (characterStyleColor.HasValue) {
+                yield return characterStyleColor.Value;
+            }
+
             foreach (WordParagraph run in GetNativeRuns(paragraph)) {
                 if (run.IsImage || string.IsNullOrWhiteSpace(run.Text)) {
                     continue;
@@ -350,6 +426,11 @@ namespace OfficeIMO.Word.Pdf {
                 PdfCore.PdfColor? runColor = ParseNativeColor(run.ColorHex);
                 if (runColor.HasValue) {
                     yield return runColor.Value;
+                }
+
+                PdfCore.PdfColor? runCharacterStyleColor = ParseNativeColor(GetNativeCharacterStyleDefaults(run._document, GetNativeRunProperties(run)).ColorHex);
+                if (runCharacterStyleColor.HasValue) {
+                    yield return runCharacterStyleColor.Value;
                 }
             }
         }
@@ -545,14 +626,14 @@ namespace OfficeIMO.Word.Pdf {
             }
 
             pageNumberStyle = null;
-            if (paragraph.IsHyperLink && paragraph.Hyperlink != null) {
-                return AppendNativeHeaderFooterSupplementalText(paragraph.Hyperlink.Text, paragraph);
+            if (paragraph.IsHyperLink && paragraph.Hyperlink != null && !IsNativeHiddenTextRun(paragraph)) {
+                return AppendNativeHeaderFooterSupplementalText(ApplyNativeTextTransform(paragraph.Hyperlink.Text, paragraph), paragraph);
             }
 
             List<WordParagraph> runs = GetNativeRuns(paragraph);
             string? text = runs.Count > 0
-                ? string.Concat(runs.Select(run => run.Text))
-                : paragraph.Text;
+                ? string.Concat(runs.Where(run => !IsNativeHiddenTextRun(run, paragraph)).Select(run => ApplyNativeTextTransform(run.Text, run, paragraph)))
+                : IsNativeHiddenTextRun(paragraph) ? string.Empty : ApplyNativeTextTransform(paragraph.Text, paragraph);
             text = AppendNativeHeaderFooterSupplementalText(text, paragraph);
             if (!string.IsNullOrWhiteSpace(text)) {
                 return text;
@@ -864,6 +945,10 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static void AppendNativeHeaderFooterRunText(W.Run run, StringBuilder builder, NativeHeaderFooterFieldState state, ref PdfCore.PdfPageNumberStyle? pageNumberStyle, ref bool hasConflictingStyles, ref bool hasFieldToken) {
+            if (IsNativeHiddenRun(run)) {
+                return;
+            }
+
             foreach (var child in run.ChildElements) {
                 if (child is W.FieldChar fieldChar) {
                     W.FieldCharValues? fieldCharType = fieldChar.FieldCharType?.Value;
@@ -902,7 +987,7 @@ namespace OfficeIMO.Word.Pdf {
                 }
 
                 if (child is W.Text text) {
-                    builder.Append(text.Text);
+                    builder.Append(ApplyNativeHeaderFooterRunTextTransform(text.Text, run));
                 } else if (child is W.TabChar) {
                     builder.Append('\t');
                 } else if (child is W.Break) {
@@ -910,6 +995,18 @@ namespace OfficeIMO.Word.Pdf {
                 }
             }
         }
+
+        private static bool IsNativeHiddenRun(W.Run run) =>
+            ReadNativeOnOff(run.RunProperties?.GetFirstChild<W.Vanish>()) == true;
+
+        private static string ApplyNativeHeaderFooterRunTextTransform(string text, W.Run run) =>
+            IsNativeAllCapsRun(run)
+                ? text.ToUpperInvariant()
+                : text;
+
+        private static bool IsNativeAllCapsRun(W.Run run) =>
+            ReadNativeOnOff(run.RunProperties?.GetFirstChild<W.Caps>()) == true ||
+            ReadNativeOnOff(run.RunProperties?.GetFirstChild<W.SmallCaps>()) == true;
 
         private static bool TryGetNativeHeaderFooterFieldToken(WordParagraph paragraph, out string? token, out PdfCore.PdfPageNumberStyle? style) {
             token = null;
