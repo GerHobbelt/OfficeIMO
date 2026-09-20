@@ -2,6 +2,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using System.Globalization;
+using OfficeFormula = DocumentFormat.OpenXml.Office.Excel.Formula;
 
 namespace OfficeIMO.Excel {
     public partial class ExcelDocument {
@@ -33,6 +34,10 @@ namespace OfficeIMO.Excel {
         /// <param name="validationMode">How to validate or sanitize <paramref name="newSheetName"/>.</param>
         /// <returns>The copied worksheet.</returns>
         public ExcelSheet CopyWorkSheet(ExcelSheet sourceSheet, string newSheetName, SheetNameValidationMode validationMode = SheetNameValidationMode.Sanitize) {
+            return CopyWorkSheetWithinWorkbook(sourceSheet, newSheetName, validationMode).Sheet;
+        }
+
+        private WorksheetPackageCopyResult CopyWorkSheetWithinWorkbook(ExcelSheet sourceSheet, string newSheetName, SheetNameValidationMode validationMode) {
             if (sourceSheet == null) throw new ArgumentNullException(nameof(sourceSheet));
             if (!ReferenceEquals(sourceSheet.Document, this)) {
                 throw new ArgumentException("Source worksheet must belong to this workbook. Use CopyWorkSheetFrom to copy between workbooks.", nameof(sourceSheet));
@@ -44,13 +49,13 @@ namespace OfficeIMO.Excel {
                 WorksheetPart copiedPart = WorkbookPartRoot.AddNewPart<WorksheetPart>();
                 copiedPart.Worksheet = (Worksheet)sourcePart.Worksheet!.CloneNode(true);
                 RemoveRelationshipBackedWorksheetFeatures(copiedPart.Worksheet);
-                CopyWorksheetTables(sourcePart, copiedPart);
+                Dictionary<string, string> tableNameMap = CopyWorksheetTables(sourcePart, copiedPart, rewriteCopiedTableReferences: true);
                 copiedPart.Worksheet.Save();
 
                 Sheet sheet = AppendWorksheetElement(copiedPart, validatedName);
                 MarkSheetCacheDirty();
                 WorkbookRoot.Save();
-                return new ExcelSheet(this, _spreadSheetDocument, sheet);
+                return new WorksheetPackageCopyResult(new ExcelSheet(this, _spreadSheetDocument, sheet), tableNameMap);
             });
         }
 
@@ -85,11 +90,11 @@ namespace OfficeIMO.Excel {
         public ExcelSheet CopyWorkSheetFrom(ExcelDocument sourceDocument, string sourceSheetName, string newSheetName, SheetNameValidationMode validationMode, ExcelWorksheetCopyOptions? options) {
             if (sourceDocument == null) throw new ArgumentNullException(nameof(sourceDocument));
             if (string.IsNullOrWhiteSpace(sourceSheetName)) throw new ArgumentNullException(nameof(sourceSheetName));
-            if (ReferenceEquals(sourceDocument, this)) {
+            options ??= new ExcelWorksheetCopyOptions();
+            if (ReferenceEquals(sourceDocument, this) && options.CopyMode != ExcelWorksheetCopyMode.Values) {
                 return CopyWorkSheet(sourceSheetName, newSheetName, validationMode);
             }
 
-            options ??= new ExcelWorksheetCopyOptions();
             return options.CopyMode == ExcelWorksheetCopyMode.Values
                 ? CopyWorkSheetFromValues(sourceDocument, sourceSheetName, newSheetName, validationMode)
                 : CopyWorkSheetFromPackage(sourceDocument, sourceSheetName, newSheetName, validationMode);
@@ -355,6 +360,17 @@ namespace OfficeIMO.Excel {
             worksheet.RemoveAllChildren<Controls>();
             worksheet.RemoveAllChildren<Picture>();
 
+            PageSetup? pageSetup = worksheet.GetFirstChild<PageSetup>();
+            if (pageSetup != null) {
+                pageSetup.Id = null;
+            }
+
+            RemoveElementsByLocalName(worksheet, "pivotTableDefinition");
+            RemoveElementsByLocalName(worksheet, "pivotTableDefinitions");
+            RemoveElementsByLocalName(worksheet, "queryTableParts");
+            RemoveElementsByLocalName(worksheet, "customProperties");
+            RemoveWorksheetExtensionsContainingLocalNames(worksheet, "slicerList", "slicerRef", "timelineRefs", "timelineRef");
+
             foreach (Hyperlinks hyperlinks in worksheet.Elements<Hyperlinks>().ToList()) {
                 foreach (Hyperlink hyperlink in hyperlinks.Elements<Hyperlink>().Where(h => h.Id != null).ToList()) {
                     hyperlink.Remove();
@@ -366,7 +382,52 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        private Dictionary<string, string> CopyWorksheetTables(WorksheetPart sourcePart, WorksheetPart copiedPart) {
+        private static void RemoveWorksheetExtensionsContainingLocalNames(Worksheet worksheet, params string[] localNames) {
+            WorksheetExtensionList? extensionList = worksheet.GetFirstChild<WorksheetExtensionList>();
+            if (extensionList == null) {
+                return;
+            }
+
+            var names = new HashSet<string>(localNames, StringComparer.Ordinal);
+            foreach (OpenXmlElement extension in extensionList.Elements<OpenXmlElement>().ToList()) {
+                bool remove = extension.Descendants<OpenXmlElement>()
+                    .Any(element => names.Contains(element.LocalName));
+                if (remove) {
+                    extension.Remove();
+                }
+            }
+
+            if (!extensionList.Elements<OpenXmlElement>().Any()) {
+                extensionList.Remove();
+            }
+        }
+
+        private static void RemoveElementsByLocalName(OpenXmlElement root, string localName) {
+            foreach (OpenXmlElement element in root.Descendants<OpenXmlElement>()
+                .Where(element => string.Equals(element.LocalName, localName, StringComparison.Ordinal))
+                .ToList()) {
+                element.Remove();
+            }
+        }
+
+        private static void RemoveExtensionsContainingLocalNames(OpenXmlElement root, params string[] localNames) {
+            var names = new HashSet<string>(localNames, StringComparer.Ordinal);
+            foreach (OpenXmlElement extension in root.Descendants<OpenXmlElement>()
+                .Where(element => string.Equals(element.LocalName, "ext", StringComparison.Ordinal)
+                    && element.Descendants<OpenXmlElement>().Any(descendant => names.Contains(descendant.LocalName)))
+                .ToList()) {
+                extension.Remove();
+            }
+
+            foreach (OpenXmlElement extensionList in root.Descendants<OpenXmlElement>()
+                .Where(element => string.Equals(element.LocalName, "extLst", StringComparison.Ordinal)
+                    && !element.ChildElements.Any())
+                .ToList()) {
+                extensionList.Remove();
+            }
+        }
+
+        private Dictionary<string, string> CopyWorksheetTables(WorksheetPart sourcePart, WorksheetPart copiedPart, bool rewriteCopiedTableReferences = false) {
             TableParts? copiedTableParts = null;
             var tableNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var copiedTables = new List<Table>();
@@ -380,7 +441,9 @@ namespace OfficeIMO.Excel {
                 TableDefinitionPart copiedTablePart = copiedPart.AddNewPart<TableDefinitionPart>(relationshipId);
                 var copiedTable = (Table)sourceTable.CloneNode(true);
                 copiedTable.Id = GetNextUniqueTableId();
+                StripCopiedTableQueryBindings(copiedTable);
                 string? sourceTableName = sourceTable.Name?.Value ?? sourceTable.DisplayName?.Value;
+                string? sourceDisplayName = sourceTable.DisplayName?.Value;
                 string tableName = CreateUniqueCopiedTableName(sourceTableName);
                 copiedTable.Name = tableName;
                 copiedTable.DisplayName = tableName;
@@ -392,16 +455,20 @@ namespace OfficeIMO.Excel {
                     tableNameMap[sourceTableName!] = tableName;
                 }
 
+                if (!string.IsNullOrWhiteSpace(sourceDisplayName)) {
+                    tableNameMap[sourceDisplayName!] = tableName;
+                }
+
                 copiedTableParts ??= EnsureTableParts(copiedPart.Worksheet!);
                 copiedTableParts.Append(new TablePart { Id = copiedPart.GetIdOfPart(copiedTablePart) });
             }
 
-            if (tableNameMap.Count > 0) {
+            if (rewriteCopiedTableReferences && tableNameMap.Count > 0) {
                 RewriteStructuredTableReferences(copiedPart.Worksheet!, tableNameMap);
             }
 
             foreach (Table copiedTable in copiedTables) {
-                if (tableNameMap.Count > 0) {
+                if (rewriteCopiedTableReferences && tableNameMap.Count > 0) {
                     RewriteStructuredTableReferences(copiedTable, tableNameMap);
                 }
 
@@ -413,6 +480,18 @@ namespace OfficeIMO.Excel {
             }
 
             return tableNameMap;
+        }
+
+        private static void StripCopiedTableQueryBindings(Table table) {
+            table.ConnectionId = null;
+            foreach (TableColumn column in table.Descendants<TableColumn>()) {
+                column.QueryTableFieldId = null;
+            }
+
+            RemoveElementsByLocalName(table, "queryTable");
+            RemoveElementsByLocalName(table, "queryTableField");
+            RemoveElementsByLocalName(table, "queryTableFields");
+            RemoveExtensionsContainingLocalNames(table, "queryTable", "queryTableField", "queryTableFields");
         }
 
         private uint GetNextUniqueTableId() {
@@ -508,6 +587,10 @@ namespace OfficeIMO.Excel {
             foreach (Formula2 formula in worksheet.Descendants<Formula2>()) {
                 formula.Text = RewriteStructuredTableReferences(formula.Text, tableNameMap);
             }
+
+            foreach (OfficeFormula formula in worksheet.Descendants<OfficeFormula>()) {
+                formula.Text = RewriteStructuredTableReferences(formula.Text, tableNameMap);
+            }
         }
 
         private static void RewriteStructuredTableReferences(Table table, IReadOnlyDictionary<string, string> tableNameMap) {
@@ -518,6 +601,139 @@ namespace OfficeIMO.Excel {
             foreach (TotalsRowFormula formula in table.Descendants<TotalsRowFormula>()) {
                 formula.Text = RewriteStructuredTableReferences(formula.Text, tableNameMap);
             }
+        }
+
+        private static void RewriteCopiedWorksheetExternalReferences(WorksheetPart worksheetPart, IReadOnlyDictionary<int, int> externalReferenceMap) {
+            if (externalReferenceMap.Count == 0) {
+                return;
+            }
+
+            foreach (CellFormula formula in worksheetPart.Worksheet!.Descendants<CellFormula>()) {
+                formula.Text = RewriteExternalWorkbookReferenceIndexes(formula.Text, externalReferenceMap);
+            }
+
+            foreach (Formula formula in worksheetPart.Worksheet!.Descendants<Formula>()) {
+                formula.Text = RewriteExternalWorkbookReferenceIndexes(formula.Text, externalReferenceMap);
+            }
+
+            foreach (Formula1 formula in worksheetPart.Worksheet!.Descendants<Formula1>()) {
+                formula.Text = RewriteExternalWorkbookReferenceIndexes(formula.Text, externalReferenceMap);
+            }
+
+            foreach (Formula2 formula in worksheetPart.Worksheet!.Descendants<Formula2>()) {
+                formula.Text = RewriteExternalWorkbookReferenceIndexes(formula.Text, externalReferenceMap);
+            }
+
+            foreach (OfficeFormula formula in worksheetPart.Worksheet!.Descendants<OfficeFormula>()) {
+                formula.Text = RewriteExternalWorkbookReferenceIndexes(formula.Text, externalReferenceMap);
+            }
+
+            foreach (TableDefinitionPart tablePart in worksheetPart.TableDefinitionParts) {
+                if (tablePart.Table == null) {
+                    continue;
+                }
+
+                bool tableChanged = false;
+                foreach (CalculatedColumnFormula formula in tablePart.Table.Descendants<CalculatedColumnFormula>()) {
+                    tableChanged |= RewriteExternalWorkbookReferenceIndexFormula(formula, externalReferenceMap);
+                }
+
+                foreach (TotalsRowFormula formula in tablePart.Table.Descendants<TotalsRowFormula>()) {
+                    tableChanged |= RewriteExternalWorkbookReferenceIndexFormula(formula, externalReferenceMap);
+                }
+
+                if (tableChanged) {
+                    tablePart.Table.Save();
+                }
+            }
+        }
+
+        private static bool RewriteExternalWorkbookReferenceIndexFormula(OpenXmlLeafTextElement formula, IReadOnlyDictionary<int, int> externalReferenceMap) {
+            string text = formula.Text;
+            string rewritten = RewriteExternalWorkbookReferenceIndexes(text, externalReferenceMap);
+            if (string.Equals(rewritten, text, StringComparison.Ordinal)) {
+                return false;
+            }
+
+            formula.Text = rewritten;
+            return true;
+        }
+
+        private static string RewriteExternalWorkbookReferenceIndexes(string? formula, IReadOnlyDictionary<int, int> externalReferenceMap) {
+            if (string.IsNullOrEmpty(formula) || externalReferenceMap.Count == 0) {
+                return formula ?? string.Empty;
+            }
+
+            var rewritten = new System.Text.StringBuilder(formula!.Length);
+            bool inStringLiteral = false;
+            for (int index = 0; index < formula!.Length;) {
+                char current = formula[index];
+                if (current == '"') {
+                    rewritten.Append(current);
+                    if (inStringLiteral && index + 1 < formula.Length && formula[index + 1] == '"') {
+                        rewritten.Append(formula[index + 1]);
+                        index += 2;
+                        continue;
+                    }
+
+                    inStringLiteral = !inStringLiteral;
+                    index++;
+                    continue;
+                }
+
+                if (!inStringLiteral
+                    && current == '['
+                    && TryReadExternalWorkbookIndex(formula, index, out int sourceIndex, out int closeIndex)
+                    && LooksLikeExternalWorkbookReference(formula, index, closeIndex)
+                    && externalReferenceMap.TryGetValue(sourceIndex, out int targetIndex)) {
+                    rewritten.Append('[')
+                        .Append(targetIndex.ToString(CultureInfo.InvariantCulture))
+                        .Append(']');
+                    index = closeIndex + 1;
+                    continue;
+                }
+
+                rewritten.Append(current);
+                index++;
+            }
+
+            return rewritten.ToString();
+        }
+
+        private static bool LooksLikeExternalWorkbookReference(string formula, int bracketIndex, int closeIndex) {
+            if (bracketIndex > 0 && formula[bracketIndex - 1] == '[') {
+                return false;
+            }
+
+            int nextIndex = closeIndex + 1;
+            return nextIndex < formula.Length
+                && (formula[nextIndex] == '\'' || char.IsLetterOrDigit(formula[nextIndex]) || formula[nextIndex] == '_');
+        }
+
+        private static bool TryReadExternalWorkbookIndex(string formula, int bracketIndex, out int sourceIndex, out int closeIndex) {
+            sourceIndex = 0;
+            closeIndex = bracketIndex;
+            int index = bracketIndex + 1;
+            if (index >= formula.Length || !char.IsDigit(formula[index])) {
+                return false;
+            }
+
+            while (index < formula.Length && char.IsDigit(formula[index])) {
+                int digit = formula[index] - '0';
+                if (sourceIndex > (int.MaxValue - digit) / 10) {
+                    return false;
+                }
+
+                sourceIndex = (sourceIndex * 10) + digit;
+                index++;
+            }
+
+            if (index >= formula.Length || formula[index] != ']') {
+                return false;
+            }
+
+            closeIndex = index;
+            return sourceIndex > 0;
         }
 
         private static string RewriteStructuredTableReferences(string? formula, IReadOnlyDictionary<string, string> tableNameMap) {
@@ -575,12 +791,19 @@ namespace OfficeIMO.Excel {
                 string tableName = mapping.Key;
                 if (index > 0) {
                     char previous = formula[index - 1];
-                    if (char.IsLetterOrDigit(previous) || previous == '_' || previous == '\\') {
+                    if (char.IsLetterOrDigit(previous) || previous == '_' || previous == '\\' || previous == '\'' || previous == '!' || previous == '[') {
                         continue;
                     }
                 }
 
-                if (index + tableName.Length >= formula.Length || formula[index + tableName.Length] != '[') {
+                int nextIndex = index + tableName.Length;
+                bool hasStructuredSpecifier = nextIndex < formula.Length && formula[nextIndex] == '[';
+                bool hasBareReferenceBoundary = nextIndex >= formula.Length || IsFormulaTokenBoundary(formula[nextIndex]);
+                if (!hasStructuredSpecifier && nextIndex < formula.Length && formula[nextIndex] == '(') {
+                    continue;
+                }
+
+                if (!hasStructuredSpecifier && !hasBareReferenceBoundary) {
                     continue;
                 }
 
@@ -594,6 +817,10 @@ namespace OfficeIMO.Excel {
             }
 
             return false;
+        }
+
+        private static bool IsFormulaTokenBoundary(char value) {
+            return !(char.IsLetterOrDigit(value) || value == '_' || value == '\\' || value == '\'' || value == '!' || value == ':' || value == '.');
         }
 
         private static string MakeUnusedRelationshipId(WorksheetPart worksheetPart) {

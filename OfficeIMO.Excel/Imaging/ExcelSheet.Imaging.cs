@@ -31,8 +31,8 @@ namespace OfficeIMO.Excel {
             ExcelWorksheetImageExportOptions resolved = NormalizeWorksheetOptions(options);
             IReadOnlyList<WorksheetImageRangeResolution> ranges = ResolveWorksheetImageRanges(resolved, allowMultipleResults: true);
             var results = new List<OfficeImageExportResult>(ranges.Count);
-            foreach (WorksheetImageRangeResolution range in ranges) {
-                results.Add(RenderWorksheetImageResult(format, range, resolved));
+            for (int index = 0; index < ranges.Count; index++) {
+                results.Add(RenderWorksheetImageResult(format, ranges[index], resolved, index + 1, ranges.Count));
             }
 
             return results.AsReadOnly();
@@ -75,7 +75,26 @@ namespace OfficeIMO.Excel {
             WriteImageStream(stream, Encoding.UTF8.GetBytes(ToSvg(options)));
 
         private static ExcelWorksheetImageExportOptions NormalizeWorksheetOptions(ExcelWorksheetImageExportOptions? options) {
-            ExcelWorksheetImageExportOptions resolved = options ?? new ExcelWorksheetImageExportOptions();
+            ExcelWorksheetImageExportOptions source = options ?? new ExcelWorksheetImageExportOptions();
+            ExcelWorksheetImageExportOptions resolved = new ExcelWorksheetImageExportOptions {
+                Scale = source.Scale,
+                BackgroundColor = source.BackgroundColor,
+                GridlineColor = source.GridlineColor,
+                ShowGridlines = source.ShowGridlines,
+                IncludeHidden = source.IncludeHidden,
+                IncludeImages = source.IncludeImages,
+                IncludeCharts = source.IncludeCharts,
+                IncludeDrawingObjects = source.IncludeDrawingObjects,
+                IncludeConditionalFormatting = source.IncludeConditionalFormatting,
+                ShowHyperlinkHints = source.ShowHyperlinkHints,
+                ShowCommentBodies = source.ShowCommentBodies,
+                DefaultColumnWidthPixels = source.DefaultColumnWidthPixels,
+                DefaultRowHeightPixels = source.DefaultRowHeightPixels,
+                Range = source.Range,
+                HeaderFooterDateTime = source.HeaderFooterDateTime ?? DateTime.Now,
+                UsePrintArea = source.UsePrintArea,
+                SplitByManualPageBreaks = source.SplitByManualPageBreaks
+            };
             if (resolved.Scale <= 0D || double.IsNaN(resolved.Scale) || double.IsInfinity(resolved.Scale)) {
                 throw new ArgumentOutOfRangeException(nameof(options), "Scale must be a finite positive number.");
             }
@@ -153,7 +172,9 @@ namespace OfficeIMO.Excel {
                 return ranges;
             }
 
-            IReadOnlyList<OfficeImageExportDiagnostic> pageDiagnostics = BuildPageLevelUnsupportedDiagnostics(includePrintTitlesUnsupported: !allowMultipleResults);
+            IReadOnlyList<OfficeImageExportDiagnostic> pageDiagnostics = BuildPageLevelUnsupportedDiagnostics(
+                includePrintTitlesUnsupported: !allowMultipleResults,
+                includeHeaderFooterUnsupported: !allowMultipleResults || !CanRenderHeaderFooterTextChrome(options.HeaderFooterDateTime ?? DateTime.Now));
             if (!allowMultipleResults) {
                 return ranges
                     .Select(range => range
@@ -191,7 +212,7 @@ namespace OfficeIMO.Excel {
             return splitRanges.AsReadOnly();
         }
 
-        private IReadOnlyList<OfficeImageExportDiagnostic> BuildPageLevelUnsupportedDiagnostics(bool includePrintTitlesUnsupported) {
+        private IReadOnlyList<OfficeImageExportDiagnostic> BuildPageLevelUnsupportedDiagnostics(bool includePrintTitlesUnsupported, bool includeHeaderFooterUnsupported) {
             var diagnostics = new List<OfficeImageExportDiagnostic>();
             ExcelPrintTitles printTitles = GetPrintTitles();
             if (includePrintTitlesUnsupported && (printTitles.HasRows || printTitles.HasColumns)) {
@@ -203,15 +224,15 @@ namespace OfficeIMO.Excel {
             }
 
             ExcelSheetPageSetup pageSetup = GetPageSetup();
-            if (pageSetup.Orientation.HasValue || pageSetup.FitToWidth.HasValue || pageSetup.FitToHeight.HasValue || pageSetup.Scale.HasValue) {
+            if (ExcelPageSetupGeometry.HasUnsupportedFitToPageScale(pageSetup)) {
                 diagnostics.Add(new OfficeImageExportDiagnostic(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.PageSetupUnsupported,
-                    "Worksheet page setup orientation or scaling is configured, but image page output still uses worksheet pixel ranges instead of physical page geometry.",
+                    "Worksheet fit-to-width or fit-to-height page setup requests more than one page in a dimension, but image page output does not calculate automatic multi-page fit pagination yet.",
                     Name + "!pageSetup"));
             }
 
-            if (HasHeaderFooterContent()) {
+            if (includeHeaderFooterUnsupported && HasHeaderFooterContent()) {
                 diagnostics.Add(new OfficeImageExportDiagnostic(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.HeaderFooterUnsupported,

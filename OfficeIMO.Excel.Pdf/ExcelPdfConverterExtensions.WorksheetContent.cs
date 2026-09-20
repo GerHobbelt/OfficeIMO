@@ -4,16 +4,7 @@ using PdfCore = OfficeIMO.Pdf;
 namespace OfficeIMO.Excel.Pdf {
     public static partial class ExcelPdfConverterExtensions {
         private static void ApplyWorksheetPageSetup(PdfCore.PdfPageCompose page, ExcelSheetPageSetup? pageSetup, ExcelPdfSaveOptions options) {
-            PdfCore.PageSize? pageSize = options.PageSize;
-            if (!options.PageSize.HasValue && pageSetup?.Orientation == ExcelPageOrientation.Landscape) {
-                pageSize = (pageSize ?? PdfCore.PageSizes.Letter).Landscape();
-            } else if (!options.PageSize.HasValue && pageSetup?.Orientation == ExcelPageOrientation.Portrait) {
-                pageSize = (pageSize ?? PdfCore.PageSizes.Letter).Portrait();
-            }
-
-            if (pageSize.HasValue) {
-                page.Size(pageSize.Value);
-            }
+            page.Size(GetEffectivePageSize(options, pageSetup));
 
             if (options.Margins.HasValue) {
                 page.Margin(options.Margins.Value);
@@ -90,7 +81,7 @@ namespace OfficeIMO.Excel.Pdf {
                     continue;
                 }
 
-                images.Add(new WorksheetImageExportData(bytes, PixelsToPoints(image.WidthPixels), PixelsToPoints(image.HeightPixels), A1.CellReference(image.RowIndex, image.ColumnIndex)));
+                images.Add(new WorksheetImageExportData(bytes, PixelsToPoints(image.WidthPixels), PixelsToPoints(image.HeightPixels), A1.CellReference(image.RowIndex, image.ColumnIndex), image.RotationDegrees));
             }
 
             return images;
@@ -164,25 +155,12 @@ namespace OfficeIMO.Excel.Pdf {
         }
 
         private static bool IsPdfSupportedImageContentType(string contentType) {
-            return string.Equals(contentType, "image/png", StringComparison.OrdinalIgnoreCase)
-                   || string.Equals(contentType, "image/jpeg", StringComparison.OrdinalIgnoreCase)
-                   || string.Equals(contentType, "image/jpg", StringComparison.OrdinalIgnoreCase);
+            return OfficeImagePdfCompatibility.IsSupportedContentType(contentType);
         }
 
         private static bool TryValidatePdfImageBytes(byte[] bytes, string contentType, out string? unsupportedReason) {
             unsupportedReason = null;
-            if (!OfficeImageReader.TryIdentify(bytes, null, out OfficeImageInfo imageInfo)) {
-                unsupportedReason = "Image bytes do not contain a supported image header.";
-                return false;
-            }
-
-            if (IsPngContentType(contentType) && imageInfo.Format != OfficeImageFormat.Png) {
-                unsupportedReason = $"Image bytes were declared as PNG but were detected as {imageInfo.Format}.";
-                return false;
-            }
-
-            if (IsJpegContentType(contentType) && imageInfo.Format != OfficeImageFormat.Jpeg) {
-                unsupportedReason = $"Image bytes were declared as JPEG but were detected as {imageInfo.Format}.";
+            if (!OfficeImagePdfCompatibility.TryValidateDeclaredContentType(bytes, contentType, out _, out unsupportedReason)) {
                 return false;
             }
 
@@ -200,13 +178,6 @@ namespace OfficeIMO.Excel.Pdf {
                 return false;
             }
         }
-
-        private static bool IsPngContentType(string contentType) =>
-            string.Equals(contentType, "image/png", StringComparison.OrdinalIgnoreCase);
-
-        private static bool IsJpegContentType(string contentType) =>
-            string.Equals(contentType, "image/jpeg", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(contentType, "image/jpg", StringComparison.OrdinalIgnoreCase);
 
         private static double PixelsToPoints(int pixels) {
             return pixels * 72D / 96D;

@@ -20,6 +20,7 @@ namespace OfficeIMO.Tests {
         private const string TransformedImageBaselineName = "officeimo-excel-image-transformed-image";
         private const string DrawingObjectBaselineName = "officeimo-excel-image-drawing-object";
         private const string RichTextBaselineName = "officeimo-excel-image-rich-text";
+        private const string StackedTextBaselineName = "officeimo-excel-image-stacked-text";
         private const string PatternFillBaselineName = "officeimo-excel-image-pattern-fills";
 
         [Fact]
@@ -226,6 +227,34 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void StackedTextImageExportMatchesApprovedBaselines() {
+            using ExcelBaselineFixture fixture = CreateStackedTextBaselineWorkbook();
+            ExcelRange range = fixture.Sheet.Range("A1:D5");
+            ExcelImageExportOptions options = CreateBaselineOptions();
+
+            OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+            OfficeImageExportResult svg = range.ExportImage(OfficeImageExportFormat.Svg, options);
+            string svgText = System.Text.Encoding.UTF8.GetString(svg.Bytes);
+
+            Assert.Equal(3, png.Diagnostics.Count(item => item.Code == ExcelImageExportDiagnosticCodes.CellTextRotationApproximation));
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.DoesNotContain(svg.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellStackedTextRotationUnsupported);
+            Assert.DoesNotContain(svg.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellStackedTextRotationUnsupported);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.DoesNotContain(svg.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
+            Assert.Contains(">S</text>", svgText, StringComparison.Ordinal);
+            Assert.Contains(">K</text>", svgText, StringComparison.Ordinal);
+            Assert.Contains(">R</text>", svgText, StringComparison.Ordinal);
+            Assert.Contains("font-weight=\"700\"", svgText, StringComparison.Ordinal);
+            Assert.Contains("font-style=\"italic\"", svgText, StringComparison.Ordinal);
+            Assert.Contains("text-decoration=\"underline\"", svgText, StringComparison.Ordinal);
+            Assert.DoesNotContain("rotate(", svgText, StringComparison.Ordinal);
+            AssertRasterBaseline(StackedTextBaselineName + ".png", png.Bytes);
+            AssertTextBaseline(StackedTextBaselineName + ".svg", svgText);
+        }
+
+        [Fact]
         public void PatternFillImageExportMatchesApprovedBaselines() {
             using ExcelBaselineFixture fixture = CreatePatternFillBaselineWorkbook();
             ExcelRange range = fixture.Sheet.Range("A1:D5");
@@ -326,6 +355,44 @@ namespace OfficeIMO.Tests {
             Assert.Contains("#7C3AED", svg, StringComparison.Ordinal);
             Assert.Contains("#DC2626", svg, StringComparison.Ordinal);
             Assert.Contains("font-size", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ApprovedStackedTextBaselinesAreRenderableAndNonBlank() {
+            string baselineDirectory = BaselineDirectory;
+            string pngPath = Path.Combine(baselineDirectory, StackedTextBaselineName + ".png");
+            string svgPath = Path.Combine(baselineDirectory, StackedTextBaselineName + ".svg");
+            if (UpdateBaselines) {
+                using ExcelBaselineFixture fixture = CreateStackedTextBaselineWorkbook();
+                ExcelRange range = fixture.Sheet.Range("A1:D5");
+                ExcelImageExportOptions options = CreateBaselineOptions();
+                AssertRasterBaseline(StackedTextBaselineName + ".png", range.ExportImage(OfficeImageExportFormat.Png, options).Bytes);
+                AssertTextBaseline(StackedTextBaselineName + ".svg", System.Text.Encoding.UTF8.GetString(range.ExportImage(OfficeImageExportFormat.Svg, options).Bytes));
+            }
+
+            Assert.True(File.Exists(pngPath), "Missing approved stacked-text PNG baseline: " + pngPath);
+            Assert.True(File.Exists(svgPath), "Missing approved stacked-text SVG baseline: " + svgPath);
+
+            OfficeRasterImage image = VisualBaselineTestSupport.DecodePng(File.ReadAllBytes(pngPath), "Approved stacked-text PNG baseline is not a supported PNG file.");
+            Assert.True(image.Width >= 420, "Stacked-text PNG baseline width is unexpectedly small.");
+            Assert.True(image.Height >= 230, "Stacked-text PNG baseline height is unexpectedly small.");
+            int nonBackgroundPixels = VisualBaselineTestSupport.CountNonBackgroundPixels(image, OfficeColor.White);
+            Assert.True(nonBackgroundPixels >= 1200, "Stacked-text PNG baseline appears blank or nearly blank. Visible pixels: " + nonBackgroundPixels + ".");
+
+            string svg = File.ReadAllText(svgPath);
+            Assert.Contains("<svg", svg, StringComparison.Ordinal);
+            Assert.Contains("Stacked Text Fidelity", svg, StringComparison.Ordinal);
+            Assert.Contains(">S</text>", svg, StringComparison.Ordinal);
+            Assert.Contains(">K</text>", svg, StringComparison.Ordinal);
+            Assert.Contains(">R</text>", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain("rotate(", svg, StringComparison.Ordinal);
+            Assert.Contains("#0F766E", svg, StringComparison.Ordinal);
+            Assert.Contains("#7C3AED", svg, StringComparison.Ordinal);
+            Assert.Contains("#DC2626", svg, StringComparison.Ordinal);
+            Assert.Contains("#2563EB", svg, StringComparison.Ordinal);
+            Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
+            Assert.Contains("font-style=\"italic\"", svg, StringComparison.Ordinal);
+            Assert.Contains("text-decoration=\"underline\"", svg, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -753,6 +820,84 @@ namespace OfficeIMO.Tests {
             return new ExcelBaselineFixture(document, sheet);
         }
 
+        private static ExcelBaselineFixture CreateStackedTextBaselineWorkbook() {
+            string filePath = Path.Combine(Path.GetTempPath(), "OfficeIMO-ExcelStackedTextBaseline-" + Guid.NewGuid().ToString("N") + ".xlsx");
+            ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("StackedText");
+
+            sheet.CellValue(1, 1, "Stacked Text Fidelity");
+            sheet.Range("A1:D1").Merge();
+            sheet.Range("A1:D1").SetFillColor("0F172A").SetFontColor("FFFFFF").SetBold();
+            sheet.CellAlign(1, 1, HorizontalAlignmentValues.Center);
+            sheet.CellVerticalAlign(1, 1, VerticalAlignmentValues.Center);
+
+            string[] headers = { "Case", "Status", "Narrow", "Marker" };
+            for (int column = 1; column <= headers.Length; column++) {
+                sheet.CellValue(2, column, headers[column - 1]);
+                sheet.CellAt(2, column).SetFillColor("E2E8F0").SetFontColor("0F172A").SetBold();
+                sheet.CellAlign(2, column, HorizontalAlignmentValues.Center);
+                sheet.CellVerticalAlign(2, column, VerticalAlignmentValues.Center);
+            }
+
+            sheet.CellValue(3, 1, "Centered");
+            sheet.CellValue(4, 1, "Shrink");
+            sheet.CellValue(5, 1, "Mixed");
+            sheet.Range("A3:A5").SetFillColor("F8FAFC").SetFontColor("334155");
+
+            sheet.CellValue(3, 2, "STACK");
+            sheet.CellAt(3, 2).SetTextRotation(255).SetFontColor("0F766E").SetBold().SetFontSize(12);
+            sheet.CellAlign(3, 2, HorizontalAlignmentValues.Center);
+            sheet.CellVerticalAlign(3, 2, VerticalAlignmentValues.Center);
+
+            sheet.CellValue(3, 3, "EXPORT");
+            sheet.CellAt(3, 3).SetTextRotation(255).SetFontColor("7C3AED").SetBold().SetShrinkToFit().SetFontSize(14);
+            sheet.CellAlign(3, 3, HorizontalAlignmentValues.Center);
+            sheet.CellVerticalAlign(3, 3, VerticalAlignmentValues.Center);
+
+            sheet.CellAt(3, 4).SetTextRotation(255).SetRichText(
+                new ExcelRichTextRun("R") { Bold = true, FontColor = "DC2626", FontSize = 12D },
+                new ExcelRichTextRun("E") { Italic = true, FontColor = "EA580C", FontSize = 12D },
+                new ExcelRichTextRun("A") { Underline = true, FontColor = "2563EB", FontSize = 12D },
+                new ExcelRichTextRun("D") { Bold = true, FontColor = "16A34A", FontSize = 12D },
+                new ExcelRichTextRun("Y") { FontColor = "7C3AED", FontSize = 12D });
+            sheet.CellAlign(3, 4, HorizontalAlignmentValues.Center);
+            sheet.CellVerticalAlign(3, 4, VerticalAlignmentValues.Center);
+
+            sheet.CellValue(4, 2, "PNG");
+            sheet.CellValue(4, 3, "SVG");
+            sheet.CellValue(4, 4, "Drawing-owned stacked layout");
+            sheet.CellAt(4, 2).SetFontColor("0F766E").SetBold();
+            sheet.CellAt(4, 3).SetFontColor("7C3AED").SetBold();
+            sheet.CellAt(4, 4).SetFontColor("475569").SetShrinkToFit();
+
+            sheet.CellValue(5, 2, "Shared layout");
+            sheet.CellValue(5, 3, "No old unsupported diagnostic");
+            sheet.CellValue(5, 4, "PNG/SVG baseline gate");
+            sheet.Range("B5:D5").SetFontColor("475569");
+            sheet.WrapCells(5, 5, 3);
+
+            sheet.SetColumnWidth(1, 14);
+            sheet.SetColumnWidth(2, 12);
+            sheet.SetColumnWidth(3, 10);
+            sheet.SetColumnWidth(4, 20);
+            sheet.SetRowHeight(1, 28);
+            sheet.SetRowHeight(2, 26);
+            sheet.SetRowHeight(3, 96);
+            sheet.SetRowHeight(4, 30);
+            sheet.SetRowHeight(5, 42);
+
+            for (int row = 1; row <= 5; row++) {
+                for (int column = 1; column <= 4; column++) {
+                    sheet.CellAt(row, column).SetBorder(BorderStyleValues.Thin, "CBD5E1");
+                    sheet.CellVerticalAlign(row, column, VerticalAlignmentValues.Center);
+                }
+            }
+
+            sheet.Range("B3:D3").SetFillColor("F8FAFC");
+            sheet.Range("B4:D5").SetFillColor("FFFFFF");
+            return new ExcelBaselineFixture(document, sheet);
+        }
+
         private static ExcelBaselineFixture CreatePatternFillBaselineWorkbook() {
             string filePath = Path.Combine(Path.GetTempPath(), "OfficeIMO-ExcelPatternFillBaseline-" + Guid.NewGuid().ToString("N") + ".xlsx");
             ExcelDocument document = ExcelDocument.Create(filePath);
@@ -1168,7 +1313,7 @@ namespace OfficeIMO.Tests {
             canvas.DrawRectangle(1, 1, 34, 20, OfficeColor.FromRgb(22, 163, 74));
             canvas.DrawLine(8, 11, 15, 17, OfficeColor.FromRgb(22, 101, 52), 2);
             canvas.DrawLine(15, 17, 28, 5, OfficeColor.FromRgb(22, 101, 52), 2);
-            return OfficePngWriter.Encode(image);
+            return OfficePngWriter.Encode(image, OfficePngCompression.Stored);
         }
 
         private static byte[] CreateClippedBannerPng() {
@@ -1181,7 +1326,7 @@ namespace OfficeIMO.Tests {
             canvas.DrawLine(86, 10, 150, 10, OfficeColor.White, 2);
             canvas.DrawLine(86, 22, 138, 22, OfficeColor.White, 2);
             canvas.DrawLine(86, 34, 124, 34, OfficeColor.White, 2);
-            return OfficePngWriter.Encode(image);
+            return OfficePngWriter.Encode(image, OfficePngCompression.Stored);
         }
 
         private static byte[] CreateTwoCellBannerPng() {
@@ -1194,7 +1339,7 @@ namespace OfficeIMO.Tests {
             canvas.DrawLine(86, 28, 154, 28, OfficeColor.White, 4);
             canvas.DrawLine(64, 48, 176, 48, OfficeColor.White, 4);
             canvas.DrawLine(86, 68, 154, 68, OfficeColor.White, 4);
-            return OfficePngWriter.Encode(image);
+            return OfficePngWriter.Encode(image, OfficePngCompression.Stored);
         }
 
         private static byte[] CreateCroppedBandPng() {
@@ -1207,7 +1352,7 @@ namespace OfficeIMO.Tests {
             canvas.DrawLine(76, 26, 124, 26, OfficeColor.White, 4);
             canvas.DrawLine(66, 42, 134, 42, OfficeColor.White, 4);
             canvas.DrawLine(76, 58, 124, 58, OfficeColor.White, 4);
-            return OfficePngWriter.Encode(image);
+            return OfficePngWriter.Encode(image, OfficePngCompression.Stored);
         }
 
         private static byte[] CreateRotatedBannerPng() {
@@ -1220,7 +1365,7 @@ namespace OfficeIMO.Tests {
             canvas.DrawLine(82, 26, 138, 26, OfficeColor.White, 5);
             canvas.DrawLine(64, 43, 156, 43, OfficeColor.White, 5);
             canvas.DrawLine(82, 60, 138, 60, OfficeColor.White, 5);
-            return OfficePngWriter.Encode(image);
+            return OfficePngWriter.Encode(image, OfficePngCompression.Stored);
         }
 
         private static byte[] CreateTransformedBannerPng() {
@@ -1232,7 +1377,7 @@ namespace OfficeIMO.Tests {
             canvas.DrawRectangle(64, 8, 102, 74, OfficeColor.White, 4);
             canvas.DrawLine(92, 32, 142, 32, OfficeColor.White, 5);
             canvas.DrawLine(82, 52, 152, 52, OfficeColor.White, 5);
-            return OfficePngWriter.Encode(image);
+            return OfficePngWriter.Encode(image, OfficePngCompression.Stored);
         }
 
         private static void AddDrawingObjectShape(ExcelSheet sheet) {

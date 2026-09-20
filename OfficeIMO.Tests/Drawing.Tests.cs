@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using OfficeIMO.Drawing;
 using Xunit;
@@ -18,6 +19,177 @@ public class DrawingTests {
         0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
         0x42, 0x60, 0x82
     };
+
+    [Fact]
+    public void OfficeImagePlacementFitsImagesIntoTargetRectangles() {
+        OfficeImagePlacement stretch = OfficeImagePlacement.Fit(
+            sourceWidth: 200D,
+            sourceHeight: 100D,
+            targetX: 10D,
+            targetY: 20D,
+            targetWidth: 80D,
+            targetHeight: 40D,
+            fit: OfficeImageFit.Stretch);
+        Assert.Equal((10D, 20D, 80D, 40D), stretch.ToTuple());
+
+        OfficeImagePlacement containedWide = OfficeImagePlacement.Fit(
+            sourceWidth: 400D,
+            sourceHeight: 100D,
+            targetX: 10D,
+            targetY: 20D,
+            targetWidth: 80D,
+            targetHeight: 40D,
+            fit: OfficeImageFit.Contain);
+        Assert.Equal((10D, 30D, 80D, 20D), containedWide.ToTuple());
+
+        OfficeImagePlacement containedTall = OfficeImagePlacement.Fit(
+            sourceWidth: 100D,
+            sourceHeight: 400D,
+            targetX: 10D,
+            targetY: 20D,
+            targetWidth: 80D,
+            targetHeight: 40D,
+            fit: OfficeImageFit.Contain);
+        Assert.Equal((45D, 20D, 10D, 40D), containedTall.ToTuple());
+
+        OfficeImagePlacement coveredWide = OfficeImagePlacement.Fit(
+            sourceWidth: 400D,
+            sourceHeight: 100D,
+            targetX: 10D,
+            targetY: 20D,
+            targetWidth: 80D,
+            targetHeight: 40D,
+            fit: OfficeImageFit.Cover);
+        Assert.Equal((-30D, 20D, 160D, 40D), coveredWide.ToTuple());
+    }
+
+    [Fact]
+    public void OfficeImagePlacementRejectsInvalidPlacementInputs() {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeImagePlacement(0D, 0D, 0D, 10D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeImagePlacement.Fit(0D, 1D, 0D, 0D, 10D, 10D, OfficeImageFit.Contain));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeImagePlacement.Fit(1D, 1D, 0D, 0D, double.NaN, 10D, OfficeImageFit.Stretch));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeImagePlacement.Fit(1D, 1D, 0D, 0D, 10D, 10D, (OfficeImageFit)99));
+    }
+
+    [Fact]
+    public void OfficeImageSourceCropExposesVisibleSourceRatios() {
+        var crop = new OfficeImageSourceCrop(0.25D, 0.1D, 0.5D, 0.2D);
+
+        Assert.True(crop.HasCrop);
+        Assert.Equal((0.25D, 0.1D, 0.5D, 0.2D), crop.ToTuple());
+        Assert.Equal(0.25D, crop.VisibleWidth);
+        Assert.Equal(0.7D, crop.VisibleHeight, precision: 10);
+    }
+
+    [Fact]
+    public void OfficeImageSourceCropClampsCollapsedAuthoredFractions() {
+        OfficeImageSourceCrop crop = OfficeImageSourceCrop.FromClampedFractions(
+            left: 0.999D,
+            top: double.NaN,
+            right: double.PositiveInfinity,
+            bottom: -1D);
+
+        Assert.True(crop.HasCrop);
+        Assert.Equal(0.999D, crop.Left);
+        Assert.Equal(0D, crop.Top);
+        Assert.Equal(0.999D, crop.Right);
+        Assert.Equal(0D, crop.Bottom);
+        Assert.Equal(OfficeImageSourceCrop.MinimumVisibleRatio, crop.VisibleWidth);
+        Assert.Equal(1D, crop.VisibleHeight);
+    }
+
+    [Fact]
+    public void OfficeImageSourceCropRejectsInvalidFractions() {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeImageSourceCrop(-0.01D, 0D, 0D, 0D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeImageSourceCrop(0D, 1D, 0D, 0D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeImageSourceCrop(0D, 0D, double.NaN, 0D));
+    }
+
+    [Fact]
+    public void OfficeImageProjectionScalesPlacementCropAndTransform() {
+        var projection = new OfficeImageProjection(
+            new OfficeImagePlacement(10D, 20D, 80D, 40D),
+            new OfficeImageSourceCrop(0.25D, 0.1D, 0.25D, 0.1D),
+            rotationDegrees: 30D,
+            flipHorizontal: true);
+
+        OfficeImageProjection scaled = projection.Scale(2D);
+
+        Assert.Equal((20D, 40D, 160D, 80D), scaled.Placement.ToTuple());
+        Assert.Equal(0.25D, scaled.SourceLeft);
+        Assert.Equal(0.5D, scaled.SourceWidth);
+        Assert.Equal(30D, scaled.RotationDegrees);
+        Assert.Equal(100D, scaled.RotationCenterX);
+        Assert.Equal(80D, scaled.RotationCenterY);
+        Assert.True(scaled.HasCrop);
+        Assert.True(scaled.HasTransform);
+        Assert.True(scaled.FlipHorizontal);
+    }
+
+    [Fact]
+    public void OfficeImageRenderPlan_ResolvesTopLeftAndBottomLeftCropPlacement() {
+        var crop = new OfficeImageSourceCrop(0.25D, 0.1D, 0.25D, 0.2D);
+
+        OfficeImageRenderPlan topLeft = OfficeImageRenderPlan.CreateTopLeft(
+            sourceWidth: 200D,
+            sourceHeight: 100D,
+            targetX: 10D,
+            targetY: 20D,
+            targetWidth: 80D,
+            targetHeight: 40D,
+            sourceCrop: crop);
+
+        OfficeImageRenderPlan bottomLeft = OfficeImageRenderPlan.CreateBottomLeft(
+            sourceWidth: 200D,
+            sourceHeight: 100D,
+            targetX: 10D,
+            targetBottomY: 20D,
+            targetWidth: 80D,
+            targetHeight: 40D,
+            sourceCrop: crop);
+
+        Assert.Equal((10D, 20D, 80D, 40D), topLeft.TargetPlacement.ToTuple());
+        Assert.Equal((10D, 20D, 80D, 40D), topLeft.VisiblePlacement.ToTuple());
+        Assert.Equal(-30D, topLeft.ImagePlacement.X);
+        Assert.Equal(14.285714285714285D, topLeft.ImagePlacement.Y, precision: 10);
+        Assert.Equal(160D, topLeft.ImagePlacement.Width);
+        Assert.Equal(57.142857142857146D, topLeft.ImagePlacement.Height, precision: 10);
+        Assert.Equal(8.571428571428571D, bottomLeft.ImagePlacement.Y, precision: 10);
+        Assert.False(topLeft.RequiresTargetClip);
+        Assert.False(bottomLeft.RequiresTargetClip);
+    }
+
+    [Fact]
+    public void OfficeImageRenderPlan_FitsVisibleCropAndReportsCoverClip() {
+        var crop = new OfficeImageSourceCrop(0.25D, 0D, 0.25D, 0D);
+
+        OfficeImageRenderPlan contained = OfficeImageRenderPlan.CreateTopLeft(
+            sourceWidth: 400D,
+            sourceHeight: 200D,
+            targetX: 0D,
+            targetY: 0D,
+            targetWidth: 100D,
+            targetHeight: 50D,
+            fit: OfficeImageFit.Contain,
+            sourceCrop: crop);
+
+        Assert.Equal((25D, 0D, 50D, 50D), contained.VisiblePlacement.ToTuple());
+        Assert.Equal((0D, 0D, 100D, 50D), contained.ImagePlacement.ToTuple());
+        Assert.False(contained.RequiresTargetClip);
+
+        OfficeImageRenderPlan covered = OfficeImageRenderPlan.CreateTopLeft(
+            sourceWidth: 400D,
+            sourceHeight: 100D,
+            targetX: 10D,
+            targetY: 20D,
+            targetWidth: 80D,
+            targetHeight: 40D,
+            fit: OfficeImageFit.Cover);
+
+        Assert.Equal((-30D, 20D, 160D, 40D), covered.VisiblePlacement.ToTuple());
+        Assert.Equal(covered.VisiblePlacement.ToTuple(), covered.ImagePlacement.ToTuple());
+        Assert.True(covered.RequiresTargetClip);
+    }
 
     [Fact]
     public void OfficeColorParsesNamedAndHexValues() {
@@ -218,12 +390,13 @@ public class DrawingTests {
 
     [Fact]
     public void OfficeFontInfoStoresUnderlineStyle() {
-        var font = new OfficeFontInfo("Calibri", 11, OfficeFontStyle.Underline);
+        var font = new OfficeFontInfo("Calibri", 11, OfficeFontStyle.Underline | OfficeFontStyle.Strikethrough);
 
         Assert.False(font.IsBold);
         Assert.False(font.IsItalic);
         Assert.True(font.IsUnderline);
-        Assert.Equal("Calibri, 11pt, Underline", font.ToString());
+        Assert.True(font.IsStrikethrough);
+        Assert.Equal("Calibri, 11pt, Underline, Strikethrough", font.ToString());
     }
 
     [Fact]
@@ -235,6 +408,212 @@ public class DrawingTests {
 
         Assert.Equal(new OfficeFontInfo("Arial", 10, OfficeFontStyle.Bold), font);
         Assert.NotEqual(OfficeFontInfo.Default, font);
+    }
+
+    [Theory]
+    [InlineData("image/png; charset=binary", OfficeImageFormat.Png)]
+    [InlineData("image/jpg", OfficeImageFormat.Jpeg)]
+    [InlineData("image/pjpeg", OfficeImageFormat.Jpeg)]
+    [InlineData("image/svg+xml; charset=utf-8", OfficeImageFormat.Svg)]
+    [InlineData("image/x-emf", OfficeImageFormat.Emf)]
+    [InlineData("image/webp", OfficeImageFormat.Webp)]
+    [InlineData("application/octet-stream", OfficeImageFormat.Unknown)]
+    public void OfficeImageInfoMapsMimeTypesToSharedFormats(string contentType, OfficeImageFormat expected) {
+        Assert.Equal(expected, OfficeImageInfo.FromMimeType(contentType));
+    }
+
+    [Theory]
+    [InlineData(" image/jpg; charset=binary ", true, "image/jpeg")]
+    [InlineData("image/svg", true, "image/svg+xml")]
+    [InlineData("image/x-custom; version=1", true, "image/x-custom")]
+    [InlineData("application/octet-stream", false, "")]
+    [InlineData("", false, "")]
+    public void OfficeImageInfoNormalizesImageContentTypes(string contentType, bool expectedResult, string expectedContentType) {
+        Assert.Equal(expectedResult, OfficeImageInfo.TryNormalizeImageContentType(contentType, out string normalizedContentType));
+        Assert.Equal(expectedContentType, normalizedContentType);
+    }
+
+    [Theory]
+    [InlineData(OfficeImageFormat.Png, ".png")]
+    [InlineData(OfficeImageFormat.Jpeg, ".jpeg")]
+    [InlineData(OfficeImageFormat.Svg, ".svg")]
+    [InlineData(OfficeImageFormat.Emf, ".emf")]
+    [InlineData(OfficeImageFormat.Icon, ".ico")]
+    [InlineData(OfficeImageFormat.Webp, ".webp")]
+    [InlineData(OfficeImageFormat.Unknown, ".bin")]
+    public void OfficeImageInfoProvidesCanonicalImageExtensions(OfficeImageFormat format, string expectedExtension) {
+        Assert.Equal(expectedExtension, OfficeImageInfo.GetDefaultExtension(format));
+    }
+
+    [Fact]
+    public void OfficeTextLayoutEngineBuildsStackedTextBlocksFromTextElements() {
+        OfficeTextBlockLayout layout = OfficeTextLayoutEngine.LayoutStackedTextBlock(
+            "AB",
+            10D,
+            12D,
+            30D,
+            1.2D,
+            4D,
+            (text, size) => string.IsNullOrEmpty(text) ? 0D : text!.Length * size * 0.5D);
+
+        Assert.Equal(2, layout.Lines.Count);
+        Assert.Equal("A", layout.Lines[0].Text);
+        Assert.Equal("B", layout.Lines[1].Text);
+        Assert.Equal(10D, layout.FontSize);
+        Assert.Equal(12D, layout.LineHeight);
+        Assert.Equal(24D, layout.Height);
+        Assert.False(layout.Clipped);
+    }
+
+    [Fact]
+    public void OfficeTextLayoutEngineShrinksStackedTextBlocksToFitBounds() {
+        OfficeTextBlockLayout layout = OfficeTextLayoutEngine.LayoutStackedTextBlock(
+            "ABCD",
+            12D,
+            20D,
+            30D,
+            1.2D,
+            4D,
+            (text, size) => string.IsNullOrEmpty(text) ? 0D : size * 0.6D);
+
+        Assert.Equal(4, layout.Lines.Count);
+        Assert.True(layout.FontSize < 12D);
+        Assert.True(layout.FontSize >= 4D);
+        Assert.True(layout.Height <= 30D);
+    }
+
+    [Fact]
+    public void OfficeTextLayoutEngineBuildsStackedRichTextBlocksFromTextElements() {
+        OfficeRichTextBlockLayout layout = OfficeTextLayoutEngine.LayoutStackedRichTextBlock(
+            new[] {
+                new OfficeRichTextRun("A", 10D, OfficeColor.Red, bold: true),
+                new OfficeRichTextRun("B", 12D, OfficeColor.Blue, italic: true)
+            },
+            20D,
+            40D,
+            1.2D,
+            (text, size, _) => string.IsNullOrEmpty(text) ? 0D : size * 0.5D,
+            shrinkToFit: true,
+            minimumFontSize: 4D);
+
+        Assert.Equal(2, layout.Lines.Count);
+        Assert.Equal(15D, layout.LineHeight);
+        Assert.Equal(30D, layout.Height);
+        Assert.False(layout.Clipped);
+        Assert.Single(layout.Lines[0].Segments);
+        Assert.Single(layout.Lines[1].Segments);
+        Assert.Equal("A", layout.Lines[0].Segments[0].Text);
+        Assert.Equal("B", layout.Lines[1].Segments[0].Text);
+        Assert.Equal(OfficeColor.Red, layout.Lines[0].Segments[0].Color);
+        Assert.Equal(OfficeColor.Blue, layout.Lines[1].Segments[0].Color);
+        Assert.True(layout.Lines[0].Segments[0].Bold);
+        Assert.True(layout.Lines[1].Segments[0].Italic);
+    }
+
+    [Fact]
+    public void OfficeTextLayoutEngineShrinksStackedRichTextBlocksToFitBounds() {
+        OfficeRichTextBlockLayout layout = OfficeTextLayoutEngine.LayoutStackedRichTextBlock(
+            new[] {
+                new OfficeRichTextRun("ABCD", 12D, OfficeColor.Purple, bold: true)
+            },
+            20D,
+            30D,
+            1.2D,
+            (text, size, _) => string.IsNullOrEmpty(text) ? 0D : size * 0.6D,
+            shrinkToFit: true,
+            minimumFontSize: 4D);
+
+        Assert.Equal(4, layout.Lines.Count);
+        Assert.True(layout.Lines[0].Segments[0].FontSize < 12D);
+        Assert.True(layout.Lines[0].Segments[0].FontSize >= 4D);
+        Assert.True(layout.Height <= 30D);
+        Assert.True(layout.Lines.All(line => line.Segments.Count == 1 && line.Segments[0].Bold));
+    }
+
+    [Theory]
+    [InlineData(".png", true, "image/png")]
+    [InlineData("photo.jpeg", true, "image/jpeg")]
+    [InlineData("diagram.svg", false, "image/svg+xml")]
+    [InlineData("preview.bmp", true, "image/bmp")]
+    [InlineData("legacy.emf", false, "image/x-emf")]
+    [InlineData("payload.bin", false, "application/octet-stream")]
+    public void OfficeImageInfoOwnsSafeBrowserPreviewImageExtensionPolicy(string fileName, bool expectedRenderable, string expectedContentType) {
+        Assert.Equal(expectedContentType, OfficeImageInfo.GetMimeTypeFromExtension(fileName));
+        Assert.Equal(expectedRenderable, OfficeImageInfo.IsBrowserPreviewSafeExtension(fileName));
+    }
+
+    [Theory]
+    [InlineData("image/png; charset=binary", true)]
+    [InlineData("image/svg+xml", false)]
+    [InlineData("image/bmp", true)]
+    [InlineData("image/x-emf", false)]
+    [InlineData("application/octet-stream", false)]
+    public void OfficeImageInfoOwnsSafeBrowserPreviewImageContentTypePolicy(string contentType, bool expectedRenderable) {
+        Assert.Equal(expectedRenderable, OfficeImageInfo.IsBrowserPreviewSafeContentType(contentType));
+    }
+
+    [Theory]
+    [InlineData(OfficeImageFormat.Png, "image/png")]
+    [InlineData(OfficeImageFormat.Jpeg, "image/jpeg")]
+    [InlineData(OfficeImageFormat.Gif, "image/gif")]
+    [InlineData(OfficeImageFormat.Svg, "image/svg+xml")]
+    [InlineData(OfficeImageFormat.Webp, "image/webp")]
+    public void OfficeSvgImageRendererResolvesEmbeddableContentTypes(OfficeImageFormat format, string expectedContentType) {
+        Assert.True(OfficeSvgImageRenderer.TryGetEmbeddableContentType(format, out string contentType));
+        Assert.Equal(expectedContentType, contentType);
+    }
+
+    [Theory]
+    [InlineData("image/png; charset=binary", "image/png")]
+    [InlineData("image/jpg", "image/jpeg")]
+    [InlineData("image/svg+xml; charset=utf-8", "image/svg+xml")]
+    [InlineData("image/webp", "image/webp")]
+    public void OfficeSvgImageRendererNormalizesEmbeddableMimeContentTypes(string contentType, string expectedContentType) {
+        Assert.True(OfficeSvgImageRenderer.TryGetEmbeddableContentType(contentType, out string normalizedContentType));
+        Assert.Equal(expectedContentType, normalizedContentType);
+    }
+
+    [Fact]
+    public void OfficeSvgImageRendererRejectsUnsupportedEmbeddableContentTypes() {
+        Assert.False(OfficeSvgImageRenderer.TryGetEmbeddableContentType(OfficeImageFormat.Emf, out string unsupportedContentType));
+        Assert.Equal(string.Empty, unsupportedContentType);
+        Assert.False(OfficeSvgImageRenderer.TryGetEmbeddableContentType("application/octet-stream", out string unsupportedMimeContentType));
+        Assert.Equal(string.Empty, unsupportedMimeContentType);
+    }
+
+    [Theory]
+    [InlineData("image/png; charset=binary", null, null, "image/png")]
+    [InlineData("image/jpg", null, null, "image/jpeg")]
+    [InlineData("application/octet-stream", "png", ".bin", "image/png")]
+    [InlineData("application/octet-stream", "jpeg", ".bin", "image/jpeg")]
+    [InlineData("binary/octet-stream", "gif", ".bin", "image/gif")]
+    [InlineData("application/octet-stream", "svg-preamble", ".bin", "image/svg+xml")]
+    [InlineData(null, null, ".svg", "image/svg+xml")]
+    [InlineData(null, null, ".webp", "image/webp")]
+    public void OfficeSvgImageRendererResolvesEmbeddableContentTypeFromMetadataBytesAndExtension(string? declaredContentType, string? bytesKind, string? fileName, string expectedContentType) {
+        byte[]? bytes = bytesKind switch {
+            "png" => new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A },
+            "jpeg" => new byte[] { 0xFF, 0xD8, 0xFF },
+            "gif" => Encoding.ASCII.GetBytes("GIF89a"),
+            "svg-preamble" => Encoding.UTF8.GetBytes(
+                "\uFEFF<?xml version=\"1.0\"?>" +
+                "<!-- OfficeIMO preview -->" +
+                "<!DOCTYPE svg>" +
+                "<?officeimo preview?>" +
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"),
+            _ => null
+        };
+
+        Assert.True(OfficeSvgImageRenderer.TryResolveEmbeddableContentType(declaredContentType, bytes, fileName, out string contentType));
+        Assert.Equal(expectedContentType, contentType);
+    }
+
+    [Fact]
+    public void OfficeSvgImageRendererRejectsUnsupportedEmbeddableContentTypeSources() {
+        Assert.False(OfficeSvgImageRenderer.TryResolveEmbeddableContentType("image/tiff", null, ".tif", out string unsupportedContentType));
+        Assert.Equal(string.Empty, unsupportedContentType);
+        Assert.False(OfficeSvgImageRenderer.TryResolveEmbeddableContentType("application/octet-stream", new byte[] { 1, 2, 3 }, ".bin", out string unknownContentType));
+        Assert.Equal(string.Empty, unknownContentType);
     }
 
     [Fact]
@@ -546,6 +925,30 @@ public class DrawingTests {
         Assert.Throws<ArgumentException>(() => new OfficeLinearGradient(0, 0, 1, 1, new OfficeGradientStop(0, OfficeColor.Black), new OfficeGradientStop(0.75, OfficeColor.White)));
     }
 
+    [Theory]
+    [InlineData(0D, 0D, 0.5D, 1D, 0.5D)]
+    [InlineData(45D, 0D, 0D, 1D, 1D)]
+    [InlineData(90D, 0.5D, 0D, 0.5D, 1D)]
+    [InlineData(180D, 1D, 0.5D, 0D, 0.5D)]
+    [InlineData(450D, 0.5D, 0D, 0.5D, 1D)]
+    [InlineData(-90D, 0.5D, 1D, 0.5D, 0D)]
+    public void OfficeLinearGradientFromAngleProjectsNormalizedEndpoints(double degrees, double startX, double startY, double endX, double endY) {
+        OfficeLinearGradient gradient = OfficeLinearGradient.FromAngle(OfficeColor.Blue, OfficeColor.Green, degrees);
+
+        Assert.Equal(startX, gradient.StartX, precision: 10);
+        Assert.Equal(startY, gradient.StartY, precision: 10);
+        Assert.Equal(endX, gradient.EndX, precision: 10);
+        Assert.Equal(endY, gradient.EndY, precision: 10);
+        Assert.Equal(new OfficeGradientStop(0, OfficeColor.Blue), gradient.Stops[0]);
+        Assert.Equal(new OfficeGradientStop(1, OfficeColor.Green), gradient.Stops[1]);
+    }
+
+    [Fact]
+    public void OfficeLinearGradientFromAngleRejectsInvalidAngles() {
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeLinearGradient.FromAngle(OfficeColor.Blue, OfficeColor.Green, double.NaN));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficeLinearGradient.FromAngle(OfficeColor.Blue, OfficeColor.Green, double.PositiveInfinity));
+    }
+
     [Fact]
     public void OfficeShadowStoresReusableShapeEffectIntent() {
         var shadow = new OfficeShadow(OfficeColor.FromRgb(10, 20, 30), 0.35, 4, 6);
@@ -594,6 +997,110 @@ public class DrawingTests {
     }
 
     [Fact]
+    public void OfficeGeometryCalculatesReusableParallelLineOffsets() {
+        Assert.True(OfficeGeometry.TryGetParallelLineOffsets(10D, 2D, 10D, 12D, 4D, out double offsetX, out double offsetY));
+        Assert.Equal(-2D, offsetX, precision: 6);
+        Assert.Equal(0D, offsetY, precision: 6);
+
+        Assert.False(OfficeGeometry.TryGetParallelLineOffsets(10D, 2D, 10D, 2D, 4D, out offsetX, out offsetY));
+        Assert.Equal(0D, offsetX);
+        Assert.Equal(0D, offsetY);
+    }
+
+    [Fact]
+    public void OfficeGeometryDetectsReusableSegmentIntersections() {
+        Assert.True(OfficeGeometry.SegmentsIntersect((0D, 0D), (4D, 4D), (0D, 4D), (4D, 0D)));
+        Assert.True(OfficeGeometry.SegmentsIntersect((0D, 0D), (4D, 0D), (2D, 0D), (5D, 0D)));
+        Assert.True(OfficeGeometry.SegmentsIntersect(new OfficePoint(0D, 0D), new OfficePoint(0D, 2D), new OfficePoint(-1D, 1D), new OfficePoint(1D, 1D)));
+        Assert.False(OfficeGeometry.SegmentsIntersect((0D, 0D), (1D, 0D), (0D, 1D), (1D, 1D)));
+    }
+
+    [Fact]
+    public void OfficeGeometryDetectsReusableSegmentRectangleIntersections() {
+        Assert.True(OfficeGeometry.SegmentIntersectsRectangle((0D, 0D), (4D, 4D), 1D, 1D, 3D, 3D));
+        Assert.True(OfficeGeometry.SegmentIntersectsRectangle((2D, 2D), (2.5D, 2.5D), 1D, 1D, 3D, 3D));
+        Assert.True(OfficeGeometry.SegmentIntersectsRectangle((0D, 1D), (1D, 1D), 1D, 1D, 3D, 3D));
+        Assert.True(OfficeGeometry.SegmentIntersectsRectangle(new OfficePoint(4D, 2D), new OfficePoint(2D, 2D), 3D, 1D, 1D, 3D));
+        Assert.False(OfficeGeometry.SegmentIntersectsRectangle((0D, 0D), (0.5D, 0.5D), 1D, 1D, 3D, 3D));
+    }
+
+    [Fact]
+    public void OfficeGeometryCalculatesReusableArrowheadGeometry() {
+        Assert.True(OfficeGeometry.TryCreateArrowheadPoints(new OfficePoint(10D, 10D), new OfficePoint(0D, 10D), 2D, out OfficePoint[] arrow));
+        Assert.Equal(3, arrow.Length);
+        Assert.Equal(10D, arrow[0].X);
+        Assert.Equal(10D, arrow[0].Y);
+        Assert.Equal(arrow[1].X, arrow[2].X, precision: 6);
+        Assert.True(arrow[1].Y > arrow[0].Y);
+        Assert.True(arrow[2].Y < arrow[0].Y);
+
+        Assert.False(OfficeGeometry.TryCreateArrowheadPoints(new OfficePoint(10D, 10D), new OfficePoint(10D, 10D), 2D, out arrow));
+        Assert.Empty(arrow);
+    }
+
+    [Fact]
+    public void OfficeGeometryFindsReusableArrowheadSegments() {
+        var points = new[] {
+            (X: 0D, Y: 0D),
+            (X: 0D, Y: 0D),
+            (X: 3D, Y: 4D)
+        };
+
+        Assert.True(OfficeGeometry.TryGetArrowheadSegment(points, fromStart: true, out (double X, double Y) startTip, out (double X, double Y) startFrom));
+        Assert.Equal((0D, 0D), startTip);
+        Assert.Equal((3D, 4D), startFrom);
+
+        Assert.True(OfficeGeometry.TryGetArrowheadSegment(points, fromStart: false, out (double X, double Y) endTip, out (double X, double Y) endFrom));
+        Assert.Equal((3D, 4D), endTip);
+        Assert.Equal((0D, 0D), endFrom);
+    }
+
+    [Fact]
+    public void OfficeGeometryResolvesReusableRectangleBoundaryEndpoints() {
+        OfficePoint right = OfficeGeometry.ResolveRectangleBoundaryEndpoint(
+            sourceLeft: 0D,
+            sourceBottom: 0D,
+            sourceRight: 10D,
+            sourceTop: 6D,
+            targetLeft: 20D,
+            targetBottom: 1D,
+            targetRight: 30D,
+            targetTop: 5D);
+        Assert.Equal(10D, right.X);
+        Assert.Equal(3D, right.Y);
+
+        OfficePoint top = OfficeGeometry.ResolveRectangleBoundaryEndpoint(
+            sourceLeft: 0D,
+            sourceBottom: 0D,
+            sourceRight: 10D,
+            sourceTop: 6D,
+            targetLeft: 2D,
+            targetBottom: 20D,
+            targetRight: 8D,
+            targetTop: 30D);
+        Assert.Equal(5D, top.X);
+        Assert.Equal(6D, top.Y);
+
+        OfficeGeometry.ResolveRectangleBoundaryEndpoint(
+            sourceLeft: 10D,
+            sourceBottom: 6D,
+            sourceRight: 0D,
+            sourceTop: 0D,
+            targetLeft: -30D,
+            targetBottom: 1D,
+            targetRight: -20D,
+            targetTop: 5D,
+            out double leftX,
+            out double leftY);
+        (double X, double Y) left = (leftX, leftY);
+        Assert.Equal((0D, 3D), left);
+
+        OfficePoint aligned = OfficeGeometry.ResolveRectangleBoundaryEndpoint(0D, 0D, 10D, 6D, 0D, 0D, 10D, 6D);
+        Assert.Equal(10D, aligned.X);
+        Assert.Equal(3D, aligned.Y);
+    }
+
+    [Fact]
     public void OfficeSvgFormattingFormatsReusableSvgValues() {
         Assert.Equal("12.346", OfficeSvgFormatting.FormatNumber(12.34567D));
         Assert.Equal("0", OfficeSvgFormatting.FormatNumber(0.00000001D));
@@ -623,6 +1130,10 @@ public class DrawingTests {
         var lineBuilder = new StringBuilder();
         lineBuilder.AppendLineElement(1.25D, 2.5D, 30.125D, 40.75D, OfficeColor.FromRgba(17, 34, 51, 128), 1.5D, OfficeStrokeDashStyle.Dot, OfficeStrokeLineCap.Round);
         Assert.Equal("<line x1=\"1.25\" y1=\"2.5\" x2=\"30.125\" y2=\"40.75\" stroke=\"#112233\" stroke-opacity=\"0.502\" stroke-width=\"1.5\" stroke-dasharray=\"1.5 3\" stroke-linecap=\"round\"/>", lineBuilder.ToString());
+
+        var parallelLineBuilder = new StringBuilder();
+        parallelLineBuilder.AppendParallelLineElements(10D, 2D, 10D, 12D, OfficeColor.Black, 1D, 4D, OfficeStrokeDashStyle.Dash);
+        Assert.Equal("<line x1=\"12\" y1=\"2\" x2=\"12\" y2=\"12\" stroke=\"#000000\" stroke-width=\"1\" stroke-dasharray=\"4 2\"/><line x1=\"8\" y1=\"2\" x2=\"8\" y2=\"12\" stroke=\"#000000\" stroke-width=\"1\" stroke-dasharray=\"4 2\"/>", parallelLineBuilder.ToString());
 
         var rawLineBuilder = new StringBuilder();
         rawLineBuilder.AppendLineElement(0D, 1D, 2D, 3D, " stroke=\"none\" transform=\"rotate(45)\"");
@@ -840,19 +1351,11 @@ public class DrawingTests {
         OfficeSvgImageRenderer.AppendImage(
             builder,
             "data:image/png;base64,AA==",
-            10,
-            20,
-            80,
-            40,
+            new OfficeImageProjection(
+                new OfficeImagePlacement(10, 20, 80, 40),
+                new OfficeImageSourceCrop(0.25D, 0.1D, 0.25D, 0.1D)),
             "imgClip",
-            10,
-            20,
-            80,
-            40,
-            sourceLeft: 0.25D,
-            sourceTop: 0.1D,
-            sourceWidth: 0.5D,
-            sourceHeight: 0.8D);
+            new OfficeImagePlacement(10, 20, 80, 40));
 
         string svg = builder.ToString();
         Assert.Contains("<clipPath id=\"imgClip\"><rect x=\"10\" y=\"20\" width=\"80\" height=\"40\"/></clipPath>", svg, StringComparison.Ordinal);
@@ -933,6 +1436,35 @@ public class DrawingTests {
         Assert.Contains("x=\"10\"", svg, StringComparison.Ordinal);
         Assert.Contains("preserveAspectRatio=\"xMidYMid meet\"", svg, StringComparison.Ordinal);
         Assert.Contains("transform=\"rotate(45 50 40)\"", svg, StringComparison.Ordinal);
+        Assert.Contains("href=\"data:image/png;base64,AA==\"", svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeSvgImageRendererWritesXmlImageElementFromProjection() {
+        var builder = new StringBuilder();
+        using (var writer = System.Xml.XmlWriter.Create(
+            new System.IO.StringWriter(builder, System.Globalization.CultureInfo.InvariantCulture),
+            new System.Xml.XmlWriterSettings { OmitXmlDeclaration = true, ConformanceLevel = System.Xml.ConformanceLevel.Fragment })) {
+            OfficeSvgImageRenderer.WriteImage(
+                writer,
+                "http://www.w3.org/2000/svg",
+                "data:image/png;base64,AA==",
+                new OfficeImageProjection(
+                    new OfficeImagePlacement(10, 20, 80, 40),
+                    rotationDegrees: 45D,
+                    rotationCenterX: 50D,
+                    rotationCenterY: 40D,
+                    flipHorizontal: true),
+                preserveAspectRatio: "xMidYMid meet",
+                writeAdditionalAttributes: static imageWriter => imageWriter.WriteAttributeString("data-test-image", "true"));
+        }
+
+        string svg = builder.ToString();
+        Assert.Contains("<image", svg, StringComparison.Ordinal);
+        Assert.Contains("data-test-image=\"true\"", svg, StringComparison.Ordinal);
+        Assert.Contains("x=\"10\"", svg, StringComparison.Ordinal);
+        Assert.Contains("preserveAspectRatio=\"xMidYMid meet\"", svg, StringComparison.Ordinal);
+        Assert.Contains("transform=\"translate(50 40) rotate(45) scale(-1 1) translate(-50 -40)\"", svg, StringComparison.Ordinal);
         Assert.Contains("href=\"data:image/png;base64,AA==\"", svg, StringComparison.Ordinal);
     }
 
@@ -1048,8 +1580,44 @@ public class DrawingTests {
         Assert.Equal(90, star!.Width);
         Assert.Equal(90, star.Height);
 
-        Assert.False(OfficeShapePresets.TryCreate("cloud", 100, 60, out OfficeShape? unsupported));
-        Assert.Null(unsupported);
+        Assert.True(OfficeShapePresets.TryCreate("line", 120, 40, out OfficeShape? presetLine));
+        Assert.NotNull(presetLine);
+        Assert.Equal(OfficeShapeKind.Line, presetLine!.Kind);
+        Assert.Equal(new OfficePoint(0, 0), presetLine.Points[0]);
+        Assert.Equal(new OfficePoint(120, 0), presetLine.Points[1]);
+
+        Assert.True(OfficeShapePresets.TryCreate("straightConnector1", 120, 40, out OfficeShape? straightConnector));
+        Assert.NotNull(straightConnector);
+        Assert.Equal(OfficeShapeKind.Line, straightConnector!.Kind);
+        Assert.Equal(new OfficePoint(0, 0), straightConnector.Points[0]);
+        Assert.Equal(new OfficePoint(120, 40), straightConnector.Points[1]);
+
+        Assert.True(OfficeShapePresets.TryCreate("cloud", 100, 60, out OfficeShape? cloud));
+        Assert.NotNull(cloud);
+        Assert.Equal(OfficeShapeKind.Path, cloud!.Kind);
+        Assert.Contains(cloud.PathCommands, command => command.Kind == OfficePathCommandKind.CubicBezierTo);
+
+        Assert.True(OfficeShapePresets.TryCreate("can", 80, 60, out OfficeShape? can));
+        Assert.NotNull(can);
+        Assert.Equal(OfficeShapeKind.Path, can!.Kind);
+        Assert.Contains(can.PathCommands, command => command.Kind == OfficePathCommandKind.CubicBezierTo);
+
+        Assert.True(OfficeShapePresets.TryCreate("donut", 70, 70, out OfficeShape? donut));
+        Assert.NotNull(donut);
+        Assert.Equal(OfficeShapeKind.Path, donut!.Kind);
+        Assert.True(donut.PathCommands.Count(command => command.Kind == OfficePathCommandKind.Close) >= 2);
+
+        Assert.True(OfficeShapePresets.TryCreate("heart", 64, 56, horizontalFlip: true, verticalFlip: false, out OfficeShape? heart));
+        Assert.NotNull(heart);
+        Assert.Equal(new OfficePoint(32, 56), heart!.PathCommands[0].Point);
+
+        Assert.True(OfficeShapePresets.TryCreate("cube", 72, 60, out OfficeShape? cube));
+        Assert.NotNull(cube);
+        Assert.Equal(OfficeShapeKind.Polygon, cube!.Kind);
+
+        Assert.True(OfficeShapePresets.TryCreate("leftRightArrow", 96, 40, out OfficeShape? leftRightArrow));
+        Assert.NotNull(leftRightArrow);
+        Assert.Equal(OfficeShapeKind.Polygon, leftRightArrow!.Kind);
     }
 
     [Fact]
@@ -1078,6 +1646,55 @@ public class DrawingTests {
         Assert.Equal(0D, x);
         Assert.Equal(5D, y);
         Assert.Equal(5D, OfficeGeometry.Distance((0D, 0D), (3D, 4D)));
+    }
+
+    [Fact]
+    public void OfficeGeometryBuildsReusableConnectorPolylines() {
+        List<(double X, double Y)> explicitRoute = OfficeGeometry.BuildConnectorPolyline(
+            (0D, 0D),
+            (10D, 10D),
+            new[] { (2D, 3D), (4D, 5D) },
+            useRightAngleFallback: true);
+
+        Assert.Equal(new[] { (0D, 0D), (2D, 3D), (4D, 5D), (10D, 10D) }, explicitRoute);
+
+        List<(double X, double Y)> rightAngle = OfficeGeometry.BuildConnectorPolyline(
+            (1D, 2D),
+            (7D, 9D),
+            Array.Empty<(double X, double Y)>(),
+            useRightAngleFallback: true);
+
+        Assert.Equal(new[] { (1D, 2D), (1D, 9D), (7D, 9D) }, rightAngle);
+
+        List<(double X, double Y)> straight = OfficeGeometry.BuildConnectorPolyline(
+            (1D, 2D),
+            (7D, 9D),
+            null,
+            useRightAngleFallback: false);
+
+        Assert.Equal(new[] { (1D, 2D), (7D, 9D) }, straight);
+
+        List<OfficePoint> officePoints = OfficeGeometry.BuildConnectorPolyline(
+            new OfficePoint(0D, 0D),
+            new OfficePoint(4D, 4D),
+            new[] { new OfficePoint(0D, 4D) },
+            useRightAngleFallback: true);
+
+        Assert.Equal(new OfficePoint(0D, 4D), officePoints[1]);
+    }
+
+    [Fact]
+    public void OfficeGeometryRotatesPointsAndConvertsAngles() {
+        double radians = OfficeGeometry.DegreesToRadians(90D);
+        Assert.Equal(90D, OfficeGeometry.RadiansToDegrees(radians), precision: 10);
+
+        OfficePoint rotated = OfficeGeometry.RotatePoint(new OfficePoint(1D, 0D), 0D, 0D, radians);
+        Assert.Equal(0D, rotated.X, precision: 10);
+        Assert.Equal(1D, rotated.Y, precision: 10);
+
+        (double x, double y) = OfficeGeometry.RotatePoint((1D, 0D), 0D, 0D, -radians);
+        Assert.Equal(0D, x, precision: 10);
+        Assert.Equal(-1D, y, precision: 10);
     }
 
     [Fact]
@@ -1235,6 +1852,17 @@ public class DrawingTests {
         Assert.Contains(contours, contour => contour.Count >= 3);
     }
 
+    [Fact]
+    public void OfficeTrueTypeFontResolvesCssFontFamilyFallbackWhenAvailable() {
+        OfficeTrueTypeFont? font = OfficeTrueTypeFont.TryLoadFontFamily("\"Definitely Missing\", sans-serif", out string? path);
+        if (font == null) {
+            return;
+        }
+
+        Assert.False(string.IsNullOrWhiteSpace(path));
+        Assert.True(font.Measure("OfficeIMO", 18) > 0);
+    }
+
     private static byte[] CreateTruncatedFormat12Cmap() {
         var data = new byte[28];
         WriteUInt16(data, 2, 1);
@@ -1320,8 +1948,61 @@ public class DrawingTests {
     [InlineData("photo.JPG", OfficeImageFormat.Jpeg)]
     [InlineData("diagram.svg", OfficeImageFormat.Svg)]
     [InlineData("legacy.emf", OfficeImageFormat.Emf)]
+    [InlineData("preview.webp", OfficeImageFormat.Webp)]
     public void OfficeImageReaderMapsFileNamesAndBareExtensions(string fileName, OfficeImageFormat expected) {
         Assert.Equal(expected, OfficeImageReader.FromExtension(fileName));
+    }
+
+    [Theory]
+    [InlineData("photo.jpeg", true)]
+    [InlineData(".webp", true)]
+    [InlineData("legacy.emf", true)]
+    [InlineData("diagram.txt", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void OfficeImageReaderIdentifiesKnownImageExtensions(string? fileName, bool expected) {
+        Assert.Equal(expected, OfficeImageReader.IsKnownImageExtension(fileName));
+    }
+
+    [Theory]
+    [InlineData("image/png", OfficeImageFormat.Png, true)]
+    [InlineData("image/jpg", OfficeImageFormat.Jpeg, true)]
+    [InlineData("image/jpeg; charset=binary", OfficeImageFormat.Jpeg, true)]
+    [InlineData("image/webp", OfficeImageFormat.Webp, false)]
+    [InlineData("application/octet-stream", OfficeImageFormat.Unknown, false)]
+    public void OfficeImagePdfCompatibilityMapsSupportedContentTypes(string contentType, OfficeImageFormat expectedFormat, bool expectedSupported) {
+        bool supported = OfficeImagePdfCompatibility.TryGetSupportedContentTypeFormat(contentType, out OfficeImageFormat format);
+
+        Assert.Equal(expectedSupported, supported);
+        Assert.Equal(expectedFormat, format);
+        Assert.Equal(expectedSupported, OfficeImagePdfCompatibility.IsSupportedContentType(contentType));
+    }
+
+    [Fact]
+    public void OfficeImagePdfCompatibilityRejectsDeclaredContentTypeMismatch() {
+        bool valid = OfficeImagePdfCompatibility.TryValidateDeclaredContentType(
+            OnePixelPng,
+            "image/jpeg",
+            out OfficeImageInfo? imageInfo,
+            out string? unsupportedReason);
+
+        Assert.False(valid);
+        Assert.NotNull(imageInfo);
+        Assert.Equal(OfficeImageFormat.Png, imageInfo!.Format);
+        Assert.Equal("Image bytes were declared as JPEG but were detected as Png.", unsupportedReason);
+    }
+
+    [Fact]
+    public void OfficeImagePdfCompatibilityRejectsEmptyDeclaredContentTypeBytes() {
+        bool valid = OfficeImagePdfCompatibility.TryValidateDeclaredContentType(
+            Array.Empty<byte>(),
+            "image/png",
+            out OfficeImageInfo? imageInfo,
+            out string? unsupportedReason);
+
+        Assert.False(valid);
+        Assert.Null(imageInfo);
+        Assert.Equal("Image bytes are empty.", unsupportedReason);
     }
 
     [Fact]

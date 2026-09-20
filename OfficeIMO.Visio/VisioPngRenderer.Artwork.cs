@@ -29,7 +29,7 @@ namespace OfficeIMO.Visio {
             double stroke = Math.Max(canvas.Supersampling, size * 0.045D);
             double rasterRotation = ToRasterRotation(shape.Angle);
             (double X, double Y) Point(double offsetX, double offsetY) =>
-                RotateTextPoint((x + (size * offsetX), y + (size * offsetY)), x, y, rasterRotation);
+                OfficeGeometry.RotatePoint((x + (size * offsetX), y + (size * offsetY)), x, y, -rasterRotation);
             (double X, double Y)[] Points(params (double X, double Y)[] offsets) {
                 (double X, double Y)[] points = new (double X, double Y)[offsets.Length];
                 for (int i = 0; i < offsets.Length; i++) {
@@ -122,25 +122,22 @@ namespace OfficeIMO.Visio {
             (double centerX, double centerY) = ToRaster(page, cx, cy, canvas.Scale);
             double targetWidth = imageWidth * canvas.Scale;
             double targetHeight = imageHeight * canvas.Scale;
-            double imageAspect = (double)raster.Width / raster.Height;
-            double targetAspect = targetWidth / targetHeight;
-            double drawWidth = targetWidth;
-            double drawHeight = targetHeight;
-            if (imageAspect > targetAspect) {
-                drawHeight = targetWidth / imageAspect;
-            } else if (imageAspect < targetAspect) {
-                drawWidth = targetHeight * imageAspect;
-            }
+            OfficeImagePlacement placement = OfficeImagePlacement.Fit(
+                raster.Width,
+                raster.Height,
+                centerX - (targetWidth / 2D),
+                centerY - (targetHeight / 2D),
+                targetWidth,
+                targetHeight,
+                OfficeImageFit.Contain);
 
             canvas.DrawImage(
                 raster,
-                centerX - (drawWidth / 2D),
-                centerY - (drawHeight / 2D),
-                drawWidth,
-                drawHeight,
-                ToRasterRotation(shape.Angle),
-                centerX,
-                centerY);
+                new OfficeImageProjection(
+                    placement,
+                    rotationDegrees: OfficeGeometry.RadiansToDegrees(ToRasterRotation(shape.Angle)),
+                    rotationCenterX: centerX,
+                    rotationCenterY: centerY));
             return true;
         }
 

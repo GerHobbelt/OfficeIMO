@@ -11,19 +11,25 @@ public sealed partial class OfficeRasterCanvas {
 
     /// <summary>Measures text width with the managed font fallback used by this canvas.</summary>
     public double MeasureText(string? text, double fontSize = 12D) {
+        return MeasureText(text, fontSize, null);
+    }
+
+    /// <summary>Measures text width with the requested font family when it can be resolved without platform font APIs.</summary>
+    public double MeasureText(string? text, double fontSize, string? fontFamily) {
         if (string.IsNullOrEmpty(text)) {
             return 0D;
         }
 
         double size = Math.Max(1D, fontSize);
-        var key = new TextMeasurementKey(text!, size);
+        var key = new TextMeasurementKey(text!, size, fontFamily);
         Dictionary<TextMeasurementKey, double> cache = _textMeasurementCache ??= new Dictionary<TextMeasurementKey, double>();
         if (cache.TryGetValue(key, out double cached)) {
             return cached;
         }
 
-        double measured = _font != null
-            ? _font.Measure(text!, size)
+        OfficeTrueTypeFont? font = ResolveTextFont(fontFamily);
+        double measured = font != null
+            ? font.Measure(text!, size)
             : MeasureFallbackText(text!, size);
         if (cache.Count >= MaxTextMeasurementCacheEntries) {
             cache.Clear();
@@ -43,29 +49,31 @@ public sealed partial class OfficeRasterCanvas {
         OfficeColor color,
         double fontSize = 12D,
         OfficeTextAlignment alignment = OfficeTextAlignment.Left,
-        OfficeFontStyle style = OfficeFontStyle.Regular) {
+        OfficeFontStyle style = OfficeFontStyle.Regular,
+        string? fontFamily = null) {
         if (string.IsNullOrEmpty(text) || color.A == 0 || width <= 0D || height <= 0D) {
             return;
         }
 
         string value = text!;
         double size = Math.Max(6D, Math.Min(fontSize, height - 2D));
-        if (_font != null) {
-            double measured = _font.Measure(value, size);
+        OfficeTrueTypeFont? font = ResolveTextFont(fontFamily);
+        if (font != null) {
+            double measured = font.Measure(value, size);
             double availableWidth = Math.Max(1D, width - 6D);
             while (measured > availableWidth && value.Length > 1) {
                 value = value.Substring(0, value.Length - 1);
-                measured = _font.Measure(value + "...", size);
+                measured = font.Measure(value + "...", size);
             }
 
             if (!string.Equals(value, text, StringComparison.Ordinal)) {
                 value += "...";
-                measured = _font.Measure(value, size);
+                measured = font.Measure(value, size);
             }
 
-            double top = y + Math.Max(1D, (height - _font.LineHeight(size)) / 2D);
+            double top = y + Math.Max(1D, (height - font.LineHeight(size)) / 2D);
             double textX = ResolveTextX(x + 3D, availableWidth, measured, alignment);
-            List<List<OfficePoint>> contours = _font.GetTextContours(value, textX, top, size);
+            List<List<OfficePoint>> contours = font.GetTextContours(value, textX, top, size);
             if ((style & OfficeFontStyle.Italic) == OfficeFontStyle.Italic) {
                 SlantContours(contours, top, size);
             }
@@ -77,8 +85,13 @@ public sealed partial class OfficeRasterCanvas {
             }
 
             if ((style & OfficeFontStyle.Underline) == OfficeFontStyle.Underline) {
-                double underlineY = top + (_font.LineHeight(size) * 0.86D);
+                double underlineY = top + (font.LineHeight(size) * 0.86D);
                 DrawLine(textX, underlineY, textX + measured, underlineY, color, Math.Max(1D, size / 16D));
+            }
+
+            if ((style & OfficeFontStyle.Strikethrough) == OfficeFontStyle.Strikethrough) {
+                double strikeY = top + (font.LineHeight(size) * 0.52D);
+                DrawLine(textX, strikeY, textX + measured, strikeY, color, Math.Max(1D, size / 16D));
             }
             return;
         }
@@ -100,6 +113,9 @@ public sealed partial class OfficeRasterCanvas {
     /// <param name="rotationDegrees">Clockwise rotation in degrees.</param>
     /// <param name="rotationCenterX">Rotation center X coordinate.</param>
     /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
+    /// <param name="underline">Whether to draw an underline using the measured text width.</param>
+    /// <param name="strikethrough">Whether to draw a strikethrough using the measured text width.</param>
+    /// <param name="fontFamily">Requested font family fallback list.</param>
     public void DrawTextLine(
         string? text,
         double anchorX,
@@ -111,20 +127,24 @@ public sealed partial class OfficeRasterCanvas {
         OfficeTextAlignment alignment = OfficeTextAlignment.Center,
         double rotationDegrees = 0D,
         double rotationCenterX = 0D,
-        double rotationCenterY = 0D) {
+        double rotationCenterY = 0D,
+        bool underline = false,
+        bool strikethrough = false,
+        string? fontFamily = null) {
         if (string.IsNullOrEmpty(text) || color.A == 0 || height <= 0D) {
             return;
         }
 
         string value = text!;
         double fontHeight = Math.Max(1D, height);
-        double width = MeasureText(value, fontHeight);
+        OfficeTrueTypeFont? font = ResolveTextFont(fontFamily);
+        double width = MeasureText(value, fontHeight, fontFamily);
         double x = ResolveAnchoredTextX(anchorX, width, alignment);
-        double rotationRadians = DegreesToRadians(rotationDegrees);
-        if (_font != null) {
+        double rotationRadians = OfficeGeometry.DegreesToRadians(rotationDegrees);
+        if (font != null) {
             double bottom = top + fontHeight;
             IReadOnlyList<List<OfficePoint>> contours = TransformTextContours(
-                _font.GetTextContours(value, x, top, fontHeight),
+                font.GetTextContours(value, x, top, fontHeight),
                 bottom,
                 italic,
                 rotationRadians,
@@ -133,7 +153,7 @@ public sealed partial class OfficeRasterCanvas {
             FillContours(contours, color);
             if (bold) {
                 contours = TransformTextContours(
-                    _font.GetTextContours(value, x + Math.Max(1D, fontHeight / 22D), top, fontHeight),
+                    font.GetTextContours(value, x + Math.Max(1D, fontHeight / 22D), top, fontHeight),
                     bottom,
                     italic,
                     rotationRadians,
@@ -142,10 +162,50 @@ public sealed partial class OfficeRasterCanvas {
                 FillContours(contours, color);
             }
 
+            DrawTextLineDecorations(x, width, top, fontHeight, color, rotationDegrees, rotationCenterX, rotationCenterY, underline, strikethrough);
             return;
         }
 
         DrawStrokeText(value, anchorX, top + (fontHeight / 2D), fontHeight, color, bold, italic, alignment, rotationRadians, rotationCenterX, rotationCenterY);
+        DrawTextLineDecorations(x, width, top, fontHeight, color, rotationDegrees, rotationCenterX, rotationCenterY, underline, strikethrough);
+    }
+
+    private void DrawTextLineDecorations(
+        double x,
+        double width,
+        double top,
+        double fontHeight,
+        OfficeColor color,
+        double rotationDegrees,
+        double rotationCenterX,
+        double rotationCenterY,
+        bool underline,
+        bool strikethrough) {
+        if (width <= 0D || color.A == 0) {
+            return;
+        }
+
+        if (underline) {
+            DrawRotatedTextDecorationLine(x, width, top + (fontHeight * 0.86D), color, fontHeight, rotationDegrees, rotationCenterX, rotationCenterY);
+        }
+
+        if (strikethrough) {
+            DrawRotatedTextDecorationLine(x, width, top + (fontHeight * 0.52D), color, fontHeight, rotationDegrees, rotationCenterX, rotationCenterY);
+        }
+    }
+
+    private void DrawRotatedTextDecorationLine(
+        double x,
+        double width,
+        double y,
+        OfficeColor color,
+        double fontHeight,
+        double rotationDegrees,
+        double rotationCenterX,
+        double rotationCenterY) {
+        OfficePoint start = OfficeTextPlacement.RotatePoint(new OfficePoint(x, y), rotationCenterX, rotationCenterY, rotationDegrees);
+        OfficePoint end = OfficeTextPlacement.RotatePoint(new OfficePoint(x + width, y), rotationCenterX, rotationCenterY, rotationDegrees);
+        DrawLine(start.X, start.Y, end.X, end.Y, color, Math.Max(1D, fontHeight / 16D));
     }
 
     private void DrawFallbackText(string text, double x, double y, double width, double height, OfficeColor color) {
@@ -199,24 +259,39 @@ public sealed partial class OfficeRasterCanvas {
         return MeasureStrokeText(text, fontSize);
     }
 
+    private OfficeTrueTypeFont? ResolveTextFont(string? fontFamily) {
+        if (string.IsNullOrWhiteSpace(fontFamily)) {
+            return _font;
+        }
+
+        return OfficeTrueTypeFont.TryLoadFontFamily(fontFamily) ?? _font;
+    }
+
     private readonly struct TextMeasurementKey : IEquatable<TextMeasurementKey> {
-        internal TextMeasurementKey(string text, double fontSize) {
+        internal TextMeasurementKey(string text, double fontSize, string? fontFamily) {
             Text = text;
             FontSize = fontSize;
+            FontFamily = fontFamily ?? string.Empty;
         }
 
         private string Text { get; }
         private double FontSize { get; }
+        private string FontFamily { get; }
 
         public bool Equals(TextMeasurementKey other) =>
-            FontSize.Equals(other.FontSize) && string.Equals(Text, other.Text, StringComparison.Ordinal);
+            FontSize.Equals(other.FontSize) &&
+            string.Equals(Text, other.Text, StringComparison.Ordinal) &&
+            string.Equals(FontFamily, other.FontFamily, StringComparison.Ordinal);
 
         public override bool Equals(object? obj) =>
             obj is TextMeasurementKey other && Equals(other);
 
         public override int GetHashCode() {
             unchecked {
-                return ((Text != null ? StringComparer.Ordinal.GetHashCode(Text) : 0) * 397) ^ FontSize.GetHashCode();
+                int hash = (Text != null ? StringComparer.Ordinal.GetHashCode(Text) : 0);
+                hash = (hash * 397) ^ FontSize.GetHashCode();
+                hash = (hash * 397) ^ StringComparer.Ordinal.GetHashCode(FontFamily);
+                return hash;
             }
         }
     }
@@ -344,7 +419,7 @@ public sealed partial class OfficeRasterCanvas {
         OfficePoint skewed = italic ? new OfficePoint(point.X + ((bottom - point.Y) * ItalicShear), point.Y) : point;
         return Math.Abs(rotationRadians) < TextRotationEpsilon
             ? skewed
-            : RotatePoint(skewed, rotationCenterX, rotationCenterY, rotationRadians);
+            : OfficeGeometry.RotatePoint(skewed, rotationCenterX, rotationCenterY, rotationRadians);
     }
 
     private static OfficePoint GlyphPoint(double x, double y, double cell, int col, int row) {

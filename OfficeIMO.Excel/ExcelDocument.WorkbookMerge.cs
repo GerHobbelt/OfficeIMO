@@ -25,18 +25,50 @@ namespace OfficeIMO.Excel {
             var importedSourceNames = new List<string>(sourceSheets.Count);
             var createdTargetNames = new List<string>(sourceSheets.Count);
             var sheetNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var tableNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var externalReferenceMaps = new Dictionary<string, IReadOnlyDictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (ExcelSheet sourceSheet in sourceSheets) {
                 string requestedName = (options.SheetNamePrefix ?? string.Empty) + sourceSheet.Name;
-                ExcelSheet targetSheet = CopyWorkSheetFrom(sourceDocument, sourceSheet.Name, requestedName, options.SheetNameValidationMode, new ExcelWorksheetCopyOptions {
-                    CopyMode = options.CopyMode
-                });
+                ExcelSheet targetSheet;
+                if (options.CopyMode == ExcelWorksheetCopyMode.Values) {
+                    targetSheet = CopyWorkSheetFromValues(sourceDocument, sourceSheet.Name, requestedName, options.SheetNameValidationMode);
+                } else if (ReferenceEquals(sourceDocument, this)) {
+                    WorksheetPackageCopyResult copyResult = CopyWorkSheetWithinWorkbook(sourceSheet, requestedName, options.SheetNameValidationMode);
+                    targetSheet = copyResult.Sheet;
+                    foreach (var tableName in copyResult.TableNameMap) {
+                        tableNameMap[tableName.Key] = tableName.Value;
+                    }
+                } else {
+                    WorksheetPackageCopyResult copyResult = CopyWorkSheetFromPackage(
+                        sourceDocument,
+                        sourceSheet.Name,
+                        requestedName,
+                        options.SheetNameValidationMode,
+                        rewriteCopiedReferences: false,
+                        copyReferencedDefinedNames: false);
+                    targetSheet = copyResult.Sheet;
+                    foreach (var tableName in copyResult.TableNameMap) {
+                        tableNameMap[tableName.Key] = tableName.Value;
+                    }
+
+                    if (copyResult.ExternalReferenceMap.Count > 0) {
+                        externalReferenceMaps[targetSheet.Name] = copyResult.ExternalReferenceMap;
+                    }
+                }
+
                 importedSourceNames.Add(sourceSheet.Name);
                 createdTargetNames.Add(targetSheet.Name);
                 sheetNameMap[sourceSheet.Name] = targetSheet.Name;
             }
 
-            RewriteMergedWorksheetReferences(createdTargetNames, sheetNameMap);
+            RewriteMergedWorksheetReferences(createdTargetNames, sheetNameMap, tableNameMap);
+            for (int index = 0; index < importedSourceNames.Count; index++) {
+                ExcelSheet targetSheet = GetSheet(createdTargetNames[index]);
+                externalReferenceMaps.TryGetValue(targetSheet.Name, out IReadOnlyDictionary<int, int>? externalReferenceMap);
+                CopyReferencedDefinedNamesFromSource(sourceDocument, targetSheet, sheetNameMap, tableNameMap, externalReferenceMap);
+            }
+
             MarkPackageDirty();
             return new ExcelWorkbookMergeResult(importedSourceNames, createdTargetNames);
         }
@@ -55,44 +87,22 @@ namespace OfficeIMO.Excel {
             return options.SheetNames.Select(sourceDocument.GetSheet);
         }
 
-        private void RewriteMergedWorksheetReferences(IEnumerable<string> copiedSheetNames, IReadOnlyDictionary<string, string> sheetNameMap) {
-            if (sheetNameMap.Count == 0) {
+        private void RewriteMergedWorksheetReferences(
+            IEnumerable<string> copiedSheetNames,
+            IReadOnlyDictionary<string, string> sheetNameMap,
+            IReadOnlyDictionary<string, string> tableNameMap) {
+            if (sheetNameMap.Count == 0 && tableNameMap.Count == 0) {
                 return;
             }
 
             foreach (string copiedSheetName in copiedSheetNames) {
                 ExcelSheet copiedSheet = GetSheet(copiedSheetName);
                 WorksheetPart worksheetPart = copiedSheet.WorksheetPart;
-                Worksheet worksheet = worksheetPart.Worksheet ?? throw new InvalidOperationException("Worksheet is missing.");
-                bool worksheetChanged = RewriteWorksheetFormulaSheetReferences(worksheet, sheetNameMap);
-
-                foreach (TableDefinitionPart tablePart in worksheetPart.TableDefinitionParts) {
-                    Table? table = tablePart.Table;
-                    if (table == null) {
-                        continue;
-                    }
-
-                    bool tableChanged = false;
-                    foreach (CalculatedColumnFormula formula in table.Descendants<CalculatedColumnFormula>()) {
-                        tableChanged |= RewriteFormulaSheetReference(formula, sheetNameMap);
-                    }
-
-                    foreach (TotalsRowFormula formula in table.Descendants<TotalsRowFormula>()) {
-                        tableChanged |= RewriteFormulaSheetReference(formula, sheetNameMap);
-                    }
-
-                    if (tableChanged) {
-                        table.Save();
-                    }
-                }
-
-                if (worksheetChanged) {
-                    worksheet.Save();
-                }
+                RewriteCopiedWorksheetReferences(worksheetPart, sheetNameMap, tableNameMap);
             }
         }
 
-        private static bool RewriteWorksheetFormulaSheetReferences(Worksheet worksheet, IReadOnlyDictionary<string, string> sheetNameMap) {
+        private static bool RewriteWorksheetSheetReferences(Worksheet worksheet, IReadOnlyDictionary<string, string> sheetNameMap) {
             bool changed = false;
             foreach (CellFormula formula in worksheet.Descendants<CellFormula>()) {
                 changed |= RewriteFormulaSheetReference(formula, sheetNameMap);
@@ -114,6 +124,19 @@ namespace OfficeIMO.Excel {
                 changed |= RewriteFormulaSheetReference(formula, sheetNameMap);
             }
 
+            foreach (Hyperlink hyperlink in worksheet.Descendants<Hyperlink>()) {
+                string? location = hyperlink.Location?.Value;
+                if (string.IsNullOrEmpty(location)) {
+                    continue;
+                }
+
+                string updated = ReplaceSheetNameReferences(location!, sheetNameMap);
+                if (!string.Equals(updated, location, StringComparison.Ordinal)) {
+                    hyperlink.Location = updated;
+                    changed = true;
+                }
+            }
+
             return changed;
         }
 
@@ -123,10 +146,7 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
-            string updated = text!;
-            foreach (KeyValuePair<string, string> mapping in sheetNameMap) {
-                updated = ReplaceSheetNameReferences(updated, mapping.Key, mapping.Value);
-            }
+            string updated = ReplaceSheetNameReferences(text!, sheetNameMap);
 
             if (string.Equals(updated, text, StringComparison.Ordinal)) {
                 return false;

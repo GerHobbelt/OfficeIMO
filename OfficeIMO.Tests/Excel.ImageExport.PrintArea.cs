@@ -262,15 +262,15 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void ExcelWorksheet_PageSlicedImageExportReportsUnsupportedPageChromeSemantics() {
+        public void ExcelWorksheet_PageSlicedImageExportReportsRemainingPageChromeDiagnostics() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
             ExcelSheet sheet = document.AddWorkSheet("Report");
             FillPageBreakGrid(sheet);
             document.SetPrintTitles(sheet, firstRow: 1, lastRow: 1, firstCol: null, lastCol: null, save: false);
             sheet.SetOrientation(ExcelPageOrientation.Landscape);
-            sheet.SetPageSetup(fitToWidth: 1, fitToHeight: 1);
-            sheet.SetHeaderFooter(headerCenter: "Confidential", footerRight: "Page &[Page]");
+            sheet.SetPageSetup(fitToWidth: 2, fitToHeight: 1);
+            sheet.SetHeaderFooter(headerCenter: "Confidential", footerRight: "Printed &BConfidential");
             sheet.AddManualRowPageBreak(2, save: false);
 
             IReadOnlyList<OfficeImageExportResult> results = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
@@ -286,12 +286,248 @@ namespace OfficeIMO.Tests {
                 Assert.Contains(result.Diagnostics, item =>
                     item.Code == ExcelImageExportDiagnosticCodes.PageSetupUnsupported &&
                     item.Source == "Report!pageSetup");
+                Assert.DoesNotContain(result.Diagnostics, item =>
+                    item.Code == ExcelImageExportDiagnosticCodes.HeaderFooterUnsupported);
                 Assert.Contains(result.Diagnostics, item =>
-                    item.Code == ExcelImageExportDiagnosticCodes.HeaderFooterUnsupported &&
+                    item.Code == ExcelImageExportDiagnosticCodes.HeaderFooterFormattingApproximation &&
                     item.Source == "Report!headerFooter");
                 Assert.Contains(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.ManualPageBreaksSplit);
                 Assert.True(OfficeImageReader.Identify(result.Bytes).Width > 0);
             });
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedPngExportAppliesPageSetupCanvasForManualScale() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetOrientation(ExcelPageOrientation.Landscape);
+            sheet.SetMargins(0.5D, 0.5D, 0.5D, 0.5D);
+            sheet.SetPageSetup(scale: 50);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            OfficeImageInfo info = OfficeImageReader.Identify(result.Bytes);
+            Assert.Equal(1056, info.Width);
+            Assert.Equal(816, info.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupUnsupported);
+            Assert.Contains(result.Diagnostics, item =>
+                item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted &&
+                item.Source == "Report!pageSetup");
+            Assert.True(OfficePngReader.TryDecode(result.Bytes, out OfficeRasterImage? image));
+            Assert.NotNull(image);
+            (int x, int y) = FindFirstNonWhitePixel(image!);
+            Assert.InRange(x, 48, 180);
+            Assert.InRange(y, 48, 140);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedSvgExportAppliesPageSetupCanvasForManualScale() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetMargins(0.25D, 0.25D, 0.5D, 0.5D);
+            sheet.SetPageSetup(scale: 75);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Svg, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            string svg = Encoding.UTF8.GetString(result.Bytes);
+            Assert.Equal(816, result.Width);
+            Assert.Equal(1056, result.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupUnsupported);
+            Assert.Contains(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted);
+            Assert.Contains("width=\"816\"", svg);
+            Assert.Contains("height=\"1056\"", svg);
+            Assert.Contains("<svg x=\"24\" y=\"48\"", svg);
+            Assert.Contains(">A3<", svg);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedSvgExportAppliesFitToWidthScaling() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            for (int column = 1; column <= 4; column++) {
+                sheet.SetColumnWidth(column, 40D);
+            }
+
+            sheet.SetMargins(0.25D, 0.25D, 0.25D, 0.25D);
+            sheet.SetPageSetup(fitToWidth: 1, fitToHeight: 0, paperSize: ExcelPaperSize.Letter);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Svg, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            string svg = Encoding.UTF8.GetString(result.Bytes);
+            Assert.Equal(816, result.Width);
+            Assert.Equal(1056, result.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupUnsupported);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted);
+            Assert.Contains("<svg x=\"24\" y=\"24\" width=\"768\"", svg);
+            Assert.Contains(">A3<", svg);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedPngExportAppliesFitToWidthScaling() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.CellBackground(3, 4, "#00FF00");
+            for (int column = 1; column <= 4; column++) {
+                sheet.SetColumnWidth(column, 40D);
+            }
+
+            sheet.SetMargins(0.25D, 0.25D, 0.25D, 0.25D);
+            sheet.SetPageSetup(fitToWidth: 1, fitToHeight: 0, paperSize: ExcelPaperSize.Letter);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            Assert.Equal(816, result.Width);
+            Assert.Equal(1056, result.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupUnsupported);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted);
+            Assert.True(OfficePngReader.TryDecode(result.Bytes, out OfficeRasterImage? image));
+            Assert.NotNull(image);
+            OfficeColor fitPixel = image!.GetPixel(760, 30);
+            Assert.True(fitPixel.G > 180 && fitPixel.R < 80 && fitPixel.B < 80, "Expected the far-right filled cell to be visible after fit-to-width scaling.");
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedSvgExportAppliesFitToHeightScaling() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetRowHeight(3, 800D);
+            sheet.SetRowHeight(4, 800D);
+            sheet.SetMargins(0.25D, 0.25D, 0.25D, 0.25D);
+            sheet.SetPageSetup(fitToWidth: 0, fitToHeight: 1, paperSize: ExcelPaperSize.Letter);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Svg, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            string svg = Encoding.UTF8.GetString(result.Bytes);
+            Assert.Equal(816, result.Width);
+            Assert.Equal(1056, result.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupUnsupported);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted);
+            Assert.Contains("<svg x=\"24\" y=\"24\"", svg);
+            Assert.Contains("height=\"1008\"", svg);
+            Assert.Contains(">A3<", svg);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedPngExportAppliesConfiguredPaperSize() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetMargins(0.25D, 0.25D, 0.5D, 0.5D);
+            sheet.SetPageSetup(scale: 100, paperSize: ExcelPaperSize.A4);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            OfficeImageInfo info = OfficeImageReader.Identify(result.Bytes);
+            Assert.Equal(794, info.Width);
+            Assert.Equal(1123, info.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeUnsupported);
+            Assert.True(OfficePngReader.TryDecode(result.Bytes, out OfficeRasterImage? image));
+            Assert.NotNull(image);
+            (int x, int y) = FindFirstNonWhitePixel(image!);
+            Assert.InRange(x, 24, 120);
+            Assert.InRange(y, 48, 140);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedSvgExportAppliesLandscapePaperSize() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetOrientation(ExcelPageOrientation.Landscape);
+            sheet.SetMargins(0.25D, 0.25D, 0.25D, 0.25D);
+            sheet.SetPageSetup(scale: 100, paperSize: ExcelPaperSize.Legal);
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Svg, new ExcelWorksheetImageExportOptions {
+                Range = "A1:D4",
+                SplitByManualPageBreaks = true,
+                ShowGridlines = false
+            })[1];
+
+            string svg = Encoding.UTF8.GetString(result.Bytes);
+            Assert.Equal(1344, result.Width);
+            Assert.Equal(816, result.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeUnsupported);
+            Assert.Contains("width=\"1344\"", svg);
+            Assert.Contains("height=\"816\"", svg);
+            Assert.Contains("<svg x=\"24\" y=\"24\"", svg);
+            Assert.Contains(">A3<", svg);
+        }
+
+        [Fact]
+        public void ExcelWorksheet_PageSlicedPngExportDiagnosesUnsupportedPaperSizeCode() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorkSheet("Report");
+                FillPageBreakGrid(sheet);
+                sheet.SetMargins(0.25D, 0.25D, 0.25D, 0.25D);
+                sheet.SetPageSetup(scale: 100);
+                sheet.AddManualRowPageBreak(2, save: false);
+            }
+
+            SetFirstWorksheetPaperSizeCode(filePath, 999U);
+
+            OfficeImageExportResult result;
+            using (ExcelDocument document = ExcelDocument.Load(filePath, readOnly: true)) {
+                ExcelSheet sheet = document.GetSheet("Report");
+                result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
+                    Range = "A1:D4",
+                    SplitByManualPageBreaks = true,
+                    ShowGridlines = false
+                })[1];
+            }
+
+            OfficeImageInfo info = OfficeImageReader.Identify(result.Bytes);
+            Assert.Equal(816, info.Width);
+            Assert.Equal(1056, info.Height);
+            Assert.DoesNotContain(result.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeDefaulted);
+            Assert.Contains(result.Diagnostics, item =>
+                item.Code == ExcelImageExportDiagnosticCodes.PageSetupPaperSizeUnsupported &&
+                item.Source == "Report!pageSetup");
         }
 
         [Fact]
@@ -323,6 +559,33 @@ namespace OfficeIMO.Tests {
                     sheet.CellValue(row, column, A1.CellReference(row, column));
                 }
             }
+        }
+
+        private static (int X, int Y) FindFirstNonWhitePixel(OfficeRasterImage image) {
+            for (int y = 0; y < image.Height; y++) {
+                for (int x = 0; x < image.Width; x++) {
+                    OfficeColor pixel = image.GetPixel(x, y);
+                    if (pixel.A > 0 && (pixel.R < 245 || pixel.G < 245 || pixel.B < 245)) {
+                        return (x, y);
+                    }
+                }
+            }
+
+            throw new InvalidOperationException("Expected at least one visible non-white pixel.");
+        }
+
+        private static void SetFirstWorksheetPaperSizeCode(string filePath, uint paperSizeCode) {
+            using SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true);
+            WorksheetPart worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
+            X.Worksheet worksheet = worksheetPart.Worksheet;
+            X.PageSetup? pageSetup = worksheet.GetFirstChild<X.PageSetup>();
+            if (pageSetup == null) {
+                pageSetup = new X.PageSetup();
+                worksheet.Append(pageSetup);
+            }
+
+            pageSetup.PaperSize = paperSizeCode;
+            worksheet.Save();
         }
 
         private static void AddMultiAreaPrintArea(string filePath) {

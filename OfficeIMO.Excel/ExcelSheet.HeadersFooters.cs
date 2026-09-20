@@ -94,14 +94,13 @@ namespace OfficeIMO.Excel {
         }
 
         internal static string NormalizeImageContentType(string? contentType, string parameterName) {
-            if (string.IsNullOrWhiteSpace(contentType)) return "image/png";
+            if (string.IsNullOrWhiteSpace(contentType)) return OfficeImageInfo.GetMimeType(OfficeImageFormat.Png);
 
-            var trimmed = contentType!.Trim();
-            if (!trimmed.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) {
+            if (!OfficeImageInfo.TryNormalizeImageContentType(contentType, out var normalizedContentType)) {
                 throw new ArgumentException("Content type must start with 'image/'", parameterName);
             }
 
-            return trimmed;
+            return normalizedContentType;
         }
 
         /// <summary>
@@ -581,6 +580,7 @@ namespace OfficeIMO.Excel {
                     case 'I':
                     case 'U':
                     case 'S': // bold, italic, underline, strike
+                    case '[': // bracketed fields such as &[Page], &[Pages], &[Tab]
                         return true;
                 }
                 return false;
@@ -687,17 +687,7 @@ namespace OfficeIMO.Excel {
             }
 
             // 3) Add/replace image in the VML drawing part
-            ImagePart imgPart;
-            if (contentType.Equals("image/png", StringComparison.OrdinalIgnoreCase))
-                imgPart = vmlPart.AddImagePart(ImagePartType.Png);
-            else if (contentType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase) || contentType.Equals("image/jpg", StringComparison.OrdinalIgnoreCase))
-                imgPart = vmlPart.AddImagePart(ImagePartType.Jpeg);
-            else if (contentType.Equals("image/gif", StringComparison.OrdinalIgnoreCase))
-                imgPart = vmlPart.AddImagePart(ImagePartType.Gif);
-            else if (contentType.Equals("image/bmp", StringComparison.OrdinalIgnoreCase))
-                imgPart = vmlPart.AddImagePart(ImagePartType.Bmp);
-            else
-                imgPart = vmlPart.AddImagePart(ImagePartType.Png);
+            ImagePart imgPart = vmlPart.AddImagePart(ToImagePartType(contentType));
 
             using (var ms = new MemoryStream(imageBytes)) {
                 imgPart.FeedData(ms);

@@ -137,7 +137,7 @@ namespace OfficeIMO.Tests {
             OfficeRasterCanvas canvas = new OfficeRasterCanvas(new OfficeRasterImage(120, 40, OfficeColor.Transparent));
 
             IReadOnlyList<OfficeTextLine> lines = OfficeTextLayoutEngine.WrapLines(
-                "Alpha Beta\nGamma",
+                "Alpha\tBeta\nGamma",
                 12D,
                 canvas.MeasureText("Alpha Beta", 12D) - 1D,
                 canvas.MeasureText);
@@ -172,6 +172,7 @@ namespace OfficeIMO.Tests {
 
             OfficeTextLine clipped = OfficeTextLayoutEngine.TrimLineToWidth("ABCDEFG", 1D, 6D, Measure, out bool wasClipped);
             OfficeTextLine unchanged = OfficeTextLayoutEngine.TrimLineToWidth("ABC", 1D, 6D, Measure, out bool unchangedClipped);
+            OfficeTextLine startClipped = OfficeTextLayoutEngine.TrimLineStartToWidth("ABCDEFG", 1D, 5D, Measure, out bool wasStartClipped);
 
             Assert.True(wasClipped);
             Assert.Equal("ABC...", clipped.Text);
@@ -179,6 +180,24 @@ namespace OfficeIMO.Tests {
             Assert.False(unchangedClipped);
             Assert.Equal("ABC", unchanged.Text);
             Assert.Equal(3D, unchanged.Width);
+            Assert.True(wasStartClipped);
+            Assert.Equal("...FG", startClipped.Text);
+            Assert.Equal(5D, startClipped.Width);
+        }
+
+        [Fact]
+        public void OfficeTextZoneLayout_CreatesNonOverlappingThreeColumnZones() {
+            OfficeTextZoneLayout zones = OfficeTextZoneLayout.CreateThreeColumn(144D, 12D, 6D);
+
+            Assert.Equal(12D, zones.Left.X);
+            Assert.Equal(36D, zones.Left.Width);
+            Assert.Equal(12D, zones.Left.AnchorX);
+            Assert.Equal(54D, zones.Center.X);
+            Assert.Equal(72D, zones.Center.AnchorX);
+            Assert.Equal(96D, zones.Right.X);
+            Assert.Equal(132D, zones.Right.AnchorX);
+            Assert.True(zones.Left.X + zones.Left.Width < zones.Center.X);
+            Assert.True(zones.Center.X + zones.Center.Width < zones.Right.X);
         }
 
         [Fact]
@@ -331,6 +350,30 @@ namespace OfficeIMO.Tests {
             Assert.True(shrink.Lines[0].Segments[1].FontSize < 20D);
             Assert.True(shrink.Lines[0].Segments[0].Bold);
             Assert.True(shrink.Lines[0].Segments[1].Italic);
+        }
+
+        [Fact]
+        public void OfficeTextLayoutEngine_LayoutsRichTextRunsWithFontFamilyAwareMeasurement() {
+            double Measure(string? value, double size, string? family) {
+                double factor = string.Equals(family, "Wide", StringComparison.Ordinal) ? 10D : 1D;
+                return (value?.Length ?? 0) * size * factor;
+            }
+
+            OfficeRichTextBlockLayout layout = OfficeTextLayoutEngine.LayoutRichTextBlock(
+                new[] {
+                    new OfficeRichTextRun("AA", 2D, OfficeColor.Black, fontFamily: "Wide"),
+                    new OfficeRichTextRun("BB", 2D, OfficeColor.Black, fontFamily: "Narrow")
+                },
+                100D,
+                30D,
+                lineHeightFactor: 1.2D,
+                Measure,
+                wrap: false);
+
+            Assert.Single(layout.Lines);
+            Assert.Equal(40D, layout.Lines[0].Segments[0].Width);
+            Assert.Equal(4D, layout.Lines[0].Segments[1].Width);
+            Assert.Equal(44D, layout.Width);
         }
 
         [Fact]
@@ -491,6 +534,18 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeRasterCanvas_DrawsParallelStyledLinesThroughSharedGeometry() {
+            OfficeRasterImage image = new OfficeRasterImage(24, 18, OfficeColor.Transparent);
+            OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
+
+            canvas.DrawParallelStyledLine(12, 3, 12, 15, OfficeColor.Black, 1, 6);
+
+            Assert.True(image.GetPixel(9, 9).A > 0);
+            Assert.True(image.GetPixel(15, 9).A > 0);
+            Assert.Equal(0, image.GetPixel(12, 9).A);
+        }
+
+        [Fact]
         public void OfficeDrawingRasterRenderer_HonorsLineDashStyle() {
             OfficeDrawing solidDrawing = new OfficeDrawing(72, 16);
             OfficeShape solidLine = OfficeShape.Line(0, 0, 64, 0);
@@ -511,6 +566,55 @@ namespace OfficeIMO.Tests {
             Assert.True(CountPaintedPixels(solid) > CountPaintedPixels(dashed));
             Assert.True(AnyAlpha(dashed, 4, 7, 10, 9));
             Assert.True(CountTransparentColumnsOnRow(dashed, 8, 4, 68) >= 6);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_HonorsPolygonDashStyleThroughSharedRasterPrimitive() {
+            OfficeDrawing solidDrawing = new OfficeDrawing(72, 32);
+            OfficeShape solidPolygon = OfficeShape.Polygon(
+                new OfficePoint(0, 0),
+                new OfficePoint(64, 0),
+                new OfficePoint(64, 20),
+                new OfficePoint(0, 20));
+            solidPolygon.StrokeColor = OfficeColor.Black;
+            solidPolygon.StrokeWidth = 2;
+            solidDrawing.AddShape(solidPolygon, 4, 6);
+
+            OfficeDrawing dashedDrawing = new OfficeDrawing(72, 32);
+            OfficeShape dashedPolygon = solidPolygon.Clone();
+            dashedPolygon.StrokeDashStyle = OfficeStrokeDashStyle.Dash;
+            dashedDrawing.AddShape(dashedPolygon, 4, 6);
+
+            OfficeRasterImage solid = OfficeDrawingRasterRenderer.Render(solidDrawing);
+            OfficeRasterImage dashed = OfficeDrawingRasterRenderer.Render(dashedDrawing);
+
+            Assert.True(CountPaintedPixels(solid) > CountPaintedPixels(dashed));
+            Assert.True(AnyAlpha(dashed, 4, 5, 12, 7));
+            Assert.True(AnyAlpha(dashed, 63, 6, 69, 16));
+            Assert.True(CountTransparentColumnsOnRow(dashed, 6, 4, 68) >= 6);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_HonorsShapeTransformsInRasterOutput() {
+            OfficeDrawing untransformedDrawing = new OfficeDrawing(40, 40);
+            OfficeShape untransformedShape = OfficeShape.Rectangle(20, 6);
+            untransformedShape.FillColor = OfficeColor.Red;
+            untransformedDrawing.AddShape(untransformedShape, 10, 17);
+
+            OfficeDrawing transformedDrawing = new OfficeDrawing(40, 40);
+            OfficeShape transformedShape = OfficeShape.Rectangle(20, 6);
+            transformedShape.FillColor = OfficeColor.Red;
+            transformedShape.Transform = OfficeTransform.RotateDegrees(90, 10, 3);
+            transformedDrawing.AddShape(transformedShape, 10, 17);
+
+            OfficeRasterImage untransformed = OfficeDrawingRasterRenderer.Render(untransformedDrawing);
+            OfficeRasterImage transformed = OfficeDrawingRasterRenderer.Render(transformedDrawing);
+
+            Assert.True(CountPixelsNear(transformed, OfficeColor.Red) > 80);
+            Assert.Equal(0, untransformed.GetPixel(20, 11).A);
+            AssertColorNear(transformed.GetPixel(20, 11), OfficeColor.Red);
+            AssertColorNear(untransformed.GetPixel(12, 20), OfficeColor.Red);
+            Assert.Equal(0, transformed.GetPixel(12, 20).A);
         }
 
         [Fact]
@@ -596,6 +700,55 @@ namespace OfficeIMO.Tests {
             Assert.True(CountTransparentColumnsOnRow(polyline, 7, 2, 38) >= 8);
             Assert.True(CountPaintedPixels(ellipse) > 20);
             Assert.Equal(0, ellipse.GetPixel(24, 24).A);
+        }
+
+        [Fact]
+        public void OfficeRasterCanvas_RendersTuplePolygonsThroughSharedRasterPrimitives() {
+            OfficeRasterImage filled = new OfficeRasterImage(22, 22, OfficeColor.Transparent);
+            OfficeRasterCanvas fillCanvas = new OfficeRasterCanvas(filled);
+            fillCanvas.FillPolygon(new[] {
+                (2D, 2D),
+                (19D, 2D),
+                (11D, 18D)
+            }, OfficeColor.Black);
+
+            OfficeRasterImage evenOdd = new OfficeRasterImage(24, 24, OfficeColor.Transparent);
+            OfficeRasterCanvas evenOddCanvas = new OfficeRasterCanvas(evenOdd);
+            IReadOnlyList<(double X, double Y)>[] contours = {
+                new[] {
+                    (2D, 2D),
+                    (21D, 2D),
+                    (21D, 21D),
+                    (2D, 21D)
+                },
+                new[] {
+                    (8D, 8D),
+                    (15D, 8D),
+                    (15D, 15D),
+                    (8D, 15D)
+                }
+            };
+            evenOddCanvas.FillPolygonsEvenOdd(contours, OfficeColor.Black);
+
+            OfficeRasterImage outline = new OfficeRasterImage(28, 24, OfficeColor.Transparent);
+            new OfficeRasterCanvas(outline).DrawStyledPolygon(
+                new[] {
+                    (4D, 4D),
+                    (23D, 4D),
+                    (23D, 19D),
+                    (4D, 19D)
+                },
+                OfficeColor.Black,
+                2D,
+                OfficeStrokeDashStyle.Dot,
+                resetDashPatternForEachSegment: true);
+
+            Assert.True(filled.GetPixel(11, 8).A > 0);
+            Assert.True(evenOdd.GetPixel(4, 4).A > 0);
+            Assert.Equal(0, evenOdd.GetPixel(11, 11).A);
+            Assert.True(AnyAlpha(outline, 4, 3, 23, 5));
+            Assert.True(AnyAlpha(outline, 3, 4, 5, 19));
+            Assert.True(CountTransparentColumnsOnRow(outline, 4, 4, 23) >= 4);
         }
 
         private static bool AnyAlpha(OfficeRasterImage image, int left, int top, int right, int bottom) {
@@ -852,6 +1005,38 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeTextBlockRenderer_DrawsRasterRichTextBlockWithRunStyles() {
+            OfficeRasterImage image = new OfficeRasterImage(140, 72, OfficeColor.Transparent);
+            OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
+            var line = new OfficeRichTextLine(new[] {
+                new OfficeRichTextSegment("Red", canvas.MeasureText("Red", 14D), 14D, OfficeColor.Red, bold: true, italic: false, underline: true, fontFamily: "Aptos"),
+                new OfficeRichTextSegment(" Blue", canvas.MeasureText(" Blue", 14D), 14D, OfficeColor.Blue, bold: false, italic: true, underline: false, fontFamily: "Aptos", strikethrough: true)
+            });
+            var layout = new OfficeRichTextBlockLayout(new[] { line }, lineHeight: 18D, width: line.Width, height: 18D);
+
+            OfficeTextBlockRenderer.DrawRasterRichTextBlock(
+                canvas,
+                layout,
+                left: 8D,
+                top: 10D,
+                width: 120D,
+                height: 44D,
+                horizontalAlignment: OfficeTextAlignment.Center,
+                verticalAlignment: OfficeTextVerticalAlignment.Center);
+
+            var painted = Enumerable.Range(0, image.Width * image.Height)
+                .Where(index => image.GetPixel(index % image.Width, index / image.Width).A > 0)
+                .Select(index => (X: index % image.Width, Y: index / image.Width))
+                .ToList();
+
+            Assert.NotEmpty(painted);
+            Assert.True(CountPixelsNear(image, OfficeColor.Red) > 20, "Expected the first rich text run to render red ink.");
+            Assert.True(CountPixelsNear(image, OfficeColor.Blue) > 20, "Expected the second rich text run to render blue ink.");
+            Assert.True(painted.Min(pixel => pixel.X) > 20, "Expected centered rich text placement.");
+            Assert.True(painted.Max(pixel => pixel.X) < 128, "Expected centered rich text placement to remain inside the target box.");
+        }
+
+        [Fact]
         public void OfficeTextBlockRenderer_AppendsSvgTextBlockWithSharedStyleAttributes() {
             var builder = new System.Text.StringBuilder();
             var layout = new OfficeTextBlockLayout(
@@ -877,6 +1062,7 @@ namespace OfficeIMO.Tests {
                 bold: true,
                 italic: true,
                 underline: true,
+                strikethrough: true,
                 rotationDegrees: 15D,
                 rotationCenterX: 50D,
                 rotationCenterY: 20D);
@@ -886,7 +1072,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("font-family=\"Aptos, Arial, sans-serif\"", svg);
             Assert.Contains("font-weight=\"700\"", svg);
             Assert.Contains("font-style=\"italic\"", svg);
-            Assert.Contains("text-decoration=\"underline\"", svg);
+            Assert.Contains("text-decoration=\"underline line-through\"", svg);
             Assert.Contains("fill=\"#010203\"", svg);
             Assert.Contains("fill-opacity=\"0.502\"", svg);
             Assert.Contains("transform=\"rotate(15 50 20)\"", svg);
@@ -910,12 +1096,13 @@ namespace OfficeIMO.Tests {
                 bold: true,
                 italic: true,
                 underline: true,
+                strikethrough: true,
                 rotationDegrees: 15D,
                 rotationCenterX: 50D,
                 rotationCenterY: 20D);
 
             string svg = builder.ToString();
-            Assert.Equal("<text x=\"50\" y=\"12\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"middle\" fill=\"#010203\" fill-opacity=\"0.502\" font-weight=\"700\" font-style=\"italic\" text-decoration=\"underline\" transform=\"rotate(15 50 20)\">A&amp;B<tspan x=\"50\" dy=\"14\">Beta</tspan></text>", svg);
+            Assert.Equal("<text x=\"50\" y=\"12\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"middle\" fill=\"#010203\" fill-opacity=\"0.502\" font-weight=\"700\" font-style=\"italic\" text-decoration=\"underline line-through\" transform=\"rotate(15 50 20)\">A&amp;B<tspan x=\"50\" dy=\"14\">Beta</tspan></text>", svg);
         }
 
         [Fact]
@@ -929,11 +1116,12 @@ namespace OfficeIMO.Tests {
                 bold: true,
                 italic: true,
                 underline: true,
-                fontFamily: "Aptos");
+                fontFamily: "Aptos",
+                strikethrough: true);
 
             builder.AppendSvgRichTextSegment(segment, 5D, 12D);
 
-            Assert.Equal("<text x=\"5\" y=\"12\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"start\" fill=\"#010203\" fill-opacity=\"0.502\" font-weight=\"700\" font-style=\"italic\" text-decoration=\"underline\">A&amp;B</text>", builder.ToString());
+            Assert.Equal("<text x=\"5\" y=\"12\" font-family=\"Aptos\" font-size=\"10\" text-anchor=\"start\" fill=\"#010203\" fill-opacity=\"0.502\" font-weight=\"700\" font-style=\"italic\" text-decoration=\"underline line-through\">A&amp;B</text>", builder.ToString());
         }
 
         [Fact]
@@ -972,7 +1160,8 @@ namespace OfficeIMO.Tests {
                     rotationCenterX: 50D,
                     rotationCenterY: 20D,
                     svgNamespace: "http://www.w3.org/2000/svg",
-                    configureTextAttributes: textWriter => textWriter.WriteAttributeString("data-officeimo-test", "true"));
+                    configureTextAttributes: textWriter => textWriter.WriteAttributeString("data-officeimo-test", "true"),
+                    strikethrough: true);
             }
 
             string svg = builder.ToString();
@@ -983,7 +1172,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains("font-family=\"Aptos, Arial, sans-serif\"", svg);
             Assert.Contains("font-weight=\"700\"", svg);
             Assert.Contains("font-style=\"italic\"", svg);
-            Assert.Contains("text-decoration=\"underline\"", svg);
+            Assert.Contains("text-decoration=\"underline line-through\"", svg);
             Assert.Contains("fill=\"#010203\"", svg);
             Assert.Contains("fill-opacity=\"0.502\"", svg);
             Assert.Contains("transform=\"rotate(15 50 20)\"", svg);
@@ -1005,6 +1194,15 @@ namespace OfficeIMO.Tests {
                         Math.Abs(color.B - expected.B) <= 8 &&
                         color.A > 0;
                 });
+
+        private static void AssertColorNear(OfficeColor actual, OfficeColor expected) {
+            Assert.True(
+                Math.Abs(actual.R - expected.R) <= 8 &&
+                Math.Abs(actual.G - expected.G) <= 8 &&
+                Math.Abs(actual.B - expected.B) <= 8 &&
+                actual.A > 0,
+                $"Expected ARGB near {expected.A},{expected.R},{expected.G},{expected.B} but got {actual.A},{actual.R},{actual.G},{actual.B}.");
+        }
 
     }
 }

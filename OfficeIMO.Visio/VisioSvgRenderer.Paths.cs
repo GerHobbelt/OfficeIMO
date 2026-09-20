@@ -50,21 +50,17 @@ namespace OfficeIMO.Visio {
             double targetTop,
             out double x,
             out double y) {
-            double sourceCenterX = (sourceLeft + sourceRight) / 2D;
-            double sourceCenterY = (sourceBottom + sourceTop) / 2D;
-            double targetCenterX = (targetLeft + targetRight) / 2D;
-            double targetCenterY = (targetBottom + targetTop) / 2D;
-            double dx = targetCenterX - sourceCenterX;
-            double dy = targetCenterY - sourceCenterY;
-
-            if (Math.Abs(dy) > Math.Abs(dx)) {
-                x = sourceCenterX;
-                y = dy >= 0D ? sourceTop : sourceBottom;
-                return;
-            }
-
-            x = dx >= 0D ? sourceRight : sourceLeft;
-            y = sourceCenterY;
+            OfficeGeometry.ResolveRectangleBoundaryEndpoint(
+                sourceLeft,
+                sourceBottom,
+                sourceRight,
+                sourceTop,
+                targetLeft,
+                targetBottom,
+                targetRight,
+                targetTop,
+                out x,
+                out y);
         }
 
         private static double PointsToSvgPixels(double points, double scale) {
@@ -88,7 +84,7 @@ namespace OfficeIMO.Visio {
         private static double Distance((double X, double Y) a, (double X, double Y) b) =>
             OfficeIMO.Drawing.OfficeGeometry.Distance(a, b);
 
-        private static double RadiansToDegrees(double radians) => radians * 180D / Math.PI;
+        private static double RadiansToDegrees(double radians) => OfficeGeometry.RadiansToDegrees(radians);
 
         private static string Format(double value) => OfficeSvgFormatting.FormatNumber(value);
     }

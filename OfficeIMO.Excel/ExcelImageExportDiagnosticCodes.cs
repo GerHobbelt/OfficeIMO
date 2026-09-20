@@ -24,6 +24,9 @@ public static class ExcelImageExportDiagnosticCodes {
     /// <summary>Rich text fell back to an approximate or plain-text layout path.</summary>
     public const string CellRichTextLayoutApproximation = "ExcelCellRichTextLayoutApproximation";
 
+    /// <summary>Requested cell font family could not be loaded exactly by the dependency-free exporter.</summary>
+    public const string CellFontFamilyFallback = "ExcelCellFontFamilyFallback";
+
     /// <summary>Excel gradient fills are not rendered by the dependency-free exporter yet.</summary>
     public const string FillGradientUnsupported = "ExcelFillGradientUnsupported";
 
@@ -102,6 +105,9 @@ public static class ExcelImageExportDiagnosticCodes {
     /// <summary>Worksheet drawing shape is not renderable by the current image exporter.</summary>
     public const string DrawingShapeUnsupported = "ExcelDrawingShapeUnsupported";
 
+    /// <summary>Worksheet drawing shape text is rendered through an approximate rotation path.</summary>
+    public const string DrawingShapeTextRotationApproximation = "ExcelDrawingShapeTextRotationApproximation";
+
     /// <summary>Worksheet chart could not be converted to a renderable snapshot.</summary>
     public const string ChartSnapshotUnavailable = "ExcelChartSnapshotUnavailable";
 
@@ -150,6 +156,9 @@ public static class ExcelImageExportDiagnosticCodes {
     /// <summary>Chart text styling is approximate.</summary>
     public const string ChartTextStyleApproximation = "ExcelChartTextStyleApproximation";
 
+    /// <summary>Requested chart text font family could not be loaded exactly by the dependency-free exporter.</summary>
+    public const string ChartFontFamilyFallback = "ExcelChartFontFamilyFallback";
+
     /// <summary>Chart series styling is approximate.</summary>
     public const string ChartSeriesStyleApproximation = "ExcelChartSeriesStyleApproximation";
 
@@ -177,8 +186,20 @@ public static class ExcelImageExportDiagnosticCodes {
     /// <summary>Worksheet page setup settings are not applied to image page geometry yet.</summary>
     public const string PageSetupUnsupported = "ExcelPageSetupUnsupported";
 
+    /// <summary>Worksheet page setup image output used the default paper size because no paper size is configured.</summary>
+    public const string PageSetupPaperSizeDefaulted = "ExcelPageSetupPaperSizeDefaulted";
+
+    /// <summary>Worksheet page setup configured a paper size that image page geometry does not support yet.</summary>
+    public const string PageSetupPaperSizeUnsupported = "ExcelPageSetupPaperSizeUnsupported";
+
     /// <summary>Worksheet headers or footers are not rendered in image page output yet.</summary>
     public const string HeaderFooterUnsupported = "ExcelHeaderFooterUnsupported";
+
+    /// <summary>Worksheet header/footer text formatting is rendered through an approximate image-export path.</summary>
+    public const string HeaderFooterFormattingApproximation = "ExcelHeaderFooterFormattingApproximation";
+
+    /// <summary>Requested worksheet header/footer font family could not be loaded exactly by the dependency-free exporter.</summary>
+    public const string HeaderFooterFontFamilyFallback = "ExcelHeaderFooterFontFamilyFallback";
 
     /// <summary>Sparkline kind is not rendered by the image exporter yet.</summary>
     public const string SparklineKindUnsupported = "ExcelSparklineKindUnsupported";

@@ -40,6 +40,23 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportReportsUnresolvedCellFontFamilyFallback() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Fonts");
+            sheet.CellValue(1, 1, "Font fallback");
+            sheet.CellAt(1, 1).SetFontName("OfficeIMO Missing Cell Font");
+            sheet.SetColumnWidth(1, 18);
+
+            OfficeImageExportResult png = sheet.Range("A1:A1").ExportImage(OfficeImageExportFormat.Png, new ExcelImageExportOptions { ShowGridlines = false });
+
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellFontFamilyFallback);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
+            Assert.Equal("Fonts!A1", diagnostic.Source);
+            Assert.Contains("OfficeIMO Missing Cell Font", diagnostic.Message);
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportUsesNumberFormatLiteralsAndSections() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
@@ -2300,21 +2317,41 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void ExcelRange_ImageExportReportsUnsupportedStackedTextRotation() {
+        public void ExcelRange_ImageExportRendersStackedTextRotationAcrossPngAndSvg() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
             ExcelSheet sheet = document.AddWorkSheet("Stacked");
             sheet.CellValue(1, 1, "Stacked");
-            sheet.CellAt(1, 1).SetTextRotation(255);
+            sheet.SetColumnWidth(1, 5);
+            sheet.SetRowHeight(1, 96);
+            sheet.CellAt(1, 1)
+                .SetTextRotation(255)
+                .SetFontColor("010203")
+                .SetBold();
 
             ExcelRange range = sheet.Range("A1:A1");
             ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot();
             OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, new ExcelImageExportOptions { ShowGridlines = false });
+            string svg = range.ToSvg(new ExcelImageExportOptions { ShowGridlines = false });
 
             Assert.Equal(255, snapshot.Cells[0].Style.TextRotation);
-            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellStackedTextRotationUnsupported);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellStackedTextRotationUnsupported);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellTextRotationApproximation);
             Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
             Assert.Equal("Stacked!A1", diagnostic.Source);
+            Assert.DoesNotContain("rotate(", svg, StringComparison.Ordinal);
+            Assert.Contains("fill=\"#010203\"", svg, StringComparison.Ordinal);
+            Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
+            Assert.True(CountOccurrences(svg, "<text") >= "Stacked".Length, "Expected stacked SVG output to emit one visible text element per stacked character.");
+            Assert.Contains(">S</text>", svg, StringComparison.Ordinal);
+            Assert.Contains(">t</text>", svg, StringComparison.Ordinal);
+            Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+            Assert.NotNull(rendered);
+            (int MinY, int MaxY) yExtent = DarkPixelYExtent(rendered!, snapshot.Cells[0]);
+            (int MinX, int MaxX) xExtent = DarkPixelXExtent(rendered!, snapshot.Cells[0]);
+            Assert.True(
+                yExtent.MaxY - yExtent.MinY > xExtent.MaxX - xExtent.MinX,
+                $"Expected stacked text to be taller than wide. x={xExtent.MinX}-{xExtent.MaxX}, y={yExtent.MinY}-{yExtent.MaxY}");
         }
 
         private static byte[] CreateSolidPng(int width, int height, OfficeColor color) {

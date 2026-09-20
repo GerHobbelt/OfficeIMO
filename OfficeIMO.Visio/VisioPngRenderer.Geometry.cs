@@ -40,17 +40,18 @@ namespace OfficeIMO.Visio {
 
         private static List<(double X, double Y)> GetConnectorPoints(VisioConnector connector) {
             ComputeConnectorEndpoints(connector, out double startX, out double startY, out double endX, out double endY);
-            List<(double X, double Y)> points = new() { (startX, startY) };
+            List<(double X, double Y)> waypoints = new(connector.Waypoints.Count);
             if (connector.Waypoints.Count > 0) {
                 foreach (VisioConnectorWaypoint waypoint in connector.Waypoints) {
-                    points.Add((waypoint.X, waypoint.Y));
+                    waypoints.Add((waypoint.X, waypoint.Y));
                 }
-            } else if (connector.Kind == ConnectorKind.RightAngle) {
-                points.Add((startX, endY));
             }
 
-            points.Add((endX, endY));
-            return points;
+            return OfficeGeometry.BuildConnectorPolyline(
+                (startX, startY),
+                (endX, endY),
+                waypoints,
+                connector.Kind == ConnectorKind.RightAngle);
         }
 
         private static void ComputeConnectorEndpoints(VisioConnector connector, out double startX, out double startY, out double endX, out double endY) {
@@ -120,21 +121,17 @@ namespace OfficeIMO.Visio {
             double targetTop,
             out double x,
             out double y) {
-            double sourceCenterX = (sourceLeft + sourceRight) / 2D;
-            double sourceCenterY = (sourceBottom + sourceTop) / 2D;
-            double targetCenterX = (targetLeft + targetRight) / 2D;
-            double targetCenterY = (targetBottom + targetTop) / 2D;
-            double dx = targetCenterX - sourceCenterX;
-            double dy = targetCenterY - sourceCenterY;
-
-            if (Math.Abs(dy) > Math.Abs(dx)) {
-                x = sourceCenterX;
-                y = dy >= 0D ? sourceTop : sourceBottom;
-                return;
-            }
-
-            x = dx >= 0D ? sourceRight : sourceLeft;
-            y = sourceCenterY;
+            OfficeGeometry.ResolveRectangleBoundaryEndpoint(
+                sourceLeft,
+                sourceBottom,
+                sourceRight,
+                sourceTop,
+                targetLeft,
+                targetBottom,
+                targetRight,
+                targetTop,
+                out x,
+                out y);
         }
 
         private static (double X, double Y) ToRaster(VisioPage page, double x, double y, double scale) =>

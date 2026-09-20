@@ -28,6 +28,8 @@ public static class OfficeTextBlockRenderer {
     /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
     /// <param name="centerLineInLineHeight">Whether the text glyph box should be vertically centered inside each measured line height.</param>
     /// <param name="underlineOffsetFactor">Underline baseline offset as a factor of the resolved font size.</param>
+    /// <param name="strikethrough">Whether to render a strikethrough for each visible line.</param>
+    /// <param name="fontFamily">Requested font family fallback list.</param>
     public static void DrawRasterTextBlock(
         OfficeRasterCanvas canvas,
         OfficeTextBlockLayout layout,
@@ -45,7 +47,9 @@ public static class OfficeTextBlockRenderer {
         double rotationCenterX = 0D,
         double rotationCenterY = 0D,
         bool centerLineInLineHeight = true,
-        double underlineOffsetFactor = 0.86D) {
+        double underlineOffsetFactor = 0.86D,
+        bool strikethrough = false,
+        string? fontFamily = null) {
         if (canvas == null) {
             throw new ArgumentNullException(nameof(canvas));
         }
@@ -66,16 +70,84 @@ public static class OfficeTextBlockRenderer {
             double runTop = centerLineInLineHeight
                 ? lineTop + Math.Max(0D, (layout.LineHeight - layout.FontSize) / 2D)
                 : lineTop;
-            canvas.DrawTextLine(line.Text, anchorX, runTop, layout.FontSize, color, bold, italic, horizontalAlignment, rotationDegrees, rotationCenterX, rotationCenterY);
-            if (!underline || line.Width <= 0D) {
+            canvas.DrawTextLine(line.Text, anchorX, runTop, layout.FontSize, color, bold, italic, horizontalAlignment, rotationDegrees, rotationCenterX, rotationCenterY, underline, strikethrough, fontFamily);
+        }
+    }
+
+    /// <summary>
+    /// Draws a measured rich text block on a raster canvas.
+    /// </summary>
+    /// <param name="canvas">Raster canvas receiving the text.</param>
+    /// <param name="layout">Measured rich text block layout.</param>
+    /// <param name="left">Left edge of the available text rectangle.</param>
+    /// <param name="top">Top edge of the available text rectangle.</param>
+    /// <param name="width">Available text rectangle width.</param>
+    /// <param name="height">Available text rectangle height.</param>
+    /// <param name="horizontalAlignment">Horizontal alignment inside the rectangle.</param>
+    /// <param name="verticalAlignment">Vertical alignment inside the rectangle.</param>
+    /// <param name="rotationDegrees">Clockwise rotation in degrees.</param>
+    /// <param name="rotationCenterX">Rotation center X coordinate.</param>
+    /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
+    /// <param name="centerLineInLineHeight">Whether each run glyph box should be vertically centered inside its measured line height.</param>
+    public static void DrawRasterRichTextBlock(
+        OfficeRasterCanvas canvas,
+        OfficeRichTextBlockLayout layout,
+        double left,
+        double top,
+        double width,
+        double height,
+        OfficeTextAlignment horizontalAlignment = OfficeTextAlignment.Left,
+        OfficeTextVerticalAlignment verticalAlignment = OfficeTextVerticalAlignment.Top,
+        double rotationDegrees = 0D,
+        double rotationCenterX = 0D,
+        double rotationCenterY = 0D,
+        bool centerLineInLineHeight = true) {
+        if (canvas == null) {
+            throw new ArgumentNullException(nameof(canvas));
+        }
+
+        if (layout == null) {
+            throw new ArgumentNullException(nameof(layout));
+        }
+
+        if (layout.Lines.Count == 0 || width <= 0D || height <= 0D) {
+            return;
+        }
+
+        double textTop = OfficeTextPlacement.ResolveTop(top, height, layout.Height, verticalAlignment);
+        for (int lineIndex = 0; lineIndex < layout.Lines.Count; lineIndex++) {
+            OfficeRichTextLine line = layout.Lines[lineIndex];
+            if (line.Segments.Count == 0) {
                 continue;
             }
 
-            double underlineY = runTop + (layout.FontSize * underlineOffsetFactor);
-            double underlineLeft = OfficeTextPlacement.ResolveLineLeft(left, width, line.Width, horizontalAlignment);
-            OfficePoint start = OfficeTextPlacement.RotatePoint(new OfficePoint(underlineLeft, underlineY), rotationCenterX, rotationCenterY, rotationDegrees);
-            OfficePoint end = OfficeTextPlacement.RotatePoint(new OfficePoint(underlineLeft + line.Width, underlineY), rotationCenterX, rotationCenterY, rotationDegrees);
-            canvas.DrawLine(start.X, start.Y, end.X, end.Y, color, Math.Max(1D, layout.FontSize / 16D));
+            double lineTop = textTop + (lineIndex * layout.LineHeight);
+            double lineFontSize = Math.Max(1D, line.FontSize);
+            double runTop = centerLineInLineHeight
+                ? lineTop + Math.Max(0D, (layout.LineHeight - lineFontSize) / 2D)
+                : lineTop;
+            double baseline = runTop + (lineFontSize * 0.84D);
+            double cursor = OfficeTextPlacement.ResolveLineLeft(left, width, line.Width, horizontalAlignment);
+            for (int segmentIndex = 0; segmentIndex < line.Segments.Count; segmentIndex++) {
+                OfficeRichTextSegment segment = line.Segments[segmentIndex];
+                double segmentTop = baseline - (segment.FontSize * 0.84D);
+                canvas.DrawTextLine(
+                    segment.Text,
+                    cursor,
+                    segmentTop,
+                    segment.FontSize,
+                    segment.Color,
+                    segment.Bold,
+                    segment.Italic,
+                    OfficeTextAlignment.Left,
+                    rotationDegrees,
+                    rotationCenterX,
+                    rotationCenterY,
+                    segment.Underline,
+                    segment.Strikethrough,
+                    segment.FontFamily);
+                cursor += segment.Width;
+            }
         }
     }
 
@@ -99,6 +171,7 @@ public static class OfficeTextBlockRenderer {
     /// <param name="rotationCenterX">Rotation center X coordinate.</param>
     /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
     /// <param name="centerLineInLineHeight">Whether the text glyph box should be vertically centered inside each measured line height.</param>
+    /// <param name="strikethrough">Whether to render strikethrough text.</param>
     /// <returns>The supplied builder for call chaining.</returns>
     public static StringBuilder AppendSvgTextBlock(
         this StringBuilder builder,
@@ -117,7 +190,8 @@ public static class OfficeTextBlockRenderer {
         double rotationDegrees = 0D,
         double rotationCenterX = 0D,
         double rotationCenterY = 0D,
-        bool centerLineInLineHeight = true) {
+        bool centerLineInLineHeight = true,
+        bool strikethrough = false) {
         if (builder == null) {
             throw new ArgumentNullException(nameof(builder));
         }
@@ -155,9 +229,7 @@ public static class OfficeTextBlockRenderer {
                 builder.Append(" font-style=\"italic\"");
             }
 
-            if (underline) {
-                builder.Append(" text-decoration=\"underline\"");
-            }
+            AppendSvgTextDecorationAttribute(builder, underline, strikethrough);
 
             if (Math.Abs(rotationDegrees) > 0.000001D) {
                 builder.AppendRotateTransformAttribute(rotationDegrees, rotationCenterX, rotationCenterY);
@@ -189,6 +261,7 @@ public static class OfficeTextBlockRenderer {
     /// <param name="rotationDegrees">Clockwise rotation in degrees.</param>
     /// <param name="rotationCenterX">Rotation center X coordinate.</param>
     /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
+    /// <param name="strikethrough">Whether to render strikethrough text.</param>
     /// <returns>The supplied builder for call chaining.</returns>
     public static StringBuilder AppendSvgTextElement(
         this StringBuilder builder,
@@ -205,7 +278,8 @@ public static class OfficeTextBlockRenderer {
         bool underline = false,
         double rotationDegrees = 0D,
         double rotationCenterX = 0D,
-        double rotationCenterY = 0D) {
+        double rotationCenterY = 0D,
+        bool strikethrough = false) {
         if (builder == null) {
             throw new ArgumentNullException(nameof(builder));
         }
@@ -235,9 +309,7 @@ public static class OfficeTextBlockRenderer {
             builder.Append(" font-style=\"italic\"");
         }
 
-        if (underline) {
-            builder.Append(" text-decoration=\"underline\"");
-        }
+        AppendSvgTextDecorationAttribute(builder, underline, strikethrough);
 
         if (Math.Abs(rotationDegrees) > 0.000001D) {
             builder.AppendRotateTransformAttribute(rotationDegrees, rotationCenterX, rotationCenterY);
@@ -285,7 +357,8 @@ public static class OfficeTextBlockRenderer {
             OfficeTextAlignment.Left,
             segment.Bold,
             segment.Italic,
-            segment.Underline);
+            segment.Underline,
+            strikethrough: segment.Strikethrough);
     }
 
     /// <summary>
@@ -309,6 +382,7 @@ public static class OfficeTextBlockRenderer {
     /// <param name="rotationCenterY">Rotation center Y coordinate.</param>
     /// <param name="svgNamespace">SVG namespace URI. Pass <c>null</c> to write elements without a namespace.</param>
     /// <param name="configureTextAttributes">Optional callback for adapter-specific attributes on the <c>text</c> element.</param>
+    /// <param name="strikethrough">Whether to render strikethrough text.</param>
     public static void WriteSvgTextBlock(
         XmlWriter writer,
         OfficeTextBlockLayout layout,
@@ -327,7 +401,8 @@ public static class OfficeTextBlockRenderer {
         double rotationCenterX = 0D,
         double rotationCenterY = 0D,
         string? svgNamespace = null,
-        Action<XmlWriter>? configureTextAttributes = null) {
+        Action<XmlWriter>? configureTextAttributes = null,
+        bool strikethrough = false) {
         if (writer == null) {
             throw new ArgumentNullException(nameof(writer));
         }
@@ -359,9 +434,7 @@ public static class OfficeTextBlockRenderer {
             writer.WriteAttributeString("font-style", "italic");
         }
 
-        if (underline) {
-            writer.WriteAttributeString("text-decoration", "underline");
-        }
+        WriteSvgTextDecorationAttribute(writer, underline, strikethrough);
 
         if (Math.Abs(rotationDegrees) > 0.000001D) {
             writer.WriteRotateTransformAttribute(rotationDegrees, rotationCenterX, rotationCenterY);
@@ -387,5 +460,37 @@ public static class OfficeTextBlockRenderer {
             default:
                 return "start";
         }
+    }
+
+    private static void AppendSvgTextDecorationAttribute(StringBuilder builder, bool underline, bool strikethrough) {
+        if (!underline && !strikethrough) {
+            return;
+        }
+
+        builder.Append(" text-decoration=\"");
+        if (underline) {
+            builder.Append("underline");
+        }
+
+        if (underline && strikethrough) {
+            builder.Append(' ');
+        }
+
+        if (strikethrough) {
+            builder.Append("line-through");
+        }
+
+        builder.Append('"');
+    }
+
+    private static void WriteSvgTextDecorationAttribute(XmlWriter writer, bool underline, bool strikethrough) {
+        if (!underline && !strikethrough) {
+            return;
+        }
+
+        string value = underline && strikethrough
+            ? "underline line-through"
+            : underline ? "underline" : "line-through";
+        writer.WriteAttributeString("text-decoration", value);
     }
 }

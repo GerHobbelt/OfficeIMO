@@ -296,7 +296,11 @@ namespace OfficeIMO.Excel {
                 drawingObjects.Add(new ExcelVisualDrawingObject(
                     drawing.Name,
                     drawing.Order,
+                    drawing.ShapePresetName,
                     drawing.ShapeKind.Value,
+                    drawing.HorizontalFlip,
+                    drawing.VerticalFlip,
+                    drawing.RotationDegrees,
                     x,
                     y,
                     width,

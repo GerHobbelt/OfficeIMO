@@ -532,7 +532,11 @@ namespace OfficeIMO.Excel {
         internal ExcelVisualDrawingObject(
             string name,
             int order,
+            string shapePresetName,
             OfficeShapeKind shapeKind,
+            bool horizontalFlip,
+            bool verticalFlip,
+            double rotationDegrees,
             double x,
             double y,
             double width,
@@ -544,7 +548,11 @@ namespace OfficeIMO.Excel {
             string source) {
             Name = name ?? string.Empty;
             Order = order;
+            ShapePresetName = shapePresetName ?? string.Empty;
             ShapeKind = shapeKind;
+            HorizontalFlip = horizontalFlip;
+            VerticalFlip = verticalFlip;
+            RotationDegrees = rotationDegrees;
             X = x;
             Y = y;
             Width = width;
@@ -562,8 +570,23 @@ namespace OfficeIMO.Excel {
         /// <summary>Zero-based source drawing layer order.</summary>
         public int Order { get; }
 
+        /// <summary>Serialized DrawingML preset geometry name used to create the shared OfficeIMO.Drawing shape.</summary>
+        public string ShapePresetName { get; }
+
         /// <summary>Shared OfficeIMO.Drawing shape kind.</summary>
         public OfficeShapeKind ShapeKind { get; }
+
+        /// <summary>Whether the DrawingML geometry is mirrored horizontally.</summary>
+        public bool HorizontalFlip { get; }
+
+        /// <summary>Whether the DrawingML geometry is mirrored vertically.</summary>
+        public bool VerticalFlip { get; }
+
+        /// <summary>Clockwise DrawingML rotation in degrees.</summary>
+        public double RotationDegrees { get; }
+
+        /// <summary>Whether the drawing object has any authored rotation.</summary>
+        public bool HasRotation => Math.Abs(RotationDegrees) > 0.0001D;
 
         /// <summary>X position in CSS pixels.</summary>
         public double X { get; }
@@ -691,10 +714,7 @@ namespace OfficeIMO.Excel {
             Y = y;
             Width = width;
             Height = height;
-            CropLeftRatio = cropLeftRatio;
-            CropTopRatio = cropTopRatio;
-            CropRightRatio = cropRightRatio;
-            CropBottomRatio = cropBottomRatio;
+            SourceCrop = OfficeImageSourceCrop.FromClampedFractions(cropLeftRatio, cropTopRatio, cropRightRatio, cropBottomRatio);
             RotationDegrees = rotationDegrees;
             FlipHorizontal = flipHorizontal;
             FlipVertical = flipVertical;
@@ -728,20 +748,23 @@ namespace OfficeIMO.Excel {
         /// <summary>Image height in CSS pixels.</summary>
         public double Height { get; }
 
+        /// <summary>Normalized source-image crop from the authored image edges.</summary>
+        public OfficeImageSourceCrop SourceCrop { get; }
+
         /// <summary>Normalized crop from the source image left edge.</summary>
-        public double CropLeftRatio { get; }
+        public double CropLeftRatio => SourceCrop.Left;
 
         /// <summary>Normalized crop from the source image top edge.</summary>
-        public double CropTopRatio { get; }
+        public double CropTopRatio => SourceCrop.Top;
 
         /// <summary>Normalized crop from the source image right edge.</summary>
-        public double CropRightRatio { get; }
+        public double CropRightRatio => SourceCrop.Right;
 
         /// <summary>Normalized crop from the source image bottom edge.</summary>
-        public double CropBottomRatio { get; }
+        public double CropBottomRatio => SourceCrop.Bottom;
 
         /// <summary>Whether the image has any authored crop rectangle.</summary>
-        public bool HasCrop => CropLeftRatio > 0D || CropTopRatio > 0D || CropRightRatio > 0D || CropBottomRatio > 0D;
+        public bool HasCrop => SourceCrop.HasCrop;
 
         /// <summary>Clockwise rotation in degrees.</summary>
         public double RotationDegrees { get; }

@@ -56,6 +56,9 @@ namespace OfficeIMO.Visio {
             bool drawLabelBackground = false,
             bool labelAdjusted = false) {
             double fontSize = PointsToSvgPixels(style?.Size ?? defaultSize, scale);
+            string fontFamily = ResolveSvgTextFontFamily(style);
+            OfficeFontStyle fontStyle = ResolveOfficeFontStyle(style);
+            OfficeTextMeasurer textMeasurer = OfficeTextMeasurer.Create(new OfficeFontInfo(fontFamily, fontSize, fontStyle));
             double availableWidth = IsFinitePositive(maxWidth) ? maxWidth : double.PositiveInfinity;
             double availableHeight = IsFinitePositive(maxHeight) ? maxHeight : double.PositiveInfinity;
             OfficeTextBlockLayout layout = OfficeTextLayoutEngine.FitWrappedText(
@@ -65,7 +68,7 @@ namespace OfficeIMO.Visio {
                 availableHeight,
                 lineHeightFactor: 1.2D,
                 minimumFontSize: 5D,
-                EstimateTextWidth);
+                (candidate, candidateFontSize) => MeasureSvgTextWidth(textMeasurer, candidate, candidateFontSize, fontFamily, fontStyle));
             fontSize = layout.FontSize;
             OfficeTextAlignment alignment = VisioDrawingTextAlignment.ToOfficeTextAlignment(style?.HorizontalAlignment);
             OfficeTextVerticalAlignment verticalAlignment = VisioDrawingTextAlignment.ToOfficeTextVerticalAlignment(style?.VerticalAlignment);
@@ -109,7 +112,7 @@ namespace OfficeIMO.Visio {
                 availableWidth,
                 availableHeight,
                 style?.Color ?? Color.FromRgb(17, 24, 39),
-                string.IsNullOrWhiteSpace(style?.FontFamily) ? "Aptos, Calibri, Arial, sans-serif" : style!.FontFamily,
+                fontFamily,
                 alignment,
                 verticalAlignment,
                 style?.Bold == true,
@@ -133,80 +136,43 @@ namespace OfficeIMO.Visio {
             string position) {
             (double tipX, double tipY) = ToSvg(page, tip.X, tip.Y, scale);
             (double fromX, double fromY) = ToSvg(page, from.X, from.Y, scale);
-            double angle = Math.Atan2(tipY - fromY, tipX - fromX);
-            double length = Math.Max(strokeWidth * 4D, 8D);
-            double wing = Math.PI / 7D;
-            double x1 = tipX - (Math.Cos(angle - wing) * length);
-            double y1 = tipY - (Math.Sin(angle - wing) * length);
-            double x2 = tipX - (Math.Cos(angle + wing) * length);
-            double y2 = tipY - (Math.Sin(angle + wing) * length);
+            if (!OfficeGeometry.TryCreateArrowheadPoints(
+                    new OfficePoint(tipX, tipY),
+                    new OfficePoint(fromX, fromY),
+                    strokeWidth,
+                    out OfficePoint[] arrow)) {
+                return;
+            }
 
             writer.WriteStartElement("path", SvgNamespace);
             writer.WriteAttributeString("data-officeimo-connector-arrow", position);
-            writer.WriteAttributeString("d", OfficeSvgFormatting.FormatMoveLinePathData(new[] {
-                new OfficePoint(tipX, tipY),
-                new OfficePoint(x1, y1),
-                new OfficePoint(x2, y2)
-            }, closePath: true));
+            writer.WriteAttributeString("d", OfficeSvgFormatting.FormatMoveLinePathData(arrow, closePath: true));
             OfficeSvgFormatting.WriteColorAttribute(writer, "fill", color);
             writer.WriteAttributeString("stroke", "none");
             writer.WriteEndElement();
         }
 
-        private static bool TryGetArrowSegment(
-            IReadOnlyList<(double X, double Y)> points,
-            bool fromStart,
-            out (double X, double Y) tip,
-            out (double X, double Y) from) {
-            if (points.Count < 2) {
-                tip = default;
-                from = default;
-                return false;
+        private static double MeasureSvgTextWidth(OfficeTextMeasurer measurer, string? text, double fontSize, string fontFamily, OfficeFontStyle fontStyle) =>
+            measurer.MeasureWidth(text, measurer.CreateStyle(new OfficeFontInfo(fontFamily, fontSize, fontStyle), dpi: 72D));
+
+        private static string ResolveSvgTextFontFamily(VisioTextStyle? style) =>
+            string.IsNullOrWhiteSpace(style?.FontFamily) ? "Aptos, Calibri, Arial, sans-serif" : style!.FontFamily!;
+
+        private static OfficeFontStyle ResolveOfficeFontStyle(VisioTextStyle? style) {
+            OfficeFontStyle fontStyle = OfficeFontStyle.Regular;
+            if (style?.Bold == true) {
+                fontStyle |= OfficeFontStyle.Bold;
             }
 
-            if (fromStart) {
-                tip = points[0];
-                for (int i = 1; i < points.Count; i++) {
-                    if (Distance(tip, points[i]) > 1e-6D) {
-                        from = points[i];
-                        return true;
-                    }
-                }
-            } else {
-                tip = points[points.Count - 1];
-                for (int i = points.Count - 2; i >= 0; i--) {
-                    if (Distance(tip, points[i]) > 1e-6D) {
-                        from = points[i];
-                        return true;
-                    }
-                }
+            if (style?.Italic == true) {
+                fontStyle |= OfficeFontStyle.Italic;
             }
 
-            from = default;
-            return false;
-        }
-
-        private static double EstimateTextWidth(string? text, double fontSize) {
-            if (string.IsNullOrEmpty(text)) {
-                return 0D;
+            if (style?.Underline == true) {
+                fontStyle |= OfficeFontStyle.Underline;
             }
 
-            double width = 0D;
-            foreach (char c in text!) {
-                if (char.IsWhiteSpace(c)) {
-                    width += fontSize * 0.32D;
-                } else if ("ilI.,'!:;|".IndexOf(c) >= 0) {
-                    width += fontSize * 0.26D;
-                } else if ("MW@#%&".IndexOf(c) >= 0) {
-                    width += fontSize * 0.86D;
-                } else if (char.IsDigit(c)) {
-                    width += fontSize * 0.56D;
-                } else {
-                    width += fontSize * 0.54D;
-                }
-            }
-
-            return width;
+            return fontStyle;
         }
 
         private static bool IsFinitePositive(double value) =>

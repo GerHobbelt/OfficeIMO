@@ -35,6 +35,28 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportReportsUnresolvedRichTextRunFontFamilyFallback() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("RichFont");
+            sheet.SetColumnWidth(1, 22);
+            sheet.SetRowHeight(1, 28);
+            sheet.CellAt(1, 1).SetRichText(
+                new ExcelRichTextRun("Missing run font") {
+                    FontName = "OfficeIMO Missing Rich Font",
+                    FontColor = "0F766E"
+                });
+
+            OfficeImageExportResult png = sheet.Range("A1:A1").ExportImage(OfficeImageExportFormat.Png, new ExcelImageExportOptions { ShowGridlines = false });
+
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellFontFamilyFallback);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
+            Assert.Equal("RichFont!A1", diagnostic.Source);
+            Assert.Contains("OfficeIMO Missing Rich Font", diagnostic.Message);
+            Assert.DoesNotContain(png.Diagnostics, item => item.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportPreservesHardBreakRichTextRunsInPngAndSvg() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
@@ -116,6 +138,43 @@ namespace OfficeIMO.Tests {
             Assert.Contains("Tilt", svg, StringComparison.Ordinal);
             Assert.Contains("rich", svg, StringComparison.Ordinal);
             Assert.Contains("text", svg, StringComparison.Ordinal);
+            Assert.Contains("#0F766E", svg, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("#7C3AED", svg, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("#2563EB", svg, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
+            Assert.Contains("font-style=\"italic\"", svg, StringComparison.Ordinal);
+            Assert.Contains("text-decoration=\"underline\"", svg, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportPreservesStackedRichTextRunsWithApproximationDiagnostic() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorkSheet("Rich");
+            sheet.SetColumnWidth(1, 5);
+            sheet.SetRowHeight(1, 96);
+            sheet.CellAt(1, 1)
+                .SetTextRotation(255)
+                .SetRichText(
+                    new ExcelRichTextRun("S") { Bold = true, FontColor = "0F766E", FontSize = 12D },
+                    new ExcelRichTextRun("V") { Italic = true, FontColor = "7C3AED", FontSize = 12D },
+                    new ExcelRichTextRun("G") { Underline = true, FontColor = "2563EB", FontSize = 12D });
+
+            ExcelRange range = sheet.Range("A1:A1");
+            OfficeImageExportResult pngResult = range.ExportImage(OfficeImageExportFormat.Png, new ExcelImageExportOptions { ShowGridlines = false });
+            OfficeImageExportResult svgResult = range.ExportImage(OfficeImageExportFormat.Svg, new ExcelImageExportOptions { ShowGridlines = false });
+            string svg = Encoding.UTF8.GetString(svgResult.Bytes);
+
+            Assert.True(OfficePngReader.TryDecode(pngResult.Bytes, out OfficeRasterImage? rendered));
+            Assert.NotNull(rendered);
+            Assert.DoesNotContain(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.DoesNotContain(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation);
+            Assert.Contains(pngResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextRotationApproximation && diagnostic.Source == "Rich!A1");
+            Assert.Contains(svgResult.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellTextRotationApproximation && diagnostic.Source == "Rich!A1");
+            Assert.DoesNotContain("rotate(", svg, StringComparison.Ordinal);
+            Assert.Contains(">S</text>", svg, StringComparison.Ordinal);
+            Assert.Contains(">V</text>", svg, StringComparison.Ordinal);
+            Assert.Contains(">G</text>", svg, StringComparison.Ordinal);
             Assert.Contains("#0F766E", svg, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("#7C3AED", svg, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("#2563EB", svg, StringComparison.OrdinalIgnoreCase);
