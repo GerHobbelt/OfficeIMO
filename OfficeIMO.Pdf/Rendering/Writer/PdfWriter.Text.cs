@@ -18,6 +18,11 @@ internal static partial class PdfWriter {
     }
 
     private static string EncodeTextHex(string text, PdfStandardFont font, PdfOptions? options) {
+        PdfTextEncodingDiagnostic? diagnostic = GetFirstTextEncodingDiagnostic(text, font, options);
+        if (diagnostic != null) {
+            throw CreateTextEncodingException(diagnostic, nameof(text));
+        }
+
         if (options != null &&
             options.TryGetEmbeddedStandardFontProgram(font, out PdfTrueTypeFontProgram? fontProgram) &&
             fontProgram != null) {
@@ -46,6 +51,37 @@ internal static partial class PdfWriter {
 
         options?.AddTextDiagnostics(PdfTextDiagnostics.AnalyzeWinAnsiText(text));
         return EncodeWinAnsiHex(text);
+    }
+
+    private static PdfTextEncodingDiagnostic? GetFirstTextEncodingDiagnostic(string text, PdfStandardFont font, PdfOptions? options) {
+        System.Collections.Generic.IReadOnlyList<PdfTextEncodingDiagnostic> diagnostics = options == null
+            ? PdfTextDiagnostics.AnalyzeWinAnsiText(text, "generated text")
+            : PdfTextDiagnostics.AnalyzeGeneratedText(text, options, font, "generated text");
+
+        return diagnostics.Count == 0 ? null : diagnostics[0];
+    }
+
+    private static ArgumentException CreateTextEncodingException(PdfTextEncodingDiagnostic diagnostic, string paramName) {
+        var exception = new ArgumentException(diagnostic.Message, paramName);
+        exception.Data["code"] = diagnostic.Code;
+        exception.Data["source"] = diagnostic.Source;
+        exception.Data["index"] = diagnostic.Index;
+        exception.Data["codePoint"] = diagnostic.CodePoint;
+        exception.Data["text"] = diagnostic.Text;
+        exception.Data["isControlCharacter"] = diagnostic.IsControlCharacter;
+        if (!string.IsNullOrWhiteSpace(diagnostic.Location)) {
+            exception.Data["location"] = diagnostic.Location;
+        }
+
+        if (!string.IsNullOrWhiteSpace(diagnostic.Encoding)) {
+            exception.Data["encoding"] = diagnostic.Encoding;
+        }
+
+        if (!string.IsNullOrWhiteSpace(diagnostic.Remediation)) {
+            exception.Data["remediation"] = diagnostic.Remediation;
+        }
+
+        return exception;
     }
 
     private static int GetScalarUtf16Length(string text, int index) {
@@ -651,10 +687,12 @@ internal static partial class PdfWriter {
             }
 
             int position = 0;
+            var plannedChunks = new System.Collections.Generic.List<(string Text, double Width)>();
             while (position < token.Length) {
                 int selectedBreak = -1;
                 string selectedText = string.Empty;
                 double selectedWidth = 0D;
+                double maxWidthForChunk = plannedChunks.Count == 0 ? CurrentMaxWidth() : maxWidthPts;
                 int[] candidates = breakpoints
                     .Where(point => point > position)
                     .Concat(new[] { token.Length })
@@ -674,15 +712,15 @@ internal static partial class PdfWriter {
                     }
 
                     double chunkWidth = MeasureRichText(chunkText, font, runFontSize, baseline, options);
-                    if (chunkWidth <= CurrentMaxWidth() || selectedBreak < 0) {
-                        if (chunkWidth <= CurrentMaxWidth()) {
+                    if (chunkWidth <= maxWidthForChunk || selectedBreak < 0) {
+                        if (chunkWidth <= maxWidthForChunk) {
                             selectedBreak = candidate;
                             selectedText = chunkText;
                             selectedWidth = chunkWidth;
                         }
                     }
 
-                    if (chunkWidth > CurrentMaxWidth() && selectedBreak >= 0) {
+                    if (chunkWidth > maxWidthForChunk && selectedBreak >= 0) {
                         break;
                     }
                 }
@@ -691,11 +729,16 @@ internal static partial class PdfWriter {
                     return false;
                 }
 
+                plannedChunks.Add((selectedText, selectedWidth));
+                position = selectedBreak;
+            }
+
+            for (int chunkIndex = 0; chunkIndex < plannedChunks.Count; chunkIndex++) {
+                (string selectedText, double selectedWidth) = plannedChunks[chunkIndex];
                 lines[lines.Count - 1].Add(new RichSeg(selectedText, bold, italic, underline, strike, color, backgroundColor, uri, destinationName, contents, font, runFontSize, baseline));
                 RegisterLineHeight(runFontSize);
                 lineWidth += selectedWidth;
-                position = selectedBreak;
-                if (position < token.Length) {
+                if (chunkIndex < plannedChunks.Count - 1) {
                     StartNewLine();
                 }
             }
@@ -778,7 +821,9 @@ internal static partial class PdfWriter {
                 continue;
             }
 
-            if (fallbackSet.TryPlanTextRuns(run.Text, out System.Collections.Generic.IReadOnlyList<TextRun> plannedRuns, styleTemplate: run)) {
+            PdfTextShapingMode shapingMode = options?.TextShapingModeSnapshot ?? PdfTextShapingMode.UnicodeScalar;
+            if (fallbackSet.TryPlanTextRuns(run.Text, out System.Collections.Generic.IReadOnlyList<TextRun> plannedRuns, styleTemplate: run, shapingMode: shapingMode) ||
+                TryPlanFallbackRunsPreservingSelectedFont(run, baseFont, options, fallbackSet, out plannedRuns)) {
                 normalized.AddRange(plannedRuns);
             } else {
                 normalized.Add(run);
@@ -788,39 +833,158 @@ internal static partial class PdfWriter {
         return normalized;
     }
 
+    private static bool TryPlanFallbackRunsPreservingSelectedFont(
+        TextRun run,
+        PdfStandardFont baseFont,
+        PdfOptions? options,
+        PdfEmbeddedFontFallbackSet fallbackSet,
+        out System.Collections.Generic.IReadOnlyList<TextRun> plannedRuns) {
+        plannedRuns = Array.Empty<TextRun>();
+        string text = run.Text ?? string.Empty;
+        if (text.Length == 0 || IsLayoutControlRun(run)) {
+            plannedRuns = new[] { run };
+            return true;
+        }
+
+        PdfStandardFont fontForRun = ResolveFontForRun(run, baseFont);
+        var runs = new System.Collections.Generic.List<TextRun>();
+        int selectedStart = -1;
+
+        void FlushSelected(int endIndex) {
+            if (selectedStart < 0 || endIndex <= selectedStart) {
+                return;
+            }
+
+            runs.Add(CreateStyledTextRun(text.Substring(selectedStart, endIndex - selectedStart), run, run.Font));
+            selectedStart = -1;
+        }
+
+        for (int index = 0; index < text.Length;) {
+            int scalarStart = index;
+            int scalar = ReadScalar(text, ref index);
+            if (scalar == '\n' || scalar == '\r' || scalar == '\t') {
+                FlushSelected(scalarStart);
+                if (scalar == '\t') {
+                    runs.Add(TextRun.Tab(run.TabLeader, run.TabAlignment));
+                } else {
+                    runs.Add(TextRun.LineBreak());
+                    if (scalar == '\r' && index < text.Length && text[index] == '\n') {
+                        index++;
+                    }
+                }
+
+                continue;
+            }
+
+            if (TryGetSelectedTextLength(text, scalarStart, fontForRun, options, out int selectedLength)) {
+                if (selectedStart < 0) {
+                    selectedStart = scalarStart;
+                }
+
+                index = scalarStart + selectedLength;
+                continue;
+            }
+
+            FlushSelected(scalarStart);
+            string scalarText = text.Substring(scalarStart, index - scalarStart);
+            PdfTextShapingMode shapingMode = options?.TextShapingModeSnapshot ?? PdfTextShapingMode.UnicodeScalar;
+            if (!fallbackSet.TryPlanTextRuns(scalarText, out System.Collections.Generic.IReadOnlyList<TextRun> fallbackRuns, styleTemplate: run, shapingMode: shapingMode)) {
+                plannedRuns = Array.Empty<TextRun>();
+                return false;
+            }
+
+            runs.AddRange(fallbackRuns);
+        }
+
+        FlushSelected(text.Length);
+        plannedRuns = runs.AsReadOnly();
+        return true;
+    }
+
+    private static TextRun CreateStyledTextRun(string text, TextRun styleTemplate, PdfStandardFont? font) {
+        bool keepLink = !string.IsNullOrWhiteSpace(text) &&
+            (styleTemplate.LinkUri != null || styleTemplate.LinkDestinationName != null);
+
+        return new TextRun(
+            text,
+            styleTemplate.Bold,
+            styleTemplate.Underline,
+            styleTemplate.Color,
+            styleTemplate.Italic,
+            styleTemplate.Strike,
+            styleTemplate.FontSize,
+            font,
+            keepLink ? styleTemplate.LinkUri : null,
+            keepLink ? styleTemplate.LinkContents : null,
+            styleTemplate.Baseline,
+            keepLink ? styleTemplate.LinkDestinationName : null,
+            backgroundColor: styleTemplate.BackgroundColor);
+    }
+
     private static bool CanWriteRunWithSelectedFont(TextRun run, PdfStandardFont baseFont, PdfOptions? options) {
         string text = run.Text ?? string.Empty;
         if (text.Length == 0 || IsLayoutControlRun(run)) {
             return true;
         }
 
+        PdfStandardFont fontForRun = ResolveFontForRun(run, baseFont);
+        if (options != null &&
+            options.TryGetEmbeddedStandardFontProgram(fontForRun, out PdfTrueTypeFontProgram? fontProgram) &&
+            fontProgram != null) {
+            return CanWriteWithEmbeddedFont(text, fontProgram, options.TextShapingModeSnapshot);
+        }
+
+        if (options != null &&
+            options.TryGetEmbeddedStandardOpenTypeCffFontProgram(fontForRun, out PdfOpenTypeCffFontProgram? cffFontProgram) &&
+            cffFontProgram != null) {
+            return CanWriteWithEmbeddedFont(text, cffFontProgram, options.TextShapingModeSnapshot);
+        }
+
+        return PdfWinAnsiEncoding.CanEncode(text, out _);
+    }
+
+    private static PdfStandardFont ResolveFontForRun(TextRun run, PdfStandardFont baseFont) {
         PdfStandardFont runBaseFont = run.Font.HasValue ? ChooseNormal(run.Font.Value) : baseFont;
-        PdfStandardFont fontForRun = (run.Bold && run.Italic)
+        return (run.Bold && run.Italic)
             ? ChooseBoldItalic(runBaseFont)
             : run.Bold
                 ? ChooseBold(runBaseFont)
                 : run.Italic
                     ? ChooseItalic(runBaseFont)
                     : runBaseFont;
+    }
 
+    private static bool TryGetSelectedTextLength(string text, int index, PdfStandardFont fontForRun, PdfOptions? options, out int length) {
         if (options != null &&
             options.TryGetEmbeddedStandardFontProgram(fontForRun, out PdfTrueTypeFontProgram? fontProgram) &&
             fontProgram != null) {
-            return CanWriteWithEmbeddedFont(text, fontProgram);
+            return TryGetCoveredTextLength(text, index, fontProgram, options.TextShapingModeSnapshot, out length);
         }
 
         if (options != null &&
             options.TryGetEmbeddedStandardOpenTypeCffFontProgram(fontForRun, out PdfOpenTypeCffFontProgram? cffFontProgram) &&
             cffFontProgram != null) {
-            return CanWriteWithEmbeddedFont(text, cffFontProgram);
+            return TryGetCoveredTextLength(text, index, cffFontProgram, options.TextShapingModeSnapshot, out length);
         }
 
-        return PdfWinAnsiEncoding.CanEncode(text, out _);
+        int endIndex = index;
+        _ = ReadScalar(text, ref endIndex);
+        length = endIndex - index;
+        return PdfWinAnsiEncoding.CanEncode(text.Substring(index, length), out _);
     }
 
-    private static bool CanWriteWithEmbeddedFont(string text, PdfTrueTypeFontProgram fontProgram) {
+    private static bool CanWriteWithEmbeddedFont(string text, PdfTrueTypeFontProgram fontProgram, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar) {
         int index = 0;
         while (index < text.Length) {
+            int scalarStart = index;
+            if (shapingMode == PdfTextShapingMode.LatinLigatures &&
+                PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, scalarStart, out int ligatureScalar, out int ligatureLength) &&
+                fontProgram.TryGetGlyphId(ligatureScalar, out int ligatureGlyphId) &&
+                ligatureGlyphId > 0) {
+                index += ligatureLength;
+                continue;
+            }
+
             int scalar = ReadScalar(text, ref index);
             if (scalar == '\n' || scalar == '\r' || scalar == '\t') {
                 continue;
@@ -838,9 +1002,32 @@ internal static partial class PdfWriter {
         return true;
     }
 
-    private static bool CanWriteWithEmbeddedFont(string text, PdfOpenTypeCffFontProgram fontProgram) {
+    private static bool TryGetCoveredTextLength(string text, int index, PdfTrueTypeFontProgram fontProgram, PdfTextShapingMode shapingMode, out int length) {
+        if (shapingMode == PdfTextShapingMode.LatinLigatures &&
+            PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, index, out int ligatureScalar, out length) &&
+            fontProgram.TryGetGlyphId(ligatureScalar, out int ligatureGlyphId) &&
+            ligatureGlyphId > 0) {
+            return true;
+        }
+
+        int endIndex = index;
+        int scalar = ReadScalar(text, ref endIndex);
+        length = endIndex - index;
+        return fontProgram.TryGetGlyphId(scalar, out int glyphId) && glyphId > 0;
+    }
+
+    private static bool CanWriteWithEmbeddedFont(string text, PdfOpenTypeCffFontProgram fontProgram, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar) {
         int index = 0;
         while (index < text.Length) {
+            int scalarStart = index;
+            if (shapingMode == PdfTextShapingMode.LatinLigatures &&
+                PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, scalarStart, out int ligatureScalar, out int ligatureLength) &&
+                fontProgram.TryGetGlyphId(ligatureScalar, out int ligatureGlyphId) &&
+                ligatureGlyphId > 0) {
+                index += ligatureLength;
+                continue;
+            }
+
             int scalar = ReadScalar(text, ref index);
             if (scalar == '\n' || scalar == '\r' || scalar == '\t') {
                 continue;
@@ -856,6 +1043,20 @@ internal static partial class PdfWriter {
         }
 
         return true;
+    }
+
+    private static bool TryGetCoveredTextLength(string text, int index, PdfOpenTypeCffFontProgram fontProgram, PdfTextShapingMode shapingMode, out int length) {
+        if (shapingMode == PdfTextShapingMode.LatinLigatures &&
+            PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, index, out int ligatureScalar, out length) &&
+            fontProgram.TryGetGlyphId(ligatureScalar, out int ligatureGlyphId) &&
+            ligatureGlyphId > 0) {
+            return true;
+        }
+
+        int endIndex = index;
+        int scalar = ReadScalar(text, ref endIndex);
+        length = endIndex - index;
+        return fontProgram.TryGetGlyphId(scalar, out int glyphId) && glyphId > 0;
     }
 
     private static bool IsLayoutControlRun(TextRun run) =>

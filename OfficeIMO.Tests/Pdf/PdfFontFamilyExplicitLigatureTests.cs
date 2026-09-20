@@ -66,6 +66,8 @@ public class PdfFontFamilyExplicitLigatureTests {
             .EmbedStandardFont(PdfStandardFont.Helvetica, fontBytes, "OfficeIMO Source Serif CFF");
 
         const string text = "Ligature shaping: staff fine flow affinity waffle";
+        Assert.Empty(PdfTextDiagnostics.AnalyzeGeneratedText(text, options, PdfStandardFont.Helvetica));
+
         byte[] bytes = PdfDocument.Create(options)
             .Paragraph(paragraph => paragraph.Text(text))
             .ToBytes();
@@ -87,6 +89,31 @@ public class PdfFontFamilyExplicitLigatureTests {
         Assert.Contains(BuildToUnicodeEntry(fflGlyphId, "ffl"), raw, StringComparison.Ordinal);
         Assert.Contains(text, extracted, StringComparison.Ordinal);
         Assert.DoesNotContain(report.Warnings, warning => warning.Code == "unsupported-font-ligature-substitution");
+    }
+
+    [Fact]
+    public void TextShapingModeLatinLigatures_StillReportsUncoveredOpenTypeLigatureDiagnostics() {
+        string? fontPath = PdfComplianceTestFonts.FindBundledOpenTypeCffFont();
+        Assert.NotNull(fontPath);
+
+        byte[] fontBytes = File.ReadAllBytes(fontPath!);
+        var report = new PdfConversionReport();
+        var options = new PdfOptions {
+                CompressContentStreams = false,
+                CompressEmbeddedFonts = false
+            }
+            .SetTextShapingMode(PdfTextShapingMode.LatinLigatures)
+            .ReportDiagnosticsTo(report, "OfficeIMO.Tests")
+            .EmbedStandardFont(PdfStandardFont.Helvetica, fontBytes, "OfficeIMO Source Serif CFF");
+
+        byte[] bytes = PdfDocument.Create(options)
+            .Paragraph(paragraph => paragraph.Text("Uppercase ligature probe: FINE"))
+            .ToBytes();
+
+        Assert.NotEmpty(bytes);
+        PdfConversionWarning warning = Assert.Single(report.Warnings, item => item.Code == "unsupported-font-ligature-substitution");
+        Assert.Equal("OpenType GSUB ligature", warning.Details["script"]);
+        Assert.Equal("U+0046", warning.Details["codePoint"]);
     }
 
     private static string BuildToUnicodeEntry(int glyphId, string text) {

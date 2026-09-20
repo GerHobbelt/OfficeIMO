@@ -70,6 +70,7 @@ PdfHtmlProfileContract contract = PdfHtmlProfileContracts.Get(PdfHtmlProfile.Pos
 
 Console.WriteLine(contract.Id);
 Console.WriteLine(contract.UnsupportedScope);
+Console.WriteLine(string.Join(", ", contract.ReviewSignals));
 ```
 
 ```csharp
@@ -82,13 +83,28 @@ string reviewHtml = PdfHtmlConverter.ToHtml(pdf, new PdfHtmlSaveOptions {
 });
 ```
 
+```csharp
+using OfficeIMO.Html.Pdf;
+
+PdfHtmlConversionResult result = PdfHtmlConverter.ToHtmlResult("quarterly-update.pdf", new PdfHtmlSaveOptions {
+    Profile = PdfHtmlProfile.PositionedReview,
+    IncludeLinkAnnotations = true
+});
+
+Console.WriteLine(result.Summary.ProfileId);
+Console.WriteLine(result.Summary.ImagePlacementCount);
+```
+
 Use the semantic profile for articles, documentation, simple reports, and
 HTML that should become structured text. Use the document profile when the
 existing Word HTML converter is a better source model for the HTML being
 processed. `HtmlPdfSaveOptions.CreateDocumentProfile()` is the practical
 HTML-to-PDF preset for local/trusted print HTML with CSS, images, links,
 tables, and page-break hints; `CreateTrustedDocumentProfile()` also enables
-the trusted Word HTML stylesheet behavior.
+the trusted Word HTML stylesheet behavior. `HtmlPdfSaveOptions.GetResourcePolicySummary()`
+returns the active stylesheet/image resource policy, and document-profile HTML
+import diagnostics such as blocked stylesheets are forwarded into
+`HtmlPdfSaveOptions.ConversionReport`.
 
 Use PDF semantic HTML for search, indexing, export, and review workflows where
 clean structure matters. Use positioned review HTML when callers need a
@@ -104,7 +120,14 @@ dropped.
 
 `HtmlPdfProfileContracts.All` and `PdfHtmlProfileContracts.All` expose stable
 profile identifiers, pipeline descriptions, intended use, fidelity guarantees,
-and unsupported scope for wrappers, manifests, UI selectors, and product docs.
-They are deliberately descriptive contracts rather than renderer switches:
-callers still choose behavior through `HtmlPdfSaveOptions.Profile` and
-`PdfHtmlSaveOptions.Profile`.
+supported HTML/CSS/resource or PDF review signals, diagnostics, renderer
+boundaries, and unsupported scope for wrappers, manifests, UI selectors, and
+product docs. They are deliberately descriptive contracts rather than renderer
+switches: callers still choose behavior through `HtmlPdfSaveOptions.Profile`
+and `PdfHtmlSaveOptions.Profile`.
+
+`PdfHtmlConverter.ToHtmlResult(...)` returns the generated HTML plus a
+`PdfHtmlExportSummary` with selected page numbers, text/table/image/link/form
+counts, image-placement counts, warning count, image export mode, and the
+active profile fidelity contract. Use it for sidecars, migration reports, and
+visual review galleries instead of scraping generated HTML.

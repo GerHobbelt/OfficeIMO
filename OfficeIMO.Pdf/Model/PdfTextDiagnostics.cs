@@ -6,13 +6,23 @@ namespace OfficeIMO.Pdf;
 /// Provides reusable text preflight helpers for generated PDF output.
 /// </summary>
 public static class PdfTextDiagnostics {
+    private const string WinAnsiEncodingDescription = "PDF WinAnsiEncoding";
+    private const string WinAnsiGlyphRemediation = "Embedded Unicode fonts are required for this text.";
+    private const string ControlCharacterEncodingDescription = "PDF text output";
+    private const string ControlCharacterRemediation = "Use paragraphs, line breaks, tables, or spacing primitives for layout instead of literal control characters.";
+
     /// <summary>
     /// Finds text that cannot be written through the current generated standard-font WinAnsi path.
     /// </summary>
     /// <param name="text">Text to inspect.</param>
     /// <param name="source">Optional caller-provided source label such as a block, field, sheet, slide, or converter area.</param>
+    /// <param name="location">Optional generated document location such as a block, table cell, or canvas item path.</param>
     /// <returns>Encoding diagnostics in source order.</returns>
-    public static IReadOnlyList<PdfTextEncodingDiagnostic> AnalyzeWinAnsiText(string text, string source = "") {
+    public static IReadOnlyList<PdfTextEncodingDiagnostic> AnalyzeWinAnsiText(string text, string source = "", string location = "") {
+        return AnalyzeWinAnsiTextCore(text, source, location, null);
+    }
+
+    private static List<PdfTextEncodingDiagnostic> AnalyzeWinAnsiTextCore(string text, string source, string location, int? runIndex) {
         Guard.NotNull(text, nameof(text));
         var diagnostics = new List<PdfTextEncodingDiagnostic>();
 
@@ -25,7 +35,7 @@ public static class PdfTextDiagnostics {
             }
 
             if (!PdfWinAnsiEncoding.CanEncode(ch.ToString(), out _)) {
-                diagnostics.Add(CreateDiagnostic(text, index, source));
+                diagnostics.Add(CreateDiagnostic(text, index, source, location, runIndex));
                 if (char.IsHighSurrogate(ch) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1])) {
                     index += 2;
                     continue;
@@ -44,17 +54,119 @@ public static class PdfTextDiagnostics {
     /// </summary>
     /// <param name="runs">Text runs to inspect.</param>
     /// <param name="source">Optional caller-provided source label such as a block, field, sheet, slide, or converter area.</param>
+    /// <param name="location">Optional generated document location such as a block, table cell, or canvas item path.</param>
     /// <returns>Encoding diagnostics in run order.</returns>
-    public static IReadOnlyList<PdfTextEncodingDiagnostic> AnalyzeWinAnsiTextRuns(IEnumerable<TextRun> runs, string source = "") {
+    public static IReadOnlyList<PdfTextEncodingDiagnostic> AnalyzeWinAnsiTextRuns(IEnumerable<TextRun> runs, string source = "", string location = "") {
         Guard.NotNull(runs, nameof(runs));
         var diagnostics = new List<PdfTextEncodingDiagnostic>();
 
+        int runIndex = 0;
         foreach (TextRun run in runs) {
             if (run == null || IsLayoutControlRun(run)) {
+                runIndex++;
                 continue;
             }
 
-            diagnostics.AddRange(AnalyzeWinAnsiText(run.Text, source));
+            diagnostics.AddRange(AnalyzeWinAnsiTextCore(run.Text, source, AppendRunLocation(location, runIndex), runIndex));
+            runIndex++;
+        }
+
+        return diagnostics;
+    }
+
+    /// <summary>
+    /// Finds text that cannot be written with the generated PDF text path selected by the supplied options and font.
+    /// </summary>
+    /// <param name="text">Text to inspect.</param>
+    /// <param name="options">PDF options that may provide embedded font coverage for the selected generated font.</param>
+    /// <param name="font">Generated PDF font slot to inspect.</param>
+    /// <param name="source">Optional caller-provided source label such as a block, field, sheet, slide, or converter area.</param>
+    /// <param name="location">Optional generated document location such as a block, table cell, or canvas item path.</param>
+    /// <returns>Encoding diagnostics in source order.</returns>
+    public static IReadOnlyList<PdfTextEncodingDiagnostic> AnalyzeGeneratedText(string text, PdfOptions options, PdfStandardFont font, string source = "", string location = "") {
+        return AnalyzeGeneratedTextCore(text, options, font, source, location, null);
+    }
+
+    private static List<PdfTextEncodingDiagnostic> AnalyzeGeneratedTextCore(string text, PdfOptions options, PdfStandardFont font, string source, string location, int? runIndex) {
+        Guard.NotNull(text, nameof(text));
+        Guard.NotNull(options, nameof(options));
+        Guard.StandardFont(font, nameof(font), "Generated PDF text diagnostics require a supported PDF font.");
+        PdfTextShapingMode shapingMode = options.TextShapingModeSnapshot;
+
+        PdfEmbeddedFontFallbackSet? fallbackSet = options.EmbeddedFontFallbacksSnapshot;
+
+        if (options.TryGetEmbeddedStandardFontProgram(font, out PdfTrueTypeFontProgram? fontProgram) &&
+            fontProgram != null) {
+            if (fallbackSet != null) {
+                return AnalyzeGeneratedTextWithFallback(
+                    text,
+                    fallbackSet,
+                    source,
+                    location,
+                    runIndex,
+                    shapingMode,
+                    (string value, int index, out int length) => TryGetCoveredTextLength(value, index, fontProgram, shapingMode, out length));
+            }
+
+            return AnalyzeEmbeddedFontText(text, fontProgram, source, location, runIndex, shapingMode);
+        }
+
+        if (options.TryGetEmbeddedStandardOpenTypeCffFontProgram(font, out PdfOpenTypeCffFontProgram? cffFontProgram) &&
+            cffFontProgram != null) {
+            if (fallbackSet != null) {
+                return AnalyzeGeneratedTextWithFallback(
+                    text,
+                    fallbackSet,
+                    source,
+                    location,
+                    runIndex,
+                    shapingMode,
+                    (string value, int index, out int length) => TryGetCoveredTextLength(value, index, cffFontProgram, shapingMode, out length));
+            }
+
+            return AnalyzeEmbeddedFontText(text, cffFontProgram, source, location, runIndex, shapingMode);
+        }
+
+        if (fallbackSet != null) {
+            return AnalyzeGeneratedTextWithFallback(
+                text,
+                fallbackSet,
+                source,
+                location,
+                runIndex,
+                shapingMode,
+                TryGetWinAnsiCoveredTextLength);
+        }
+
+        return AnalyzeWinAnsiTextCore(text, source, location, runIndex);
+    }
+
+    /// <summary>
+    /// Finds text runs that cannot be written with the generated PDF text path selected by the supplied options and font.
+    /// Explicit PDF line-break and tab runs are treated as layout controls rather than literal text.
+    /// </summary>
+    /// <param name="runs">Text runs to inspect.</param>
+    /// <param name="options">PDF options that may provide embedded font coverage for the selected generated font.</param>
+    /// <param name="font">Generated PDF font slot to inspect.</param>
+    /// <param name="source">Optional caller-provided source label such as a block, field, sheet, slide, or converter area.</param>
+    /// <param name="location">Optional generated document location such as a block, table cell, or canvas item path.</param>
+    /// <returns>Encoding diagnostics in run order.</returns>
+    public static IReadOnlyList<PdfTextEncodingDiagnostic> AnalyzeGeneratedTextRuns(IEnumerable<TextRun> runs, PdfOptions options, PdfStandardFont font, string source = "", string location = "") {
+        Guard.NotNull(runs, nameof(runs));
+        Guard.NotNull(options, nameof(options));
+        Guard.StandardFont(font, nameof(font), "Generated PDF text diagnostics require a supported PDF font.");
+        var diagnostics = new List<PdfTextEncodingDiagnostic>();
+
+        int runIndex = 0;
+        foreach (TextRun run in runs) {
+            if (run == null || IsLayoutControlRun(run)) {
+                runIndex++;
+                continue;
+            }
+
+            PdfStandardFont runFont = ResolveRunFont(font, run);
+            diagnostics.AddRange(AnalyzeGeneratedTextCore(run.Text, options, runFont, source, AppendRunLocation(location, runIndex), runIndex));
+            runIndex++;
         }
 
         return diagnostics;
@@ -295,8 +407,9 @@ public static class PdfTextDiagnostics {
     /// <param name="text">Text to inspect.</param>
     /// <param name="candidates">Candidate fonts in priority order.</param>
     /// <param name="source">Optional caller-provided source label such as a block, field, sheet, slide, or converter area.</param>
+    /// <param name="shapingMode">Text shaping mode to use when checking fallback font coverage.</param>
     /// <returns>A fallback plan with covered text segments and missing-glyph diagnostics.</returns>
-    public static PdfTextFallbackPlan PlanEmbeddedFontFallbackText(string text, IEnumerable<PdfEmbeddedFontFallbackCandidate> candidates, string source = "") {
+    public static PdfTextFallbackPlan PlanEmbeddedFontFallbackText(string text, IEnumerable<PdfEmbeddedFontFallbackCandidate> candidates, string source = "", PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar) {
         Guard.NotNull(text, nameof(text));
         Guard.NotNull(candidates, nameof(candidates));
 
@@ -332,6 +445,7 @@ public static class PdfTextDiagnostics {
             int scalarStart = index;
             int scalar = ReadScalar(text, ref index);
             if (scalar == '\n' || scalar == '\r' || scalar == '\t') {
+                FlushSegment(scalarStart);
                 continue;
             }
 
@@ -341,7 +455,7 @@ public static class PdfTextDiagnostics {
                 continue;
             }
 
-            int fontIndex = FindCoveringFont(fonts, scalar);
+            int fontIndex = FindCoveringFont(fonts, text, scalarStart, shapingMode, out int coveredLength);
             if (fontIndex < 0) {
                 FlushSegment(scalarStart);
                 diagnostics.Add(CreateEmbeddedFallbackDiagnostic(scalarStart, scalar, source, fonts));
@@ -358,27 +472,103 @@ public static class PdfTextDiagnostics {
                 segmentFontIndex = fontIndex;
                 segmentFontName = fonts[fontIndex].FontName;
             }
+
+            index = scalarStart + coveredLength;
         }
 
         FlushSegment(text.Length);
         return new PdfTextFallbackPlan(text, segments, diagnostics);
     }
 
+    private delegate bool TryGetSelectedTextLength(string text, int index, out int length);
+
+    private static List<PdfTextEncodingDiagnostic> AnalyzeGeneratedTextWithFallback(
+        string text,
+        PdfEmbeddedFontFallbackSet fallbackSet,
+        string source,
+        string location,
+        int? runIndex,
+        PdfTextShapingMode shapingMode,
+        TryGetSelectedTextLength tryGetSelectedTextLength) {
+        List<EmbeddedFontFallbackProgram> fallbackFonts = BuildFallbackPrograms(fallbackSet.Candidates);
+        var diagnostics = new List<PdfTextEncodingDiagnostic>();
+
+        for (int index = 0; index < text.Length;) {
+            int scalarStart = index;
+            int scalar = ReadScalar(text, ref index);
+            if (scalar == '\n' || scalar == '\r' || scalar == '\t') {
+                continue;
+            }
+
+            if (tryGetSelectedTextLength(text, scalarStart, out int selectedLength)) {
+                index = scalarStart + selectedLength;
+                continue;
+            }
+
+            if (scalar < ' ' || scalar == '\u007F') {
+                diagnostics.Add(CreateDiagnostic(text, scalarStart, source, location, runIndex));
+                continue;
+            }
+
+            if (FindCoveringFont(fallbackFonts, text, scalarStart, shapingMode, out int fallbackCoveredLength) < 0) {
+                diagnostics.Add(CreateEmbeddedFallbackDiagnostic(scalarStart, scalar, source, fallbackFonts, location, runIndex));
+            } else {
+                index = scalarStart + fallbackCoveredLength;
+            }
+        }
+
+        return diagnostics;
+    }
+
+    private static bool TryGetWinAnsiCoveredTextLength(string text, int index, out int length) {
+        int endIndex = index;
+        _ = ReadScalar(text, ref endIndex);
+        length = endIndex - index;
+        return PdfWinAnsiEncoding.CanEncode(text.Substring(index, length), out _);
+    }
+
+    private static bool TryGetCoveredTextLength(string text, int index, PdfTrueTypeFontProgram fontProgram, PdfTextShapingMode shapingMode, out int length) {
+        if (TrySkipCoveredLatinLigature(text, index, shapingMode, fontProgram, out length)) {
+            return true;
+        }
+
+        int endIndex = index;
+        int scalar = ReadScalar(text, ref endIndex);
+        length = endIndex - index;
+        return fontProgram.TryGetGlyphId(scalar, out int glyphId) && glyphId > 0;
+    }
+
+    private static bool TryGetCoveredTextLength(string text, int index, PdfOpenTypeCffFontProgram fontProgram, PdfTextShapingMode shapingMode, out int length) {
+        if (TrySkipCoveredLatinLigature(text, index, shapingMode, fontProgram, out length)) {
+            return true;
+        }
+
+        int endIndex = index;
+        int scalar = ReadScalar(text, ref endIndex);
+        length = endIndex - index;
+        return fontProgram.TryGetGlyphId(scalar, out int glyphId) && glyphId > 0;
+    }
+
     private static bool IsLayoutControlRun(TextRun run) =>
         string.Equals(run.Text, "\n", StringComparison.Ordinal) ||
         string.Equals(run.Text, "\t", StringComparison.Ordinal);
 
-    private static List<PdfTextEncodingDiagnostic> AnalyzeEmbeddedFontTextCore(string text, PdfTrueTypeFontProgram font, string source, string fontName) {
-        PdfGlyphRun glyphRun = font.ShapeText(text, PdfTextShapingOptions.ForDiagnostics(source, fontName));
+    private static List<PdfTextEncodingDiagnostic> AnalyzeEmbeddedFontTextCore(string text, PdfTrueTypeFontProgram font, string source, string fontName, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar) {
+        PdfGlyphRun glyphRun = font.ShapeText(text, PdfTextShapingOptions.ForDiagnostics(source, fontName, shapingMode));
         return glyphRun.Diagnostics.Count == 0
             ? new List<PdfTextEncodingDiagnostic>()
             : glyphRun.Diagnostics.ToList();
     }
 
-    private static List<PdfTextEncodingDiagnostic> AnalyzeEmbeddedFontTextCore(string text, PdfOpenTypeCffFontProgram font, string source, string fontName) {
+    private static List<PdfTextEncodingDiagnostic> AnalyzeEmbeddedFontTextCore(string text, PdfOpenTypeCffFontProgram font, string source, string fontName, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar) {
         var diagnostics = new List<PdfTextEncodingDiagnostic>();
         for (int index = 0; index < text.Length;) {
             int scalarStart = index;
+            if (TrySkipCoveredLatinLigature(text, scalarStart, shapingMode, font, out int ligatureLength)) {
+                index += ligatureLength;
+                continue;
+            }
+
             int scalar = ReadScalar(text, ref index);
             if (scalar == '\n' || scalar == '\r' || scalar == '\t') {
                 continue;
@@ -395,6 +585,106 @@ public static class PdfTextDiagnostics {
         }
 
         return diagnostics;
+    }
+
+    private static string AppendRunLocation(string location, int runIndex) {
+        if (string.IsNullOrWhiteSpace(location)) {
+            return string.Empty;
+        }
+
+        return location + ".Run[" + runIndex.ToString(CultureInfo.InvariantCulture) + "]";
+    }
+
+    private static List<PdfTextEncodingDiagnostic> AnalyzeEmbeddedFontText(string text, PdfTrueTypeFontProgram fontProgram, string source, string location, int? runIndex, PdfTextShapingMode shapingMode) {
+        var diagnostics = new List<PdfTextEncodingDiagnostic>();
+
+        int index = 0;
+        while (index < text.Length) {
+            char ch = text[index];
+            if (ch == '\n' || ch == '\r' || ch == '\t') {
+                index++;
+                continue;
+            }
+
+            int scalarStart = index;
+            if (TrySkipCoveredLatinLigature(text, scalarStart, shapingMode, fontProgram, out int ligatureLength)) {
+                index += ligatureLength;
+                continue;
+            }
+
+            int scalar = ReadScalar(text, ref index);
+            if (!fontProgram.TryGetGlyphId(scalar, out _)) {
+                diagnostics.Add(CreateDiagnostic(
+                    text,
+                    scalarStart,
+                    source,
+                    location,
+                    runIndex,
+                    "embedded TrueType font '" + fontProgram.FontName + "'",
+                    "Choose a font that contains this glyph or configure a fallback before rendering."));
+            }
+        }
+
+        return diagnostics;
+    }
+
+    private static List<PdfTextEncodingDiagnostic> AnalyzeEmbeddedFontText(string text, PdfOpenTypeCffFontProgram fontProgram, string source, string location, int? runIndex, PdfTextShapingMode shapingMode) {
+        var diagnostics = new List<PdfTextEncodingDiagnostic>();
+
+        int index = 0;
+        while (index < text.Length) {
+            char ch = text[index];
+            if (ch == '\n' || ch == '\r' || ch == '\t') {
+                index++;
+                continue;
+            }
+
+            int scalarStart = index;
+            if (TrySkipCoveredLatinLigature(text, scalarStart, shapingMode, fontProgram, out int ligatureLength)) {
+                index += ligatureLength;
+                continue;
+            }
+
+            int scalar = ReadScalar(text, ref index);
+            if (!fontProgram.TryGetGlyphId(scalar, out int glyphId) || glyphId <= 0) {
+                diagnostics.Add(CreateDiagnostic(
+                    text,
+                    scalarStart,
+                    source,
+                    location,
+                    runIndex,
+                    "embedded OpenType/CFF font '" + fontProgram.FontName + "'",
+                    "Choose a font that contains this glyph or configure a fallback before rendering."));
+            }
+        }
+
+        return diagnostics;
+    }
+
+    private static bool TrySkipCoveredLatinLigature(string text, int index, PdfTextShapingMode shapingMode, PdfTrueTypeFontProgram fontProgram, out int ligatureLength) {
+        ligatureLength = 0;
+        if (shapingMode != PdfTextShapingMode.LatinLigatures ||
+            !PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, index, out int ligatureScalar, out ligatureLength) ||
+            !fontProgram.TryGetGlyphId(ligatureScalar, out int glyphId) ||
+            glyphId <= 0) {
+            ligatureLength = 0;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TrySkipCoveredLatinLigature(string text, int index, PdfTextShapingMode shapingMode, PdfOpenTypeCffFontProgram fontProgram, out int ligatureLength) {
+        ligatureLength = 0;
+        if (shapingMode != PdfTextShapingMode.LatinLigatures ||
+            !PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, index, out int ligatureScalar, out ligatureLength) ||
+            !fontProgram.TryGetGlyphId(ligatureScalar, out int glyphId) ||
+            glyphId <= 0) {
+            ligatureLength = 0;
+            return false;
+        }
+
+        return true;
     }
 
     private static List<EmbeddedFontFallbackProgram> BuildFallbackPrograms(IEnumerable<PdfEmbeddedFontFallbackCandidate> candidates) {
@@ -423,7 +713,53 @@ public static class PdfTextDiagnostics {
         return -1;
     }
 
+    private static int FindCoveringFont(IReadOnlyList<EmbeddedFontFallbackProgram> fonts, string text, int textIndex, PdfTextShapingMode shapingMode, out int coveredLength) {
+        coveredLength = 0;
+        if (shapingMode == PdfTextShapingMode.LatinLigatures &&
+            PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, textIndex, out int ligatureScalar, out int ligatureLength)) {
+            int ligatureFontIndex = FindCoveringFont(fonts, ligatureScalar);
+            if (ligatureFontIndex >= 0) {
+                coveredLength = ligatureLength;
+                return ligatureFontIndex;
+            }
+        }
+
+        int endIndex = textIndex;
+        int scalar = ReadScalar(text, ref endIndex);
+        int fontIndex = FindCoveringFont(fonts, scalar);
+        if (fontIndex >= 0) {
+            coveredLength = endIndex - textIndex;
+        }
+
+        return fontIndex;
+    }
+
     private static PdfTextEncodingDiagnostic CreateDiagnostic(string text, int index, string source) {
+        return CreateDiagnostic(text, index, source, string.Empty, null);
+    }
+
+    private static PdfStandardFont ResolveRunFont(PdfStandardFont baseFont, TextRun run) {
+        PdfStandardFont font = run.Font ?? baseFont;
+        if (run.Bold && run.Italic) {
+            return PdfStandardFontMapper.GetStyledFont(font, bold: true, italic: true);
+        }
+
+        if (run.Bold) {
+            return PdfStandardFontMapper.GetStyledFont(font, bold: true, italic: false);
+        }
+
+        if (run.Italic) {
+            return PdfStandardFontMapper.GetStyledFont(font, bold: false, italic: true);
+        }
+
+        return font;
+    }
+
+    private static PdfTextEncodingDiagnostic CreateDiagnostic(string text, int index, string source, string location, int? runIndex) {
+        return CreateDiagnostic(text, index, source, location, runIndex, string.Empty, string.Empty);
+    }
+
+    private static PdfTextEncodingDiagnostic CreateDiagnostic(string text, int index, string source, string location, int? runIndex, string encoding, string remediation) {
         char ch = text[index];
         bool isSurrogatePair = char.IsHighSurrogate(ch) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]);
         int codePointValue = isSurrogatePair ? char.ConvertToUtf32(ch, text[index + 1]) : ch;
@@ -434,8 +770,14 @@ public static class PdfTextDiagnostics {
             : isSurrogatePair
                 ? new string(new[] { ch, text[index + 1] })
                 : ch.ToString();
+        string diagnosticEncoding = string.IsNullOrWhiteSpace(encoding)
+            ? isControlCharacter ? ControlCharacterEncodingDescription : WinAnsiEncodingDescription
+            : encoding;
+        string diagnosticRemediation = string.IsNullOrWhiteSpace(remediation)
+            ? isControlCharacter ? ControlCharacterRemediation : WinAnsiGlyphRemediation
+            : remediation;
 
-        return new PdfTextEncodingDiagnostic(source, index, codePoint, display, isControlCharacter);
+        return new PdfTextEncodingDiagnostic(source, index, codePoint, display, isControlCharacter, diagnosticEncoding, diagnosticRemediation, location, runIndex);
     }
 
     internal static PdfTextEncodingDiagnostic CreateControlCharacterDiagnostic(int index, int scalar, string source) {
@@ -455,7 +797,8 @@ public static class PdfTextDiagnostics {
             display,
             isControlCharacter: false,
             code: "missing-embedded-font-glyph",
-            message: message);
+            message: message,
+            customCode: true);
     }
 
     private static PdfTextEncodingDiagnostic CreateEmbeddedCffFontDiagnostic(int index, int scalar, string source, string fontName) {
@@ -470,12 +813,13 @@ public static class PdfTextDiagnostics {
             display,
             isControlCharacter: false,
             code: "missing-embedded-font-glyph",
-            message: message);
+            message: message,
+            customCode: true);
     }
 
-    private static void AddDiagnostic(List<PdfTextShapingDiagnostic> diagnostics, HashSet<string> reportedCodes, string source, int index, int scalar, string script, string code, string message) {
+    private static void AddDiagnostic(List<PdfTextShapingDiagnostic> diagnostics, HashSet<string> reportedCodes, string source, int index, int scalar, string script, string code, string message, bool isCoveredByBuiltInShaping = false) {
         if (reportedCodes.Add(code)) {
-            diagnostics.Add(new PdfTextShapingDiagnostic(source, index, scalar, script, code, message));
+            diagnostics.Add(new PdfTextShapingDiagnostic(source, index, scalar, script, code, message, isCoveredByBuiltInShaping));
         }
     }
 
@@ -485,6 +829,9 @@ public static class PdfTextDiagnostics {
             if (ligatureIndex >= 0) {
                 int sourceIndex = ligatureIndex + indexOffset;
                 int scalar = char.ConvertToUtf32(text, ligatureIndex);
+                bool isCoveredByBuiltInShaping =
+                    PdfLatinLigatureSubstitution.TryGetPresentationLigature(text, ligatureIndex, out int ligatureScalar, out _) &&
+                    info.ContainsUnicodeScalar(ligatureScalar);
                 AddDiagnostic(
                     diagnostics,
                     reportedCodes,
@@ -493,7 +840,8 @@ public static class PdfTextDiagnostics {
                     scalar,
                     "OpenType GSUB ligature",
                     "unsupported-font-ligature-substitution",
-                    "Text contains a Latin ligature sequence at index " + sourceIndex.ToString(CultureInfo.InvariantCulture) + ", and embedded font '" + info.FontName + "' advertises GSUB ligature features. OfficeIMO.Pdf currently writes scalar glyph ids without applying OpenType ligature substitution, so generated output may be visually simplified.");
+                    "Text contains a Latin ligature sequence at index " + sourceIndex.ToString(CultureInfo.InvariantCulture) + ", and embedded font '" + info.FontName + "' advertises GSUB ligature features. OfficeIMO.Pdf currently writes scalar glyph ids without applying OpenType ligature substitution, so generated output may be visually simplified.",
+                    isCoveredByBuiltInShaping);
             }
         }
 
@@ -644,7 +992,7 @@ public static class PdfTextDiagnostics {
     private static bool IsInRange(int scalar, int first, int last) =>
         scalar >= first && scalar <= last;
 
-    private static PdfTextEncodingDiagnostic CreateEmbeddedFallbackDiagnostic(int index, int scalar, string source, IReadOnlyList<EmbeddedFontFallbackProgram> fonts) {
+    private static PdfTextEncodingDiagnostic CreateEmbeddedFallbackDiagnostic(int index, int scalar, string source, IReadOnlyList<EmbeddedFontFallbackProgram> fonts, string location = "", int? runIndex = null) {
         string codePoint = FormatCodePoint(scalar);
         string display = GetDisplayText(scalar);
         string rendered = string.IsNullOrEmpty(display) ? string.Empty : " '" + display + "'";
@@ -657,7 +1005,8 @@ public static class PdfTextDiagnostics {
             display,
             isControlCharacter: false,
             code: "missing-embedded-font-fallback-glyph",
-            message: message);
+            message: message,
+            customCode: true);
     }
 
     private static int ReadScalar(string text, ref int index) {

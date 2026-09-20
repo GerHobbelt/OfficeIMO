@@ -5,7 +5,7 @@ namespace OfficeIMO.Reader.Pdf;
 /// <summary>
 /// PDF ingestion adapter for <see cref="DocumentReader"/>.
 /// </summary>
-public static class DocumentReaderPdfExtensions {
+public static partial class DocumentReaderPdfExtensions {
     /// <summary>
     /// Reads a PDF file and emits normalized page-aware chunks.
     /// </summary>
@@ -95,7 +95,28 @@ public static class DocumentReaderPdfExtensions {
 
         if (!pdfOptions.ChunkByPage) {
             string markdown = BuildMarkdown(pages, markdownOptions);
-            foreach (var chunk in BuildChunksFromText(markdown, source, readerOptions, page: null, sourceBlockIndex: 0, blockKind: "document", blockAnchor: "document", tables: BuildTables(GetTables(pages), readerOptions), idPrefix: "pdf-document", maxChars: maxChars, cancellationToken: cancellationToken)) {
+            IReadOnlyList<PdfLogicalTableExtraction> documentTableExtractions = PdfLogicalTableAnalysis.ExtractTables(pages, GetMaxTableRows(readerOptions));
+            var documentTables = BuildTables(documentTableExtractions);
+            var documentVisuals = BuildVisuals(pages);
+            var documentFormFields = BuildFormFields(document, pages, page: null);
+            var documentActions = BuildActions(document, pages, page: null);
+            ReaderChunkDiagnostics documentDiagnostics = BuildChunkDiagnostics(document, pages, page: null, documentTableExtractions);
+            foreach (var chunk in BuildChunksFromText(
+                markdown,
+                source,
+                readerOptions,
+                page: null,
+                sourceBlockIndex: 0,
+                blockKind: "document",
+                blockAnchor: "document",
+                tables: documentTables,
+                visuals: documentVisuals,
+                formFields: documentFormFields,
+                actions: documentActions,
+                diagnostics: documentDiagnostics,
+                idPrefix: "pdf-document",
+                maxChars: maxChars,
+                cancellationToken: cancellationToken)) {
                 yield return chunk;
             }
 
@@ -111,8 +132,28 @@ public static class DocumentReaderPdfExtensions {
             string pageAnchor = "page-" + page.PageNumber.ToString(CultureInfo.InvariantCulture) + "-selection-" + pageOccurrence;
             string idPrefix = "pdf-page-" + page.PageNumber.ToString("D4", CultureInfo.InvariantCulture) + "-selection-" + pageOccurrence;
             string markdown = page.ToMarkdown(markdownOptions);
-            var pageTables = BuildTables(page.Tables, readerOptions);
-            foreach (var chunk in BuildChunksFromText(markdown, source, readerOptions, page.PageNumber, pageIndex, "page", pageAnchor, pageTables, idPrefix, maxChars, cancellationToken)) {
+            IReadOnlyList<PdfLogicalTableExtraction> pageTableExtractions = PdfLogicalTableAnalysis.ExtractTables(page, GetMaxTableRows(readerOptions));
+            var pageTables = BuildTables(pageTableExtractions, pageIndex);
+            var pageVisuals = BuildVisuals(new[] { page }, pageIndex);
+            var pageFormFields = BuildFormFields(document, pages, page);
+            var pageActions = BuildActions(document, pages, page);
+            ReaderChunkDiagnostics pageDiagnostics = BuildChunkDiagnostics(document, pages, page, pageTableExtractions);
+            foreach (var chunk in BuildChunksFromText(
+                markdown,
+                source,
+                readerOptions,
+                page.PageNumber,
+                pageIndex,
+                "page",
+                pageAnchor,
+                pageTables,
+                pageVisuals,
+                pageFormFields,
+                pageActions,
+                pageDiagnostics,
+                idPrefix,
+                maxChars,
+                cancellationToken)) {
                 chunk.Location.BlockIndex = emittedIndex++;
                 yield return chunk;
             }
@@ -129,6 +170,7 @@ public static class DocumentReaderPdfExtensions {
                     SourceBlockKind = "warning"
                 },
                 Text = warning,
+                Diagnostics = BuildChunkDiagnostics(document, pages, page: null, Array.Empty<PdfLogicalTableExtraction>()),
                 Warnings = new[] { warning }
             }, source, readerOptions.ComputeHashes);
         }
@@ -179,16 +221,7 @@ public static class DocumentReaderPdfExtensions {
         return string.Join(Environment.NewLine + Environment.NewLine, pages.Select(page => page.ToMarkdown(markdownOptions)).Where(text => !string.IsNullOrWhiteSpace(text)));
     }
 
-    private static IReadOnlyList<PdfLogicalTable> GetTables(IReadOnlyList<PdfLogicalPage> pages) {
-        var tables = new List<PdfLogicalTable>();
-        for (int i = 0; i < pages.Count; i++) {
-            tables.AddRange(pages[i].Tables);
-        }
-
-        return tables.Count == 0 ? Array.Empty<PdfLogicalTable>() : tables.AsReadOnly();
-    }
-
-    private static IEnumerable<ReaderChunk> BuildChunksFromText(string markdown, SourceMetadata source, ReaderOptions readerOptions, int? page, int sourceBlockIndex, string blockKind, string blockAnchor, IReadOnlyList<ReaderTable>? tables, string idPrefix, int maxChars, CancellationToken cancellationToken) {
+    private static IEnumerable<ReaderChunk> BuildChunksFromText(string markdown, SourceMetadata source, ReaderOptions readerOptions, int? page, int sourceBlockIndex, string blockKind, string blockAnchor, IReadOnlyList<ReaderTable>? tables, IReadOnlyList<ReaderVisual>? visuals, IReadOnlyList<ReaderFormField>? formFields, IReadOnlyList<ReaderActionSummary>? actions, ReaderChunkDiagnostics diagnostics, string idPrefix, int maxChars, CancellationToken cancellationToken) {
         var parts = SplitText(markdown, maxChars);
         if (parts.Count == 0) {
             string warning = page.HasValue
@@ -215,8 +248,340 @@ public static class DocumentReaderPdfExtensions {
                 Text = part.Text,
                 Markdown = part.Text,
                 Tables = i == 0 ? tables : null,
+                Visuals = i == 0 ? visuals : null,
+                FormFields = i == 0 ? formFields : null,
+                Actions = i == 0 ? actions : null,
+                Diagnostics = diagnostics,
                 Warnings = part.Warnings
             }, source, readerOptions.ComputeHashes);
+        }
+    }
+
+    private static ReaderChunkDiagnostics BuildChunkDiagnostics(PdfLogicalDocument document, IReadOnlyList<PdfLogicalPage> selectedPages, PdfLogicalPage? page, IReadOnlyList<PdfLogicalTableExtraction> tableExtractions) {
+        IReadOnlyList<PdfLogicalPage> scope = page is null ? selectedPages : new[] { page };
+        PdfDocumentSecurityInfo security = document.Security;
+        bool hasScopedOpenAction = GetScopedOpenAction(document.OpenAction, scope) is not null;
+        int selectedCatalogActionCount = GetScopedCatalogActions(document, selectedPages).Count;
+        int selectedPageActionCount = CountPageActions(scope);
+        int selectedAnnotationActionCount = CountAnnotationActions(scope);
+        int imageCount = CountImages(scope);
+        int imageGeometryCount = CountImageGeometry(scope);
+        int selectedFormWidgetCount = CountFormWidgets(scope);
+        int selectedFormWidgetAppearanceStateCount = CountFormWidgetAppearanceStates(scope);
+        TableDiagnosticSummary tableSummary = SummarizeTables(tableExtractions);
+        return new ReaderChunkDiagnostics {
+            SourceKind = "pdf",
+            PageCount = document.PageCount,
+            SelectedPageCount = selectedPages.Count,
+            PageNumber = page?.PageNumber,
+            TableCount = tableExtractions.Count,
+            TableGeometryCount = tableSummary.GeometryCount,
+            TableGeometryCoverage = GetCoverage(tableSummary.GeometryCount, tableExtractions.Count),
+            MinTableConfidence = tableSummary.MinConfidence,
+            AverageTableConfidence = tableSummary.AverageConfidence,
+            ImageCount = imageCount,
+            ImageGeometryCount = imageGeometryCount,
+            ImageGeometryCoverage = GetCoverage(imageGeometryCount, imageCount),
+            LinkCount = CountLinks(scope),
+            HasOpenAction = hasScopedOpenAction,
+            HasCatalogActions = selectedCatalogActionCount > 0,
+            HasPageActions = selectedPageActionCount > 0,
+            HasAnnotationActions = selectedAnnotationActionCount > 0,
+            HasActiveContent = selectedCatalogActionCount > 0 || selectedPageActionCount > 0 || selectedAnnotationActionCount > 0,
+            CatalogActionCount = selectedCatalogActionCount,
+            PageActionCount = document.PageActionCount,
+            SelectedPageActionCount = selectedPageActionCount,
+            AnnotationActionCount = CountAnnotationActions(document.Pages),
+            SelectedAnnotationActionCount = selectedAnnotationActionCount,
+            FormFieldCount = document.FormFields.Count,
+            FormWidgetCount = document.FormWidgets.Count,
+            SelectedFormWidgetCount = selectedFormWidgetCount,
+            SelectedFormWidgetAppearanceStateCount = selectedFormWidgetAppearanceStateCount,
+            SelectedFormWidgetAppearanceStateCoverage = GetCoverage(selectedFormWidgetAppearanceStateCount, selectedFormWidgetCount),
+            SelectedFormWidgetNormalAppearanceStateCount = CountFormWidgetNormalAppearanceStates(scope),
+            HasSecurityState = document.HasSecurityState,
+            HasEncryption = security.HasEncryption,
+            HasSignatures = security.HasSignatures,
+            HasIncrementalUpdates = security.HasIncrementalUpdates,
+            RevisionCount = security.RevisionCount,
+            RequiresAppendOnlyMutation = security.RequiresAppendOnlyMutation
+        };
+    }
+
+    private readonly struct TableDiagnosticSummary {
+        public TableDiagnosticSummary(int geometryCount, double? minConfidence, double? averageConfidence) {
+            GeometryCount = geometryCount;
+            MinConfidence = minConfidence;
+            AverageConfidence = averageConfidence;
+        }
+
+        public int GeometryCount { get; }
+
+        public double? MinConfidence { get; }
+
+        public double? AverageConfidence { get; }
+    }
+
+    private static TableDiagnosticSummary SummarizeTables(IReadOnlyList<PdfLogicalTableExtraction> tables) {
+        if (tables.Count == 0) {
+            return new TableDiagnosticSummary(0, null, null);
+        }
+
+        int geometryCount = 0;
+        double minConfidence = double.MaxValue;
+        double totalConfidence = 0D;
+        for (int i = 0; i < tables.Count; i++) {
+            PdfLogicalTableDiagnostics diagnostics = tables[i].Data.Diagnostics;
+            if (diagnostics.HasGeometry) {
+                geometryCount++;
+            }
+
+            double confidence = diagnostics.Confidence;
+            if (confidence < minConfidence) {
+                minConfidence = confidence;
+            }
+
+            totalConfidence += confidence;
+        }
+
+        return new TableDiagnosticSummary(geometryCount, minConfidence, totalConfidence / tables.Count);
+    }
+
+    private static double GetCoverage(int countWithSignal, int totalCount) {
+        return totalCount == 0 ? 0D : (double)countWithSignal / totalCount;
+    }
+
+    private static int CountImageGeometry(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            IReadOnlyList<PdfLogicalImage> images = pages[i].Images;
+            for (int j = 0; j < images.Count; j++) {
+                if (images[j].PrimaryPlacement is not null) {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private static int CountImages(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            count += pages[i].Images.Count;
+        }
+
+        return count;
+    }
+
+    private static int CountLinks(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            count += pages[i].Links.Count;
+        }
+
+        return count;
+    }
+
+    private static int CountPageActions(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            count += pages[i].PageActionCount;
+        }
+
+        return count;
+    }
+
+    private static int CountAnnotationActions(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            IReadOnlyList<PdfAnnotation> annotations = pages[i].Annotations;
+            for (int j = 0; j < annotations.Count; j++) {
+                PdfAnnotation annotation = annotations[j];
+                if (annotation.HasAction) {
+                    count++;
+                }
+
+                count += annotation.AdditionalActions.Count;
+                count += annotation.ChainedActions.Count;
+            }
+        }
+
+        return count;
+    }
+
+    private static int CountFormWidgets(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            count += pages[i].FormWidgets.Count;
+        }
+
+        return count;
+    }
+
+    private static int CountFormWidgetAppearanceStates(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            IReadOnlyList<PdfLogicalFormWidget> widgets = pages[i].FormWidgets;
+            for (int j = 0; j < widgets.Count; j++) {
+                if (!string.IsNullOrEmpty(widgets[j].AppearanceState)) {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private static int CountFormWidgetNormalAppearanceStates(IReadOnlyList<PdfLogicalPage> pages) {
+        int count = 0;
+        for (int i = 0; i < pages.Count; i++) {
+            IReadOnlyList<PdfLogicalFormWidget> widgets = pages[i].FormWidgets;
+            for (int j = 0; j < widgets.Count; j++) {
+                count += widgets[j].NormalAppearanceStateCount;
+            }
+        }
+
+        return count;
+    }
+
+    private static IReadOnlyList<ReaderFormField>? BuildFormFields(PdfLogicalDocument document, IReadOnlyList<PdfLogicalPage> selectedPages, PdfLogicalPage? page) {
+        if (document.FormFields.Count == 0) return null;
+
+        int[] pageNumbers = GetSelectedPageNumbers(selectedPages, page);
+        if (pageNumbers.Length == 0) return null;
+
+        var result = new List<ReaderFormField>();
+        for (int i = 0; i < document.FormFields.Count; i++) {
+            PdfFormField field = document.FormFields[i];
+            IReadOnlyList<PdfFormWidget> widgets = GetWidgetsForPages(field, pageNumbers);
+            if (widgets.Count == 0) {
+                continue;
+            }
+
+            result.Add(BuildFormField(field, widgets));
+        }
+
+        return result.Count == 0 ? null : result.AsReadOnly();
+    }
+
+    private static int[] GetSelectedPageNumbers(IReadOnlyList<PdfLogicalPage> selectedPages, PdfLogicalPage? page) {
+        if (page is not null) {
+            return new[] { page.PageNumber };
+        }
+
+        var pageNumbers = new List<int>();
+        for (int i = 0; i < selectedPages.Count; i++) {
+            int pageNumber = selectedPages[i].PageNumber;
+            if (!pageNumbers.Contains(pageNumber)) {
+                pageNumbers.Add(pageNumber);
+            }
+        }
+
+        return pageNumbers.ToArray();
+    }
+
+    private static IReadOnlyList<PdfFormWidget> GetWidgetsForPages(PdfFormField field, int[] pageNumbers) {
+        if (field.Widgets.Count == 0 || pageNumbers.Length == 0) {
+            return Array.Empty<PdfFormWidget>();
+        }
+
+        var widgets = new List<PdfFormWidget>();
+        for (int i = 0; i < field.Widgets.Count; i++) {
+            PdfFormWidget widget = field.Widgets[i];
+            if (!widget.PageNumber.HasValue) {
+                continue;
+            }
+
+            for (int j = 0; j < pageNumbers.Length; j++) {
+                if (widget.PageNumber.Value == pageNumbers[j]) {
+                    widgets.Add(widget);
+                    break;
+                }
+            }
+        }
+
+        return widgets.Count == 0 ? Array.Empty<PdfFormWidget>() : widgets.AsReadOnly();
+    }
+
+    private static ReaderFormField BuildFormField(PdfFormField field, IReadOnlyList<PdfFormWidget> widgets) {
+        return new ReaderFormField {
+            Name = field.Name,
+            PartialName = field.PartialName,
+            AlternateName = field.AlternateName,
+            MappingName = field.MappingName,
+            FieldType = field.FieldType,
+            Kind = ToReaderFormFieldKind(field.Kind),
+            Value = field.Value,
+            Values = field.Values,
+            DefaultValue = field.DefaultValue,
+            DefaultValues = field.DefaultValues,
+            MaxLength = field.MaxLength,
+            IsReadOnly = field.IsReadOnly,
+            IsRequired = field.IsRequired,
+            IsNoExport = field.IsNoExport,
+            IsMultiline = field.IsMultiline,
+            IsPassword = field.IsPassword,
+            IsComb = field.IsComb,
+            OptionCount = field.OptionCount,
+            SelectedOptionCount = field.SelectedOptionCount,
+            WidgetCount = widgets.Count,
+            PageNumbers = GetWidgetPageNumbers(widgets),
+            Widgets = BuildFormWidgets(widgets)
+        };
+    }
+
+    private static IReadOnlyList<int> GetWidgetPageNumbers(IReadOnlyList<PdfFormWidget> widgets) {
+        var pageNumbers = new List<int>();
+        for (int i = 0; i < widgets.Count; i++) {
+            int? pageNumber = widgets[i].PageNumber;
+            if (pageNumber.HasValue && !pageNumbers.Contains(pageNumber.Value)) {
+                pageNumbers.Add(pageNumber.Value);
+            }
+        }
+
+        return pageNumbers.Count == 0 ? Array.Empty<int>() : pageNumbers.AsReadOnly();
+    }
+
+    private static IReadOnlyList<ReaderFormWidget> BuildFormWidgets(IReadOnlyList<PdfFormWidget> widgets) {
+        if (widgets.Count == 0) return Array.Empty<ReaderFormWidget>();
+
+        var result = new ReaderFormWidget[widgets.Count];
+        for (int i = 0; i < widgets.Count; i++) {
+            PdfFormWidget widget = widgets[i];
+            result[i] = new ReaderFormWidget {
+                FieldName = widget.FieldName,
+                PageNumber = widget.PageNumber,
+                X1 = widget.X1,
+                Y1 = widget.Y1,
+                X2 = widget.X2,
+                Y2 = widget.Y2,
+                Width = widget.Width,
+                Height = widget.Height,
+                AppearanceState = widget.AppearanceState,
+                IsHidden = widget.IsHidden,
+                IsPrint = widget.IsPrint,
+                IsReadOnly = widget.IsReadOnly,
+                NormalAppearanceStateCount = widget.NormalAppearanceStateCount,
+                NormalAppearanceStates = widget.NormalAppearanceStates
+            };
+        }
+
+        return Array.AsReadOnly(result);
+    }
+
+    private static ReaderFormFieldKind ToReaderFormFieldKind(PdfFormFieldKind kind) {
+        switch (kind) {
+            case PdfFormFieldKind.Text:
+                return ReaderFormFieldKind.Text;
+            case PdfFormFieldKind.Button:
+                return ReaderFormFieldKind.Button;
+            case PdfFormFieldKind.Choice:
+                return ReaderFormFieldKind.Choice;
+            case PdfFormFieldKind.Signature:
+                return ReaderFormFieldKind.Signature;
+            default:
+                return ReaderFormFieldKind.Unknown;
         }
     }
 
@@ -262,32 +627,96 @@ public static class DocumentReaderPdfExtensions {
         return end;
     }
 
-    private static IReadOnlyList<ReaderTable>? BuildTables(IReadOnlyList<PdfLogicalTable> tables, ReaderOptions readerOptions) {
+    private static int GetMaxTableRows(ReaderOptions readerOptions) {
+        return readerOptions.MaxTableRows > 0 ? readerOptions.MaxTableRows : 0;
+    }
+
+    private static IReadOnlyList<ReaderTable>? BuildTables(IReadOnlyList<PdfLogicalTableExtraction> tables, int? pageSelectionIndex = null) {
         if (tables.Count == 0) return null;
 
         var result = new List<ReaderTable>(tables.Count);
         for (int i = 0; i < tables.Count; i++) {
-            PdfLogicalTable table = tables[i];
-            int totalRows = table.Rows.Count;
-            int maxRows = readerOptions.MaxTableRows > 0 ? readerOptions.MaxTableRows : totalRows;
-            var rows = table.Rows.Take(maxRows).Select(static row => (IReadOnlyList<string>)row.ToArray()).ToArray();
-            int columnCount = 0;
-            for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++) {
-                columnCount = Math.Max(columnCount, table.Rows[rowIndex].Count);
-            }
+            PdfLogicalTableExtraction table = tables[i];
+            PdfLogicalTableData data = table.Data;
+            int selectionIndex = pageSelectionIndex ?? table.PageIndex;
 
             result.Add(new ReaderTable {
                 Kind = table.DetectionKind,
-                Columns = Enumerable.Range(1, columnCount)
-                    .Select(static column => "Column " + column.ToString(CultureInfo.InvariantCulture))
-                    .ToArray(),
-                Rows = rows,
-                TotalRowCount = totalRows,
-                Truncated = rows.Length < totalRows
+                Location = new ReaderLocation {
+                    Page = table.PageNumber,
+                    TableIndex = table.TableIndex,
+                    SourceBlockIndex = selectionIndex,
+                    SourceBlockKind = "table",
+                    BlockAnchor = "page-" + table.PageNumber.ToString(CultureInfo.InvariantCulture)
+                        + "-selection-" + selectionIndex.ToString("D4", CultureInfo.InvariantCulture)
+                        + "-table-" + table.TableIndex.ToString(CultureInfo.InvariantCulture)
+                },
+                Columns = data.Columns,
+                ColumnProfiles = BuildColumnProfiles(data),
+                Diagnostics = BuildTableDiagnostics(data.Diagnostics),
+                Rows = data.Rows,
+                TotalRowCount = data.TotalRowCount,
+                Truncated = data.Truncated
             });
         }
 
         return result;
+    }
+
+    private static ReaderTableDiagnostics BuildTableDiagnostics(PdfLogicalTableDiagnostics source) {
+        return new ReaderTableDiagnostics {
+            Confidence = source.Confidence,
+            SchemaConfidence = source.SchemaConfidence,
+            CellCompleteness = source.CellCompleteness,
+            ColumnGeometryConfidence = source.ColumnGeometryConfidence,
+            SourceRowCount = source.SourceRowCount,
+            ExpectedCellCount = source.ExpectedCellCount,
+            FilledCellCount = source.FilledCellCount,
+            MissingCellCount = source.MissingCellCount,
+            XStart = source.XStart,
+            XEnd = source.XEnd,
+            YTop = source.YTop,
+            YBottom = source.YBottom,
+            Width = source.Width,
+            Height = source.Height,
+            HasGeometry = source.HasGeometry
+        };
+    }
+
+    private static IReadOnlyList<ReaderTableColumnProfile> BuildColumnProfiles(PdfLogicalTableData data) {
+        if (data.ColumnProfiles.Count == 0) {
+            return Array.Empty<ReaderTableColumnProfile>();
+        }
+
+        var profiles = new ReaderTableColumnProfile[data.ColumnProfiles.Count];
+        for (int i = 0; i < data.ColumnProfiles.Count; i++) {
+            PdfLogicalTableColumnProfile source = data.ColumnProfiles[i];
+            profiles[i] = new ReaderTableColumnProfile {
+                Index = source.Index,
+                Name = source.Name,
+                Kind = ToReaderTableColumnKind(source.Kind),
+                NonEmptyCellCount = source.NonEmptyCellCount,
+                NumericCellCount = source.NumericCellCount,
+                Confidence = source.Confidence
+            };
+        }
+
+        return Array.AsReadOnly(profiles);
+    }
+
+    private static ReaderTableColumnKind ToReaderTableColumnKind(PdfLogicalTableColumnKind kind) {
+        switch (kind) {
+            case PdfLogicalTableColumnKind.Empty:
+                return ReaderTableColumnKind.Empty;
+            case PdfLogicalTableColumnKind.Numeric:
+                return ReaderTableColumnKind.Numeric;
+            case PdfLogicalTableColumnKind.Text:
+                return ReaderTableColumnKind.Text;
+            case PdfLogicalTableColumnKind.Mixed:
+                return ReaderTableColumnKind.Mixed;
+            default:
+                return ReaderTableColumnKind.Mixed;
+        }
     }
 
     private static PdfLogicalDocument LoadDocument(string path, ReaderPdfOptions options) {
@@ -332,7 +761,8 @@ public static class DocumentReaderPdfExtensions {
             chunk.Location.BlockAnchor ?? string.Empty,
             chunk.Location.Page?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             chunk.Text ?? string.Empty,
-            chunk.Markdown ?? string.Empty);
+            chunk.Markdown ?? string.Empty,
+            BuildChunkMetadataHashInput(chunk));
 
         return ComputeSha256Hex(data);
     }
@@ -421,6 +851,12 @@ public static class DocumentReaderPdfExtensions {
         using var sha = System.Security.Cryptography.SHA256.Create();
         var bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
         var hash = sha.ComputeHash(bytes);
+        return ConvertToHexLower(hash);
+    }
+
+    private static string ComputeSha256Hex(byte[] bytes) {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var hash = sha.ComputeHash(bytes ?? Array.Empty<byte>());
         return ConvertToHexLower(hash);
     }
 

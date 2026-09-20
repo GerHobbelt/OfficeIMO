@@ -271,7 +271,7 @@ internal static partial class PdfWriter {
                 int headerRowCount = style.HeaderRowCount;
                 int footerRowCount = style.FooterRowCount;
                 int footerStartRowIndex = table.Rows.Count - footerRowCount;
-                ValidateTableCellStyleCoordinates(style, table.Rows.Count, columns);
+                ValidateTableCellStyleCoordinates(style, table, columns);
                 ValidateTableColumnStyleBounds(style, columns);
                 ValidateTableRowStyleBounds(style, table.Rows.Count);
                 ValidateTableRowSpansWithinRoleBoundaries(table, columns, headerRowCount, footerStartRowIndex);
@@ -296,8 +296,9 @@ internal static partial class PdfWriter {
                 if (!string.IsNullOrWhiteSpace(style.Caption)) {
                     double captionSize = style.CaptionFontSize ?? fontSize;
                     double captionLeading = captionSize * 1.25D;
-                    var captionLines = WrapSimpleTextForOptions(style.Caption!, tableWidth, ChooseNormal(currentOpts.DefaultFont), captionSize, currentOpts);
-                    captionHeight = captionLines.Count * captionLeading + style.CaptionSpacingAfter;
+                    var captionRuns = new[] { TextRun.Normal(style.Caption!, style.CaptionColor, captionSize) };
+                    var captionWrap = WrapRichRunsCore(captionRuns, tableWidth, captionSize, ChooseNormal(currentOpts.DefaultFont), captionLeading, null, DefaultParagraphTabStopWidth, currentOpts);
+                    captionHeight = MeasureRichLinesHeight(captionWrap.LineHeights, captionWrap.Lines.Count, captionLeading) + style.CaptionSpacingAfter;
                 }
 
                 return style.SpacingBefore + captionHeight + firstRowHeight;

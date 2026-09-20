@@ -83,6 +83,39 @@ public class PdfFontFamilyTests {
     }
 
     [Fact]
+    public void PdfOptions_TryUseDefaultDocumentFontFallbackEmbedsUnicodeCapableGeneratedText() {
+        var options = new PdfOptions {
+            CompressContentStreams = false
+        };
+        if (!options.TryUseDefaultDocumentFontFallback(requireEmbeddedFont: true)) {
+            return;
+        }
+
+        const string polish = "Zażółć gęślą jaźń Łódź";
+        byte[] bytes = PdfDocument.Create(options)
+            .Paragraph(paragraph => paragraph.Text(polish))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string text = PdfReadDocument.Load(bytes).ExtractText();
+
+        Assert.True(options.HasEmbeddedStandardFontFamily(options.DefaultFont));
+        Assert.Contains("/Subtype /Type0", raw, StringComparison.Ordinal);
+        Assert.Contains("/Encoding /Identity-H", raw, StringComparison.Ordinal);
+        Assert.Contains(polish, text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PdfOptions_TryRegisterDefaultDocumentMonospaceFontFallbackEmbedsCourierSlotWhenAvailable() {
+        var options = new PdfOptions();
+        if (!options.TryRegisterDefaultDocumentMonospaceFontFallback(requireEmbeddedFont: true)) {
+            return;
+        }
+
+        Assert.True(options.HasEmbeddedStandardFontFamily(PdfStandardFont.Courier));
+    }
+
+    [Fact]
     public void PdfOptions_RegisterFontFamilyEmbedsSemanticSlotWithoutChangingDefaults() {
         string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
         if (fontPath == null) {
@@ -496,6 +529,108 @@ public class PdfFontFamilyTests {
     }
 
     [Fact]
+    public void PdfTextDiagnostics_UsesEmbeddedFontCoverageForGeneratedText() {
+        string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        var options = new PdfOptions()
+            .UseFontFamily("OfficeIMO Diagnostic Font", fontPath);
+
+        IReadOnlyList<PdfTextEncodingDiagnostic> diagnostics = PdfTextDiagnostics.AnalyzeGeneratedText(
+            "Zażółć gęślą jaźń",
+            options,
+            PdfStandardFont.Helvetica,
+            "body");
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void PdfTextDiagnostics_ReportsEmbeddedFontMissingGlyphAsConversionWarning() {
+        string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        var options = new PdfOptions()
+            .UseFontFamily("OfficeIMO Diagnostic Font", fontPath);
+        IReadOnlyList<PdfTextEncodingDiagnostic> diagnostics = PdfTextDiagnostics.AnalyzeGeneratedText(
+            "Snowman \u2603",
+            options,
+            PdfStandardFont.Helvetica,
+            "body",
+            "PdfParagraph[0]");
+
+        if (diagnostics.Count == 0) {
+            return;
+        }
+
+        PdfTextEncodingDiagnostic diagnostic = Assert.Single(diagnostics);
+        PdfConversionWarning warning = diagnostic.ToConversionWarning("OfficeIMO.Tests");
+
+        Assert.Equal("unsupported-text-glyph", diagnostic.Code);
+        Assert.Equal("U+2603", diagnostic.CodePoint);
+        Assert.Contains("embedded TrueType font", diagnostic.Encoding, StringComparison.Ordinal);
+        Assert.Contains("fallback", diagnostic.Remediation, StringComparison.Ordinal);
+        Assert.Equal("PdfParagraph[0]", diagnostic.Location);
+        Assert.Equal(diagnostic.Encoding, warning.Details["encoding"]);
+        Assert.Equal(diagnostic.Remediation, warning.Details["remediation"]);
+        Assert.Equal(diagnostic.Location, warning.Details["location"]);
+    }
+
+    [Fact]
+    public void PdfDocument_EmbeddedFontMissingGlyphThrowsDiagnosticBackedException() {
+        string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        string missingGlyph = char.ConvertFromUtf32(0x10FFFF);
+        ArgumentException exception = Assert.ThrowsAny<ArgumentException>(() =>
+            PdfDocument.Create()
+                .UseFontFamily("OfficeIMO Diagnostic Font", fontPath)
+                .Paragraph(paragraph => paragraph.Text("Missing " + missingGlyph))
+                .ToBytes());
+
+        Assert.Contains("U+10FFFF", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("embedded TrueType font", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("fallback", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("unsupported-text-glyph", exception.Data["code"]);
+        Assert.Equal("PdfParagraph", exception.Data["source"]);
+        Assert.Equal("PdfParagraph[0].Run[0]", exception.Data["location"]);
+        Assert.Equal(0, exception.Data["runIndex"]);
+        Assert.Equal("U+10FFFF", exception.Data["codePoint"]);
+        Assert.Equal(1, exception.Data["diagnosticsCount"]);
+        Assert.Contains("embedded TrueType font", (string)exception.Data["encoding"]!, StringComparison.Ordinal);
+        Assert.Contains("fallback", (string)exception.Data["remediation"]!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PdfTextDiagnostics_UsesStyledEmbeddedFontSlotsForRuns() {
+        string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        var options = new PdfOptions()
+            .UseFontFamily("OfficeIMO Diagnostic Family", fontPath);
+
+        IReadOnlyList<PdfTextEncodingDiagnostic> diagnostics = PdfTextDiagnostics.AnalyzeGeneratedTextRuns(
+            new[] {
+                TextRun.Bolded("Bold Łódź"),
+                TextRun.Italicized("Italic Łódź"),
+                TextRun.BoldItalic("Bold italic Łódź")
+            },
+            options,
+            PdfStandardFont.Helvetica,
+            "body");
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
     public void PdfDocument_UseFontFamilySubsetsUnicodeFontDeterministically() {
         string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
         if (fontPath == null) {
@@ -565,7 +700,7 @@ public class PdfFontFamilyTests {
             }
             .ReportDiagnosticsTo(report, "OfficeIMO.Tests");
 
-        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+        ArgumentException exception = Assert.ThrowsAny<ArgumentException>(() =>
             PdfDocument.Create(options)
                 .Paragraph(paragraph => paragraph.Text("\u0645\u0631\u062D\u0628\u0627"))
                 .ToBytes());
@@ -576,6 +711,31 @@ public class PdfFontFamilyTests {
         Assert.Equal(PdfConversionWarningSeverity.Warning, shapingWarning.Severity);
         Assert.Equal(PdfLayoutDiagnosticKind.SimplifiedContent, bidiWarning.LayoutDiagnostic!.Kind);
         Assert.Contains(report.Warnings, item => item.Code == "unsupported-text-glyph" && item.Severity == PdfConversionWarningSeverity.Error);
+    }
+
+    [Fact]
+    public void PdfOptions_ReportDiagnosticsToResetsTextDiagnosticDeduplicationForNewReport() {
+        var first = new PdfConversionReport();
+        var second = new PdfConversionReport();
+        var options = new PdfOptions {
+                CompressContentStreams = false
+            }
+            .ReportDiagnosticsTo(first, "OfficeIMO.Tests");
+
+        Assert.ThrowsAny<ArgumentException>(() =>
+            PdfDocument.Create(options)
+                .Paragraph(paragraph => paragraph.Text("\u0645\u0631\u062D\u0628\u0627"))
+                .ToBytes());
+
+        options.ReportDiagnosticsTo(second, "OfficeIMO.Tests");
+
+        Assert.ThrowsAny<ArgumentException>(() =>
+            PdfDocument.Create(options)
+                .Paragraph(paragraph => paragraph.Text("\u0645\u0631\u062D\u0628\u0627"))
+                .ToBytes());
+
+        Assert.Contains(first.Warnings, item => item.Code == "unsupported-complex-script-shaping");
+        Assert.Contains(second.Warnings, item => item.Code == "unsupported-complex-script-shaping");
     }
 
     [Fact]
@@ -692,6 +852,25 @@ public class PdfFontFamilyTests {
     }
 
     [Fact]
+    public void PdfFontDiagnostics_AnalyzeEmbeddedFontRejectsOpenTypeCffFontsThatEmbeddingParserRejects() {
+        string? fontPath = PdfComplianceTestFonts.FindBundledOpenTypeCffFont();
+        Assert.NotNull(fontPath);
+        byte[] restrictedFont = CreateEmbeddingRestrictedOpenTypeCffFont(File.ReadAllBytes(fontPath!));
+
+        PdfOpenTypeFontInfo info = PdfOpenTypeFontInspector.Inspect(restrictedFont, "OfficeIMO Restricted CFF");
+        IReadOnlyList<PdfFontEmbeddingDiagnostic> diagnostics = PdfFontDiagnostics.AnalyzeEmbeddedFont(
+            restrictedFont,
+            "word:styles[Restricted]",
+            "OfficeIMO Restricted CFF");
+
+        Assert.True(info.IsOpenTypeCff);
+        PdfFontEmbeddingDiagnostic diagnostic = Assert.Single(diagnostics);
+        Assert.Equal("unsupported-opentype-cff-font", diagnostic.Code);
+        Assert.Equal("OpenType/CFF", diagnostic.Format);
+        Assert.Contains("fsType", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PdfOpenTypeCffFontProgram_ParsesMetricsAndEncodesGlyphIdsFromRealFont() {
         string? fontPath = PdfComplianceTestFonts.FindBundledOpenTypeCffFont();
         Assert.NotNull(fontPath);
@@ -765,6 +944,7 @@ public class PdfFontFamilyTests {
         string raw = Encoding.ASCII.GetString(bytes);
         string extracted = PdfReadDocument.Load(bytes).ExtractText();
 
+        Assert.StartsWith("%PDF-1.6", raw, StringComparison.Ordinal);
         Assert.Contains("/FontFile3", raw, StringComparison.Ordinal);
         Assert.Contains("/Subtype /OpenType", raw, StringComparison.Ordinal);
         Assert.Contains("/Subtype /CIDFontType0", raw, StringComparison.Ordinal);
@@ -785,6 +965,52 @@ public class PdfFontFamilyTests {
         Assert.True(int.Parse(fullFontWarning.Details["glyphCount"], CultureInfo.InvariantCulture) > int.Parse(fullFontWarning.Details["usedGlyphCount"], CultureInfo.InvariantCulture));
         Assert.True(int.Parse(fullFontWarning.Details["fontFileLength"], CultureInfo.InvariantCulture) > 0);
         Assert.True(int.Parse(fullFontWarning.Details["cffTableLength"], CultureInfo.InvariantCulture) > 0);
+    }
+
+    [Fact]
+    public void PdfOptions_EmbedStandardFontReplacesCachedOpenTypeCffProgram() {
+        string? fontPath = PdfComplianceTestFonts.FindBundledOpenTypeCffFont();
+        Assert.NotNull(fontPath);
+        byte[] fontBytes = File.ReadAllBytes(fontPath!);
+        var options = new PdfOptions()
+            .EmbedStandardFont(PdfStandardFont.Helvetica, fontBytes, "OfficeIMO First CFF");
+
+        Assert.True(options.TryGetEmbeddedStandardOpenTypeCffFontProgram(PdfStandardFont.Helvetica, out PdfOpenTypeCffFontProgram? firstProgram));
+        Assert.NotNull(firstProgram);
+        Assert.Equal("OfficeIMOFirstCFF", firstProgram!.FontName);
+
+        options.EmbedStandardFont(PdfStandardFont.Helvetica, fontBytes, "OfficeIMO Second CFF");
+
+        Assert.True(options.TryGetEmbeddedStandardOpenTypeCffFontProgram(PdfStandardFont.Helvetica, out PdfOpenTypeCffFontProgram? secondProgram));
+        Assert.NotNull(secondProgram);
+        Assert.Equal("OfficeIMOSecondCFF", secondProgram!.FontName);
+
+        options.ClearEmbeddedStandardFonts();
+
+        Assert.False(options.TryGetEmbeddedStandardOpenTypeCffFontProgram(PdfStandardFont.Helvetica, out _));
+    }
+
+    [Fact]
+    public void PdfOptions_ClearEmbeddedStandardFontsClearsFallbackPlans() {
+        string? fontPath = PdfComplianceTestFonts.FindBundledOpenTypeCffFont();
+        Assert.NotNull(fontPath);
+
+        var fallbackSet = new PdfEmbeddedFontFallbackSet(
+            new[] { new PdfEmbeddedFontFallbackCandidate("Source Serif CFF", File.ReadAllBytes(fontPath!)) },
+            new[] { PdfStandardFont.TimesRoman });
+        var options = new PdfOptions {
+            CompressContentStreams = false,
+            CompressEmbeddedFonts = false
+        }.RegisterEmbeddedFontFallbacks(fallbackSet);
+
+        options.ClearEmbeddedStandardFonts();
+
+        Assert.Null(options.EmbeddedFontFallbacks);
+        ArgumentException exception = Assert.ThrowsAny<ArgumentException>(() =>
+            PdfDocument.Create(options)
+                .Paragraph(paragraph => paragraph.Text("Fallback cleared Łódź"))
+                .ToBytes());
+        Assert.Contains("WinAnsiEncoding", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -811,12 +1037,41 @@ public class PdfFontFamilyTests {
         string raw = Encoding.ASCII.GetString(bytes);
         string extracted = PdfReadDocument.Load(bytes).ExtractText();
 
+        Assert.StartsWith("%PDF-1.6", raw, StringComparison.Ordinal);
         Assert.Contains("/FontFile3", raw, StringComparison.Ordinal);
         Assert.Contains("/Subtype /OpenType", raw, StringComparison.Ordinal);
         Assert.Contains("/Subtype /CIDFontType0", raw, StringComparison.Ordinal);
         Assert.Contains("/Encoding /Identity-H", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("/FontFile2", raw, StringComparison.Ordinal);
         Assert.Contains("CFF fallback Łódź", extracted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PdfOptions_EmbeddedFontFallbacksPropertyRegistersFallbackFontSlots() {
+        string? fontPath = PdfComplianceTestFonts.FindBundledOpenTypeCffFont();
+        Assert.NotNull(fontPath);
+
+        var fallbackSet = new PdfEmbeddedFontFallbackSet(
+            new[] { new PdfEmbeddedFontFallbackCandidate("Source Serif CFF", File.ReadAllBytes(fontPath!)) },
+            new[] { PdfStandardFont.TimesRoman });
+        var options = new PdfOptions {
+            CompressContentStreams = false,
+            CompressEmbeddedFonts = false,
+            EmbeddedFontFallbacks = fallbackSet
+        };
+
+        byte[] bytes = PdfDocument.Create(options)
+            .Paragraph(paragraph => paragraph.Text("CFF property fallback Łódź"))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string extracted = PdfReadDocument.Load(bytes).ExtractText();
+
+        Assert.Contains(PdfStandardFont.TimesRoman, options.EmbeddedFonts.Keys);
+        Assert.Contains("/FontFile3", raw, StringComparison.Ordinal);
+        Assert.Contains("/Subtype /OpenType", raw, StringComparison.Ordinal);
+        Assert.Contains("/Encoding /Identity-H", raw, StringComparison.Ordinal);
+        Assert.Contains("CFF property fallback Łódź", extracted, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -997,6 +1252,73 @@ public class PdfFontFamilyTests {
         Assert.Equal("\t", runs[1].Text);
         Assert.Equal("Invoice", runs[2].Text);
         Assert.Equal(PdfStandardFont.Helvetica, runs[2].Font);
+    }
+
+    [Fact]
+    public void PdfTextFallbackPlan_ToTextRunsKeepsLayoutControlsBetweenFallbackSegments() {
+        string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        var candidate = new PdfEmbeddedFontFallbackCandidate("Primary", File.ReadAllBytes(fontPath));
+        PdfTextFallbackPlan plan = PdfTextDiagnostics.PlanEmbeddedFontFallbackText(
+            "A\nB\tC\rD",
+            new[] { candidate },
+            "word:paragraph[4]");
+
+        Assert.Collection(
+            plan.Segments,
+            segment => {
+                Assert.Equal("A", segment.Text);
+                Assert.Equal(0, segment.StartIndex);
+            },
+            segment => {
+                Assert.Equal("B", segment.Text);
+                Assert.Equal(2, segment.StartIndex);
+            },
+            segment => {
+                Assert.Equal("C", segment.Text);
+                Assert.Equal(4, segment.StartIndex);
+            },
+            segment => {
+                Assert.Equal("D", segment.Text);
+                Assert.Equal(6, segment.StartIndex);
+            });
+
+        IReadOnlyList<TextRun> runs = plan.ToTextRuns(new[] { PdfStandardFont.Helvetica });
+
+        Assert.Collection(
+            runs,
+            run => Assert.Equal("A", run.Text),
+            run => Assert.Equal("\n", run.Text),
+            run => Assert.Equal("B", run.Text),
+            run => Assert.Equal("\t", run.Text),
+            run => Assert.Equal("C", run.Text),
+            run => Assert.Equal("\n", run.Text),
+            run => Assert.Equal("D", run.Text));
+    }
+
+    [Fact]
+    public void PdfTextFallbackPlan_ToTextRunsNormalizesCrLfBetweenFallbackSegments() {
+        string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        var candidate = new PdfEmbeddedFontFallbackCandidate("Primary", File.ReadAllBytes(fontPath));
+        PdfTextFallbackPlan plan = PdfTextDiagnostics.PlanEmbeddedFontFallbackText(
+            "A\r\nB",
+            new[] { candidate },
+            "word:paragraph[4]");
+
+        IReadOnlyList<TextRun> runs = plan.ToTextRuns(new[] { PdfStandardFont.Helvetica });
+
+        Assert.Collection(
+            runs,
+            run => Assert.Equal("A", run.Text),
+            run => Assert.Equal("\n", run.Text),
+            run => Assert.Equal("B", run.Text));
     }
 
     [Fact]
@@ -1693,6 +2015,85 @@ public class PdfFontFamilyTests {
     }
 
     [Fact]
+    public void PdfTextDiagnostics_AnalyzeGeneratedTextAcceptsSelectedFontPlusFallbackCoverage() {
+        string? primaryPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (primaryPath == null) {
+            return;
+        }
+
+        byte[] primary = File.ReadAllBytes(primaryPath);
+        string text = "Invoice 😀 marker";
+        foreach (string fallbackPath in EnumerateLocalNonBmpTrueTypeFonts()) {
+            if (string.Equals(primaryPath, fallbackPath, StringComparison.OrdinalIgnoreCase)) {
+                continue;
+            }
+
+            var fallbackSet = new PdfEmbeddedFontFallbackSet(
+                new[] { new PdfEmbeddedFontFallbackCandidate("Emoji Fallback", File.ReadAllBytes(fallbackPath)) },
+                new[] { PdfStandardFont.TimesRoman });
+            var options = new PdfOptions()
+                .EmbedStandardFont(PdfStandardFont.Helvetica, primary, "OfficeIMO Primary")
+                .RegisterEmbeddedFontFallbacks(fallbackSet);
+
+            try {
+                IReadOnlyList<PdfTextEncodingDiagnostic> diagnostics = PdfTextDiagnostics.AnalyzeGeneratedText(
+                    text,
+                    options,
+                    PdfStandardFont.Helvetica,
+                    "word:paragraph[mixed-fallback]");
+
+                if (diagnostics.Count == 0) {
+                    return;
+                }
+            } catch (NotSupportedException) {
+                continue;
+            }
+        }
+    }
+
+    [Fact]
+    public void PdfDocument_RegisteredFallbacksPreserveSelectedFontCoveredSpans() {
+        string? primaryPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (primaryPath == null) {
+            return;
+        }
+
+        byte[] primary = File.ReadAllBytes(primaryPath);
+        string text = "Invoice 😀 marker";
+        foreach (string fallbackPath in EnumerateLocalNonBmpTrueTypeFonts()) {
+            if (string.Equals(primaryPath, fallbackPath, StringComparison.OrdinalIgnoreCase)) {
+                continue;
+            }
+
+            var fallbackSet = new PdfEmbeddedFontFallbackSet(
+                new[] { new PdfEmbeddedFontFallbackCandidate("Emoji Fallback", File.ReadAllBytes(fallbackPath)) },
+                new[] { PdfStandardFont.TimesRoman });
+
+            byte[] bytes;
+            try {
+                bytes = PdfDocument.Create(new PdfOptions {
+                        CompressContentStreams = false
+                    })
+                    .EmbedStandardFont(PdfStandardFont.Helvetica, primary, "OfficeIMO Primary")
+                    .RegisterEmbeddedFontFallbacks(fallbackSet)
+                    .Paragraph(paragraph => paragraph.Text(text))
+                    .ToBytes();
+            } catch (Exception exception) when (exception is NotSupportedException || exception is ArgumentException) {
+                continue;
+            }
+
+            string raw = Encoding.ASCII.GetString(bytes);
+            string extracted = PdfReadDocument.Load(bytes).ExtractText();
+
+            Assert.Contains("/BaseFont /OfficeIMOPrimary", raw, StringComparison.Ordinal);
+            Assert.Contains("/BaseFont /EmojiFallback", raw, StringComparison.Ordinal);
+            Assert.Contains("Invoice", extracted, StringComparison.Ordinal);
+            Assert.Contains("marker", extracted, StringComparison.Ordinal);
+            return;
+        }
+    }
+
+    [Fact]
     public void PdfDocument_UseFontFamilyEncodesTextWatermarkWithEmbeddedGlyphs() {
         string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
         if (fontPath == null) {
@@ -1809,6 +2210,13 @@ public class PdfFontFamilyTests {
             0x00, 0x00,
             0x00, 0x00
         };
+
+    private static byte[] CreateEmbeddingRestrictedOpenTypeCffFont(byte[] fontData) {
+        byte[] restricted = fontData.ToArray();
+        int os2Offset = FindOpenTypeTableOffset(restricted, "OS/2");
+        WriteUInt16(restricted, os2Offset + 8, 0x0002);
+        return restricted;
+    }
 
     private static int CountUnicodeScalars(string text) {
         int count = 0;
@@ -1979,6 +2387,24 @@ public class PdfFontFamilyTests {
         ((uint)data[offset + 1] << 16) |
         ((uint)data[offset + 2] << 8) |
         data[offset + 3];
+
+    private static int FindOpenTypeTableOffset(byte[] data, string tag) {
+        int tableCount = ReadUInt16(data, 4);
+        for (int index = 0; index < tableCount; index++) {
+            int recordOffset = 12 + index * 16;
+            string candidate = Encoding.ASCII.GetString(data, recordOffset, 4);
+            if (string.Equals(candidate, tag, StringComparison.Ordinal)) {
+                return checked((int)ReadUInt32(data, recordOffset + 8));
+            }
+        }
+
+        throw new InvalidOperationException("Required OpenType table '" + tag + "' was not found.");
+    }
+
+    private static void WriteUInt16(byte[] data, int offset, ushort value) {
+        data[offset] = (byte)(value >> 8);
+        data[offset + 1] = (byte)value;
+    }
 
     private static void WriteUInt32(byte[] data, int offset, uint value) {
         data[offset] = (byte)(value >> 24);

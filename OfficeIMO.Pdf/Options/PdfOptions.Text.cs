@@ -106,10 +106,13 @@ public sealed partial class PdfOptions {
         Guard.NotNull(report, nameof(report));
         _diagnosticsReport = report;
         _diagnosticsConverter = string.IsNullOrWhiteSpace(converter) ? "OfficeIMO.Pdf" : converter;
+        _reportedEmbeddedFontProgramFailures?.Clear();
+        _reportedTextShapingDiagnostics?.Clear();
         return this;
     }
 
     private bool IsCoveredTextShapingDiagnostic(PdfTextShapingDiagnostic diagnostic) =>
         _textShapingMode == PdfTextShapingMode.LatinLigatures &&
+        diagnostic.IsCoveredByBuiltInShaping &&
         string.Equals(diagnostic.Code, "unsupported-font-ligature-substitution", StringComparison.Ordinal);
 }

@@ -124,6 +124,7 @@ public partial class PdfFormFillerTests {
         string output = Encoding.ASCII.GetString(filled);
         PdfFormField field = Assert.Single(PdfInspector.Inspect(filled).FormFields);
 
+        Assert.StartsWith("%PDF-1.6", output, StringComparison.Ordinal);
         Assert.Equal("Łódź", field.Value);
         Assert.Contains("/AP << /N", output, StringComparison.Ordinal);
         Assert.Contains("/Subtype /Type0", output, StringComparison.Ordinal);
@@ -144,6 +145,21 @@ public partial class PdfFormFillerTests {
         Assert.True(int.Parse(fullFontWarning.Details["glyphCount"], CultureInfo.InvariantCulture) > int.Parse(fullFontWarning.Details["usedGlyphCount"], CultureInfo.InvariantCulture));
         Assert.True(int.Parse(fullFontWarning.Details["fontFileLength"], CultureInfo.InvariantCulture) > 0);
         Assert.True(int.Parse(fullFontWarning.Details["cffTableLength"], CultureInfo.InvariantCulture) > 0);
+    }
+
+    [Fact]
+    public void TextAppearanceBuilder_RejectsUnencodableEmbeddedAppearanceFontSegmentsWithoutWinAnsiFallback() {
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceContent(
+                120,
+                20,
+                "Łódź\nZażółć",
+                10,
+                textWidth: 30,
+                fontResourceName: "F0",
+                encodeTextSegmentHex: _ => null));
+
+        Assert.Contains("cannot be encoded by the selected embedded appearance font", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -287,6 +303,7 @@ public partial class PdfFormFillerTests {
         string output = Encoding.ASCII.GetString(filled);
         PdfFormField field = Assert.Single(PdfInspector.Inspect(filled).FormFields);
 
+        Assert.StartsWith("%PDF-1.6", output, StringComparison.Ordinal);
         Assert.Equal("Łódź", field.Value);
         Assert.Contains("/Helv0", output, StringComparison.Ordinal);
         Assert.Contains("/Subtype /Type0", output, StringComparison.Ordinal);

@@ -186,6 +186,7 @@ public sealed partial class PdfOptions {
         var embeddedFont = new PdfEmbeddedFont(font, data, fontName);
         (_embeddedFonts ??= new System.Collections.Generic.Dictionary<PdfStandardFont, PdfEmbeddedFont>())[font] = embeddedFont;
         _embeddedFontPrograms?.Remove(font);
+        _embeddedOpenTypeCffFontPrograms?.Remove(font);
         _embeddedFontProgramFailures?.Remove(font);
         ClearReportedEmbeddedFontProgramFailure(font);
         return this;
@@ -241,8 +242,10 @@ public sealed partial class PdfOptions {
     public PdfOptions ClearEmbeddedStandardFonts() {
         _embeddedFonts?.Clear();
         _embeddedFontPrograms?.Clear();
+        _embeddedOpenTypeCffFontPrograms?.Clear();
         _embeddedFontProgramFailures?.Clear();
         _reportedEmbeddedFontProgramFailures?.Clear();
+        _embeddedFontFallbacks = null;
         return this;
     }
 
@@ -563,7 +566,8 @@ public sealed partial class PdfOptions {
         string conformanceLevel = "EN 16931",
         string version = "1.0",
         PdfAssociatedFileRelationship relationship = PdfAssociatedFileRelationship.Data,
-        string? description = "Factur-X/ZUGFeRD invoice XML") {
+        string? description = "Factur-X/ZUGFeRD invoice XML",
+        bool useDocumentFontFallback = true) {
         PdfAIdentification pdfAIdentification = new PdfAIdentification(3, "B");
         PdfOutputIntent outputIntent = PdfOutputIntent.CreateSrgbIec6196621();
         PdfElectronicInvoiceMetadata metadata = CreateFacturXInvoiceMetadata(conformanceLevel, version);
@@ -572,6 +576,10 @@ public sealed partial class PdfOptions {
         AddEmbeddedFile(attachment);
         FileVersion = PdfFileVersion.Pdf17;
         IncludeStandardFontToUnicodeMaps = true;
+        if (useDocumentFontFallback) {
+            TryUseDefaultDocumentFontFallback(requireEmbeddedFont: false);
+        }
+
         SetPdfAIdentification(pdfAIdentification);
         SetOutputIntent(outputIntent);
         return SetElectronicInvoiceMetadata(metadata);
