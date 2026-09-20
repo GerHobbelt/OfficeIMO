@@ -50,6 +50,8 @@ namespace OfficeIMO.PowerPoint {
             _document = document;
             _filePath = filePath;
             _presentationPart = document.PresentationPart ?? document.AddPresentationPart();
+            BuiltinDocumentProperties = new PowerPointBuiltinDocumentProperties(document);
+            ApplicationProperties = new PowerPointApplicationProperties(document);
             if (isNewPresentation || _presentationPart.Presentation == null) {
                 // New presentation - create with required initial structure
                 PresentationRoot = new Presentation();
@@ -102,6 +104,16 @@ namespace OfficeIMO.PowerPoint {
                 return _slides;
             }
         }
+
+        /// <summary>
+        ///     Built-in package properties for the presentation.
+        /// </summary>
+        public PowerPointBuiltinDocumentProperties BuiltinDocumentProperties { get; }
+
+        /// <summary>
+        ///     Extended application properties for the presentation.
+        /// </summary>
+        public PowerPointApplicationProperties ApplicationProperties { get; }
 
         /// <summary>
         ///     Slide size information for the presentation.
@@ -964,6 +976,45 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Ensures a native footer placeholder exists on the specified slide layout.
+        /// </summary>
+        public PowerPointTextBox EnsureLayoutFooterPlaceholderTextBox(int masterIndex = 0, int layoutIndex = 0,
+            string? text = null, PowerPointLayoutBox? bounds = null, uint? index = null) {
+            return EnsureLayoutHeaderFooterPlaceholderTextBox(masterIndex, layoutIndex, PlaceholderValues.Footer,
+                text, bounds, index ?? 10U, "Footer Placeholder");
+        }
+
+        /// <summary>
+        ///     Ensures a native date/time placeholder exists on the specified slide layout.
+        /// </summary>
+        public PowerPointTextBox EnsureLayoutDateTimePlaceholderTextBox(int masterIndex = 0, int layoutIndex = 0,
+            string? text = null, PowerPointLayoutBox? bounds = null, uint? index = null) {
+            return EnsureLayoutHeaderFooterPlaceholderTextBox(masterIndex, layoutIndex, PlaceholderValues.DateAndTime,
+                text, bounds, index ?? 11U, "Date Placeholder");
+        }
+
+        /// <summary>
+        ///     Ensures a native slide-number placeholder exists on the specified slide layout.
+        /// </summary>
+        public PowerPointTextBox EnsureLayoutSlideNumberPlaceholderTextBox(int masterIndex = 0, int layoutIndex = 0,
+            string? text = null, PowerPointLayoutBox? bounds = null, uint? index = null) {
+            return EnsureLayoutHeaderFooterPlaceholderTextBox(masterIndex, layoutIndex, PlaceholderValues.SlideNumber,
+                text, bounds, index ?? 12U, "Slide Number Placeholder");
+        }
+
+        /// <summary>
+        ///     Ensures native footer, date/time, and slide-number placeholders exist on the specified slide layout.
+        /// </summary>
+        public IReadOnlyList<PowerPointTextBox> EnsureLayoutHeaderFooterPlaceholders(int masterIndex = 0, int layoutIndex = 0,
+            string? footerText = null, string? dateTimeText = null, string? slideNumberText = null) {
+            return new[] {
+                EnsureLayoutFooterPlaceholderTextBox(masterIndex, layoutIndex, footerText),
+                EnsureLayoutDateTimePlaceholderTextBox(masterIndex, layoutIndex, dateTimeText),
+                EnsureLayoutSlideNumberPlaceholderTextBox(masterIndex, layoutIndex, slideNumberText)
+            };
+        }
+
+        /// <summary>
         ///     Replaces text across all slides.
         /// </summary>
         public int ReplaceText(string oldValue, string newValue, bool includeTables = true, bool includeNotes = false) {
@@ -1068,6 +1119,31 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>
+        ///     Opens a password-encrypted Office Open XML PowerPoint presentation.
+        /// </summary>
+        /// <param name="filePath">Path of the encrypted presentation file to open.</param>
+        /// <param name="password">Password used to decrypt the presentation package.</param>
+        /// <param name="readOnly">Open the decrypted package in read-only mode.</param>
+        public static PowerPointPresentation OpenEncrypted(string filePath, string password, bool readOnly = false) {
+            if (filePath == null) throw new ArgumentNullException(nameof(filePath));
+            if (password == null) throw new ArgumentNullException(nameof(password));
+            if (!File.Exists(filePath)) {
+                throw new FileNotFoundException($"File '{filePath}' doesn't exist.", filePath);
+            }
+
+            byte[] encryptedBytes = File.ReadAllBytes(filePath);
+            byte[] packageBytes = OfficeEncryption.DecryptPackage(encryptedBytes, password);
+            var packageStream = new NonDisposingMemoryStream(packageBytes.Length + StreamBufferSize);
+            packageStream.Write(packageBytes, 0, packageBytes.Length);
+            packageStream.Position = 0;
+
+            PresentationDocument document = PresentationDocument.Open(packageStream, !readOnly);
+            PowerPointPresentation presentation = new(document, filePath, isNewPresentation: false);
+            presentation.ConfigureStreamCopy(packageStream, null, copyPackageToSourceOnDispose: false, leaveSourceStreamOpen: true);
+            return presentation;
+        }
+
+        /// <summary>
         ///     Opens a PowerPoint presentation from a stream.
         /// </summary>
         /// <param name="stream">Source stream containing the presentation package.</param>
@@ -1097,6 +1173,29 @@ namespace OfficeIMO.PowerPoint {
             PresentationDocument document = PresentationDocument.Open(packageStream, !readOnly);
             PowerPointPresentation presentation = new(document, string.Empty, isNewPresentation: false);
             presentation.ConfigureStreamCopy(packageStream, stream, shouldCopyBack, leaveSourceStreamOpen: true);
+            return presentation;
+        }
+
+        /// <summary>
+        ///     Opens a password-encrypted Office Open XML PowerPoint presentation from a stream.
+        /// </summary>
+        /// <param name="stream">Source stream containing the encrypted presentation package.</param>
+        /// <param name="password">Password used to decrypt the presentation package.</param>
+        /// <param name="readOnly">Open the decrypted package in read-only mode.</param>
+        public static PowerPointPresentation OpenEncrypted(Stream stream, string password, bool readOnly = false) {
+            if (stream == null) throw new ArgumentNullException(nameof(stream));
+            if (password == null) throw new ArgumentNullException(nameof(password));
+            if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
+
+            byte[] encryptedBytes = ReadAllBytes(stream);
+            byte[] packageBytes = OfficeEncryption.DecryptPackage(encryptedBytes, password);
+            var packageStream = new NonDisposingMemoryStream(packageBytes.Length + StreamBufferSize);
+            packageStream.Write(packageBytes, 0, packageBytes.Length);
+            packageStream.Position = 0;
+
+            PresentationDocument document = PresentationDocument.Open(packageStream, !readOnly);
+            PowerPointPresentation presentation = new(document, string.Empty, isNewPresentation: false);
+            presentation.ConfigureStreamCopy(packageStream, null, copyPackageToSourceOnDispose: false, leaveSourceStreamOpen: true);
             return presentation;
         }
 
@@ -1229,6 +1328,12 @@ namespace OfficeIMO.PowerPoint {
 
             SyncSectionsWithSlides();
             PresentationRoot.Save();
+        }
+
+        private void ValidateSlideIndex(int index) {
+            if (index < 0 || index >= _slides.Count) {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
         }
 
         /// <summary>
@@ -1518,6 +1623,86 @@ namespace OfficeIMO.PowerPoint {
             if (destination.CanSeek) {
                 destination.Seek(0, SeekOrigin.Begin);
             }
+        }
+
+        /// <summary>
+        ///     Exports a single slide as a standalone one-slide PowerPoint presentation.
+        /// </summary>
+        /// <param name="slideIndex">Zero-based index of the slide to export.</param>
+        /// <param name="filePath">Destination .pptx path.</param>
+        public void ExportSlide(int slideIndex, string filePath) {
+            ThrowIfDisposed();
+            if (filePath == null) throw new ArgumentNullException(nameof(filePath));
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("File path cannot be empty.", nameof(filePath));
+
+            ValidateSlideIndex(slideIndex);
+            string? directory = Path.GetDirectoryName(Path.GetFullPath(filePath));
+            if (!string.IsNullOrWhiteSpace(directory)) {
+                Directory.CreateDirectory(directory);
+            }
+
+            using FileStream stream = new(filePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+            ExportSlide(slideIndex, stream);
+        }
+
+        /// <summary>
+        ///     Exports a single slide as a standalone one-slide PowerPoint presentation.
+        /// </summary>
+        /// <param name="slideIndex">Zero-based index of the slide to export.</param>
+        /// <param name="destination">Writable destination stream.</param>
+        public void ExportSlide(int slideIndex, Stream destination) {
+            ThrowIfDisposed();
+            if (destination == null) throw new ArgumentNullException(nameof(destination));
+            if (!destination.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(destination));
+
+            ValidateSlideIndex(slideIndex);
+            using PowerPointPresentation exported = Create(destination, autoSave: false);
+            exported.ImportSlide(this, slideIndex);
+            exported.Save(destination);
+        }
+
+        /// <summary>
+        ///     Saves the presentation as a password-encrypted Office Open XML package.
+        /// </summary>
+        /// <param name="filePath">Destination path for the encrypted presentation.</param>
+        /// <param name="password">Password used to encrypt the presentation package.</param>
+        /// <param name="openPowerPoint">Whether to open the saved file after writing.</param>
+        public void SaveEncrypted(string filePath, string password, bool openPowerPoint = false) {
+            ThrowIfDisposed();
+            if (filePath == null) throw new ArgumentNullException(nameof(filePath));
+            if (password == null) throw new ArgumentNullException(nameof(password));
+            if (filePath.Length == 0) throw new ArgumentException("File path cannot be empty.", nameof(filePath));
+            if (File.Exists(filePath) && new FileInfo(filePath).IsReadOnly) {
+                throw new IOException($"Failed to save to '{filePath}'. The file is read-only.");
+            }
+
+            using var packageStream = new MemoryStream();
+            Save(packageStream);
+            byte[] encryptedBytes = OfficeEncryption.EncryptPackage(packageStream.ToArray(), password);
+            using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None)) {
+                fs.Write(encryptedBytes, 0, encryptedBytes.Length);
+                fs.Flush();
+            }
+
+            if (openPowerPoint) {
+                Helpers.Open(filePath, true);
+            }
+        }
+
+        /// <summary>
+        ///     Saves the presentation as a password-encrypted Office Open XML package to a stream.
+        /// </summary>
+        /// <param name="destination">Writable stream receiving the encrypted presentation.</param>
+        /// <param name="password">Password used to encrypt the presentation package.</param>
+        public void SaveEncrypted(Stream destination, string password) {
+            ThrowIfDisposed();
+            if (destination == null) throw new ArgumentNullException(nameof(destination));
+            if (password == null) throw new ArgumentNullException(nameof(password));
+            if (!destination.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(destination));
+
+            using var packageStream = new MemoryStream();
+            Save(packageStream);
+            OfficeEncryption.EncryptPackageToStream(packageStream.ToArray(), password, destination);
         }
 
         private void PersistPackageToSourceIfNeeded(bool persistChanges) {
@@ -2595,6 +2780,77 @@ namespace OfficeIMO.PowerPoint {
                 return new PowerPointLayoutBox(838200L, 2174875L, 7772400L, 1470025L);
             }
             return new PowerPointLayoutBox(838200L, 2174875L, 7772400L, 3962400L);
+        }
+
+        private PowerPointTextBox EnsureLayoutHeaderFooterPlaceholderTextBox(int masterIndex, int layoutIndex,
+            PlaceholderValues placeholderType, string? text, PowerPointLayoutBox? bounds, uint index, string name) {
+            ThrowIfDisposed();
+
+            SlideLayoutPart layoutPart = GetSlideLayoutPart(masterIndex, layoutIndex);
+            SetHeaderFooterFlag(layoutPart, placeholderType, true);
+
+            PowerPointTextBox textBox = EnsureLayoutPlaceholderTextBox(masterIndex, layoutIndex, placeholderType,
+                index, bounds ?? GetDefaultHeaderFooterBounds(placeholderType), name);
+            if (text != null) {
+                textBox.Text = text;
+            }
+
+            return textBox;
+        }
+
+        private PowerPointLayoutBox GetDefaultHeaderFooterBounds(PlaceholderValues placeholderType) {
+            long slideWidth = SlideSize.WidthEmus;
+            long slideHeight = SlideSize.HeightEmus;
+            long margin = PowerPointUnits.FromCentimeters(0.6);
+            long footerTop = slideHeight - PowerPointUnits.FromCentimeters(0.8);
+            long footerHeight = PowerPointUnits.FromCentimeters(0.45);
+            long sideWidth = Math.Max(PowerPointUnits.FromCentimeters(2.0), slideWidth / 5);
+            long centerWidth = Math.Max(PowerPointUnits.FromCentimeters(4.0), slideWidth / 3);
+
+            if (placeholderType == PlaceholderValues.DateAndTime) {
+                return new PowerPointLayoutBox(margin, footerTop, sideWidth, footerHeight);
+            }
+
+            if (placeholderType == PlaceholderValues.SlideNumber) {
+                return new PowerPointLayoutBox(slideWidth - margin - sideWidth, footerTop, sideWidth, footerHeight);
+            }
+
+            return new PowerPointLayoutBox((slideWidth - centerWidth) / 2, footerTop, centerWidth, footerHeight);
+        }
+
+        private static void SetHeaderFooterFlag(SlideLayoutPart layoutPart, PlaceholderValues placeholderType, bool visible) {
+            HeaderFooter headerFooter = EnsureHeaderFooter(layoutPart);
+            if (placeholderType == PlaceholderValues.Footer) {
+                headerFooter.Footer = visible;
+                return;
+            }
+
+            if (placeholderType == PlaceholderValues.DateAndTime) {
+                headerFooter.DateTime = visible;
+                return;
+            }
+
+            if (placeholderType == PlaceholderValues.SlideNumber) {
+                headerFooter.SlideNumber = visible;
+            }
+        }
+
+        private static HeaderFooter EnsureHeaderFooter(SlideLayoutPart layoutPart) {
+            SlideLayout layout = layoutPart.SlideLayout ??= new SlideLayout();
+            HeaderFooter? headerFooter = layout.GetFirstChild<HeaderFooter>();
+            if (headerFooter != null) {
+                return headerFooter;
+            }
+
+            headerFooter = new HeaderFooter();
+            SlideLayoutExtensionList? extensionList = layout.GetFirstChild<SlideLayoutExtensionList>();
+            if (extensionList != null) {
+                layout.InsertBefore(headerFooter, extensionList);
+            } else {
+                layout.AppendChild(headerFooter);
+            }
+
+            return headerFooter;
         }
 
         private void ThrowIfDisposed() {

@@ -25,6 +25,7 @@ OfficeIMO.Excel provides a lightweight, typed, and ergonomic API for reading and
   - `Automatic` switches to parallel per operation when the workload exceeds a threshold.
   - `doc.Execution.MaxDegreeOfParallelism` caps parallelism (set to CPU count for best results).
   - Optional diagnostics callbacks: `OnDecision(op, items, mode)`, `OnTiming(op, elapsed)`.
+  - `doc.Execution.SaveWorksheetAfterAutoFit = false` defers AutoFit worksheet-part saves until `Save()`/dispose, which is faster for large report exports that batch all worksheet changes.
 - Safe across tasks:
   - Multiple tasks can operate on the same `ExcelDocument`; the library coordinates writes.
   - Multiple `ExcelDocument` instances can run in parallel without interaction.
@@ -36,6 +37,7 @@ using var doc = ExcelDocument.Create(path);
 // Prefer all cores for compute; keep writes safe
 doc.Execution.Mode = ExecutionMode.Automatic;
 doc.Execution.MaxDegreeOfParallelism = Environment.ProcessorCount;
+doc.Execution.SaveWorksheetAfterAutoFit = false; // report-export mode: save once at the document boundary
 doc.Execution.OnDecision = (op, n, m) => Console.WriteLine($"[Exec] {op}: {n} → {m}");
 // AutoFit with parallel compute
 var s = doc.AddWorkSheet("Data");
@@ -54,6 +56,34 @@ using (var doc = ExcelDocument.Create(stream)) {
 // stream now contains the .xlsx package
 stream.Position = 0;
 File.WriteAllBytes("out.xlsx", stream.ToArray());
+```
+
+Create or open password-encrypted workbooks
+
+```csharp
+using var doc = ExcelDocument.Create("secure.xlsx");
+var sheet = doc.AddWorkSheet("Data");
+sheet.CellValue(1, 1, "Confidential");
+doc.SaveEncrypted("secure.xlsx", "secret");
+
+using var reopened = ExcelDocument.LoadEncrypted("secure.xlsx", "secret");
+var value = reopened.Sheets[0].CellValue(1, 1);
+```
+
+Append to an existing table
+
+```csharp
+using var doc = ExcelDocument.Load(path);
+var sheet = doc["Sales"];
+
+var rows = new DataTable();
+rows.Columns.Add("Revenue", typeof(decimal));
+rows.Columns.Add("Region", typeof(string));
+rows.Rows.Add(150m, "APAC");
+
+// Columns are matched by table header by default, so source order can differ.
+sheet.AppendDataTableToTable(rows, "SalesTable");
+doc.Save();
 ```
 
 What to expect
@@ -114,6 +144,11 @@ foreach (var row in s1.Rows()) {
 
 // Read a specific range and map to POCOs
 var people = s1.RowsAs<Person>("A1:C10").ToList();
+
+// Stream typed rows while the workbook remains open
+foreach (var person in s1.RowsAsStream<Person>("A1:C100000")) {
+    Console.WriteLine(person.Name);
+}
 
 // Friendly headers and explicit aliases are supported too
 var summaries = s1.RowsAs<StatusSummary>("E1:G10").ToList();
@@ -245,6 +280,32 @@ chart.SetSeriesDataLabelTemplate(0, labelTemplate)
 // Use an existing range/table instead:
 // sheet.AddChartFromRange("A1:D5", row: 8, column: 6, type: ExcelChartType.Line);
 // sheet.AddChartFromTable("SalesTable", row: 8, column: 6, type: ExcelChartType.Line);
+```
+
+```csharp
+// Pivot table and pivot-source chart metadata
+sheet.AddPivotTable(
+    sourceRange: "A1:C100",
+    destinationCell: "F2",
+    name: "SalesPivot",
+    rowFields: new[] { "Region" },
+    dataFields: new[] {
+        new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum, "Total Sales", numberFormat: "$#,##0")
+    },
+    fieldOptions: new[] {
+        new ExcelPivotFieldOptions("Region",
+            sortType: FieldSortValues.Ascending,
+            defaultSubtotal: false,
+            hiddenItems: new[] { "Legacy" }),
+        new ExcelPivotFieldOptions("Product",
+            selectedItem: "Standard")
+    },
+    pageFields: new[] { "Product" },
+    rowHeaderCaption: "Region",
+    grandTotalCaption: "Total");
+
+sheet.AddPivotChartFromRange("SalesPivot", "A1:C100", row: 12, column: 1,
+    type: ExcelChartType.ColumnClustered, title: "Sales Pivot");
 ```
 
 ```csharp
@@ -406,15 +467,15 @@ Assert.Throws<ArgumentException>(() => doc.AddWorkSheet("Bad:Name", SheetNameVal
 ## Colors and Styles
 
 ```csharp
-using SixLabors.ImageSharp;
+using OfficeIMO.Drawing;
 
 // Column background + bold via builder
 s.ColumnStyleByHeader("Status", includeHeader: true)
- .Background(Color.Parse("#E7FFE7"))
+ .Background(OfficeColor.Parse("#E7FFE7"))
  .Bold();
 
 // Cell backgrounds
-s.CellBackground(2, 3, Color.Parse("#FFFBE6"));
+s.CellBackground(2, 3, OfficeColor.Parse("#FFFBE6"));
 s.CellBackground(3, 3, "#FFE7E7");
 ```
 
@@ -452,7 +513,7 @@ s.ColumnStyleByHeader("Misc").NumberFormat("0.00E+00");
 
 ## Status
 
-- Values-only read: available (`Read()` fluent APIs, `Rows`, `Rows("A1:C3")`, `RowsAs<T>`)
+- Values-only read: available (`Read()` fluent APIs, `Rows`, `Rows("A1:C3")`, `RowsAs<T>`, `RowsAsStream<T>`)
 - Editable rows: available (`RowsObjects()` / `Read().AsEditableRows()`)
 - Fluent write: available (`Compose(...)`, `AsFluent().Sheet(...)`)
 

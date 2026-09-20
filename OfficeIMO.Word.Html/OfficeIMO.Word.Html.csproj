@@ -5,7 +5,7 @@
         <AssemblyName>OfficeIMO.Word.Html</AssemblyName>
         <AssemblyTitle>OfficeIMO.Word.Html</AssemblyTitle>
 
-        <VersionPrefix>1.0.17</VersionPrefix>
+        <VersionPrefix>1.0.24</VersionPrefix>
         <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
         <TargetFrameworks Condition=" '$([MSBuild]::IsOsPlatform(`Windows`))' ">
             $(TargetFrameworks);net472
@@ -22,6 +22,7 @@
         <IsPublishable>True</IsPublishable>
         <Copyright>(c) 2011 - 2024 Przemyslaw Klys @ Evotec. All rights reserved.</Copyright>
         <PackageIcon>OfficeIMO.png</PackageIcon>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <RepositoryUrl>https://github.com/EvotecIT/OfficeIMO</RepositoryUrl>
         <DebugType>portable</DebugType>
         <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
@@ -36,6 +37,10 @@
             <Pack>True</Pack>
             <PackagePath>\</PackagePath>
         </None>
+        <None Include="README.md">
+            <Pack>True</Pack>
+            <PackagePath>README.md</PackagePath>
+        </None>
     </ItemGroup>
 
     <ItemGroup>
@@ -48,10 +53,11 @@
     <ItemGroup>
         <PackageReference Include="DocumentFormat.OpenXml" Version="[3.5.1, 4.0.0)" />
         <PackageReference Include="AngleSharp" Version="1.4.0" />
-        <PackageReference Include="AngleSharp.Css" Version="1.0.0-beta.213" />
+        <PackageReference Include="AngleSharp.Css" Version="1.0.0-beta.216" />
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\OfficeIMO.Drawing\OfficeIMO.Drawing.csproj" />
         <ProjectReference Include="..\OfficeIMO.Word\OfficeIMO.Word.csproj" />
     </ItemGroup>
 

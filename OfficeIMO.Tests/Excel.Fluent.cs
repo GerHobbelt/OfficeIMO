@@ -6,7 +6,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeIMO.Excel;
 using OfficeIMO.Excel.Fluent;
-using SixLaborsColor = SixLabors.ImageSharp.Color;
+using OfficeColor = OfficeIMO.Drawing.OfficeColor;
 using Xunit;
 
 namespace OfficeIMO.Tests {
@@ -132,8 +132,8 @@ namespace OfficeIMO.Tests {
                         .Row(r => r.Values("Alice", 1))
                         .Row(r => r.Values("Bob", 2))
                         .AutoFilter("A1:B3", criteria)
-                        .ConditionalColorScale("B2:B3", SixLaborsColor.Red, SixLaborsColor.Lime)
-                        .ConditionalDataBar("B2:B3", SixLaborsColor.Blue)
+                        .ConditionalColorScale("B2:B3", OfficeColor.Red, OfficeColor.Lime)
+                        .ConditionalDataBar("B2:B3", OfficeColor.Blue)
                         .AutoFit(columns: true, rows: true))
                     .End()
                     .Save();
@@ -156,7 +156,8 @@ namespace OfficeIMO.Tests {
                   Assert.True(column?.BestFit?.Value ?? false);
 
                   var row = wsPart.Worksheet.Descendants<Row>().FirstOrDefault(r => r.RowIndex != null && r.RowIndex.Value == 1);
-                  Assert.False(row?.CustomHeight?.Value ?? false);
+                  Assert.True(row?.CustomHeight?.Value ?? false);
+                  Assert.True(row?.Height?.Value > 0);
               }
 
             File.Delete(filePath);

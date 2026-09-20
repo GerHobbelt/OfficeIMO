@@ -36,7 +36,8 @@ namespace OfficeIMO.Excel {
             return OpenFromBytes(
                 File.ReadAllBytes(path),
                 options,
-                $"Failed to open '{path}' after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
+                normalizeContentTypes: false,
+                contextMessage: $"Failed to open '{path}' after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
         }
 
         /// <summary>
@@ -49,7 +50,22 @@ namespace OfficeIMO.Excel {
             return OpenFromBytes(
                 ReadAllBytes(stream),
                 options,
-                "Failed to open workbook stream after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
+                normalizeContentTypes: false,
+                contextMessage: "Failed to open workbook stream after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
+        }
+
+        /// <summary>
+        /// Opens an Excel workbook from an in-memory package for read-only access.
+        /// The byte array is used directly; callers should not modify it while the reader is alive.
+        /// </summary>
+        public static ExcelDocumentReader Open(byte[] bytes, ExcelReadOptions? options = null) {
+            if (bytes == null) throw new ArgumentNullException(nameof(bytes));
+
+            return OpenFromBytes(
+                bytes,
+                options,
+                normalizeContentTypes: false,
+                contextMessage: "Failed to open workbook bytes after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
         }
 
         /// <summary>
@@ -77,7 +93,7 @@ namespace OfficeIMO.Excel {
             var sheet = wb.Sheets!.Elements<Sheet>().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
             if (sheet is null) throw new KeyNotFoundException($"Sheet '{name}' not found.");
             var wsPart = (WorksheetPart)WorkbookPartRoot.GetPartById(sheet.Id!);
-            return new ExcelSheetReader(sheet.Name!, wsPart, _sst, _styles, _opt);
+            return new ExcelSheetReader(sheet.Name!, wsPart, _sst, _styles, _opt, _owns);
         }
 
         /// <summary>
@@ -88,25 +104,35 @@ namespace OfficeIMO.Excel {
                 _doc.Dispose();
         }
 
-        private static ExcelDocumentReader OpenFromBytes(byte[] bytes, ExcelReadOptions? options, string contextMessage) {
-            MemoryStream? normalizedStream = null;
+        private static ExcelDocumentReader OpenFromBytes(byte[] bytes, ExcelReadOptions? options, bool normalizeContentTypes, string contextMessage) {
+            MemoryStream? packageStream = null;
             try {
-                normalizedStream = new MemoryStream(bytes.Length + 4096);
-                normalizedStream.Write(bytes, 0, bytes.Length);
-                normalizedStream.Position = 0;
+                if (normalizeContentTypes) {
+                    packageStream = new MemoryStream(bytes.Length + 4096);
+                    packageStream.Write(bytes, 0, bytes.Length);
+                    packageStream.Position = 0;
+                    ExcelPackageUtilities.NormalizeContentTypes(packageStream, leaveOpen: true);
+                    packageStream.Position = 0;
+                } else {
+                    packageStream = new MemoryStream(bytes, 0, bytes.Length, writable: false, publiclyVisible: false);
+                }
 
-                ExcelPackageUtilities.NormalizeContentTypes(normalizedStream, leaveOpen: true);
-                normalizedStream.Position = 0;
-
-                var doc = SpreadsheetDocument.Open(normalizedStream, false);
+                var doc = SpreadsheetDocument.Open(packageStream, false);
                 return new ExcelDocumentReader(doc, options ?? new ExcelReadOptions(), owns: true);
-            } catch (Exception ex) when (ex is InvalidDataException || ex is OpenXmlPackageException || ex is XmlException) {
-                normalizedStream?.Dispose();
+            } catch (Exception ex) when (!normalizeContentTypes && IsRecoverableOpenException(ex)) {
+                packageStream?.Dispose();
+                return OpenFromBytes(bytes, options, normalizeContentTypes: true, contextMessage);
+            } catch (Exception ex) when (IsRecoverableOpenException(ex)) {
+                packageStream?.Dispose();
                 throw new IOException($"{contextMessage} See inner exception for details.", ex);
             } catch {
-                normalizedStream?.Dispose();
+                packageStream?.Dispose();
                 throw;
             }
+        }
+
+        private static bool IsRecoverableOpenException(Exception ex) {
+            return ex is InvalidDataException || ex is OpenXmlPackageException || ex is XmlException;
         }
 
         private static byte[] ReadAllBytes(Stream stream) {

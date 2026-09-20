@@ -135,10 +135,7 @@ namespace OfficeIMO.Tests {
             File.Copy(sourcePath, filePath, overwrite: true);
 
             RewriteContentTypes(filePath, root => {
-                XNamespace ns = root.Name.Namespace;
-                var appOverride = root.Elements(ns + "Override")
-                    .FirstOrDefault(e => string.Equals((string?)e.Attribute("PartName"), "/docProps/app.xml", StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException("Missing /docProps/app.xml override.");
+                var appOverride = GetOrAddAppPropertiesOverride(root);
                 appOverride.SetAttributeValue("ContentType", "application/xml");
             });
 
@@ -155,16 +152,39 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Test_LoadWithAutoSave_PersistsSharedStringTableChangesOnDispose() {
+            string filePath = Path.Combine(_directoryWithFiles, "LoadAutoSaveSharedStrings.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Initial");
+                    document.Save();
+                }
+
+                using (var document = ExcelDocument.Load(filePath, readOnly: false, autoSave: true)) {
+                    document.Sheets[0].CellValue(1, 1, "Updated");
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                object?[,] values = reader.GetSheet("Data").ReadRange("A1:A1");
+
+                Assert.Equal("Updated", values[0, 0]);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
         public void Test_ReaderOpenNormalizedPath_CanReadWorkbook() {
             string sourcePath = Path.Combine(_directoryDocuments, "BasicExcel.xlsx");
             string filePath = Path.Combine(_directoryWithFiles, "ReaderOpenNormalized.xlsx");
             File.Copy(sourcePath, filePath, overwrite: true);
 
             RewriteContentTypes(filePath, root => {
-                XNamespace ns = root.Name.Namespace;
-                var appOverride = root.Elements(ns + "Override")
-                    .FirstOrDefault(e => string.Equals((string?)e.Attribute("PartName"), "/docProps/app.xml", StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException("Missing /docProps/app.xml override.");
+                var appOverride = GetOrAddAppPropertiesOverride(root);
                 appOverride.SetAttributeValue("ContentType", "application/xml");
             });
 
@@ -180,10 +200,7 @@ namespace OfficeIMO.Tests {
             File.Copy(sourcePath, filePath, overwrite: true);
 
             RewriteContentTypes(filePath, root => {
-                XNamespace ns = root.Name.Namespace;
-                var appOverride = root.Elements(ns + "Override")
-                    .FirstOrDefault(e => string.Equals((string?)e.Attribute("PartName"), "/docProps/app.xml", StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException("Missing /docProps/app.xml override.");
+                var appOverride = GetOrAddAppPropertiesOverride(root);
                 appOverride.SetAttributeValue("ContentType", "application/xml");
             });
 
@@ -237,6 +254,21 @@ namespace OfficeIMO.Tests {
             using var writer = XmlWriter.Create(replacementStream, settings);
             document.Save(writer);
             writer.Flush();
+        }
+
+        private static XElement GetOrAddAppPropertiesOverride(XElement root) {
+            XNamespace ns = root.Name.Namespace;
+            var appOverride = root.Elements(ns + "Override")
+                .FirstOrDefault(e => string.Equals((string?)e.Attribute("PartName"), "/docProps/app.xml", StringComparison.OrdinalIgnoreCase));
+            if (appOverride != null) {
+                return appOverride;
+            }
+
+            appOverride = new XElement(ns + "Override",
+                new XAttribute("PartName", "/docProps/app.xml"),
+                new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.extended-properties+xml"));
+            root.Add(appOverride);
+            return appOverride;
         }
 
     }

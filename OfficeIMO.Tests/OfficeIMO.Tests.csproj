@@ -12,10 +12,10 @@
     </PropertyGroup>
     <ItemGroup>
         <PackageReference Include="AutoFixture" Version="4.18.1" />
-        <PackageReference Include="Markdig" Version="1.1.2" />
-        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
+        <PackageReference Include="Markdig" Version="1.1.3" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
         <PackageReference Include="SemanticComparison" Version="4.1.0" />
-        <PackageReference Include="PdfPig" Version="0.1.13" />
+        <PackageReference Include="PdfPig" Version="0.1.14" />
         <PackageReference Include="xunit" Version="2.9.3" />
         <PackageReference Include="coverlet.collector" Version="10.0.0">
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -25,7 +25,7 @@
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-        <PackageReference Include="OpenMcdf" Version="3.0.3" />
+        <PackageReference Include="OpenMcdf" Version="3.1.3" />
 
     </ItemGroup>
 
@@ -59,6 +59,7 @@
         <ProjectReference Include="..\\OfficeIMO.Markup.Excel\\OfficeIMO.Markup.Excel.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markup.PowerPoint\\OfficeIMO.Markup.PowerPoint.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markup.Word\\OfficeIMO.Markup.Word.csproj" />
+        <ProjectReference Include="..\\OfficeIMO.Drawing\\OfficeIMO.Drawing.csproj" />
     </ItemGroup>
     <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
         <Reference Include="System.IO.Compression" />

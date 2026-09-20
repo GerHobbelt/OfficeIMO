@@ -14,27 +14,127 @@ namespace OfficeIMO.Excel {
             if (string.IsNullOrWhiteSpace(range)) throw new System.ArgumentNullException(nameof(range));
             if (byHeader == null) throw new System.ArgumentNullException(nameof(byHeader));
 
-            var totalsByHeader = new System.Collections.Generic.Dictionary<string, DocumentFormat.OpenXml.Spreadsheet.TotalsRowFunctionValues>(byHeader, System.StringComparer.OrdinalIgnoreCase);
+            SetTableTotalsCore(range, byHeader, throwIfMissing: false);
+        }
+
+        /// <summary>
+        /// Enables a totals row for the named table and assigns per-column functions by header name.
+        /// </summary>
+        /// <param name="tableName">Table name or display name.</param>
+        /// <param name="byHeader">Mapping of table header names to totals functions.</param>
+        public void SetTableTotalsByName(string tableName, System.Collections.Generic.IDictionary<string, DocumentFormat.OpenXml.Spreadsheet.TotalsRowFunctionValues> byHeader) {
+            if (string.IsNullOrWhiteSpace(tableName)) throw new System.ArgumentNullException(nameof(tableName));
+            if (byHeader == null) throw new System.ArgumentNullException(nameof(byHeader));
+
+            SetTableTotalsCore(tableName, byHeader, throwIfMissing: true);
+        }
+
+        /// <summary>
+        /// Clears totals-row settings for the table identified by range, name, or display name.
+        /// </summary>
+        /// <param name="tableOrRange">Table range, name, or display name.</param>
+        public void ClearTableTotals(string tableOrRange) {
+            if (string.IsNullOrWhiteSpace(tableOrRange)) throw new System.ArgumentNullException(nameof(tableOrRange));
+
             WriteLock(() => {
-                foreach (var tdp in _worksheetPart.TableDefinitionParts) {
-                    var table = tdp.Table;
-                    if (table is null) continue;
-                    if (table.Reference?.Value != range) continue;
-                    table.TotalsRowShown = true;
-                    var tableColumns = table.TableColumns ?? throw new InvalidOperationException("Table columns are missing.");
-                    var headerNames = tableColumns.Elements<TableColumn>().Select(tc => tc.Name?.Value ?? string.Empty).ToList();
-                    int idx = 0;
-                    foreach (var tc in tableColumns.Elements<TableColumn>()) {
-                        var name = headerNames[idx++];
-                        if (totalsByHeader.TryGetValue(name, out var fn)) {
-                            tc.TotalsRowFunction = fn;
-                        }
-                    }
-                    table.Save();
-                    break;
+                var table = FindTableByRangeNameOrDisplayName(tableOrRange);
+                if (table == null) {
+                    throw new InvalidOperationException($"Table '{tableOrRange}' was not found on worksheet '{Name}'.");
                 }
+
+                table.TotalsRowShown = false;
+                table.TotalsRowCount = 0U;
+                foreach (var tableColumn in table.TableColumns?.Elements<TableColumn>() ?? Enumerable.Empty<TableColumn>()) {
+                    tableColumn.TotalsRowFunction = null;
+                    tableColumn.TotalsRowFormula = null;
+                    tableColumn.TotalsRowLabel = null;
+                }
+
+                table.Save();
                 WorksheetRoot.Save();
             });
+        }
+
+        /// <summary>
+        /// Updates the visual style flags for the table identified by range, name, or display name.
+        /// </summary>
+        /// <param name="tableOrRange">Table range, name, or display name.</param>
+        /// <param name="style">Table style to apply.</param>
+        /// <param name="showFirstColumn">Optional first-column emphasis flag.</param>
+        /// <param name="showLastColumn">Optional last-column emphasis flag.</param>
+        /// <param name="showRowStripes">Optional row stripe flag.</param>
+        /// <param name="showColumnStripes">Optional column stripe flag.</param>
+        public void SetTableStyle(
+            string tableOrRange,
+            TableStyle style,
+            bool? showFirstColumn = null,
+            bool? showLastColumn = null,
+            bool? showRowStripes = null,
+            bool? showColumnStripes = null) {
+            if (string.IsNullOrWhiteSpace(tableOrRange)) throw new System.ArgumentNullException(nameof(tableOrRange));
+
+            WriteLock(() => {
+                var table = FindTableByRangeNameOrDisplayName(tableOrRange);
+                if (table == null) {
+                    throw new InvalidOperationException($"Table '{tableOrRange}' was not found on worksheet '{Name}'.");
+                }
+
+                var styleInfo = table.TableStyleInfo;
+                if (styleInfo == null) {
+                    styleInfo = new TableStyleInfo();
+                    var extensionList = table.GetFirstChild<TableExtensionList>();
+                    if (extensionList == null) {
+                        table.Append(styleInfo);
+                    } else {
+                        table.InsertBefore(styleInfo, extensionList);
+                    }
+                }
+
+                styleInfo.Name = style.ToString();
+                if (showFirstColumn.HasValue) styleInfo.ShowFirstColumn = showFirstColumn.Value;
+                if (showLastColumn.HasValue) styleInfo.ShowLastColumn = showLastColumn.Value;
+                if (showRowStripes.HasValue) styleInfo.ShowRowStripes = showRowStripes.Value;
+                if (showColumnStripes.HasValue) styleInfo.ShowColumnStripes = showColumnStripes.Value;
+
+                table.Save();
+                WorksheetRoot.Save();
+            });
+        }
+
+        private void SetTableTotalsCore(string tableOrRange, System.Collections.Generic.IDictionary<string, DocumentFormat.OpenXml.Spreadsheet.TotalsRowFunctionValues> byHeader, bool throwIfMissing) {
+            var totalsByHeader = new System.Collections.Generic.Dictionary<string, DocumentFormat.OpenXml.Spreadsheet.TotalsRowFunctionValues>(byHeader, System.StringComparer.OrdinalIgnoreCase);
+            WriteLock(() => {
+                var table = FindTableByRangeNameOrDisplayName(tableOrRange);
+                if (table == null) {
+                    if (throwIfMissing) {
+                        throw new InvalidOperationException($"Table '{tableOrRange}' was not found on worksheet '{Name}'.");
+                    }
+
+                    return;
+                }
+
+                table.TotalsRowShown = true;
+                table.TotalsRowCount = 1U;
+                var tableColumns = table.TableColumns ?? throw new InvalidOperationException("Table columns are missing.");
+                foreach (var tc in tableColumns.Elements<TableColumn>()) {
+                    var name = tc.Name?.Value ?? string.Empty;
+                    if (totalsByHeader.TryGetValue(name, out var fn)) {
+                        tc.TotalsRowFunction = fn;
+                    }
+                }
+
+                table.Save();
+                WorksheetRoot.Save();
+            });
+        }
+
+        private Table? FindTableByRangeNameOrDisplayName(string tableOrRange) {
+            return _worksheetPart.TableDefinitionParts
+                .Select(part => part.Table)
+                .FirstOrDefault(table => table != null && (
+                    string.Equals(table.Reference?.Value, tableOrRange, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(table.Name?.Value, tableOrRange, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(table.DisplayName?.Value, tableOrRange, StringComparison.OrdinalIgnoreCase)));
         }
         /// <summary>
         /// Adds an AutoFilter to the worksheet or table.
@@ -161,7 +261,7 @@ namespace OfficeIMO.Excel {
         /// <exception cref="ArgumentException">Thrown when <paramref name="range"/> is not in a valid format.</exception>
         /// <exception cref="InvalidOperationException">Thrown when the specified range overlaps with an existing table.</exception>
         public void AddTable(string range, bool hasHeader, string name, TableStyle style) {
-            AddTable(range, hasHeader, name, style, includeAutoFilter: true);
+            AddTableCore(range, hasHeader, name, style, includeAutoFilter: true, ensureRangeCellsExist: true);
         }
 
         /// <summary>
@@ -200,10 +300,19 @@ namespace OfficeIMO.Excel {
         /// - Order doesn't matter — the final state will be consistent regardless of operation order.
         /// </remarks>
         public void AddTable(string range, bool hasHeader, string name, TableStyle style, bool includeAutoFilter, TableNameValidationMode validationMode = TableNameValidationMode.Sanitize) {
+            AddTableCore(range, hasHeader, name, style, includeAutoFilter, validationMode, ensureRangeCellsExist: true);
+        }
+
+        internal string AddTableAndGetName(string range, bool hasHeader, string name, TableStyle style, bool includeAutoFilter, TableNameValidationMode validationMode = TableNameValidationMode.Sanitize, bool ensureRangeCellsExist = true) {
+            return AddTableCore(range, hasHeader, name, style, includeAutoFilter, validationMode, ensureRangeCellsExist);
+        }
+
+        private string AddTableCore(string range, bool hasHeader, string name, TableStyle style, bool includeAutoFilter, TableNameValidationMode validationMode = TableNameValidationMode.Sanitize, bool ensureRangeCellsExist = true) {
             if (string.IsNullOrEmpty(range)) {
                 throw new ArgumentNullException(nameof(range));
             }
 
+            string resolvedName = string.Empty;
             WriteLock(() => {
                 var cells = range.Split(':');
                 if (cells.Length != 2) {
@@ -246,7 +355,9 @@ namespace OfficeIMO.Excel {
                     }
                 }
 
-                EnsureRangeCellsExist(startRowIndex, endRowIndex, startColumnIndex, endColumnIndex);
+                if (ensureRangeCellsExist) {
+                    EnsureRangeCellsExist(startRowIndex, endRowIndex, startColumnIndex, endColumnIndex);
+                }
 
                 // Generate unique table ID atomically (must be unique across the entire workbook)
                 uint tableId;
@@ -291,6 +402,7 @@ namespace OfficeIMO.Excel {
                 if (string.IsNullOrWhiteSpace(name)) {
                     throw new InvalidOperationException("Table name cannot be empty after validation.");
                 }
+                resolvedName = name;
                 // Reserve the final name in the workbook-level cache for fast uniqueness checks
                 _excelDocument.ReserveTableName(name);
 
@@ -307,11 +419,14 @@ namespace OfficeIMO.Excel {
                 var usedHeaders = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
                 for (uint i = 0; i < columnsCount; i++) {
                     string baseName = $"Column{i + 1}";
+                    string headerValue = string.Empty;
+                    bool headerCellIsSharedString = false;
                     // If the table has headers, try to get the actual header value
                     if (hasHeader && startRowIndex > 0) {
                         var headerCell = GetCell(startRowIndex, startColumnIndex + (int)i);
                         if (headerCell != null) {
-                            string headerValue = GetCellText(headerCell);
+                            headerCellIsSharedString = headerCell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString;
+                            headerValue = GetCellText(headerCell);
                             if (!string.IsNullOrWhiteSpace(headerValue)) {
                                 baseName = headerValue;
                             }
@@ -324,7 +439,7 @@ namespace OfficeIMO.Excel {
                     }
                     tableColumns.Append(new TableColumn { Id = i + 1, Name = candidate });
 
-                    if (hasHeader) {
+                    if (hasHeader && (!headerCellIsSharedString || !string.Equals(headerValue, candidate, System.StringComparison.Ordinal))) {
                         CellValueCore(startRowIndex, startColumnIndex + (int)i, candidate);
                     }
                 }
@@ -388,6 +503,8 @@ namespace OfficeIMO.Excel {
 
                 WorksheetRoot.Save();
             });
+
+            return resolvedName;
         }
 
         /// <summary>
@@ -472,14 +589,54 @@ namespace OfficeIMO.Excel {
         private void EnsureRangeCellsExist(int startRowIndex, int endRowIndex, int startColumnIndex, int endColumnIndex) {
             var sheetData = GetOrCreateSheetData();
 
+            if (RangeCellsAlreadyExistAsContiguousRows(sheetData, startRowIndex, endRowIndex, startColumnIndex, endColumnIndex)) {
+                return;
+            }
+
             var rows = sheetData.Elements<Row>()
                 .Where(r => r.RowIndex != null)
                 .ToDictionary(r => (int)r.RowIndex!.Value);
+
+            int columnCount = endColumnIndex - startColumnIndex + 1;
+            bool useBitMask = columnCount <= 64;
+            ulong fullMask = columnCount == 64 ? ulong.MaxValue : (1UL << columnCount) - 1UL;
 
             for (int rowIndex = startRowIndex; rowIndex <= endRowIndex; rowIndex++) {
                 if (!rows.TryGetValue(rowIndex, out Row? row)) {
                     row = GetOrCreateRowElement(sheetData, rowIndex);
                     rows[rowIndex] = row;
+                }
+
+                if (useBitMask) {
+                    ulong existingMask = 0UL;
+                    foreach (var cell in row.Elements<Cell>()) {
+                        var cellReference = cell.CellReference?.Value;
+                        if (string.IsNullOrEmpty(cellReference)) {
+                            continue;
+                        }
+
+                        int columnIndex = GetColumnIndex(cellReference!);
+                        if (columnIndex < startColumnIndex || columnIndex > endColumnIndex) {
+                            continue;
+                        }
+
+                        existingMask |= 1UL << (columnIndex - startColumnIndex);
+                        if (existingMask == fullMask) {
+                            break;
+                        }
+                    }
+
+                    if (existingMask == fullMask) {
+                        continue;
+                    }
+
+                    for (int offset = 0; offset < columnCount; offset++) {
+                        if ((existingMask & (1UL << offset)) == 0UL) {
+                            GetCell(rowIndex, startColumnIndex + offset);
+                        }
+                    }
+
+                    continue;
                 }
 
                 var existingColumns = new HashSet<int>();
@@ -496,6 +653,58 @@ namespace OfficeIMO.Excel {
                     }
                 }
             }
+        }
+
+        private static bool RangeCellsAlreadyExistAsContiguousRows(SheetData sheetData, int startRowIndex, int endRowIndex, int startColumnIndex, int endColumnIndex) {
+            int expectedRow = startRowIndex;
+            int expectedColumnCount = endColumnIndex - startColumnIndex + 1;
+
+            foreach (var row in sheetData.Elements<Row>()) {
+                if (row.RowIndex == null) {
+                    continue;
+                }
+
+                int rowIndex = (int)row.RowIndex.Value;
+                if (rowIndex < startRowIndex) {
+                    continue;
+                }
+
+                if (rowIndex > endRowIndex) {
+                    break;
+                }
+
+                if (rowIndex != expectedRow || !RowHasExactContiguousCells(row, startColumnIndex, endColumnIndex, expectedColumnCount)) {
+                    return false;
+                }
+
+                expectedRow++;
+            }
+
+            return expectedRow > endRowIndex;
+        }
+
+        private static bool RowHasExactContiguousCells(Row row, int startColumnIndex, int endColumnIndex, int expectedColumnCount) {
+            int expectedColumn = startColumnIndex;
+            int cellCount = 0;
+
+            foreach (var cell in row.Elements<Cell>()) {
+                string? cellReference = cell.CellReference?.Value;
+                if (string.IsNullOrEmpty(cellReference)) {
+                    return false;
+                }
+
+                if (GetColumnIndex(cellReference!) != expectedColumn) {
+                    return false;
+                }
+
+                expectedColumn++;
+                cellCount++;
+                if (cellCount > expectedColumnCount) {
+                    return false;
+                }
+            }
+
+            return cellCount == expectedColumnCount && expectedColumn == endColumnIndex + 1;
         }
 
     }

@@ -57,8 +57,8 @@ namespace OfficeIMO.Excel {
                 return "A1";
             }
 
-            string start = A1.ColumnIndexToLetters(minCol) + minRow.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            string end = A1.ColumnIndexToLetters(maxCol) + maxRow.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            string start = A1.CellReference(minRow, minCol);
+            string end = A1.CellReference(maxRow, maxCol);
             return start == end ? start : start + ":" + end;
         }
 
@@ -77,10 +77,20 @@ namespace OfficeIMO.Excel {
             string reference = ComputeSheetDimensionReference(ws);
 
             if (dimEl == null) {
-                ws.InsertAt(new SheetDimension { Reference = reference }, 0);
+                InsertSheetDimensionInSchemaOrder(ws, new SheetDimension { Reference = reference });
             } else {
                 dimEl.Reference = reference;
             }
+        }
+
+        private static void InsertSheetDimensionInSchemaOrder(Worksheet worksheet, SheetDimension dimension) {
+            var sheetProperties = worksheet.GetFirstChild<SheetProperties>();
+            if (sheetProperties != null) {
+                worksheet.InsertAfter(dimension, sheetProperties);
+                return;
+            }
+
+            worksheet.PrependChild(dimension);
         }
     }
 }

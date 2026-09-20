@@ -1,7 +1,7 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
-using SixLabors.Fonts;
+using OfficeIMO.Drawing;
 using System.Globalization;
 using System.Threading;
 
@@ -30,6 +30,8 @@ namespace OfficeIMO.Excel {
         private readonly SpreadsheetDocument _spreadSheetDocument;
         private readonly ExcelDocument _excelDocument;
         private bool _isBatchOperation = false;
+        private bool _hasWorksheetMutations;
+        private bool _requiresSavePreparation;
         private readonly object _batchLock = new object();
         private static int _nextTableId = 1;
         private static readonly object _tableIdLock = new object();
@@ -86,6 +88,8 @@ namespace OfficeIMO.Excel {
             _excelDocument = excelDocument;
             _sheet = sheet;
             _spreadSheetDocument = spreadSheetDocument;
+            _hasWorksheetMutations = excelDocument.IsPackageDirty;
+            _requiresSavePreparation = excelDocument.IsPackageDirty;
 
             var workbookPart = spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null");
             _worksheetPart = (WorksheetPart)workbookPart.GetPartById(sheet.Id!);
@@ -103,6 +107,8 @@ namespace OfficeIMO.Excel {
         public ExcelSheet(ExcelDocument excelDocument, WorkbookPart workbookpart, SpreadsheetDocument spreadSheetDocument, string name) {
             _excelDocument = excelDocument;
             _spreadSheetDocument = spreadSheetDocument;
+            _hasWorksheetMutations = true;
+            _requiresSavePreparation = true;
 
             UInt32Value id = excelDocument.id.Max(v => v.Value) + 1;
             if (name == "") {
@@ -184,7 +190,7 @@ namespace OfficeIMO.Excel {
                 }
             }
 
-            string cellReference = GetColumnName(column) + row.ToString(CultureInfo.InvariantCulture);
+            string cellReference = A1.CellReference(row, column);
 
             // Find or create cell with proper ordering (by numeric column index)
             Cell? cell = null;
@@ -258,29 +264,40 @@ namespace OfficeIMO.Excel {
         }
 
         private static string GetColumnName(int columnIndex) {
-            int dividend = columnIndex;
-            StringBuilder columnName = new StringBuilder();
-
-            while (dividend > 0) {
-                int modulo = (dividend - 1) % 26;
-                columnName.Insert(0, Convert.ToChar(65 + modulo));
-                dividend = (dividend - modulo) / 26;
-            }
-
-            return columnName.ToString();
+            return A1.ColumnIndexToLetters(columnIndex);
         }
 
         private static int GetColumnIndex(string cellReference) {
             int columnIndex = 0;
-            foreach (char ch in cellReference.Where(char.IsLetter)) {
-                columnIndex = (columnIndex * 26) + (ch - 'A' + 1);
+            for (int i = 0; i < cellReference.Length; i++) {
+                char ch = cellReference[i];
+                if (ch >= 'A' && ch <= 'Z') {
+                    columnIndex = (columnIndex * 26) + (ch - 'A' + 1);
+                    continue;
+                }
+
+                if (ch >= 'a' && ch <= 'z') {
+                    columnIndex = (columnIndex * 26) + (ch - 'a' + 1);
+                    continue;
+                }
+
+                if (columnIndex > 0) {
+                    break;
+                }
             }
             return columnIndex;
         }
 
         private static int GetRowIndex(string cellReference) {
-            var digits = new string(cellReference.Where(char.IsDigit).ToArray());
-            return int.Parse(digits, CultureInfo.InvariantCulture);
+            int rowIndex = 0;
+            for (int i = 0; i < cellReference.Length; i++) {
+                char ch = cellReference[i];
+                if (ch >= '0' && ch <= '9') {
+                    rowIndex = (rowIndex * 10) + (ch - '0');
+                }
+            }
+
+            return rowIndex;
         }
 
         // Exposed as internal so other components in the same assembly (e.g., SheetComposer)
@@ -331,7 +348,10 @@ namespace OfficeIMO.Excel {
         }
 
         private void WriteLock(Action action) {
-            Locking.ExecuteWrite(_excelDocument.EnsureLock(), action);
+            Locking.ExecuteWrite(_excelDocument.EnsureLock(), () => {
+                action();
+                MarkRequiresSavePreparation();
+            });
         }
 
         private void WriteLockConditional(Action action) {
@@ -339,41 +359,13 @@ namespace OfficeIMO.Excel {
             // just execute the action directly
             if (_isBatchOperation || Locking.IsNoLock) {
                 action();
+                MarkRequiresSavePreparation();
             } else {
                 WriteLock(action);
             }
         }
 
-        private SixLabors.Fonts.Font GetDefaultFont() {
-            // Try to use the workbook's default font if present
-            var wf = GetWorkbookDefaultFont();
-            if (wf != null) return wf;
-
-            string[] preferred = { "Calibri", "Arial", "Liberation Sans", "DejaVu Sans", "Times New Roman" };
-
-            foreach (var name in preferred) {
-                try {
-                    var font = SystemFonts.CreateFont(name, 11);
-                    if (IsFontUsable(font)) return font;
-                } catch (FontFamilyNotFoundException) {
-                    // Try next option
-                }
-            }
-
-            foreach (var family in SystemFonts.Collection.Families) {
-                try {
-                    var font = family.CreateFont(11);
-                    if (IsFontUsable(font)) return font;
-                } catch {
-                    // Skip fonts that cannot be loaded or measured
-                }
-            }
-
-            // Fallback to first available family without validation
-            return SystemFonts.Collection.Families.First().CreateFont(11);
-        }
-
-        private SixLabors.Fonts.Font? GetWorkbookDefaultFont() {
+        private OfficeFontInfo? GetWorkbookDefaultFontInfo() {
             try {
                 var workbookPart = WorkbookPartRoot;
                 var stylesPart = workbookPart?.WorkbookStylesPart;
@@ -386,14 +378,10 @@ namespace OfficeIMO.Excel {
                 var fontSize = firstFont.GetFirstChild<FontSize>()?.Val?.Value ?? 11.0;
                 bool bold = firstFont.GetFirstChild<Bold>() != null;
                 bool italic = firstFont.GetFirstChild<Italic>() != null;
+                bool underline = firstFont.GetFirstChild<Underline>() != null;
 
-                var style = bold && italic ? FontStyle.BoldItalic : bold ? FontStyle.Bold : italic ? FontStyle.Italic : FontStyle.Regular;
                 if (!string.IsNullOrEmpty(fontName)) {
-                    try {
-                        return SystemFonts.CreateFont(fontName!, (float)fontSize, style);
-                    } catch (FontFamilyNotFoundException) {
-                        return null;
-                    }
+                    return new OfficeFontInfo(fontName, fontSize, GetOfficeFontStyle(bold, italic, underline));
                 }
             } catch {
                 // ignore
@@ -401,47 +389,41 @@ namespace OfficeIMO.Excel {
             return null;
         }
 
-        private static bool IsFontUsable(SixLabors.Fonts.Font font) {
-            try {
-                TextMeasurer.MeasureSize("0", new TextOptions(font));
-                return true;
-            } catch {
-                return false;
-            }
-        }
-
-        private SixLabors.Fonts.Font GetCellFont(Cell cell) {
-            var defaultFont = GetDefaultFont();
-            if (cell.StyleIndex == null) return defaultFont;
+        private OfficeFontInfo GetCellFontInfo(Cell cell, OfficeFontInfo fallbackFontInfo) {
+            if (cell.StyleIndex == null) return fallbackFontInfo;
 
             var workbookPart = WorkbookPartRoot;
             var stylesPart = workbookPart?.WorkbookStylesPart;
             var stylesheet = stylesPart?.Stylesheet;
             var fonts = stylesheet?.Fonts;
             var cellFormats = stylesheet?.CellFormats;
-            if (fonts == null || cellFormats == null) return defaultFont;
+            if (fonts == null || cellFormats == null) return fallbackFontInfo;
 
             var cellFormat = cellFormats.Elements<CellFormat>().ElementAtOrDefault((int)cell.StyleIndex.Value);
-            if (cellFormat?.FontId == null) return defaultFont;
+            if (cellFormat?.FontId == null) return fallbackFontInfo;
 
             var fontElement = fonts.Elements<DocumentFormat.OpenXml.Spreadsheet.Font>().ElementAtOrDefault((int)cellFormat.FontId.Value);
-            if (fontElement == null) return defaultFont;
+            if (fontElement == null) return fallbackFontInfo;
 
+            return CreateFontInfoFromOpenXml(fontElement, (float)fallbackFontInfo.Size);
+        }
+
+        private static OfficeFontInfo CreateFontInfoFromOpenXml(DocumentFormat.OpenXml.Spreadsheet.Font fontElement, float fallbackSize) {
             var fontName = fontElement.GetFirstChild<FontName>()?.Val?.Value;
-            var fontSize = fontElement.GetFirstChild<FontSize>()?.Val?.Value ?? defaultFont.Size;
+            var fontSize = fontElement.GetFirstChild<FontSize>()?.Val?.Value ?? fallbackSize;
             bool bold = fontElement.GetFirstChild<Bold>() != null;
             bool italic = fontElement.GetFirstChild<Italic>() != null;
+            bool underline = fontElement.GetFirstChild<Underline>() != null;
 
-            try {
-                var style = bold && italic ? FontStyle.BoldItalic : bold ? FontStyle.Bold : italic ? FontStyle.Italic : FontStyle.Regular;
-                if (!string.IsNullOrEmpty(fontName)) {
-                    return SystemFonts.CreateFont(fontName!, (float)fontSize, style);
-                }
-                return defaultFont.Family.CreateFont((float)fontSize, style);
-            } catch (FontFamilyNotFoundException) {
-                var fallbackStyle = bold && italic ? FontStyle.BoldItalic : bold ? FontStyle.Bold : italic ? FontStyle.Italic : FontStyle.Regular;
-                return defaultFont.Family.CreateFont((float)fontSize, fallbackStyle);
-            }
+            return new OfficeFontInfo(fontName, fontSize, GetOfficeFontStyle(bold, italic, underline));
+        }
+
+        private static OfficeFontStyle GetOfficeFontStyle(bool bold, bool italic, bool underline) {
+            var style = OfficeFontStyle.Regular;
+            if (bold) style |= OfficeFontStyle.Bold;
+            if (italic) style |= OfficeFontStyle.Italic;
+            if (underline) style |= OfficeFontStyle.Underline;
+            return style;
         }
 
         /// <summary>
@@ -456,6 +438,14 @@ namespace OfficeIMO.Excel {
         /// </summary>
         internal void Commit() {
             _worksheetPart?.Worksheet?.Save();
+            _requiresSavePreparation = false;
+        }
+
+        internal bool RequiresSavePreparation => _requiresSavePreparation;
+
+        internal void MarkRequiresSavePreparation() {
+            _requiresSavePreparation = true;
+            _excelDocument.MarkRequiresSavePreflight();
         }
     }
 }

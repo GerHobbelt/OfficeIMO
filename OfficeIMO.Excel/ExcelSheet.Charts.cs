@@ -138,6 +138,25 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
+        /// Adds a chart using an A1 range and marks it as sourced from an existing pivot table.
+        /// </summary>
+        public ExcelChart AddPivotChartFromRange(string pivotTableName, string dataRangeA1, int row, int column, int widthPixels = 640, int heightPixels = 360,
+            ExcelChartType type = ExcelChartType.ColumnClustered, bool hasHeaders = true, string? title = null, bool includeCachedData = true, uint formatId = 0U) {
+            if (string.IsNullOrWhiteSpace(pivotTableName)) throw new ArgumentNullException(nameof(pivotTableName));
+
+            string? resolvedName = GetPivotTables()
+                .FirstOrDefault(p => string.Equals(p.Name, pivotTableName, StringComparison.OrdinalIgnoreCase))
+                ?.Name;
+            if (string.IsNullOrWhiteSpace(resolvedName)) {
+                throw new InvalidOperationException($"Pivot table '{pivotTableName}' was not found on sheet '{Name}'.");
+            }
+
+            ExcelChart chart = AddChartFromRange(dataRangeA1, row, column, widthPixels, heightPixels, type, hasHeaders, title, includeCachedData);
+            chart.SetPivotSource(resolvedName!, formatId);
+            return chart;
+        }
+
+        /// <summary>
         /// Adds a scatter chart using explicit X/Y ranges.
         /// </summary>
         public ExcelChart AddScatterChartFromRanges(IEnumerable<ExcelChartSeriesRange> seriesRanges, int row, int column, int widthPixels = 640,
@@ -171,12 +190,12 @@ namespace OfficeIMO.Excel {
             DrawingsPart? drawingPart = null;
 
             WriteLock(() => {
-                var drawing = WorksheetRoot.GetFirstChild<Drawing>();
+                var drawing = WorksheetRoot.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Drawing>();
                 if (drawing == null) {
                     drawingPart = _worksheetPart.AddNewPart<DrawingsPart>();
                     drawingPart.WorksheetDrawing = new Xdr.WorksheetDrawing();
                     string relId = _worksheetPart.GetIdOfPart(drawingPart);
-                    WorksheetRoot.Append(new Drawing { Id = relId });
+                    WorksheetRoot.Append(new DocumentFormat.OpenXml.Spreadsheet.Drawing { Id = relId });
                 } else {
                     drawingPart = (DrawingsPart)_worksheetPart.GetPartById(drawing.Id!);
                     drawingPart.WorksheetDrawing ??= new Xdr.WorksheetDrawing();
@@ -237,12 +256,12 @@ namespace OfficeIMO.Excel {
             DrawingsPart? drawingPart = null;
 
             WriteLock(() => {
-                var drawing = WorksheetRoot.GetFirstChild<Drawing>();
+                var drawing = WorksheetRoot.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Drawing>();
                 if (drawing == null) {
                     drawingPart = _worksheetPart.AddNewPart<DrawingsPart>();
                     drawingPart.WorksheetDrawing = new Xdr.WorksheetDrawing();
                     string relId = _worksheetPart.GetIdOfPart(drawingPart);
-                    WorksheetRoot.Append(new Drawing { Id = relId });
+                    WorksheetRoot.Append(new DocumentFormat.OpenXml.Spreadsheet.Drawing { Id = relId });
                 } else {
                     drawingPart = (DrawingsPart)_worksheetPart.GetPartById(drawing.Id!);
                     drawingPart.WorksheetDrawing ??= new Xdr.WorksheetDrawing();
