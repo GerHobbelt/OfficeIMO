@@ -6,26 +6,29 @@ namespace OfficeIMO.Html;
 public static partial class HtmlRtfConverterExtensions {
     /// <summary>Converts an RTF document to semantic HTML.</summary>
     public static string ToHtml(this RtfDocument document, RtfToHtmlOptions? options = null) {
+        return document.ToHtmlResult(options).RequireValue();
+    }
+
+    private static string ToHtmlCore(RtfDocument document, RtfToHtmlOptions effectiveOptions) {
         if (document == null) {
             throw new ArgumentNullException(nameof(document));
         }
 
-        RtfToHtmlOptions effectiveOptions = options ?? new RtfToHtmlOptions();
         if (effectiveOptions.PreferEncapsulatedHtml &&
             document.HtmlEncapsulation != null &&
             !string.IsNullOrWhiteSpace(document.HtmlEncapsulation.Html)) {
             var importOptions = HtmlToRtfOptions.CreateUntrustedHtmlProfile();
             importOptions.UrlPolicy = effectiveOptions.GetUrlPolicy().Clone();
-            RtfDocument encapsulatedDocument = document.HtmlEncapsulation.Html.ToRtfDocument(importOptions);
-            foreach (HtmlRtfConversionDiagnostic diagnostic in importOptions.Diagnostics) {
-                effectiveOptions.AddDiagnostic(diagnostic.Code, diagnostic.Message, diagnostic.Source, severity: diagnostic.Severity);
+            HtmlToRtfResult imported = document.HtmlEncapsulation.Html.ToRtfDocumentResult(importOptions);
+            foreach (HtmlRtfConversionDiagnostic diagnostic in imported.RtfDiagnostics) {
+                effectiveOptions.AddDiagnostic(diagnostic.Code, diagnostic.Message, diagnostic.Source, severity: diagnostic.Severity, action: diagnostic.Action);
             }
 
             effectiveOptions.AddDiagnostic(
                 "RtfHtmlEncapsulatedHtmlUsed",
                 "Outlook/Exchange encapsulated HTML was used instead of the RTF plain-text fallback.",
                 severity: HtmlRtfConversionDiagnosticSeverity.Info);
-            return RtfHtmlWriter.Write(encapsulatedDocument, effectiveOptions);
+            return RtfHtmlWriter.Write(imported.RequireValue(), effectiveOptions);
         }
 
         return RtfHtmlWriter.Write(document, effectiveOptions);
@@ -70,11 +73,12 @@ public static partial class HtmlRtfConverterExtensions {
 
     /// <summary>Loads semantic HTML into an RTF document model.</summary>
     public static RtfDocument ToRtfDocument(this string html, HtmlToRtfOptions? options = null) {
-        if (html == null) {
-            throw new ArgumentNullException(nameof(html));
-        }
+        return html.ToRtfDocumentResult(options).RequireValue();
+    }
 
-        return RtfHtmlReader.Read(html, options ?? new HtmlToRtfOptions());
+    /// <summary>Loads a prepared shared HTML conversion document into an RTF document model without reparsing.</summary>
+    public static RtfDocument ToRtfDocument(this HtmlConversionDocument document, HtmlToRtfOptions? options = null) {
+        return document.ToRtfDocumentResult(options).RequireValue();
     }
 
     /// <summary>Loads encoded semantic HTML bytes into an RTF document model.</summary>

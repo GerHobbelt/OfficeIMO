@@ -5,7 +5,7 @@ namespace OfficeIMO.Markdown.Pdf;
 /// <summary>
 /// Explicit Markdown-to-PDF conversion entry points for scenarios where the source is a file path.
 /// </summary>
-public static class MarkdownPdfConverter {
+internal static class MarkdownPdfConverter {
     /// <summary>
     /// Converts a Markdown file to a first-party OfficeIMO PDF document model.
     /// </summary>
@@ -14,10 +14,7 @@ public static class MarkdownPdfConverter {
             throw new ArgumentException("Markdown file path cannot be empty.", nameof(markdownPath));
         }
 
-        options ??= new MarkdownPdfSaveOptions();
-        string fullPath = Path.GetFullPath(markdownPath);
-        string markdown = File.ReadAllText(fullPath, Encoding.UTF8);
-        return ConvertFileMarkdown(markdown, fullPath, options);
+        return markdownPath.ToPdfResultFromMarkdownFile(options).Value;
     }
 
     /// <summary>
@@ -72,7 +69,7 @@ public static class MarkdownPdfConverter {
 
         try {
             MarkdownDoc document = MarkdownReader.Parse(markdown, MarkdownPdfConverterExtensions.ResolveReaderOptions(options));
-            return document.ToPdfDocument(options);
+            return MarkdownPdfConverterExtensions.ConvertToPdfDocument(document, options);
         } finally {
             if (assignedBaseDirectory) {
                 options.BaseDirectory = originalBaseDirectory;

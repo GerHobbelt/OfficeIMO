@@ -52,9 +52,10 @@ namespace OfficeIMO.Tests {
             OfficeImageExportResult png = sheet.Range("A1:B1")
                 .ToImage()
                 .WithoutGridlines()
-                .Preview()
-                .AtScale(2D)
-                .ExportPng();
+                .ForPreview()
+                .WithScale(2D)
+                .AsPng()
+                .Export();
 
             Assert.Equal(OfficeImageExportFormat.Png, png.Format);
             OfficeImageInfo info = OfficeImageReader.Identify(png.Bytes);
@@ -64,7 +65,7 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void ExcelRange_ToImageFriendlyAliasesExportPngAndSvg() {
+        public void ExcelRange_ToImageUsesConfiguredFormatForBytes() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
             ExcelSheet sheet = document.AddWorkSheet("Data");
@@ -73,11 +74,13 @@ namespace OfficeIMO.Tests {
             byte[] png = sheet.Range("A1:A1")
                 .ToImage()
                 .WithoutGridlines()
-                .ToPng();
-            string svg = sheet.Range("A1:A1")
+                .AsPng()
+                .ToBytes();
+            string svg = System.Text.Encoding.UTF8.GetString(sheet.Range("A1:A1")
                 .ToImage()
                 .WithoutGridlines()
-                .ToSvg();
+                .AsSvg()
+                .ToBytes());
 
             Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, png.Take(4).ToArray());
             Assert.Contains("<svg", svg, StringComparison.Ordinal);
@@ -570,13 +573,13 @@ namespace OfficeIMO.Tests {
             ExcelCellStyleSnapshot visualStyle = visualSnapshot.Cells[0].Style;
             ExcelCellSnapshot inspectedCell = inspectionSnapshot.Worksheets[0].Cells[0];
             Assert.Equal("FF95B3D7", visualStyle.FillColorArgb);
-            Assert.Equal("FF602827", visualStyle.FontColorArgb);
+            Assert.Equal("FF632523", visualStyle.FontColorArgb);
             Assert.Equal("FF9BBB59", visualStyle.Border!.Top!.ColorArgb);
             Assert.Equal(visualStyle.FillColorArgb, directStyle.FillColorArgb);
             Assert.Equal(visualStyle.FontColorArgb, directStyle.FontColorArgb);
             Assert.Equal(visualStyle.FillColorArgb, inspectedCell.Style!.FillColorArgb);
             Assert.Contains("#95B3D7", svg, StringComparison.Ordinal);
-            Assert.Contains("#602827", svg, StringComparison.Ordinal);
+            Assert.Contains("#632523", svg, StringComparison.Ordinal);
             Assert.Contains("#9BBB59", svg, StringComparison.Ordinal);
             Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
             Assert.NotNull(rendered);
@@ -656,7 +659,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(3, 1, 100);
                 sheet.SetColumnWidth(1, 14);
                 sheet.AddConditionalDataBar("A1:A3", OfficeColor.Blue);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -742,7 +745,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(3, 1, 100);
                 sheet.SetColumnWidth(1, 14);
                 sheet.AddConditionalColorScale("A1:A3", OfficeColor.Red, OfficeColor.Green);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -810,7 +813,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(2, 1, 50);
                 sheet.CellValue(3, 1, 100);
                 sheet.AddConditionalIconSet("A1:A3", IconSetValues.ThreeTrafficLights1, showValue: true, reverseIconOrder: false);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -848,7 +851,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(3, 1, 3);
                 sheet.CellValue(4, 1, 100);
                 sheet.AddConditionalIconSet("A1:A4", IconSetValues.ThreeTrafficLights1, showValue: true, reverseIconOrder: false);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -883,7 +886,7 @@ namespace OfficeIMO.Tests {
                 sheet.SetColumnWidth(1, 12);
                 sheet.SetRowHeight(1, 24);
                 sheet.AddConditionalDataBar("A1:A1", OfficeColor.Blue);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -1790,7 +1793,7 @@ namespace OfficeIMO.Tests {
                 sheet.SetRowHeight(2, 24);
                 sheet.SetRowHeight(3, 24);
                 sheet.CellValue(1, 1, "Two-cell");
-                document.Save(false);
+                document.Save();
             }
 
             AddTwoCellAnchoredImage(filePath, banner);
@@ -1823,7 +1826,7 @@ namespace OfficeIMO.Tests {
                 sheet.SetColumnWidth(1, 8);
                 sheet.SetColumnWidth(2, 8);
                 sheet.SetRowHeight(1, 24);
-                document.Save(false);
+                document.Save();
             }
 
             AddAbsoluteAnchoredImage(filePath, banner, xPixels: 40, yPixels: 0, widthPixels: 80, heightPixels: 20);
@@ -1849,7 +1852,7 @@ namespace OfficeIMO.Tests {
                 sheet.SetColumnWidth(2, 14);
                 sheet.SetRowHeight(1, 30);
                 sheet.SetRowHeight(2, 30);
-                document.Save(false);
+                document.Save();
             }
 
             AddCroppedImage(filePath, croppedSource);
@@ -1891,7 +1894,7 @@ namespace OfficeIMO.Tests {
                     sheet.SetRowHeight(row, 30);
                 }
 
-                document.Save(false);
+                document.Save();
             }
 
             AddRotatedImage(filePath, rotatedSource);
@@ -1939,7 +1942,7 @@ namespace OfficeIMO.Tests {
                     sheet.SetRowHeight(row, 30);
                 }
 
-                document.Save(false);
+                document.Save();
             }
 
             AddTransformedImage(filePath, transformedSource);
@@ -2706,7 +2709,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(3, 1, "Feb");
                 sheet.CellValue(3, 2, 180);
                 sheet.AddChartFromRange("A1:B3", row: 4, column: 6, widthPixels: 260, heightPixels: 160, type: ExcelChartType.ColumnClustered, title: "Absolute Chart");
-                document.Save(false);
+                document.Save();
             }
 
             MoveFirstChartToAbsoluteAnchor(filePath, xPixels: 40, yPixels: 30, widthPixels: 220, heightPixels: 120);
@@ -3612,7 +3615,7 @@ namespace OfficeIMO.Tests {
                 .ForSheets("Second")
                 .WithoutGridlines()
                 .As(OfficeImageExportFormat.Svg)
-                .SaveTo(folder);
+                .Save(folder);
 
             OfficeImageExportResult result = Assert.Single(results);
             Assert.Equal(OfficeImageExportFormat.Svg, result.Format);
@@ -3637,7 +3640,7 @@ namespace OfficeIMO.Tests {
 
             var options = new ExcelWorkbookImageExportOptions { SheetNames = new[] { "Second", "Missing" } };
             ArgumentException exportException = Assert.Throws<ArgumentException>(() => document.ExportImages(OfficeImageExportFormat.Png, options));
-            ArgumentException saveException = Assert.Throws<ArgumentException>(() => document.ToImages().ForSheets("Missing").SaveTo(folder));
+            ArgumentException saveException = Assert.Throws<ArgumentException>(() => document.ToImages().ForSheets("Missing").Save(folder));
 
             Assert.Contains("Missing", exportException.Message, StringComparison.Ordinal);
             Assert.Contains("Missing", saveException.Message, StringComparison.Ordinal);

@@ -34,11 +34,19 @@ public static class PdfBookmarkEditor {
 
     /// <summary>Applies a transactional bookmark edit and validates exact title, hierarchy, and target readback.</summary>
     public static PdfBookmarkEditResult Edit(byte[] pdf, Action<PdfBookmarkEditSession> edit, PdfReadOptions? readOptions = null) {
+        return EditCore(pdf, edit, readOptions, allowBrokenSourceDestinations: false);
+    }
+
+    internal static PdfBookmarkEditResult EditAllowingBrokenSourceDestinations(byte[] pdf, Action<PdfBookmarkEditSession> edit) {
+        return EditCore(pdf, edit, readOptions: null, allowBrokenSourceDestinations: true);
+    }
+
+    private static PdfBookmarkEditResult EditCore(byte[] pdf, Action<PdfBookmarkEditSession> edit, PdfReadOptions? readOptions, bool allowBrokenSourceDestinations) {
         Guard.NotNull(pdf, nameof(pdf)); Guard.NotNull(edit, nameof(edit));
         PdfMutationPlan plan = PdfMutationPlanner.RequireFullRewrite(pdf, PdfMutationOperation.ModifyCatalog, readOptions);
         PdfReadDocument read = PdfReadDocument.Load(pdf, readOptions); PdfLogicalDocument logical = PdfLogicalDocument.From(read);
         IReadOnlyList<PdfBookmarkValidationIssue> sourceIssues = Validate(pdf, readOptions);
-        if (sourceIssues.Count > 0) throw new InvalidOperationException("PDF bookmark editing requires broken destinations to be repaired or removed first: " + string.Join(" ", sourceIssues.Select(static issue => issue.Message)));
+        if (!allowBrokenSourceDestinations && sourceIssues.Count > 0) throw new InvalidOperationException("PDF bookmark editing requires broken destinations to be repaired or removed first: " + string.Join(" ", sourceIssues.Select(static issue => issue.Message)));
         var session = new PdfBookmarkEditSession(logical); edit(session); IReadOnlyList<PdfBookmarkNode> target = session.Snapshot();
         byte[] output = PdfDocumentObjectGraphRewriter.Rewrite(pdf, readOptions, null, (objects, security) => { RewriteOutlines(objects, security, read, target); return security.InfoObjectNumber.HasValue && objects.ContainsKey(security.InfoObjectNumber.Value) ? security.InfoObjectNumber : null; });
         IReadOnlyList<PdfOutlineItem> actual = PdfReadDocument.Load(output).Outlines;
@@ -57,11 +65,27 @@ public static class PdfBookmarkEditor {
     private static void Assign(IReadOnlyList<PdfBookmarkNode> nodes, Dictionary<PdfBookmarkNode, int> ids, ref int next) { foreach (PdfBookmarkNode node in nodes) { ids[node] = next++; Assign(node.Children, ids, ref next); } }
     private static void WriteSiblings(Dictionary<int, PdfIndirectObject> objects, PdfReadDocument document, IReadOnlyList<PdfBookmarkNode> nodes, int parent, Dictionary<PdfBookmarkNode, int> ids) {
         for (int i = 0; i < nodes.Count; i++) { PdfBookmarkNode node = nodes[i]; var dictionary = new PdfDictionary(); dictionary.Items["Title"] = new PdfStringObj(node.Title, true); dictionary.Items["Parent"] = new PdfReference(parent, 0); if (i > 0) dictionary.Items["Prev"] = new PdfReference(ids[nodes[i - 1]], 0); if (i + 1 < nodes.Count) dictionary.Items["Next"] = new PdfReference(ids[nodes[i + 1]], 0);
-            int pageObject = document.Pages[node.PageNumber - 1].ObjectNumber; var destination = new PdfArray(); destination.Items.Add(new PdfReference(pageObject, 0)); destination.Items.Add(new PdfName("XYZ")); destination.Items.Add(PdfNull.Instance); destination.Items.Add(node.DestinationTop.HasValue ? new PdfNumber(node.DestinationTop.Value) : PdfNull.Instance); destination.Items.Add(PdfNull.Instance); dictionary.Items["Dest"] = destination;
+            int pageObject = document.Pages[node.PageNumber - 1].ObjectNumber; dictionary.Items["Dest"] = BuildDestination(node, pageObject);
             if (node.Children.Count > 0) { dictionary.Items["First"] = new PdfReference(ids[node.Children[0]], 0); dictionary.Items["Last"] = new PdfReference(ids[node.Children[node.Children.Count - 1]], 0); int descendants = node.Children.Sum(VisibleCount); dictionary.Items["Count"] = new PdfNumber(node.IsExpanded ? descendants : -descendants); }
             objects[ids[node]] = new PdfIndirectObject(ids[node], 0, dictionary); WriteSiblings(objects, document, node.Children, ids[node], ids); }
     }
+    private static PdfArray BuildDestination(PdfBookmarkNode node, int pageObject) {
+        var destination = new PdfArray(); destination.Items.Add(new PdfReference(pageObject, 0));
+        switch (node.DestinationMode) {
+            case PdfOpenActionDestinationMode.Xyz: destination.Items.Add(new PdfName("XYZ")); AddNumber(destination, node.DestinationLeft); AddNumber(destination, node.DestinationTop); AddNumber(destination, node.DestinationZoom); break;
+            case PdfOpenActionDestinationMode.Fit: destination.Items.Add(new PdfName("Fit")); break;
+            case PdfOpenActionDestinationMode.FitHorizontal: destination.Items.Add(new PdfName("FitH")); AddNumber(destination, node.DestinationTop); break;
+            case PdfOpenActionDestinationMode.FitVertical: destination.Items.Add(new PdfName("FitV")); AddNumber(destination, node.DestinationLeft); break;
+            case PdfOpenActionDestinationMode.FitRectangle: destination.Items.Add(new PdfName("FitR")); AddNumber(destination, node.DestinationLeft); AddNumber(destination, node.DestinationBottom); AddNumber(destination, node.DestinationRight); AddNumber(destination, node.DestinationTop); break;
+            case PdfOpenActionDestinationMode.FitBoundingBox: destination.Items.Add(new PdfName("FitB")); break;
+            case PdfOpenActionDestinationMode.FitBoundingBoxHorizontal: destination.Items.Add(new PdfName("FitBH")); AddNumber(destination, node.DestinationTop); break;
+            case PdfOpenActionDestinationMode.FitBoundingBoxVertical: destination.Items.Add(new PdfName("FitBV")); AddNumber(destination, node.DestinationLeft); break;
+            default: throw new ArgumentOutOfRangeException(nameof(node), node.DestinationMode, "PDF bookmark destination mode is not supported.");
+        }
+        return destination;
+    }
+    private static void AddNumber(PdfArray destination, double? value) => destination.Items.Add(value.HasValue ? new PdfNumber(value.Value) : PdfNull.Instance);
     private static int VisibleCount(PdfBookmarkNode node) => 1 + (node.IsExpanded ? node.Children.Sum(VisibleCount) : 0);
-    private static bool Matches(IReadOnlyList<PdfBookmarkNode> expected, IReadOnlyList<PdfOutlineItem> actual) { if (expected.Count != actual.Count) return false; for (int i = 0; i < expected.Count; i++) if (expected[i].Title != actual[i].Title || expected[i].PageNumber != actual[i].PageNumber || expected[i].Children.Count != actual[i].Children.Count || !Matches(expected[i].Children, actual[i].Children)) return false; return true; }
+    private static bool Matches(IReadOnlyList<PdfBookmarkNode> expected, IReadOnlyList<PdfOutlineItem> actual) { if (expected.Count != actual.Count) return false; for (int i = 0; i < expected.Count; i++) if (expected[i].Title != actual[i].Title || expected[i].PageNumber != actual[i].PageNumber || expected[i].DestinationMode != actual[i].DestinationMode || expected[i].DestinationTop != actual[i].DestinationTop || expected[i].DestinationLeft != actual[i].DestinationLeft || expected[i].DestinationBottom != actual[i].DestinationBottom || expected[i].DestinationRight != actual[i].DestinationRight || expected[i].DestinationZoom != actual[i].DestinationZoom || expected[i].Children.Count != actual[i].Children.Count || !Matches(expected[i].Children, actual[i].Children)) return false; return true; }
     private static void CollectIssues(IReadOnlyList<PdfOutlineItem> outlines, int pageCount, List<PdfBookmarkValidationIssue> issues) { foreach (PdfOutlineItem outline in outlines) { if (!outline.PageNumber.HasValue || outline.PageNumber < 1 || outline.PageNumber > pageCount) issues.Add(new PdfBookmarkValidationIssue(outline.Title, "BrokenDestination", "Bookmark '" + outline.Title + "' does not resolve to a current page.")); CollectIssues(outline.Children, pageCount, issues); } }
 }

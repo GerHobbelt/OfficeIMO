@@ -65,6 +65,12 @@ public sealed partial class PdfDocument {
         return PdfDiagnostics.AnalyzeOptimization(Snapshot(), options ?? ReadOptions);
     }
 
+    /// <summary>Applies dependency-free lossless optimization and returns the candidate with action and preservation reports.</summary>
+    public PdfOptimizationActionResult Optimize(PdfOptimizationOptions? options = null) => PdfOptimizer.Optimize(Snapshot(), options);
+
+    /// <summary>Applies a named deterministic lossless optimization profile.</summary>
+    public PdfOptimizationActionResult Optimize(PdfOptimizationProfile profile) => PdfOptimizer.Optimize(Snapshot(), profile);
+
     /// <summary>
     /// Plans rectangle-based redaction impact without modifying the PDF.
     /// </summary>
@@ -72,12 +78,18 @@ public sealed partial class PdfDocument {
         return PdfRedactionPlanner.Plan(Snapshot(), areas, layoutOptions, options ?? ReadOptions);
     }
 
+    /// <summary>Derives a reviewable redaction plan from literal text, regex, logical kinds, and form-field names.</summary>
+    public PdfRedactionPlan SearchRedactions(PdfRedactionSearchOptions search, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) => PdfRedactionPlanner.Search(Snapshot(), search, layoutOptions, options ?? ReadOptions);
+
     /// <summary>
     /// Creates a new PDF with matching text objects and annotations removed from the supplied redaction areas.
     /// </summary>
     public PdfDocument ApplyRedactions(IEnumerable<PdfRedactionArea> areas, PdfRedactionApplyOptions? applyOptions = null, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) {
         return FromBytes(PdfRedactionApplier.Apply(Snapshot(), areas, applyOptions, layoutOptions, options ?? ReadOptions));
     }
+
+    /// <summary>Applies a reviewed redaction plan, including exact field removal for field-derived areas.</summary>
+    public PdfDocument ApplyRedactions(PdfRedactionPlan plan, PdfRedactionApplyOptions? applyOptions = null, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) => FromBytes(PdfRedactionApplier.Apply(Snapshot(), plan, applyOptions, layoutOptions, options ?? ReadOptions));
 
     /// <summary>
     /// Attempts to apply rectangle-based redactions, returning diagnostics when blocked or failed.
@@ -165,7 +177,7 @@ public sealed partial class PdfDocument {
     /// </summary>
     public PdfOperationResult<PdfDocument> TryMergeWith(PdfDocument document, PdfReadOptions? options = null) {
         Guard.NotNull(document, nameof(document));
-        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.ModifyPageTree, _ => MergeWith(document), options: options);
+        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.MergeDocuments, _ => MergeWith(document), options: options);
     }
 
     /// <summary>
@@ -181,7 +193,7 @@ public sealed partial class PdfDocument {
     /// </summary>
     public PdfOperationResult<PdfDocument> TryMergeWith(byte[] pdf, PdfReadOptions? options = null) {
         Guard.NotNull(pdf, nameof(pdf));
-        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.ModifyPageTree, _ => MergeWith(pdf), options: options);
+        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.MergeDocuments, _ => MergeWith(pdf), options: options);
     }
 
     /// <summary>
@@ -197,7 +209,7 @@ public sealed partial class PdfDocument {
     /// </summary>
     public PdfOperationResult<PdfDocument> TryMergeWith(string path, PdfReadOptions? options = null) {
         Guard.NotNullOrWhiteSpace(path, nameof(path));
-        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.ModifyPageTree, _ => MergeWith(path), options: options);
+        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.MergeDocuments, _ => MergeWith(path), options: options);
     }
 
     /// <summary>
@@ -219,14 +231,14 @@ public sealed partial class PdfDocument {
     /// </summary>
     public PdfOperationResult<PdfDocument> TryMergeWith(Stream stream, PdfReadOptions? options = null) {
         Guard.NotNull(stream, nameof(stream));
-        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.ModifyPageTree, _ => MergeWith(stream), options: options);
+        return TryMutationOperation("Merge documents", PdfPreflightCapability.ManipulatePages, PdfMutationOperation.MergeDocuments, _ => MergeWith(stream), options: options);
     }
 
     /// <summary>
     /// Creates a new PDF with visual annotation appearance streams painted into page content where supported.
     /// </summary>
     public PdfDocument FlattenVisualAnnotations() {
-        return FromBytes(PdfAnnotationFlattener.FlattenVisualAnnotations(Snapshot()));
+        return FromBytes(PdfAnnotationFlattener.FlattenVisualAnnotations(Snapshot(), options: null, readOptions: ReadOptions));
     }
 
     /// <summary>

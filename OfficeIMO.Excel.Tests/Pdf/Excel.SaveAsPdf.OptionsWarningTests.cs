@@ -33,6 +33,7 @@ public partial class Excel {
         };
 
         byte[] bytes;
+        PdfCore.PdfDocumentConversionResult result;
         using (ExcelDocument document = ExcelDocument.Create(workbookPath, "Warnings")) {
             ExcelSheet sheet = document.Sheets[0];
             sheet.Cell(1, 1, "Name");
@@ -50,9 +51,10 @@ public partial class Excel {
             Assert.True(chart.TryGetSnapshot(out ExcelChartSnapshot snapshot));
             Assert.Equal(ExcelChartType.Surface, snapshot.ChartType);
 
-            document.Save(false);
+            document.Save();
 
-            bytes = document.SaveAsPdf(options);
+            result = document.ToPdfResult(options);
+            bytes = result.ToBytes();
         }
 
         using (PdfPigDocument pdf = PdfPigDocument.Open(new MemoryStream(bytes))) {
@@ -66,9 +68,9 @@ public partial class Excel {
             Assert.DoesNotContain("Unsupported Surface Chart", text);
         }
 
-        Assert.Contains(options.Warnings, warning => warning.SheetName == "Warnings" && warning.Feature == "WorksheetHeaderFooterFormatting");
-        Assert.Contains(options.Warnings, warning => warning.SheetName == "Warnings" && warning.Feature == "WorksheetRows");
-        Assert.Contains(options.Warnings, warning => warning.SheetName == "Warnings" && warning.Feature == "WorksheetChart" && warning.Message.Contains("Surface", StringComparison.Ordinal));
-        Assert.All(options.Warnings, warning => Assert.Contains("Warnings", warning.ToString(), StringComparison.Ordinal));
+        Assert.Contains(result.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetHeaderFooterFormatting");
+        Assert.Contains(result.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetRows");
+        Assert.Contains(result.Warnings, warning => warning.Source == "Warnings" && warning.Code == "WorksheetChart" && warning.Message.Contains("Surface", StringComparison.Ordinal));
+        Assert.All(result.Warnings, warning => Assert.Equal("Warnings", warning.Source));
     }
 }

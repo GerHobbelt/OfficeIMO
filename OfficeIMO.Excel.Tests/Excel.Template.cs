@@ -36,10 +36,10 @@ namespace OfficeIMO.Tests {
                 }, System.Globalization.CultureInfo.InvariantCulture);
 
                 Assert.Equal(3, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Equal("Invoice INV-001", document["Invoice"].CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Customer: Adatum", document["Invoice"].CellAt(2, 1).GetValue<string>());
                 Assert.Equal("Total: 123.45", document["Summary"].CellAt(1, 1).GetValue<string>());
@@ -60,7 +60,7 @@ namespace OfficeIMO.Tests {
                     new[] { "Q1", "Q2" },
                     new[] { new ExcelChartSeries("Sales", new[] { 10d, 20d }) });
                 sheet.AddChart(data, row: 1, column: 4, widthPixels: 320, heightPixels: 200, type: ExcelChartType.ColumnClustered, title: "Template Chart");
-                document.Save(false);
+                document.Save();
             }
 
             using (var document = ExcelDocument.CreateFromTemplate(templatePath, outputPath)) {
@@ -69,10 +69,10 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(1, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(outputPath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(outputPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Template"];
                 Assert.Equal("Adatum", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Footer", sheet.CellAt(2, 1).GetValue<string>());
@@ -121,10 +121,10 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Template"];
                 Assert.Equal("Hello Adatum ", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal(string.Empty, sheet.CellAt(2, 1).GetValue<string>());
@@ -160,10 +160,10 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Consulting", sheet.CellAt(2, 1).GetValue<string>());
                 Assert.Equal(1200d, sheet.CellAt(2, 2).GetValue<double>());
@@ -218,7 +218,7 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -252,7 +252,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellAt(4, 2).SetValue(25);
                 sheet.CellFormula(4, 3, "B4");
                 sheet.MergeRange("A2:A4");
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -279,7 +279,7 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -327,7 +327,7 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(2, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -367,7 +367,7 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(2, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -406,7 +406,7 @@ namespace OfficeIMO.Tests {
                         ["Name"] = "Support"
                     }
                 });
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -440,10 +440,10 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(2, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Header", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Discount", sheet.CellAt(2, 1).GetValue<string>());
@@ -469,10 +469,10 @@ namespace OfficeIMO.Tests {
                 int replacements = sheet.RemoveTemplateOptionalRows(2, 2);
 
                 Assert.Equal(0, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Header", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Footer", sheet.CellAt(2, 1).GetValue<string>());
@@ -502,7 +502,7 @@ namespace OfficeIMO.Tests {
                 int replacements = sheet.RemoveTemplateOptionalRows(2, 2);
 
                 Assert.Equal(0, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -535,7 +535,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellFormula(4, 1, "B4");
 
                 sheet.RemoveTemplateOptionalRows(2, 2);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -568,7 +568,7 @@ namespace OfficeIMO.Tests {
                 sheet.MergeRange("C2:C3");
 
                 sheet.RemoveTemplateOptionalRows(2, 2);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -603,7 +603,7 @@ namespace OfficeIMO.Tests {
                 sheet.SetComment(4, 1, "Trailing note");
                 sheet.SetHyperlink(3, 1, "https://example.org");
                 sheet.AddConditionalFormulaRule("C3", "C3>0");
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -628,7 +628,7 @@ namespace OfficeIMO.Tests {
                         ["Name"] = "Support"
                     }
                 });
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -674,7 +674,7 @@ namespace OfficeIMO.Tests {
                 sheet.AddTable("A4:B5", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.TableStyle.TableStyleMedium2);
                 document.SetNamedRange("GlobalSales", "'Invoice'!A4:B5", save: false);
                 sheet.SetNamedRange("LocalSales", "A4:B5", save: false);
-                document.Save(false);
+                document.Save();
             }
 
             using (var document = ExcelDocument.Load(filePath)) {
@@ -689,10 +689,10 @@ namespace OfficeIMO.Tests {
                 });
 
                 Assert.Equal(2, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("'Invoice'!$A$5:$B$6", document.GetNamedRange("GlobalSales"));
                 Assert.Equal("$A$5:$B$6", sheet.GetNamedRange("LocalSales"));
@@ -723,7 +723,7 @@ namespace OfficeIMO.Tests {
                 sheet.AddTable("A5:B6", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.TableStyle.TableStyleMedium2);
                 document.SetNamedRange("GlobalSales", "'Invoice'!A5:B6", save: false);
                 sheet.SetNamedRange("LocalSales", "A5:B6", save: false);
-                document.Save(false);
+                document.Save();
             }
 
             using (var document = ExcelDocument.Load(filePath)) {
@@ -731,10 +731,10 @@ namespace OfficeIMO.Tests {
                 int replacements = sheet.RemoveTemplateOptionalRows(2, 2);
 
                 Assert.Equal(0, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("'Invoice'!$A$3:$B$4", document.GetNamedRange("GlobalSales"));
                 Assert.Equal("$A$3:$B$4", sheet.GetNamedRange("LocalSales"));
@@ -806,10 +806,10 @@ namespace OfficeIMO.Tests {
                     });
 
                 Assert.Equal(10, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Contains(document.Sheets, sheet => sheet.Name == "North");
                 Assert.Contains(document.Sheets, sheet => sheet.Name == "South");
 
@@ -947,7 +947,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellAt(4, 1).SetValue("Sales");
                 sheet.CellAt(4, 2).SetValue("{{Amount}}");
                 sheet.AddChartFromRange("A3:B4", row: 6, column: 3, widthPixels: 320, heightPixels: 180, type: ExcelChartType.ColumnClustered, hasHeaders: true, title: "Regional total");
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -976,7 +976,7 @@ namespace OfficeIMO.Tests {
                     });
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1006,7 +1006,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellAt(4, 1).SetValue("Sales");
                 sheet.CellAt(4, 2).SetValue("{{Amount}}");
                 sheet.AddChartFromRange("A3:B4", row: 6, column: 3, widthPixels: 320, heightPixels: 180, type: ExcelChartType.ColumnClustered, hasHeaders: true, title: "Regional total");
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -1044,7 +1044,7 @@ namespace OfficeIMO.Tests {
                     });
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1084,7 +1084,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellAt(4, 1).SetValue("Sales");
                 sheet.CellAt(4, 2).SetValue("{{Amount}}");
                 sheet.AddChartFromRange("A3:B4", row: 6, column: 3, widthPixels: 320, heightPixels: 180, type: ExcelChartType.ColumnClustered, hasHeaders: true, title: "Regional total");
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
@@ -1129,7 +1129,7 @@ namespace OfficeIMO.Tests {
                     });
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1179,7 +1179,7 @@ namespace OfficeIMO.Tests {
 
                 Assert.Equal(2, replacements);
                 Assert.Equal(2, sheet.Images.Count());
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1230,10 +1230,10 @@ namespace OfficeIMO.Tests {
                 }, System.Globalization.CultureInfo.GetCultureInfo("en-US"));
 
                 Assert.Equal(4, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Customer: Adatum", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Total: $123.45", sheet.CellAt(2, 1).GetValue<string>());
@@ -1271,10 +1271,10 @@ namespace OfficeIMO.Tests {
                 }, options);
 
                 Assert.Equal(3, replacements);
-                document.Save(false);
+                document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Template"];
                 Assert.Equal("Customer ADATUM", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Risk High", sheet.CellAt(2, 1).GetValue<string>());
@@ -1300,7 +1300,7 @@ namespace OfficeIMO.Tests {
                 }, System.Globalization.CultureInfo.GetCultureInfo("en-US"));
 
                 Assert.Equal(3, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1334,7 +1334,7 @@ namespace OfficeIMO.Tests {
                 }, System.Globalization.CultureInfo.InvariantCulture);
 
                 Assert.Equal(2, replacements);
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {

@@ -28,7 +28,7 @@ namespace OfficeIMO.Tests {
                     document.SetPrintTitles(data, firstRow: 1, lastRow: 1, firstCol: 1, lastCol: 1, save: false);
 
                     data.Name = "Renamed";
-                    document.Save(filePath, openExcel: false);
+                    document.Save(filePath);
                 }
 
                 using var spreadsheet = SpreadsheetDocument.Open(filePath, false);
@@ -50,7 +50,7 @@ namespace OfficeIMO.Tests {
                     .First(h => string.Equals(h.Reference?.Value, "A2", StringComparison.OrdinalIgnoreCase));
                 Assert.Equal("'Renamed'!A1", hyperlink.Location?.Value);
 
-                using var verify = ExcelDocument.Load(filePath, readOnly: true);
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -80,7 +80,7 @@ namespace OfficeIMO.Tests {
                     data.AddSparklines("'Data'!B2:B3", "C2:C3");
 
                     data.Name = "Renamed Data";
-                    document.Save(filePath, openExcel: false);
+                    document.Save(filePath);
                 }
 
                 using var spreadsheet = SpreadsheetDocument.Open(filePath, false);
@@ -108,7 +108,7 @@ namespace OfficeIMO.Tests {
                 var pivotCache = workbookPart.GetPartsOfType<PivotTableCacheDefinitionPart>().Single();
                 Assert.Equal("Renamed Data", pivotCache.PivotCacheDefinition!.CacheSource!.WorksheetSource!.Sheet!.Value);
 
-                using var verify = ExcelDocument.Load(filePath, readOnly: true);
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -134,7 +134,7 @@ namespace OfficeIMO.Tests {
                     summary.AddConditionalRule("B1:B2", ConditionalFormattingOperatorValues.GreaterThan, "Data!$A$1");
 
                     data.Name = "Renamed Data";
-                    document.Save(filePath, openExcel: false);
+                    document.Save(filePath);
                 }
 
                 using var spreadsheet = SpreadsheetDocument.Open(filePath, false);
@@ -148,7 +148,7 @@ namespace OfficeIMO.Tests {
                 var rule = summaryPart.Worksheet.Descendants<ConditionalFormattingRule>().Single();
                 Assert.Equal("'Renamed Data'!$A$1", rule.Elements<Formula>().Single().Text);
 
-                using var verify = ExcelDocument.Load(filePath, readOnly: true);
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -177,7 +177,7 @@ namespace OfficeIMO.Tests {
                     var toc = document.Sheets.First(s => s.Name == "TOC");
                     toc.Name = "Index";
 
-                    document.Save(filePath, openExcel: false);
+                    document.Save(filePath);
                 }
 
                 using var spreadsheet = SpreadsheetDocument.Open(filePath, false);
@@ -196,7 +196,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("'Index'!A1", backlink.Location?.Value);
                 Assert.Equal("← Index", GetCellText(workbookPart, renamedPart, "A2"));
 
-                using var verify = ExcelDocument.Load(filePath, readOnly: true);
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -220,7 +220,7 @@ namespace OfficeIMO.Tests {
                     summary.ValidationCustomFormula("A2:A3", "COUNTIF(Data!$A$1:$A$3,\">0\")+COUNTIF('[Other.xlsx]Data'!$A$1:$A$3,\">0\")>0");
 
                     data.Name = "Renamed Data";
-                    document.Save(filePath, openExcel: false);
+                    document.Save(filePath);
                 }
 
                 using var spreadsheet = SpreadsheetDocument.Open(filePath, false);
@@ -235,7 +235,7 @@ namespace OfficeIMO.Tests {
                 var validation = summaryPart.Worksheet.Descendants<DataValidation>().Single();
                 Assert.Equal("COUNTIF('Renamed Data'!$A$1:$A$3,\">0\")+COUNTIF('[Other.xlsx]Data'!$A$1:$A$3,\">0\")>0", validation.GetFirstChild<Formula1>()!.Text);
 
-                using var verify = ExcelDocument.Load(filePath, readOnly: true);
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -276,7 +276,7 @@ namespace OfficeIMO.Tests {
                     tablePart.Table.Save();
 
                     data.Name = "Renamed Data";
-                    document.Save(filePath, openExcel: false);
+                    document.Save(filePath);
                 }
 
                 using var spreadsheet = SpreadsheetDocument.Open(filePath, false);
@@ -289,7 +289,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("SUM('Renamed Data'!$A$2,1)", valueColumnAfter.CalculatedColumnFormula!.Text);
                 Assert.Equal("SUM('Renamed Data'!$A$2:$A$3)", valueColumnAfter.TotalsRowFormula!.Text);
 
-                using var verify = ExcelDocument.Load(filePath, readOnly: true);
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {

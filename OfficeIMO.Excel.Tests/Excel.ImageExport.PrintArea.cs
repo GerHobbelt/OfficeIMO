@@ -84,7 +84,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(1, 1, "Used");
                 sheet.CellValue(2, 2, "First");
                 sheet.CellValue(2, 4, "Second");
-                document.Save(false);
+                document.Save();
             }
 
             AddMultiAreaPrintArea(filePath);
@@ -110,7 +110,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(1, 1, "Used");
                 sheet.CellValue(2, 2, "First");
                 sheet.CellValue(2, 4, "Second");
-                document.Save(false);
+                document.Save();
             }
 
             AddMultiAreaPrintArea(filePath);
@@ -169,7 +169,7 @@ namespace OfficeIMO.Tests {
                 ExcelSheet sheet = document.AddWorkSheet("Report");
                 sheet.CellValue(2, 2, "First");
                 sheet.CellValue(2, 4, "Second");
-                document.Save(false);
+                document.Save();
             }
 
             AddMultiAreaPrintArea(filePath);
@@ -535,12 +535,13 @@ namespace OfficeIMO.Tests {
                 sheet.SetMargins(0.25D, 0.25D, 0.25D, 0.25D);
                 sheet.SetPageSetup(scale: 100);
                 sheet.AddManualRowPageBreak(2, save: false);
+                document.Save();
             }
 
             SetFirstWorksheetPaperSizeCode(filePath, 999U);
 
             OfficeImageExportResult result;
-            using (ExcelDocument document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 ExcelSheet sheet = document.GetSheet("Report");
                 result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
                     Range = "A1:D4",

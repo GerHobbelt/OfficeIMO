@@ -43,7 +43,7 @@ namespace OfficeIMO.Tests {
                     dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum, "Total Sales") },
                     pivotStyleName: "PivotStyleMedium9");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var document = ExcelDocument.Load(filePath)) {
@@ -68,7 +68,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("Total Sales", dataField.DisplayName);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -103,7 +103,7 @@ namespace OfficeIMO.Tests {
 
                 Assert.Equal("F3:G3", sheet.GetPivotTableRange("SalesPivot", ExcelPivotRangeTarget.DataBody));
                 sheet.AddPivotConditionalRule("SalesPivot", ConditionalFormattingOperatorValues.GreaterThan, "0");
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -147,7 +147,7 @@ namespace OfficeIMO.Tests {
                     .Captions(rowHeader: "Rows", columnHeader: "Products", grandTotal: "Total")
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var document = ExcelDocument.Load(filePath)) {
@@ -172,7 +172,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(dataField.NumberFormatId >= 164);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -201,7 +201,7 @@ namespace OfficeIMO.Tests {
                         enableDrill: false)
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -261,7 +261,7 @@ namespace OfficeIMO.Tests {
                     .Sum("Sales", "Total Sales")
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -327,7 +327,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("B", product.SelectedItem);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -352,7 +352,7 @@ namespace OfficeIMO.Tests {
                     .Value("Sales", DataConsolidateFunctionValues.Sum, "Total Sales", numberFormatId: 4)
                     .At("D2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -378,7 +378,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("#,##0.00", dataField.NumberFormatCode);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -500,7 +500,7 @@ namespace OfficeIMO.Tests {
                     fieldListSortAscending: true,
                     customListSort: false);
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -587,7 +587,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("$#,##0.00", dataField.NumberFormatCode);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -617,7 +617,7 @@ namespace OfficeIMO.Tests {
                     .PercentOfTotal("Sales", "% Total Sales")
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -637,7 +637,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(dataField.NumberFormatId >= 164);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -671,7 +671,7 @@ namespace OfficeIMO.Tests {
                         ExcelPivotFilter.ValueGreaterThan("Region", "Total Sales", 15, name: "Sales above 15"))
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -707,7 +707,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(PivotFilterValues.ValueGreaterThan, pivot.Filters[1].Type);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -745,7 +745,7 @@ namespace OfficeIMO.Tests {
                         ExcelPivotFilter.ValueNotBetween("Region", "Total Sales", 15, 35, name: "Outside sales band"))
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -801,7 +801,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("35", pivot.Filters[3].Value2);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -839,7 +839,7 @@ namespace OfficeIMO.Tests {
                         ExcelPivotFilter.DateMonth("OrderDate", 2, name: "February"))
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -873,7 +873,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(PivotFilterValues.February, pivot.Filters[3].Type);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -912,7 +912,7 @@ namespace OfficeIMO.Tests {
                         ExcelPivotFilter.DateNotBetween("OrderDate", new DateTime(2026, 2, 1), new DateTime(2026, 2, 28), name: "Not Feb"))
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -954,7 +954,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(PivotFilterValues.DateNotBetween, pivot.Filters[3].Type);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -992,7 +992,7 @@ namespace OfficeIMO.Tests {
                         ExcelPivotFilter.BottomSum("Region", "Total Sales", 30.5, name: "Bottom 30.5 sum"))
                     .At("E2", "SalesPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1059,7 +1059,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("30.5", pivot.Filters[3].Value1);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1090,7 +1090,7 @@ namespace OfficeIMO.Tests {
                     .Sum("Margin", "Total Margin", "$#,##0")
                     .At("E2", "MarginPivot");
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1127,7 +1127,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("$#,##0", calculated.NumberFormatCode);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1189,7 +1189,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var pivot = document.GetPivotTables().Single();
                 Assert.Equal(2, pivot.Groupings.Count);
                 Assert.Equal("OrderDate", pivot.Groupings[0].FieldName);
@@ -1270,7 +1270,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 var pivot = document.GetPivotTables().Single();
 
                 Assert.Equal(new[] { "OrderDate Years", "OrderDate Quarters", "OrderDate Months" }, pivot.RowFields);
@@ -1391,7 +1391,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(chart.IsPivotChart);
                 Assert.Equal("SalesPivot", chart.PivotTableName);
 
-                document.Save(false);
+                document.Save();
             }
 
             using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
@@ -1404,7 +1404,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(0U, pivotSource.GetFirstChild<C.FormatId>()!.Val!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, readOnly: true)) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }

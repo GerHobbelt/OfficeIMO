@@ -146,6 +146,71 @@ public class PdfMutationPlannerTests {
     }
 
     [Fact]
+    public void TryFill_AppendsEncryptedFormRevisionWithOwnerAuthorization() {
+        byte[] source = PdfDocument.Create(new PdfOptions().SetEncryption("open", "owner"))
+            .TextField("Name", width: 180, height: 24, value: "Ada")
+            .ToBytes();
+        var ownerOptions = new PdfReadOptions { Password = "owner" };
+        var values = new Dictionary<string, string> { ["Name"] = "Grace" };
+
+        PdfOperationResult<PdfDocument> result = PdfDocument.Open(source, ownerOptions).Forms.TryFill(values);
+
+        Assert.True(result.Succeeded, string.Join(" ", result.Diagnostics));
+        Assert.Equal(PdfMutationExecutionMode.AppendOnly, result.MutationPlan!.ExecutionMode);
+        byte[] updated = result.RequireValue().ToBytes();
+        Assert.True(updated.AsSpan(0, source.Length).SequenceEqual(source));
+        PdfDocumentInfo info = PdfInspector.Inspect(updated, ownerOptions);
+        Assert.True(info.Security.HasEncryption);
+        Assert.Equal("Grace", Assert.Single(info.FormFields, static field => field.Name == "Name").Value);
+    }
+
+    [Fact]
+    public void TryMergeWith_UsesMergePolicyForFormBearingPrimary() {
+        byte[] primary = PdfDocument.Create().TextField("Name", value: "Ada").ToBytes();
+        byte[] incoming = PdfDocument.Create().Paragraph(paragraph => paragraph.Text("Incoming")).ToBytes();
+
+        PdfOperationResult<PdfDocument> result = PdfDocument.Open(primary).TryMergeWith(incoming);
+
+        Assert.True(result.Succeeded, string.Join(" ", result.Diagnostics));
+        Assert.Equal(PdfMutationOperation.MergeDocuments, result.MutationPlan!.Operation);
+        PdfDocumentInfo info = result.RequireValue().Inspect();
+        Assert.Equal(2, info.PageCount);
+        Assert.Single(info.FormFields, static field => field.Name == "Name");
+    }
+
+    [Fact]
+    public void TryPageImports_UseMergePolicyForFormBearingTarget() {
+        byte[] target = PdfDocument.Create().TextField("Name", value: "Ada").ToBytes();
+        byte[] incoming = PdfDocument.Create().Paragraph(paragraph => paragraph.Text("Incoming")).ToBytes();
+
+        PdfOperationResult<PdfDocument> appended = PdfDocument.Open(target).Pages.TryAppend(incoming);
+        PdfOperationResult<PdfDocument> prepended = PdfDocument.Open(target).Pages.TryPrepend(incoming);
+        PdfOperationResult<PdfDocument> inserted = PdfDocument.Open(target).Pages.TryInsert(1, incoming);
+
+        Assert.All(new[] { appended, prepended, inserted }, result => {
+            Assert.True(result.Succeeded, string.Join(" ", result.Diagnostics));
+            Assert.Equal(PdfMutationOperation.MergeDocuments, result.MutationPlan!.Operation);
+            Assert.Equal(2, result.RequireValue().Inspect().PageCount);
+            Assert.Single(result.RequireValue().Inspect().FormFields, static field => field.Name == "Name");
+        });
+    }
+
+    [Fact]
+    public void Plan_StreamStopsBufferingAtConfiguredInputLimit() {
+        byte[] source = PdfDocument.Create().Paragraph(paragraph => paragraph.Text("Bounded planner stream")).ToBytes();
+        byte[] padded = new byte[1024 * 1024];
+        source.CopyTo(padded, 0);
+        using var stream = new ChunkedNonSeekableStream(padded, 256);
+        var options = new PdfReadOptions { Limits = new PdfReadLimits { MaxInputBytes = 1024 } };
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() =>
+            PdfMutationPlanner.Plan(stream, PdfMutationOperation.UpdateMetadata, options));
+
+        Assert.Equal(PdfReadLimitKind.InputBytes, exception.Kind);
+        Assert.InRange(stream.BytesRead, 1025, 1280);
+    }
+
+    [Fact]
     public void Plan_BlocksPageTreeMutationWhenSourceStructureCannotBePreserved() {
         byte[] source = PdfRewritePreservationTestSupport.BuildSourceStructurePreservationProofPdf();
 
@@ -209,6 +274,26 @@ public class PdfMutationPlannerTests {
         Assert.Contains(PdfMutationStructure.Signatures, plan.AffectedStructures);
         Assert.Contains(PdfMutationProof.BytePrefixPreservation, plan.RequiredProofs);
         Assert.Contains(PdfMutationProof.SignatureByteRanges, plan.RequiredProofs);
+    }
+
+    [Fact]
+    public void Plan_BlocksEncryptedExternalSignaturePreparationBeforeRawObjectAppend() {
+        byte[] source = PdfDocument.Create(new PdfOptions().SetEncryption("open", "owner"))
+            .Paragraph(paragraph => paragraph.Text("Encrypted signature source"))
+            .ToBytes();
+        var readOptions = new PdfReadOptions { Password = "owner" };
+
+        PdfAppendOnlyMutationReport appendOnly = PdfIncrementalUpdater.AnalyzeAppendOnlyMutation(source, readOptions);
+        PdfMutationPlan plan = PdfMutationPlanner.Plan(source, PdfMutationOperation.PrepareExternalSignature, readOptions);
+        PdfOperationResult<PdfExternalSignaturePreparation> result = PdfDocument.Open(source, readOptions)
+            .TryPrepareExternalSignature(options: readOptions);
+
+        Assert.False(appendOnly.CanPrepareExternalSignature);
+        Assert.False(plan.CanExecute);
+        Assert.Equal(PdfMutationExecutionMode.Blocked, plan.ExecutionMode);
+        Assert.Contains("AppendOnly.EncryptedRawSignatureObject", plan.BlockerCodes);
+        Assert.False(result.CanAttempt);
+        Assert.False(result.Succeeded);
     }
 
     [Fact]
@@ -316,5 +401,57 @@ public class PdfMutationPlannerTests {
         Assert.Equal(PdfMutationOperation.ExtractPages, plan.Operation);
         Assert.Equal(PdfMutationExecutionMode.FullRewrite, plan.ExecutionMode);
         Assert.False(PdfInspector.Probe(result.RequireValue().ToBytes()).HasEncryption);
+    }
+
+    [Fact]
+    public void EncryptedPageExtractionRequiresOwnerOrCopyAndAssemblyPermissions() {
+        var encryption = new PdfStandardEncryptionOptions("open") {
+            OwnerPassword = "owner",
+            AllowedPermissions = PdfStandardPermissions.None
+        };
+        byte[] source = PdfDocument.Create(new PdfOptions().SetEncryption(encryption))
+            .Paragraph(paragraph => paragraph.Text("Restricted extraction"))
+            .ToBytes();
+        var userOptions = new PdfReadOptions { Password = "open" };
+        var ownerOptions = new PdfReadOptions { Password = "owner" };
+
+        PdfMutationPlan userPlan = PdfMutationPlanner.Plan(source, PdfMutationOperation.ExtractPages, userOptions);
+        PdfMutationPlan ownerPlan = PdfMutationPlanner.Plan(source, PdfMutationOperation.ExtractPages, ownerOptions);
+        PdfOperationResult<PdfDocument> userResult = PdfDocument.Open(source, userOptions)
+            .Pages.TryExtract(PdfPageSelection.Parse("1"));
+        PdfOperationResult<PdfDocument> ownerResult = PdfDocument.Open(source, ownerOptions)
+            .Pages.TryExtract(PdfPageSelection.Parse("1"));
+
+        Assert.False(userPlan.CanExecute);
+        Assert.Contains("FullRewrite.Encryption", userPlan.BlockerCodes);
+        Assert.False(userResult.CanAttempt);
+        Assert.True(ownerPlan.CanExecute);
+        Assert.Equal(PdfMutationExecutionMode.FullRewrite, ownerPlan.ExecutionMode);
+        Assert.True(ownerResult.Succeeded, string.Join(" ", ownerResult.Diagnostics));
+        Assert.False(PdfInspector.Probe(ownerResult.RequireValue().ToBytes()).HasEncryption);
+    }
+
+    private sealed class ChunkedNonSeekableStream : Stream {
+        private readonly byte[] _data;
+        private readonly int _maximumChunkSize;
+        private int _position;
+        internal ChunkedNonSeekableStream(byte[] data, int maximumChunkSize) { _data = data; _maximumChunkSize = maximumChunkSize; }
+        internal int BytesRead => _position;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) {
+            if (_position >= _data.Length) return 0;
+            int read = Math.Min(Math.Min(count, _maximumChunkSize), _data.Length - _position);
+            Buffer.BlockCopy(_data, _position, buffer, offset, read);
+            _position += read;
+            return read;
+        }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

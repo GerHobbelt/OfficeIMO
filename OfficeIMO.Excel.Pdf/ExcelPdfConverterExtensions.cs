@@ -10,12 +10,14 @@ namespace OfficeIMO.Excel.Pdf {
         /// Converts an Excel workbook to a first-party OfficeIMO PDF document model.
         /// </summary>
         public static PdfCore.PdfDocument ToPdfDocument(this ExcelDocument document, ExcelPdfSaveOptions? options = null) {
+            return document.ToPdfResult(options).Value;
+        }
+
+        private static PdfCore.PdfDocument ConvertToPdfDocument(ExcelDocument document, ExcelPdfSaveOptions options) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
 
-            options ??= new ExcelPdfSaveOptions();
-            options.ResetExportState();
             PdfCore.PdfOptions pdfOptions = CreatePdfOptions(options, out bool preserveConfiguredFontSlots);
             PdfCore.PdfStandardFont defaultFontFamily = PdfCore.PdfStandardFontMapper.GetFontFamily(pdfOptions.DefaultFont);
             using ExcelDocumentReader reader = document.CreateReader();
@@ -84,9 +86,9 @@ namespace OfficeIMO.Excel.Pdf {
                 throw new ArgumentNullException(nameof(document));
             }
 
-            options ??= new ExcelPdfSaveOptions();
-            PdfCore.PdfDocument pdf = document.ToPdfDocument(options);
-            return new PdfCore.PdfDocumentConversionResult(pdf, options.ConversionReport);
+            ExcelPdfSaveOptions operation = (options ?? new ExcelPdfSaveOptions()).CloneForConversion();
+            PdfCore.PdfDocument pdf = ConvertToPdfDocument(document, operation);
+            return new PdfCore.PdfDocumentConversionResult(pdf, operation.Report);
         }
 
         private static PdfCore.PdfImageStyle CreateConverterImageStyle() => new() {
@@ -106,12 +108,6 @@ namespace OfficeIMO.Excel.Pdf {
         public static byte[] ToPdf(this ExcelDocument document, ExcelPdfSaveOptions? options = null) {
             return document.ToPdfDocument(options).ToBytes();
         }
-
-        /// <summary>Returns a PDF document and diagnostics. Prefer <see cref="ToPdfResult(ExcelDocument, ExcelPdfSaveOptions?)"/>.</summary>
-        public static PdfCore.PdfDocumentConversionResult ToPdfDocumentResult(this ExcelDocument document, ExcelPdfSaveOptions? options = null) => document.ToPdfResult(options);
-
-        /// <summary>Returns PDF bytes. Prefer <see cref="ToPdf(ExcelDocument, ExcelPdfSaveOptions?)"/> for consistent in-memory naming.</summary>
-        public static byte[] SaveAsPdf(this ExcelDocument document, ExcelPdfSaveOptions? options = null) => document.ToPdf(options);
 
         /// <summary>
         /// Saves an Excel workbook as a PDF file.

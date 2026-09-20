@@ -2,6 +2,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Validation;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.Excel.Utilities;
 using OfficeIMO.Shared;
 using System.IO.Packaging;
@@ -51,7 +52,7 @@ namespace OfficeIMO.Excel {
             if (_requiresSavePreflight || options?.SafePreflight == true) {
                 if (!skipDirectFastSaveSheetPreparation || options?.SafePreflight == true) {
                     MaterializePendingDirectCellValueSheetIfNeeded();
-                    try { PreflightWorkbook(sheets); } catch { }
+                    PreflightWorkbook(sheets);
                     _requiresSavePreflight = false;
                 } else {
                     ReportSaveTiming(stageWatch, "Save.PrepareWorkbook.SkipAutomaticPreflight");
@@ -63,7 +64,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (options?.SafeRepairDefinedNames == true) {
-                try { RepairDefinedNames(save: true); } catch { }
+                RepairDefinedNames(save: true);
             }
             ReportSaveTiming(stageWatch, "Save.PrepareWorkbook.RepairDefinedNames");
 
@@ -78,7 +79,7 @@ namespace OfficeIMO.Excel {
 
             WorkbookRoot.Save();
             ReportSaveTiming(stageWatch, "Save.PrepareWorkbook.SaveWorkbookRoot");
-            try { _spreadSheetDocument.PackageProperties.Modified = DateTime.UtcNow; } catch { }
+            _spreadSheetDocument.PackageProperties.Modified = DateTime.UtcNow;
             ReportSaveTiming(stageWatch, "Save.PrepareWorkbook.UpdatePackageProperties");
         }
 
@@ -175,97 +176,15 @@ namespace OfficeIMO.Excel {
         }
 
         private static string CreateTemporarySavePath(string targetPath) {
-            var fullTargetPath = Path.GetFullPath(targetPath);
-            var directory = Path.GetDirectoryName(fullTargetPath);
-            if (string.IsNullOrEmpty(directory)) {
-                directory = Directory.GetCurrentDirectory();
-            }
-
-            var fileName = Path.GetFileName(fullTargetPath);
-            if (string.IsNullOrEmpty(fileName)) {
-                fileName = "workbook.xlsx";
-            }
-
-            return Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp");
-        }
-
-        private static string CreateTemporaryBackupPath(string targetPath) {
-            var fullTargetPath = Path.GetFullPath(targetPath);
-            var directory = Path.GetDirectoryName(fullTargetPath);
-            if (string.IsNullOrEmpty(directory)) {
-                directory = Directory.GetCurrentDirectory();
-            }
-
-            var fileName = Path.GetFileName(fullTargetPath);
-            if (string.IsNullOrEmpty(fileName)) {
-                fileName = "workbook.xlsx";
-            }
-
-            return Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.bak");
-        }
-
-        private static void ExecuteFileCommitOperationWithRetry(Action operation) {
-            for (int attempt = 0; attempt < 10; attempt++) {
-                try {
-                    operation();
-                    return;
-                } catch (IOException) when (attempt < 9) {
-                    Thread.Sleep(Math.Min(50 * (attempt + 1), 500));
-                }
-            }
+            return OfficeFileCommit.CreateTemporaryPath(targetPath);
         }
 
         private static void ReplaceTargetFile(string temporaryPath, string targetPath) {
-            if (!File.Exists(targetPath)) {
-                ExecuteFileCommitOperationWithRetry(() => File.Move(temporaryPath, targetPath));
-                return;
-            }
-
-            IOException? lastIOException = null;
-            for (int attempt = 0; attempt < 10; attempt++) {
-                try {
-                    File.Replace(temporaryPath, targetPath, destinationBackupFileName: null);
-                    return;
-                } catch (IOException ex) when (attempt < 9) {
-                    lastIOException = ex;
-                    Thread.Sleep(Math.Min(50 * (attempt + 1), 500));
-                }
-            }
-
-            var backupPath = CreateTemporaryBackupPath(targetPath);
-            try {
-                ExecuteFileCommitOperationWithRetry(() => File.Move(targetPath, backupPath));
-                try {
-                    ExecuteFileCommitOperationWithRetry(() => File.Move(temporaryPath, targetPath));
-                    temporaryPath = string.Empty;
-                    DeleteFileIfExists(backupPath);
-                    return;
-                } catch {
-                    if (!File.Exists(targetPath) && File.Exists(backupPath)) {
-                        File.Move(backupPath, targetPath);
-                    }
-
-                    throw;
-                }
-            } catch when (lastIOException != null) {
-                throw lastIOException;
-            } finally {
-                DeleteFileIfExists(backupPath);
-                DeleteFileIfExists(temporaryPath);
-            }
+            OfficeFileCommit.CommitTemporaryFile(temporaryPath, targetPath);
         }
 
         private static void DeleteFileIfExists(string path) {
-            if (string.IsNullOrWhiteSpace(path)) {
-                return;
-            }
-
-            try {
-                if (File.Exists(path)) {
-                    File.Delete(path);
-                }
-            } catch {
-            }
+            OfficeFileCommit.DeleteIfExists(path);
         }
 
         private bool TrySaveWithSimplePackageToFile(string targetPath, ExcelSaveOptions? options, out string? skipReason, CancellationToken ct = default, bool alreadyPrepared = false) {
@@ -347,31 +266,11 @@ namespace OfficeIMO.Excel {
         }
 
         private static void CommitPreparedPackageToFile(string targetPath, byte[] finalizedBytes) {
-            var temporaryPath = CreateTemporarySavePath(targetPath);
-            try {
-                using (var fs = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None)) {
-                    fs.Write(finalizedBytes, 0, finalizedBytes.Length);
-                    fs.Flush();
-                }
-                ReplaceTargetFile(temporaryPath, targetPath);
-                temporaryPath = string.Empty;
-            } finally {
-                DeleteFileIfExists(temporaryPath);
-            }
+            OfficeFileCommit.WriteAllBytes(targetPath, finalizedBytes);
         }
 
-        private static async Task CommitPreparedPackageToFileAsync(string targetPath, byte[] finalizedBytes, CancellationToken cancellationToken) {
-            var temporaryPath = CreateTemporarySavePath(targetPath);
-            try {
-                using (var fs = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 8192, FileOptions.Asynchronous)) {
-                    await fs.WriteAsync(finalizedBytes, 0, finalizedBytes.Length, cancellationToken).ConfigureAwait(false);
-                    await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
-                }
-                ReplaceTargetFile(temporaryPath, targetPath);
-                temporaryPath = string.Empty;
-            } finally {
-                DeleteFileIfExists(temporaryPath);
-            }
+        private static Task CommitPreparedPackageToFileAsync(string targetPath, byte[] finalizedBytes, CancellationToken cancellationToken) {
+            return OfficeFileCommit.WriteAllBytesAsync(targetPath, finalizedBytes, cancellationToken: cancellationToken);
         }
 
         private void TryRestoreDocumentState(SavePayload payload) {
@@ -396,7 +295,7 @@ namespace OfficeIMO.Excel {
                 : new MemoryStream(packageBytes.Length + 8192);
             mem.Write(packageBytes, 0, packageBytes.Length);
             mem.Position = 0;
-            var reopenSettings = new OpenSettings { AutoSave = true };
+            var reopenSettings = new OpenSettings { AutoSave = false };
             _spreadSheetDocument = SpreadsheetDocument.Open(mem, true, reopenSettings);
             _workBookPart = WorkbookPartRoot ?? throw new InvalidOperationException("WorkbookPart is null");
             _sharedStringTablePart = null;

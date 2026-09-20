@@ -14,6 +14,9 @@ public enum PdfMutationOperation {
     /// <summary>Update and then flatten supported AcroForm fields.</summary>
     FillAndFlattenFormFields,
 
+    /// <summary>Create, rename, remove, move, order, or otherwise edit the AcroForm field tree.</summary>
+    ModifyAcroForm,
+
     /// <summary>Append an external-signature placeholder revision.</summary>
     PrepareExternalSignature,
 
@@ -25,6 +28,9 @@ public enum PdfMutationOperation {
 
     /// <summary>Change page membership or order, including delete, move, duplicate, merge, or import.</summary>
     ModifyPageTree,
+
+    /// <summary>Merge complete documents with explicit catalog, navigation, form, and attachment policies.</summary>
+    MergeDocuments,
 
     /// <summary>Change page content streams or resources, including stamps and watermarks.</summary>
     ModifyPageContent,

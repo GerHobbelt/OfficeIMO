@@ -29,9 +29,9 @@ public partial class Excel {
             Assert.True(hyperlink.IsExternal);
             Assert.Equal(linkUri, hyperlink.Target);
 
-            document.Save(false);
+            document.Save();
 
-            bytes = document.SaveAsPdf(new ExcelPdfSaveOptions {
+            bytes = document.ToPdf(new ExcelPdfSaveOptions {
                 IncludeSheetHeadings = false,
                 HeaderRowCount = 1,
                 PageSize = new PdfCore.PageSize(360, 220),
@@ -71,16 +71,16 @@ public partial class Excel {
             Assert.False(hyperlink.IsExternal);
             Assert.Equal("'Details'!B3", hyperlink.Target);
 
-            document.Save(false);
+            document.Save();
 
-            bytes = document.SaveAsPdf(new ExcelPdfSaveOptions {
+            bytes = document.ToPdf(new ExcelPdfSaveOptions {
                 IncludeSheetHeadings = true,
                 HeaderRowCount = 1,
                 PageSize = new PdfCore.PageSize(360, 220),
                 Margins = PdfCore.PageMargins.Uniform(24)
             });
 
-            summaryOnlyBytes = document.SaveAsPdf(new ExcelPdfSaveOptions {
+            summaryOnlyBytes = document.ToPdf(new ExcelPdfSaveOptions {
                 SheetNames = new[] { "Summary" },
                 IncludeSheetHeadings = true,
                 HeaderRowCount = 1,
@@ -115,9 +115,9 @@ public partial class Excel {
             ExcelSheet sheet = document.Sheets[0];
             sheet.Cell(1, 1, "Top Target");
             sheet.SetInternalLink(2, 1, "A1", display: "Back to Top");
-            document.Save(false);
+            document.Save();
 
-            bytes = document.SaveAsPdf(new ExcelPdfSaveOptions {
+            bytes = document.ToPdf(new ExcelPdfSaveOptions {
                 IncludeSheetHeadings = true,
                 HeaderRowCount = 1,
                 PageSize = new PdfCore.PageSize(360, 220),
@@ -146,9 +146,9 @@ public partial class Excel {
             details.Cell(2, 1, "Visible Detail");
             details.Cell(200, 2, "Hidden Target");
             document.SetPrintArea(details, "A1:B2");
-            document.Save(false);
+            document.Save();
 
-            bytes = document.SaveAsPdf(new ExcelPdfSaveOptions {
+            bytes = document.ToPdf(new ExcelPdfSaveOptions {
                 IncludeSheetHeadings = true,
                 HeaderRowCount = 1,
                 PageSize = new PdfCore.PageSize(360, 220),

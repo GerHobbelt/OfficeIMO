@@ -323,7 +323,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
                 document.SetPrintArea(summary, "A1:C7");
                 document.SetPrintTitles(summary, firstRow: 2, lastRow: 2, firstCol: null, lastCol: null);
                 document.SetPrintArea(details, "A1:B3");
-                document.Save(false);
+                document.Save();
 
                 document.SaveAsPdf(pdfPath, new ExcelPdfSaveOptions {
                     IncludeSheetHeadings = true,
@@ -383,7 +383,7 @@ _Figure 1. Relative local image resolved from the Markdown file directory._
 | Images | Local JPEG/PNG image blocks | Native |
 
 ```csharp
-MarkdownPdfConverter.SaveFileAsPdf("README.md", "README.pdf");
+"README.md".SaveAsPdfFromMarkdownFile("README.pdf");
 ```
 """, new UTF8Encoding(false));
 
@@ -393,7 +393,7 @@ MarkdownPdfConverter.SaveFileAsPdf("README.md", "README.pdf");
                 IncludeLocalImages = true
             };
 
-            byte[] pdf = MarkdownPdfConverter.SaveFileAsPdf(markdownPath, options);
+            byte[] pdf = markdownPath.ToPdfFromMarkdownFile(options);
             if (options.Warnings.Count != 0) {
                 throw new InvalidOperationException("Markdown raster fixture produced export warnings: " + string.Join("; ", options.Warnings.Select(warning => warning.Code + ":" + warning.Source)));
             }
@@ -445,7 +445,7 @@ This page renders one first-party visual profile for headings, lists, tables, co
 > Quotes should read as supporting narrative.
 
 ```csharp
-var pdf = markdown.SaveAsPdf();
+var pdf = markdown.ToPdf();
 ```
 """.Replace("THEME_NAME", themeName);
     }

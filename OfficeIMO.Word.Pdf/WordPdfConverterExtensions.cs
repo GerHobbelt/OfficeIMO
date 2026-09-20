@@ -15,11 +15,7 @@ namespace OfficeIMO.Word.Pdf {
         /// <param name="options">Optional PDF configuration.</param>
         /// <returns>The generated first-party PDF document model.</returns>
         public static PdfCore.PdfDocument ToPdfDocument(this WordDocument document, PdfSaveOptions? options = null) {
-            if (document == null) {
-                throw new ArgumentNullException(nameof(document));
-            }
-
-            return CreateOfficeIMOPdfDocument(document, options);
+            return document.ToPdfResult(options).Value;
         }
 
         /// <summary>
@@ -30,9 +26,9 @@ namespace OfficeIMO.Word.Pdf {
                 throw new ArgumentNullException(nameof(document));
             }
 
-            options ??= new PdfSaveOptions();
-            PdfCore.PdfDocument pdf = document.ToPdfDocument(options);
-            return new PdfCore.PdfDocumentConversionResult(pdf, options.ConversionReport);
+            PdfSaveOptions operation = (options ?? new PdfSaveOptions()).CloneForConversion();
+            PdfCore.PdfDocument pdf = CreateOfficeIMOPdfDocument(document, operation);
+            return new PdfCore.PdfDocumentConversionResult(pdf, operation.Report);
         }
 
         /// <summary>
@@ -138,12 +134,6 @@ namespace OfficeIMO.Word.Pdf {
             return document.ToPdfDocument(options).ToBytes();
         }
 
-        /// <summary>Returns a PDF document and diagnostics. Prefer <see cref="ToPdfResult(WordDocument, PdfSaveOptions?)"/>.</summary>
-        public static PdfCore.PdfDocumentConversionResult ToPdfDocumentResult(this WordDocument document, PdfSaveOptions? options = null) => document.ToPdfResult(options);
-
-        /// <summary>Returns PDF bytes. Prefer <see cref="ToPdf(WordDocument, PdfSaveOptions?)"/> for consistent in-memory naming.</summary>
-        public static byte[] SaveAsPdf(this WordDocument document, PdfSaveOptions? options = null) => document.ToPdf(options);
-
         /// <summary>
         /// Converts the specified <see cref="WordDocument"/> to PDF bytes asynchronously.
         /// </summary>
@@ -162,10 +152,6 @@ namespace OfficeIMO.Word.Pdf {
                 return stream.ToArray();
             }
         }
-
-        /// <summary>Returns PDF bytes asynchronously. Prefer <see cref="ToPdfAsync(WordDocument, PdfSaveOptions?, CancellationToken)"/>.</summary>
-        public static Task<byte[]> SaveAsPdfAsync(this WordDocument document, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) =>
-            document.ToPdfAsync(options, cancellationToken);
 
         /// <summary>
         /// Saves the specified <see cref="WordDocument"/> as a PDF at the given <paramref name="path"/> asynchronously.

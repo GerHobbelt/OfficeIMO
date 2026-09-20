@@ -6,6 +6,10 @@ namespace OfficeIMO.Html;
 internal static partial class RtfHtmlReader {
     private static void ReadDom(string html, HtmlToRtfOptions options, RtfDocument document) {
         IHtmlDocument htmlDocument = HtmlDocumentParser.ParseDocument(html);
+        ReadDom(htmlDocument, options, document);
+    }
+
+    private static void ReadDom(IHtmlDocument htmlDocument, HtmlToRtfOptions options, RtfDocument document) {
         Uri? effectiveBaseUri = HtmlDocumentParser.ResolveEffectiveBaseUri(htmlDocument, options.BaseUri);
         var context = new ReadContext(document, options, effectiveBaseUri);
         HtmlDomLimitTracker? limits = HtmlDomLimitTracker.Create(options.MaxHtmlNodes, options.MaxHtmlDepth);
@@ -54,7 +58,7 @@ internal static partial class RtfHtmlReader {
             exception.Actual,
             exception.Limit,
             exception.Detail);
-        options.AddDiagnostic(exception.Code, exception.Message, exception.LimitSource, rtfException, HtmlRtfConversionDiagnosticSeverity.Error);
+        options.AddDiagnostic(exception.Code, exception.Message, exception.LimitSource, rtfException, HtmlRtfConversionDiagnosticSeverity.Error, RtfConversionAction.Blocked);
         throw rtfException;
     }
 }

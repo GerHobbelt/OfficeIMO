@@ -12,7 +12,7 @@ namespace OfficeIMO.Tests {
             string xlsOutputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".xls");
 
             try {
-                using (ExcelDocument document = ExcelDocument.Create(openXmlPath, autoSave: false)) {
+                using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
                     document.AddWorkSheet("First").CellValue(1, 1, "First");
                     document.AddWorkSheet("Second").CellValue(1, 1, "Second");
 
@@ -114,7 +114,7 @@ namespace OfficeIMO.Tests {
             string xlsOutputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".xls");
 
             try {
-                using (ExcelDocument document = ExcelDocument.Create(openXmlPath, autoSave: false)) {
+                using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
                     ExcelSheet sheet = document.AddWorkSheet("Views");
                     sheet.CellValue(1, 1, "Equivalent worksheet views");
 
@@ -165,7 +165,7 @@ namespace OfficeIMO.Tests {
                 using ExcelDocument loaded = ExcelDocument.Load(xlsOutputPath);
                 ExcelSheet loadedSheet = loaded.Sheets.Single();
 
-                Assert.True(loaded.WasLoadedFromLegacyXls);
+                Assert.True(loaded.SourceFormat == ExcelFileFormat.Xls);
                 ExcelWorksheetViewInfo view = loadedSheet.GetViewInfo();
                 Assert.False(view.ShowGridlines);
                 Assert.False(loadedSheet.RowColumnHeadingsVisible);
@@ -195,7 +195,7 @@ namespace OfficeIMO.Tests {
             string xlsOutputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".xls");
 
             try {
-                using (ExcelDocument document = ExcelDocument.Create(openXmlPath, autoSave: false)) {
+                using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
                     ExcelSheet sheet = document.AddWorkSheet("Views");
                     sheet.CellValue(1, 1, "Divergent worksheet views");
 

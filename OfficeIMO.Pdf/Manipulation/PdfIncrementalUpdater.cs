@@ -134,7 +134,7 @@ public static partial class PdfIncrementalUpdater {
         bool createXmpMetadata = false) {
         Guard.NotNullOrWhiteSpace(inputPath, nameof(inputPath));
         Guard.NotNullOrWhiteSpace(outputPath, nameof(outputPath));
-        File.WriteAllBytes(outputPath, UpdateMetadata(File.ReadAllBytes(inputPath), title, author, subject, keywords, readOptions, createXmpMetadata));
+        OfficeIMO.Core.Internal.OfficeFileCommit.WriteAllBytes(outputPath, UpdateMetadata(File.ReadAllBytes(inputPath), title, author, subject, keywords, readOptions, createXmpMetadata));
     }
 
     private static void SynchronizeXmpMetadata(
@@ -192,6 +192,7 @@ public static partial class PdfIncrementalUpdater {
         var commonBlockers = new List<string>();
         var metadataBlockers = new List<string>();
         var formBlockers = new List<string>();
+        var signaturePreparationBlockers = new List<string>();
         var longTermValidationBlockers = new List<string>();
         var annotationBlockers = new List<string>();
         var warnings = new List<string>();
@@ -214,8 +215,12 @@ public static partial class PdfIncrementalUpdater {
 
         metadataBlockers.AddRange(commonBlockers);
         formBlockers.AddRange(commonBlockers);
+        signaturePreparationBlockers.AddRange(commonBlockers);
         longTermValidationBlockers.AddRange(commonBlockers);
         annotationBlockers.AddRange(commonBlockers);
+        if (security.HasEncryption) {
+            signaturePreparationBlockers.Add("EncryptedRawSignatureObject");
+        }
         bool blockedBySignatureFieldLock = HasBlockingSignatureFieldLock(security, fieldNames);
 
         if (hasSignatureContent) {
@@ -281,7 +286,7 @@ public static partial class PdfIncrementalUpdater {
         }
 
         bool canPrepareSignature =
-            commonBlockers.Count == 0 &&
+            signaturePreparationBlockers.Count == 0 &&
             !hasSignatureContent &&
             !security.HasDocMDPPermissions;
         if (canPrepareSignature) {

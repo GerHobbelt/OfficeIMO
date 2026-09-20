@@ -26,12 +26,12 @@ namespace OfficeIMO.Tests {
 
                 using (ExcelDocument document = ExcelDocument.Load(filePath)) {
                     document["Imported"].CellValue(3, 2, 1400d);
-                    document.Save(false);
+                    document.Save();
                 }
 
                 AssertPreservedPackageParts(filePath, customXmlBytes, connectionBytes, queryTableBytes);
 
-                using (ExcelDocument document = ExcelDocument.Load(filePath, readOnly: true)) {
+                using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                     ExcelFeatureReport report = document.InspectFeatures();
 
                     Assert.True(report.Can(ExcelPreflightCapability.ReadWorkbookData));
@@ -77,12 +77,12 @@ namespace OfficeIMO.Tests {
 
                 using (ExcelDocument document = ExcelDocument.Load(filePath)) {
                     document["Controls"].CellValue(3, 1, "After");
-                    document.Save(false);
+                    document.Save();
                 }
 
                 AssertPreservedAdvancedPackageParts(filePath, vbaBytes, embeddedBytes);
 
-                using (ExcelDocument document = ExcelDocument.Load(filePath, readOnly: true)) {
+                using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Core.DocumentAccessMode.ReadOnly })) {
                     ExcelFeatureReport report = document.InspectFeatures();
 
                     Assert.True(report.Can(ExcelPreflightCapability.ReadWorkbookData));

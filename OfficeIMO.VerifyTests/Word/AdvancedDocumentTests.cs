@@ -120,7 +120,7 @@ public class AdvancedDocumentTests : VerifyTestBase {
         // add watermark
         document.Sections[0].AddWatermark(WordWatermarkStyle.Text, "Draft");
 
-        document.Save();
+        _ = document.ToBytes();
 
         await DoTest(document._wordprocessingDocument!);
     }

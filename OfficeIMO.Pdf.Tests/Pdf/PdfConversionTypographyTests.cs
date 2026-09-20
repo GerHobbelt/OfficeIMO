@@ -212,7 +212,7 @@ public sealed class PdfConversionTypographyTests {
             table.Rows[2].Cells[1].Paragraphs[0].Text = "Київ";
             document.Save();
 
-            return document.SaveAsPdf(new WordPdf.PdfSaveOptions {
+            return document.ToPdf(new WordPdf.PdfSaveOptions {
                 PdfOptions = CreatePdfOptions(fontPath),
                 IncludePageNumbers = false
             });
@@ -234,15 +234,15 @@ public sealed class PdfConversionTypographyTests {
             sheet.Cell(2, 1, "Zażółć gęślą jaźń");
             sheet.Cell(3, 1, "Ελλάδα");
             sheet.Cell(4, 1, "Київ");
-            document.Save(false);
+            document.Save();
 
             var options = new ExcelPdfSaveOptions {
                 PdfOptions = CreatePdfOptions(fontPath),
                 IncludeSheetHeadings = false
             };
-            byte[] pdf = document.ToPdf(options);
-            Assert.Empty(options.Warnings);
-            Assert.False(options.ConversionReport.HasWarnings);
+            PdfCore.PdfDocumentConversionResult result = document.ToPdfResult(options);
+            byte[] pdf = result.ToBytes();
+            Assert.False(result.HasWarnings);
             return pdf;
         } finally {
             if (Directory.Exists(directory)) {
@@ -256,7 +256,7 @@ public sealed class PdfConversionTypographyTests {
             ApplyWordLikeTheme = false,
             PdfOptions = CreatePdfOptions(fontPath)
         };
-        byte[] pdf = """
+        PdfCore.PdfDocumentConversionResult result = """
 # Converter typography report
 
 Zażółć gęślą jaźń
@@ -265,10 +265,10 @@ Zażółć gęślą jaźń
 | --- | --- |
 | Ελλάδα | Athens |
 | Україна | Київ |
-""".ToPdfFromMarkdown(options);
+""".ToPdfResultFromMarkdown(options);
 
-        Assert.Empty(options.Warnings);
-        Assert.False(options.ConversionReport.HasWarnings);
+        byte[] pdf = result.ToBytes();
+        Assert.False(result.HasWarnings);
         return pdf;
     }
 
@@ -314,9 +314,9 @@ Zażółć gęślą jaźń
         var options = new PowerPointPdfSaveOptions {
             PdfOptions = CreatePdfOptions(fontPath)
         };
-        byte[] pdf = presentation.ToPdf(options);
-        Assert.Empty(options.Warnings);
-        Assert.False(options.ConversionReport.HasWarnings);
+        PdfCore.PdfDocumentConversionResult result = presentation.ToPdfResult(options);
+        byte[] pdf = result.ToBytes();
+        Assert.False(result.HasWarnings);
         return pdf;
     }
 
@@ -333,8 +333,9 @@ Zażółć gęślą jaźń
                 PdfOptions = CreatePdfOptions(fontPath),
                 IncludePageNumbers = false
             };
-            _ = document.SaveAsPdf(options);
-            return options.ConversionReport;
+            PdfCore.PdfDocumentConversionResult result = document.ToPdfResult(options);
+            _ = result.ToBytes();
+            return result.Report;
         } finally {
             if (Directory.Exists(directory)) {
                 Directory.Delete(directory, recursive: true);
@@ -349,14 +350,15 @@ Zażółć gęślą jaźń
             string workbookPath = Path.Combine(directory, "opentype.xlsx");
             using ExcelDocument document = ExcelDocument.Create(workbookPath, "Report");
             document.Sheets[0].Cell(1, 1, "office cafe\u0301");
-            document.Save(false);
+            document.Save();
 
             var options = new ExcelPdfSaveOptions {
                 PdfOptions = CreatePdfOptions(fontPath),
                 IncludeSheetHeadings = false
             };
-            _ = document.SaveAsPdf(options);
-            return options.ConversionReport;
+            PdfCore.PdfDocumentConversionResult result = document.ToPdfResult(options);
+            _ = result.ToBytes();
+            return result.Report;
         } finally {
             if (Directory.Exists(directory)) {
                 Directory.Delete(directory, recursive: true);
@@ -369,8 +371,9 @@ Zażółć gęślą jaźń
             ApplyWordLikeTheme = false,
             PdfOptions = CreatePdfOptions(fontPath)
         };
-        _ = "office cafe\u0301".ToPdfFromMarkdown(options);
-        return options.ConversionReport;
+        PdfCore.PdfDocumentConversionResult result = "office cafe\u0301".ToPdfResultFromMarkdown(options);
+        _ = result.ToBytes();
+        return result.Report;
     }
 
     private static PdfCore.PdfConversionReport CreatePowerPointOpenTypeReport(string fontPath) {
@@ -383,8 +386,9 @@ Zażółć gęślą jaźń
         var options = new PowerPointPdfSaveOptions {
             PdfOptions = CreatePdfOptions(fontPath)
         };
-        _ = presentation.SaveAsPdf(options);
-        return options.ConversionReport;
+        PdfCore.PdfDocumentConversionResult result = presentation.ToPdfResult(options);
+        _ = result.ToBytes();
+        return result.Report;
     }
 
     private static PdfCore.PdfConversionReport CreateWordComplexScriptReport(string text = "مرحبا", bool allowMissingGlyphFailure = false) {
@@ -399,8 +403,9 @@ Zażółć gęślą jaźń
             var options = new WordPdf.PdfSaveOptions {
                 IncludePageNumbers = false
             };
-            AssertRenderAttempt(() => document.SaveAsPdf(options), allowMissingGlyphFailure);
-            return options.ConversionReport;
+            PdfCore.PdfDocumentConversionResult? result = null;
+            AssertRenderAttempt(() => (result = document.ToPdfResult(options)).ToBytes(), allowMissingGlyphFailure);
+            return result?.Report ?? new PdfCore.PdfConversionReport();
         } finally {
             if (Directory.Exists(directory)) {
                 Directory.Delete(directory, recursive: true);
@@ -415,13 +420,14 @@ Zażółć gęślą jaźń
             string workbookPath = Path.Combine(directory, "complex-script.xlsx");
             using ExcelDocument document = ExcelDocument.Create(workbookPath, "Report");
             document.Sheets[0].Cell(1, 1, text);
-            document.Save(false);
+            document.Save();
 
             var options = new ExcelPdfSaveOptions {
                 IncludeSheetHeadings = false
             };
-            AssertRenderAttempt(() => document.SaveAsPdf(options), allowMissingGlyphFailure);
-            return options.ConversionReport;
+            PdfCore.PdfDocumentConversionResult? result = null;
+            AssertRenderAttempt(() => (result = document.ToPdfResult(options)).ToBytes(), allowMissingGlyphFailure);
+            return result?.Report ?? new PdfCore.PdfConversionReport();
         } finally {
             if (Directory.Exists(directory)) {
                 Directory.Delete(directory, recursive: true);
@@ -433,8 +439,9 @@ Zażółć gęślą jaźń
         var options = new MarkdownPdfSaveOptions {
             ApplyWordLikeTheme = false
         };
-        AssertRenderAttempt(() => text.ToPdfFromMarkdown(options), allowMissingGlyphFailure);
-        return options.ConversionReport;
+        PdfCore.PdfDocumentConversionResult? result = null;
+        AssertRenderAttempt(() => (result = text.ToPdfResultFromMarkdown(options)).ToBytes(), allowMissingGlyphFailure);
+        return result?.Report ?? new PdfCore.PdfConversionReport();
     }
 
     private static PdfCore.PdfConversionReport CreatePowerPointComplexScriptReport(string text = "مرحبا", bool allowMissingGlyphFailure = false) {
@@ -445,8 +452,9 @@ Zażółć gęślą jaźń
         textBox.FontSize = 14;
 
         var options = new PowerPointPdfSaveOptions();
-        AssertRenderAttempt(() => presentation.SaveAsPdf(options), allowMissingGlyphFailure);
-        return options.ConversionReport;
+        PdfCore.PdfDocumentConversionResult? result = null;
+        AssertRenderAttempt(() => (result = presentation.ToPdfResult(options)).ToBytes(), allowMissingGlyphFailure);
+        return result?.Report ?? new PdfCore.PdfConversionReport();
     }
 
     private static void AssertRenderAttempt(Func<byte[]> action, bool allowMissingGlyphFailure = false) {

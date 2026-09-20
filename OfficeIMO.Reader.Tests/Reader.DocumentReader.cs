@@ -1,4 +1,5 @@
 using OfficeIMO.Excel;
+using OfficeIMO.Excel.LegacyXls.Model;
 using OfficeIMO.Markdown;
 using OfficeIMO.Pdf;
 using OfficeIMO.PowerPoint;
@@ -97,6 +98,41 @@ public sealed class ReaderDocumentReaderTests {
         Assert.Equal(ReaderInputKind.Excel, result.Kind);
         Assert.NotEmpty(result.Tables);
         Assert.Empty(result.Assets);
+    }
+
+    [Fact]
+    public void DocumentReader_LegacyXlsWarningsIncludePreservedRecords() {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".xlsx");
+        try {
+            using ExcelDocument document = ExcelDocument.Create(path);
+            document.AddWorkSheet("Data").CellValue(1, 1, "Preserved record warning");
+
+            typeof(ExcelDocument)
+                .GetProperty(nameof(ExcelDocument.SourceFormat))!
+                .SetValue(document, ExcelFileFormat.Xls);
+            typeof(ExcelDocument)
+                .GetField("_legacyXlsPreservedFeatures", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(document, new[] {
+                    new LegacyXlsPreservedFeatureRecord(
+                        LegacyXlsUnsupportedFeatureKind.Comment,
+                        "XLS-BIFF-FEATURE-COMMENT-UNSUPPORTED",
+                        "Comment metadata was not projected.",
+                        "Data",
+                        recordOffset: 42,
+                        recordType: 0x001c,
+                        payloadLength: 12,
+                        detailCode: "Comment:Record0x001C")
+                });
+
+            IReadOnlyList<string> warnings = DocumentReader.BuildLegacyExcelWarnings(document)!;
+
+            string warning = Assert.Single(warnings);
+            Assert.Contains("Legacy XLS preserved feature", warning, StringComparison.Ordinal);
+            Assert.Contains("XLS-BIFF-FEATURE-COMMENT-UNSUPPORTED", warning, StringComparison.Ordinal);
+            Assert.Contains("Comment metadata was not projected", warning, StringComparison.Ordinal);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 
     [Fact]
@@ -1450,12 +1486,12 @@ public sealed class ReaderDocumentReaderTests {
         var htmlPath = Path.Combine(folder, "oversized.html");
 
         try {
-            DocumentReaderHtmlRegistrationExtensions.RegisterHtmlHandler(replaceExisting: true);
+            OfficeDocumentReader reader = new OfficeDocumentReaderBuilder().AddHtmlHandler().Build();
 
             var html = "<html><body><p>" + new string('x', 2048) + "</p></body></html>";
             File.WriteAllText(htmlPath, html);
 
-            var document = Assert.Single(DocumentReader.ReadFolderDocuments(
+            var document = Assert.Single(reader.ReadFolderDocuments(
                 folderPath: folder,
                 folderOptions: new ReaderFolderOptions {
                     Recurse = false,
@@ -1471,7 +1507,6 @@ public sealed class ReaderDocumentReaderTests {
             Assert.Single(document.Warnings!);
             Assert.Contains("split due to MaxChars", document.Warnings![0], StringComparison.OrdinalIgnoreCase);
         } finally {
-            DocumentReaderHtmlRegistrationExtensions.UnregisterHtmlHandler();
             if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
         }
     }
@@ -1484,12 +1519,12 @@ public sealed class ReaderDocumentReaderTests {
         var htmlPath = Path.Combine(folder, "oversized.html");
 
         try {
-            DocumentReaderHtmlRegistrationExtensions.RegisterHtmlHandler(replaceExisting: true);
+            OfficeDocumentReader reader = new OfficeDocumentReaderBuilder().AddHtmlHandler().Build();
 
             var html = "<html><body><p>" + new string('x', 2048) + "</p></body></html>";
             File.WriteAllText(htmlPath, html);
 
-            var result = DocumentReader.ReadFolderDetailed(
+            var result = reader.ReadFolderDetailed(
                 folderPath: folder,
                 folderOptions: new ReaderFolderOptions {
                     Recurse = false,
@@ -1511,7 +1546,6 @@ public sealed class ReaderDocumentReaderTests {
             Assert.Single(result.Warnings!);
             Assert.Contains("split due to MaxChars", result.Warnings![0], StringComparison.OrdinalIgnoreCase);
         } finally {
-            DocumentReaderHtmlRegistrationExtensions.UnregisterHtmlHandler();
             if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
         }
     }
