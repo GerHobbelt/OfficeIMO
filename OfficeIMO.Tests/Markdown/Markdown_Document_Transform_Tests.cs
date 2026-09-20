@@ -81,7 +81,7 @@ second
         Assert.Equal(1, diagnostic.ChangedBlockCountBefore);
         Assert.Equal(0, diagnostic.ChangedBlockStartAfter);
         Assert.Equal(2, diagnostic.ChangedBlockCountAfter);
-        Assert.Equal(new MarkdownSourceSpan(1, 1), diagnostic.AffectedSourceSpan);
+        Assert.Equal(new MarkdownSourceSpan(1, 1, 1, 42), diagnostic.AffectedSourceSpan);
         Assert.Equal(2, transformed.Blocks.Count);
     }
 
@@ -94,7 +94,7 @@ second
 
         Assert.Equal(2, result.Document.Blocks.Count);
         Assert.Single(result.TransformDiagnostics);
-        Assert.Equal(new MarkdownSourceSpan(1, 1), result.TransformDiagnostics[0].AffectedSourceSpan);
+        Assert.Equal(new MarkdownSourceSpan(1, 1, 1, 42), result.TransformDiagnostics[0].AffectedSourceSpan);
     }
 
     [Fact]
@@ -494,6 +494,43 @@ Why it matters:missing evidence
             new MarkdownDocumentTransformContext(MarkdownDocumentTransformSource.MarkdownReader, options)).ToMarkdown());
 
         Assert.Equal(once, twice);
+    }
+
+    [Fact]
+    public void MarkdownInlineNormalizationTransform_Updates_Footnote_Text_From_RewrittenBlocks() {
+        var options = MarkdownReaderOptions.CreateOfficeIMOProfile();
+        options.DocumentTransforms.Add(new MarkdownInlineNormalizationTransform(new MarkdownInputNormalizationOptions {
+            NormalizeTightColonSpacing = true
+        }));
+
+        var document = MarkdownReader.Parse("""
+Lead[^1]
+
+[^1]: Why it matters:missing evidence
+""", options);
+
+        var footnote = Assert.IsType<FootnoteDefinitionBlock>(Assert.Single(document.Blocks, block => block is FootnoteDefinitionBlock));
+
+        Assert.Equal("Why it matters: missing evidence", footnote.Text);
+        Assert.Equal("Why it matters: missing evidence", Assert.Single(footnote.ParagraphBlocks).Inlines.RenderMarkdown());
+    }
+
+    [Fact]
+    public void MarkdownInlineNormalizationTransform_Updates_Callout_Body_From_RewrittenBlocks() {
+        var options = MarkdownReaderOptions.CreateOfficeIMOProfile();
+        options.DocumentTransforms.Add(new MarkdownInlineNormalizationTransform(new MarkdownInputNormalizationOptions {
+            NormalizeTightColonSpacing = true
+        }));
+
+        var document = MarkdownReader.Parse("""
+> [!NOTE] Why it matters
+> coverage:missing evidence
+""", options);
+
+        var callout = Assert.IsType<CalloutBlock>(Assert.Single(document.Blocks));
+
+        Assert.Equal("coverage: missing evidence", callout.Body);
+        Assert.Equal("coverage: missing evidence", Assert.IsType<ParagraphBlock>(Assert.Single(callout.ChildBlocks)).Inlines.RenderMarkdown());
     }
 
     private static string NormalizeMarkdown(string markdown) {

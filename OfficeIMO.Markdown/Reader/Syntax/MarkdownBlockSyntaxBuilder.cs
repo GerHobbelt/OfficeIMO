@@ -1,12 +1,20 @@
 namespace OfficeIMO.Markdown;
 
 internal static class MarkdownBlockSyntaxBuilder {
+    private static readonly MarkdownBlockSyntaxBuilderContext _context = new();
+
     internal static MarkdownSyntaxNode BuildBlock(IMarkdownBlock block, MarkdownSourceSpan? span = null) {
-        if (block is ISyntaxMarkdownBlock syntaxBlock) {
-            return syntaxBlock.BuildSyntaxNode(span);
+        var effectiveSpan = span ?? (block as MarkdownObject)?.SourceSpan;
+
+        if (block is ISyntaxMarkdownBlockWithContext syntaxBlockWithContext) {
+            return syntaxBlockWithContext.BuildSyntaxNode(_context, effectiveSpan);
         }
 
-        return new MarkdownSyntaxNode(MarkdownSyntaxKind.Unknown, span, block.RenderMarkdown(), associatedObject: block);
+        if (block is ISyntaxMarkdownBlock syntaxBlock) {
+            return syntaxBlock.BuildSyntaxNode(effectiveSpan);
+        }
+
+        return new MarkdownSyntaxNode(MarkdownSyntaxKind.Unknown, effectiveSpan, block.RenderMarkdown(), associatedObject: block);
     }
 
     internal static MarkdownSyntaxNode BuildInlineBlock(IInlineSyntaxMarkdownBlock inlineBlock, MarkdownSourceSpan? span = null) {
@@ -23,14 +31,15 @@ internal static class MarkdownBlockSyntaxBuilder {
         MarkdownSyntaxKind kind,
         InlineSequence inlines,
         MarkdownSourceSpan? span = null,
-        string? literal = null) {
+        string? literal = null,
+        object? associatedObject = null) {
         var children = MarkdownInlineSyntaxBuilder.BuildChildren(inlines);
         return new MarkdownSyntaxNode(
             kind,
             span ?? GetAggregateSpan(children),
             literal ?? inlines?.RenderMarkdown(),
             children: children,
-            associatedObject: inlines);
+            associatedObject: associatedObject ?? inlines);
     }
 
     internal static IReadOnlyList<MarkdownSyntaxNode> BuildChildSyntaxNodes(IEnumerable<IMarkdownBlock> children) {

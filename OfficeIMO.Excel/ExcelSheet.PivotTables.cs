@@ -1,7 +1,6 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
-using System.Xml.Linq;
 
 namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
@@ -11,8 +10,7 @@ namespace OfficeIMO.Excel {
         public IReadOnlyList<ExcelPivotTableInfo> GetPivotTables() {
             return Locking.ExecuteRead(_excelDocument.EnsureLock(), () => {
                 var list = new List<ExcelPivotTableInfo>();
-                var workbookPart = _spreadSheetDocument.WorkbookPart;
-                if (workbookPart == null) return list;
+                var workbookPart = WorkbookPartRoot;
 
                 var cacheMap = BuildPivotCacheMap(workbookPart);
                 var sheetIndex = ResolveSheetIndex(workbookPart);
@@ -145,7 +143,8 @@ namespace OfficeIMO.Excel {
                     dataFieldIndices.Add(idx);
                 }
 
-                var workbookPart = _spreadSheetDocument.WorkbookPart ?? throw new InvalidOperationException("WorkbookPart is null.");
+                var workbookPart = WorkbookPartRoot;
+                var workbook = workbookPart.Workbook ??= new Workbook();
                 uint cacheId = NextPivotCacheId(workbookPart);
 
                 var cacheDefPart = workbookPart.AddNewPart<PivotTableCacheDefinitionPart>();
@@ -176,7 +175,7 @@ namespace OfficeIMO.Excel {
                 cacheRecordsPart.PivotCacheRecords = new PivotCacheRecords { Count = 0U };
                 cacheRecordsPart.PivotCacheRecords.Save();
 
-                var pivotCaches = workbookPart.Workbook.PivotCaches ?? workbookPart.Workbook.AppendChild(new PivotCaches());
+                var pivotCaches = workbook.PivotCaches ?? workbook.AppendChild(new PivotCaches());
                 pivotCaches.Append(new PivotCache {
                     CacheId = cacheId,
                     Id = workbookPart.GetIdOfPart(cacheDefPart)
@@ -191,7 +190,7 @@ namespace OfficeIMO.Excel {
                 string pivotName = EnsureUniquePivotTableName(name, existingNames);
 
                 var pivotPart = _worksheetPart.AddNewPart<PivotTablePart>();
-                string pivotRelId = _worksheetPart.GetIdOfPart(pivotPart);
+                pivotPart.AddPart(cacheDefPart);
 
                 var pivotFields = new PivotFields { Count = (uint)headers.Count };
                 for (int i = 0; i < headers.Count; i++) {
@@ -286,10 +285,8 @@ namespace OfficeIMO.Excel {
                 pivotPart.PivotTableDefinition = pivotDefinition;
                 pivotPart.PivotTableDefinition.Save();
 
-                EnsurePivotTablePartsElement(pivotRelId);
-
-                _worksheetPart.Worksheet.Save();
-                workbookPart.Workbook.Save();
+                WorksheetRoot.Save();
+                workbook.Save();
             });
         }
 
@@ -364,56 +361,9 @@ namespace OfficeIMO.Excel {
             return $"{start}:{end}";
         }
 
-        private void EnsurePivotTablePartsElement(string relId) {
-            var worksheet = _worksheetPart.Worksheet;
-            const string mainNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-            var existing = worksheet.ChildElements
-                .OfType<OpenXmlUnknownElement>()
-                .FirstOrDefault(e => e.LocalName == "pivotTableParts" && e.NamespaceUri == mainNs);
-
-            var relIds = new List<string>();
-            if (existing != null) {
-                try {
-                    var xdoc = XDocument.Parse(existing.OuterXml);
-                    XNamespace r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-                    XNamespace s = mainNs;
-                    foreach (var part in xdoc.Root?.Elements(s + "pivotTablePart") ?? Enumerable.Empty<XElement>()) {
-                        var id = part.Attribute(r + "id")?.Value;
-                        if (!string.IsNullOrWhiteSpace(id)) relIds.Add(id!);
-                    }
-                } catch {
-                    // If parsing fails, fall back to only the new relationship.
-                }
-            }
-
-            if (!relIds.Contains(relId, StringComparer.OrdinalIgnoreCase)) {
-                relIds.Add(relId);
-            }
-
-            const string relNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-            var pivotParts = new OpenXmlUnknownElement("pivotTableParts", mainNs);
-            pivotParts.SetAttribute(new OpenXmlAttribute("", "count", "", relIds.Count.ToString()));
-            pivotParts.AddNamespaceDeclaration("r", relNs);
-
-            foreach (var id in relIds) {
-                var part = new OpenXmlUnknownElement("pivotTablePart", mainNs);
-                part.SetAttribute(new OpenXmlAttribute("r", "id", relNs, id));
-                pivotParts.Append(part);
-            }
-
-            var unknown = pivotParts;
-            existing?.Remove();
-
-            var ext = worksheet.Elements<ExtensionList>().FirstOrDefault();
-            if (ext != null) {
-                worksheet.InsertBefore(unknown, ext);
-            } else {
-                worksheet.Append(unknown);
-            }
-        }
-
         private static uint NextPivotCacheId(WorkbookPart workbookPart) {
-            var pivotCaches = workbookPart.Workbook.PivotCaches;
+            var workbook = workbookPart.Workbook ?? throw new InvalidOperationException("Workbook is missing.");
+            var pivotCaches = workbook.PivotCaches;
             if (pivotCaches == null) return 1;
             uint max = 0;
             foreach (var cache in pivotCaches.Elements<PivotCache>()) {
@@ -424,7 +374,8 @@ namespace OfficeIMO.Excel {
 
         private static Dictionary<uint, PivotCacheDefinition> BuildPivotCacheMap(WorkbookPart workbookPart) {
             var map = new Dictionary<uint, PivotCacheDefinition>();
-            var pivotCaches = workbookPart.Workbook.PivotCaches;
+            var workbook = workbookPart.Workbook ?? throw new InvalidOperationException("Workbook is missing.");
+            var pivotCaches = workbook.PivotCaches;
             if (pivotCaches == null) return map;
             foreach (var cache in pivotCaches.Elements<PivotCache>()) {
                 if (cache.CacheId == null) continue;
@@ -493,7 +444,8 @@ namespace OfficeIMO.Excel {
         }
 
         private int ResolveSheetIndex(WorkbookPart workbookPart) {
-            var sheets = workbookPart.Workbook.Sheets?.OfType<Sheet>().ToList();
+            var workbook = workbookPart.Workbook ?? throw new InvalidOperationException("Workbook is missing.");
+            var sheets = workbook.Sheets?.OfType<Sheet>().ToList();
             if (sheets == null) return -1;
             for (int i = 0; i < sheets.Count; i++) {
                 if (ReferenceEquals(sheets[i], _sheet)) return i;
