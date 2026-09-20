@@ -20,20 +20,21 @@ namespace OfficeIMO.Word.Pdf {
 
             pdfOptions.PageSize = firstSection == null ? PdfCore.PageSizes.A4 : GetNativePageSize(firstSection, options);
             pdfOptions.Margins = firstSection == null ? PdfCore.PageMargins.Uniform(72) : GetNativeMargins(firstSection, options);
-            bool preserveConfiguredFontSlots = ApplyNativeDefaultFont(document, options, pdfOptions) ||
+            bool allowSystemFontEmbedding = options?.AllowSystemFontEmbedding == true;
+            bool preserveConfiguredFontSlots = ApplyNativeDefaultFont(document, options, pdfOptions, allowSystemFontEmbedding) ||
                                                 options?.PdfOptions != null;
-            HashSet<PdfCore.PdfStandardFont> registeredFontSlots = RegisterNativeDocumentFonts(document, pdfOptions, preserveConfiguredFontSlots);
-            ApplyNativeFallbackFont(options, pdfOptions, preserveConfiguredFontSlots);
-            RegisterNativeEmbeddedTextFallbacks(pdfOptions, registeredFontSlots);
+            HashSet<PdfCore.PdfStandardFont> registeredFontSlots = RegisterNativeDocumentFonts(document, pdfOptions, preserveConfiguredFontSlots, allowSystemFontEmbedding);
+            ApplyNativeFallbackFont(options, pdfOptions, preserveConfiguredFontSlots, allowSystemFontEmbedding);
+            RegisterNativeEmbeddedTextFallbacks(pdfOptions, registeredFontSlots, allowSystemFontEmbedding);
             pdfOptions.BackgroundColor = ParseNativeColor(document.Background?.Color);
             pdfOptions.CreateOutlineFromHeadings = true;
             return pdfOptions;
         }
 
-        private static bool ApplyNativeDefaultFont(WordDocument document, PdfSaveOptions? options, PdfCore.PdfOptions pdfOptions) {
+        private static bool ApplyNativeDefaultFont(WordDocument document, PdfSaveOptions? options, PdfCore.PdfOptions pdfOptions, bool allowSystemFontEmbedding) {
             string? optionFontFamily = options?.FontFamily;
             if (!string.IsNullOrWhiteSpace(optionFontFamily) &&
-                TryApplyNativeDefaultFontCandidate(optionFontFamily, pdfOptions, embedSystemFont: true)) {
+                TryApplyNativeDefaultFontCandidate(optionFontFamily, pdfOptions, embedSystemFont: allowSystemFontEmbedding)) {
                 return true;
             }
 
@@ -43,7 +44,7 @@ namespace OfficeIMO.Word.Pdf {
                 document.Settings.FontFamilyEastAsia,
                 document.Settings.FontFamilyComplexScript
             }) {
-                if (TryApplyNativeDefaultFontCandidate(family, pdfOptions, embedSystemFont: true)) {
+                if (TryApplyNativeDefaultFontCandidate(family, pdfOptions, embedSystemFont: allowSystemFontEmbedding)) {
                     return true;
                 }
             }
@@ -51,8 +52,9 @@ namespace OfficeIMO.Word.Pdf {
             return false;
         }
 
-        private static void ApplyNativeFallbackFont(PdfSaveOptions? options, PdfCore.PdfOptions pdfOptions, bool preserveConfiguredFontSlots) {
+        private static void ApplyNativeFallbackFont(PdfSaveOptions? options, PdfCore.PdfOptions pdfOptions, bool preserveConfiguredFontSlots, bool allowSystemFontEmbedding) {
             if (options?.PdfOptions == null &&
+                allowSystemFontEmbedding &&
                 !preserveConfiguredFontSlots &&
                 !pdfOptions.HasEmbeddedStandardFontFamily(pdfOptions.DefaultFont)) {
                 pdfOptions.TryUseDefaultDocumentFontFallback(requireEmbeddedFont: true);
@@ -63,8 +65,9 @@ namespace OfficeIMO.Word.Pdf {
             return pdfOptions.TryUseOfficeFontFamily(familyName, embedSystemFont, requireEmbeddedFont);
         }
 
-        private static void RegisterNativeEmbeddedTextFallbacks(PdfCore.PdfOptions pdfOptions, IEnumerable<PdfCore.PdfStandardFont> reservedFontSlots) {
-            if (pdfOptions.EmbeddedFontFallbacks != null) {
+        private static void RegisterNativeEmbeddedTextFallbacks(PdfCore.PdfOptions pdfOptions, IEnumerable<PdfCore.PdfStandardFont> reservedFontSlots, bool allowSystemFontEmbedding) {
+            if (!allowSystemFontEmbedding ||
+                pdfOptions.EmbeddedFontFallbacks != null) {
                 return;
             }
 
@@ -121,14 +124,14 @@ namespace OfficeIMO.Word.Pdf {
             }
         }
 
-        private static HashSet<PdfCore.PdfStandardFont> RegisterNativeDocumentFonts(WordDocument document, PdfCore.PdfOptions pdfOptions, bool preserveConfiguredFontSlots) {
+        private static HashSet<PdfCore.PdfStandardFont> RegisterNativeDocumentFonts(WordDocument document, PdfCore.PdfOptions pdfOptions, bool preserveConfiguredFontSlots, bool allowSystemFontEmbedding) {
             var registeredFamilies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<PdfCore.PdfStandardFont> registeredFontSlots = CreateNativeRegisteredFontSlots(pdfOptions, preserveConfiguredFontSlots);
             foreach (WordSection section in document.Sections) {
                 foreach (WordElement element in CollapseNativeParagraphElements(section.Elements)) {
                     if (element is WordCoverPage coverPage) {
                         foreach (WordElement coverElement in GetNativeStructuredBlockElements(coverPage.Document, coverPage.SdtBlock)) {
-                            RegisterNativeElementFonts(coverElement, pdfOptions, registeredFamilies, registeredFontSlots);
+                            RegisterNativeElementFonts(coverElement, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
                         }
 
                         continue;
@@ -136,49 +139,49 @@ namespace OfficeIMO.Word.Pdf {
 
                     if (element is WordStructuredDocumentTag structuredDocumentTag) {
                         foreach (WordElement structuredElement in GetNativeStructuredBlockElements(structuredDocumentTag.Document, structuredDocumentTag.SdtBlock)) {
-                            RegisterNativeElementFonts(structuredElement, pdfOptions, registeredFamilies, registeredFontSlots);
+                            RegisterNativeElementFonts(structuredElement, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
                         }
 
                         continue;
                     }
 
-                    RegisterNativeElementFonts(element, pdfOptions, registeredFamilies, registeredFontSlots);
+                    RegisterNativeElementFonts(element, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
                 }
 
-                RegisterNativeHeaderFooterFonts(section.Header?.Default, pdfOptions, registeredFamilies, registeredFontSlots);
-                RegisterNativeHeaderFooterFonts(section.Header?.First, pdfOptions, registeredFamilies, registeredFontSlots);
-                RegisterNativeHeaderFooterFonts(section.Header?.Even, pdfOptions, registeredFamilies, registeredFontSlots);
-                RegisterNativeHeaderFooterFonts(section.Footer?.Default, pdfOptions, registeredFamilies, registeredFontSlots);
-                RegisterNativeHeaderFooterFonts(section.Footer?.First, pdfOptions, registeredFamilies, registeredFontSlots);
-                RegisterNativeHeaderFooterFonts(section.Footer?.Even, pdfOptions, registeredFamilies, registeredFontSlots);
+                RegisterNativeHeaderFooterFonts(section.Header?.Default, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+                RegisterNativeHeaderFooterFonts(section.Header?.First, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+                RegisterNativeHeaderFooterFonts(section.Header?.Even, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+                RegisterNativeHeaderFooterFonts(section.Footer?.Default, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+                RegisterNativeHeaderFooterFonts(section.Footer?.First, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+                RegisterNativeHeaderFooterFonts(section.Footer?.Even, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
 
                 foreach (WordWatermark watermark in section.Watermarks) {
-                    RegisterNativeFontCandidate(watermark.FontFamily, pdfOptions, registeredFamilies, registeredFontSlots);
+                    RegisterNativeFontCandidate(watermark.FontFamily, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
                 }
             }
 
             return registeredFontSlots;
         }
 
-        private static void RegisterNativeHeaderFooterFonts(WordHeaderFooter? headerFooter, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots) {
+        private static void RegisterNativeHeaderFooterFonts(WordHeaderFooter? headerFooter, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots, bool allowSystemFontEmbedding) {
             if (headerFooter == null) {
                 return;
             }
 
             foreach (WordElement element in CollapseNativeParagraphElements(headerFooter.Elements)) {
-                RegisterNativeElementFonts(element, pdfOptions, registeredFamilies, registeredFontSlots);
+                RegisterNativeElementFonts(element, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
             }
         }
 
-        private static void RegisterNativeElementFonts(WordElement element, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots) {
-                    if (element is WordParagraph paragraph) {
-                        RegisterNativeParagraphFonts(paragraph, pdfOptions, registeredFamilies, registeredFontSlots);
-                        foreach (WordParagraph run in GetNativeRuns(paragraph)) {
-                            RegisterNativeParagraphFonts(run, pdfOptions, registeredFamilies, registeredFontSlots);
-                        }
-                    } else if (element is WordTable table) {
-                        RegisterNativeTableFonts(table, pdfOptions, registeredFamilies, registeredFontSlots);
-                    }
+        private static void RegisterNativeElementFonts(WordElement element, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots, bool allowSystemFontEmbedding) {
+            if (element is WordParagraph paragraph) {
+                RegisterNativeParagraphFonts(paragraph, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+                foreach (WordParagraph run in GetNativeRuns(paragraph)) {
+                    RegisterNativeParagraphFonts(run, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+                }
+            } else if (element is WordTable table) {
+                RegisterNativeTableFonts(table, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+            }
         }
 
         private static HashSet<PdfCore.PdfStandardFont> CreateNativeRegisteredFontSlots(PdfCore.PdfOptions pdfOptions, bool preserveConfiguredFontSlots) {
@@ -200,31 +203,31 @@ namespace OfficeIMO.Word.Pdf {
             registeredFontSlots.Add(PdfCore.PdfStandardFontMapper.GetFontFamily(font));
         }
 
-        private static void RegisterNativeTableFonts(WordTable table, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots) {
+        private static void RegisterNativeTableFonts(WordTable table, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots, bool allowSystemFontEmbedding) {
             foreach (WordTableRow row in table.Rows) {
                 foreach (WordTableCell cell in row.Cells) {
                     foreach (WordParagraph paragraph in cell.Paragraphs) {
-                        RegisterNativeParagraphFonts(paragraph, pdfOptions, registeredFamilies, registeredFontSlots);
+                        RegisterNativeParagraphFonts(paragraph, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
                         foreach (WordParagraph run in GetNativeRuns(paragraph)) {
-                            RegisterNativeParagraphFonts(run, pdfOptions, registeredFamilies, registeredFontSlots);
+                            RegisterNativeParagraphFonts(run, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
                         }
                     }
 
                     foreach (WordTable nestedTable in cell.NestedTables) {
-                        RegisterNativeTableFonts(nestedTable, pdfOptions, registeredFamilies, registeredFontSlots);
+                        RegisterNativeTableFonts(nestedTable, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
                     }
                 }
             }
         }
 
-        private static void RegisterNativeParagraphFonts(WordParagraph paragraph, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots) {
-            RegisterNativeFontCandidate(paragraph.FontFamily, pdfOptions, registeredFamilies, registeredFontSlots);
-            RegisterNativeFontCandidate(paragraph.FontFamilyHighAnsi, pdfOptions, registeredFamilies, registeredFontSlots);
-            RegisterNativeFontCandidate(paragraph.FontFamilyEastAsia, pdfOptions, registeredFamilies, registeredFontSlots);
-            RegisterNativeFontCandidate(paragraph.FontFamilyComplexScript, pdfOptions, registeredFamilies, registeredFontSlots);
+        private static void RegisterNativeParagraphFonts(WordParagraph paragraph, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots, bool allowSystemFontEmbedding) {
+            RegisterNativeFontCandidate(paragraph.FontFamily, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+            RegisterNativeFontCandidate(paragraph.FontFamilyHighAnsi, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+            RegisterNativeFontCandidate(paragraph.FontFamilyEastAsia, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
+            RegisterNativeFontCandidate(paragraph.FontFamilyComplexScript, pdfOptions, registeredFamilies, registeredFontSlots, allowSystemFontEmbedding);
         }
 
-        private static void RegisterNativeFontCandidate(string? familyName, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots) {
+        private static void RegisterNativeFontCandidate(string? familyName, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots, bool allowSystemFontEmbedding) {
             if (string.IsNullOrWhiteSpace(familyName)) {
                 return;
             }
@@ -237,7 +240,7 @@ namespace OfficeIMO.Word.Pdf {
             if (PdfCore.PdfStandardFontMapper.TryMapFontFamily(trimmedFamilyName, out PdfCore.PdfStandardFont standardFont)) {
                 PdfCore.PdfStandardFont fontFamily = PdfCore.PdfStandardFontMapper.GetFontFamily(standardFont);
                 if (registeredFontSlots.Add(fontFamily)) {
-                    pdfOptions.RegisterOfficeFontFamily(trimmedFamilyName, fontFamily);
+                    pdfOptions.RegisterOfficeFontFamily(trimmedFamilyName, fontFamily, embedSystemFont: allowSystemFontEmbedding);
                 }
             }
         }
@@ -259,6 +262,7 @@ namespace OfficeIMO.Word.Pdf {
         private static Dictionary<W.Paragraph, string> BuildNativeHeadingDestinations(WordDocument document) {
             var destinations = new Dictionary<W.Paragraph, string>();
             var used = new HashSet<string>(StringComparer.Ordinal);
+            var nextSuffixByBaseName = new Dictionary<string, int>(StringComparer.Ordinal);
             int headingIndex = 0;
 
             foreach (WordSection section in document.Sections) {
@@ -277,7 +281,7 @@ namespace OfficeIMO.Word.Pdf {
                     string? bookmarkName = string.IsNullOrWhiteSpace(paragraph.Bookmark?.Name)
                         ? null
                         : paragraph.Bookmark!.Name;
-                    string destinationName = bookmarkName ?? CreateNativeHeadingDestinationName(headingText, ++headingIndex, used);
+                    string destinationName = bookmarkName ?? CreateNativeHeadingDestinationName(headingText, ++headingIndex, used, nextSuffixByBaseName);
                     destinations[paragraph._paragraph] = destinationName;
                     used.Add(destinationName);
                 }
@@ -286,7 +290,7 @@ namespace OfficeIMO.Word.Pdf {
             return destinations;
         }
 
-        private static string CreateNativeHeadingDestinationName(string text, int headingIndex, HashSet<string> used) {
+        private static string CreateNativeHeadingDestinationName(string text, int headingIndex, HashSet<string> used, Dictionary<string, int> nextSuffixByBaseName) {
             var builder = new StringBuilder("officeimo-heading-");
             foreach (char ch in text) {
                 if (char.IsLetterOrDigit(ch)) {
@@ -305,13 +309,19 @@ namespace OfficeIMO.Word.Pdf {
                 baseName = "officeimo-heading-" + headingIndex.ToString(CultureInfo.InvariantCulture);
             }
 
-            string name = baseName;
-            int suffix = 2;
-            while (used.Contains(name)) {
-                name = baseName + "-" + suffix.ToString(CultureInfo.InvariantCulture);
-                suffix++;
+            if (!used.Contains(baseName)) {
+                nextSuffixByBaseName[baseName] = 2;
+                return baseName;
             }
 
+            int suffix = nextSuffixByBaseName.TryGetValue(baseName, out int nextSuffix) ? nextSuffix : 2;
+            string name;
+            do {
+                name = baseName + "-" + suffix.ToString(CultureInfo.InvariantCulture);
+                suffix++;
+            } while (used.Contains(name));
+
+            nextSuffixByBaseName[baseName] = suffix;
             return name;
         }
 
