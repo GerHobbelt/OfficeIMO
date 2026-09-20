@@ -220,6 +220,990 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void StandardFontMapper_MapsOfficeFamiliesToDependencyFreePdfFonts() {
+        Assert.True(PdfStandardFontMapper.TryMapFontFamily("Segoe UI, sans-serif", out PdfStandardFont sans));
+        Assert.Equal(PdfStandardFont.Helvetica, sans);
+
+        Assert.True(PdfStandardFontMapper.TryMapFontFamily("\"Times New Roman\", serif", bold: true, italic: true, out PdfStandardFont serif));
+        Assert.Equal(PdfStandardFont.TimesBoldItalic, serif);
+
+        Assert.True(PdfStandardFontMapper.TryMapFontFamily("Consolas", bold: false, italic: true, out PdfStandardFont mono));
+        Assert.Equal(PdfStandardFont.CourierOblique, mono);
+
+        Assert.False(PdfStandardFontMapper.TryMapFontFamily("Unmapped Display Face", out PdfStandardFont fallback));
+        Assert.Equal(PdfStandardFont.Helvetica, fallback);
+
+        Assert.Equal(PdfStandardFont.TimesBold, PdfStandardFontMapper.GetStyledFont(PdfStandardFont.TimesItalic, bold: true, italic: false));
+    }
+
+    [Fact]
+    public void TextWatermark_RendersBehindContentWithOpacityAndRotation() {
+        byte[] bytes = PdfDoc.Create()
+            .Watermark("DRAFT", fontSize: 48, color: PdfColor.FromRgb(120, 130, 150), opacity: 0.18, rotationAngle: -45)
+            .H1("Watermark proof")
+            .Paragraph(p => p.Text("Body content stays readable above the watermark."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string text = PdfReadDocument.Load(bytes).ExtractText();
+
+        Assert.Contains("Watermark proof", text);
+        Assert.Contains("DRAFT", text);
+        Assert.Contains("/ExtGState", raw);
+        Assert.Contains("/ca 0.18", raw, StringComparison.Ordinal);
+        Assert.Contains("0.707 -0.707 0.707 0.707", raw, StringComparison.Ordinal);
+        Assert.Contains("<4452414654> Tj", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TextWatermark_CanBeScopedAndClearedPerComposedPage() {
+        byte[] bytes = PdfDoc.Create()
+            .Watermark("GLOBAL", fontSize: 30, opacity: 0.16)
+            .Page(page => {
+                page.Watermark("SECTION", fontSize: 30, opacity: 0.16);
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Section page"))));
+            })
+            .Page(page => {
+                page.Watermark((PdfTextWatermark?)null);
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Clean page"))));
+            })
+            .ToBytes();
+
+        string text = PdfReadDocument.Load(bytes).ExtractText();
+
+        Assert.Contains("SECTION", text);
+        Assert.DoesNotContain("GLOBAL", text);
+    }
+
+    [Fact]
+    public void TextWatermark_ValidatesAndClonesOptions() {
+        var options = new PdfOptions {
+            TextWatermark = new PdfTextWatermark("Original") {
+                Opacity = 0.2,
+                RotationAngle = -20,
+                FontSize = 40
+            }
+        };
+
+        PdfTextWatermark snapshot = options.TextWatermark!;
+        snapshot.Text = "Changed";
+
+        Assert.Equal("Original", options.TextWatermark!.Text);
+        Assert.Throws<ArgumentException>(() => new PdfTextWatermark(""));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfTextWatermark("Bad") { Opacity = 1.5 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfTextWatermark("Bad") { RotationAngle = double.NaN });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfTextWatermark("Bad") { Font = (PdfStandardFont)99 });
+    }
+
+    [Fact]
+    public void ImageWatermark_RendersBehindContentWithOpacityAndRotation() {
+        byte[] bytes = PdfDoc.Create()
+            .ImageWatermark(CreateMinimalRgbPng(), width: 120, height: 60, opacity: 0.2, rotationAngle: 30)
+            .H1("Image watermark proof")
+            .Paragraph(p => p.Text("Body content stays readable above the image watermark."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string stream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        int imageDraw = stream.IndexOf("/Im", StringComparison.Ordinal);
+        int firstTextBlock = stream.IndexOf("BT", StringComparison.Ordinal);
+
+        Assert.Contains("/Subtype /Image", raw, StringComparison.Ordinal);
+        Assert.Contains("/ExtGState", raw, StringComparison.Ordinal);
+        Assert.Contains("/ca 0.2", raw, StringComparison.Ordinal);
+        Assert.True(imageDraw >= 0, "Expected the image watermark XObject to be drawn.");
+        Assert.True(firstTextBlock > imageDraw, "Expected body text to be emitted after the image watermark draw command.");
+    }
+
+    [Fact]
+    public void ImageWatermark_CanBeScopedAndClearedPerComposedPage() {
+        byte[] image = CreateMinimalRgbPng();
+        byte[] bytes = PdfDoc.Create()
+            .ImageWatermark(image, width: 80, height: 80, opacity: 0.18)
+            .Page(page => {
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Marked page"))));
+            })
+            .Page(page => {
+                page.ImageWatermark((PdfImageWatermark?)null);
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Clean page"))));
+            })
+            .ToBytes();
+
+        string firstPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        string secondPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 2));
+
+        Assert.Contains("/Im", firstPageStream, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Im", secondPageStream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ImageWatermark_ValidatesAndClonesOptions() {
+        byte[] image = CreateMinimalRgbPng();
+        var options = new PdfOptions {
+            ImageWatermark = new PdfImageWatermark(image, width: 20, height: 10) {
+                Opacity = 0.25,
+                RotationAngle = -15
+            }
+        };
+
+        PdfImageWatermark snapshot = options.ImageWatermark!;
+        snapshot.Width = 120;
+
+        Assert.Equal(20, options.ImageWatermark!.Width);
+        Assert.Throws<ArgumentException>(() => new PdfImageWatermark(Array.Empty<byte>(), 20, 10));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfImageWatermark(image, 0, 10));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfImageWatermark(image, 20, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfImageWatermark(image, 20, 10) { Opacity = 1.5 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfImageWatermark(image, 20, 10) { RotationAngle = double.PositiveInfinity });
+    }
+
+    [Fact]
+    public void ContentStreamFormatting_CanonicalizesNegativeZeroInImageMatrices() {
+        byte[] bytes = PdfDoc.Create()
+            .Image(CreateMinimalRgbPng(), width: 36, height: 36)
+            .ToBytes();
+
+        string stream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+
+        Assert.Contains("36 0 0 36", stream, StringComparison.Ordinal);
+        Assert.DoesNotContain(" -0 ", stream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ContentStreams_CanBeFlateCompressedAndRemainReadable() {
+        byte[] uncompressed = CreateCompressionProbe(compressContentStreams: false);
+        byte[] compressed = CreateCompressionProbe(compressContentStreams: true);
+        string rawCompressed = Encoding.ASCII.GetString(compressed);
+        string text = PdfReadDocument.Load(compressed).ExtractText();
+        PdfOptions options = new PdfOptions {
+            CompressContentStreams = true
+        };
+        PdfOptions clone = options.Clone();
+
+        Assert.True(compressed.Length < uncompressed.Length, $"Expected compressed PDF to be smaller. Uncompressed: {uncompressed.Length}, compressed: {compressed.Length}.");
+        Assert.Contains("/Filter /FlateDecode", rawCompressed, StringComparison.Ordinal);
+        Assert.Contains("CompressionProbe", text, StringComparison.Ordinal);
+        Assert.Contains("repeated body", text, StringComparison.Ordinal);
+        Assert.Equal(1, PdfInspector.Inspect(compressed).PageCount);
+        Assert.True(clone.CompressContentStreams);
+    }
+
+    [Fact]
+    public void StandardFontToUnicodeMaps_CanBeEmittedForGeneratedPdfText() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                IncludeStandardFontToUnicodeMaps = true
+            })
+            .Paragraph(p => p.Text("Cafe é and Euro €"))
+            .ToBytes();
+        string raw = Encoding.ASCII.GetString(bytes);
+        string text = PdfReadDocument.Load(bytes).ExtractText();
+        PdfOptions clone = new PdfOptions {
+            IncludeStandardFontToUnicodeMaps = true
+        }.Clone();
+
+        Assert.Contains("/ToUnicode", raw, StringComparison.Ordinal);
+        Assert.Contains("/CMapName /OfficeIMO-WinAnsi-UCS", raw, StringComparison.Ordinal);
+        Assert.Contains("<80> <20AC>", raw, StringComparison.Ordinal);
+        Assert.Contains("<E9> <00E9>", raw, StringComparison.Ordinal);
+        Assert.Contains("Cafe é and Euro", text, StringComparison.Ordinal);
+        Assert.Contains("€", text, StringComparison.Ordinal);
+        Assert.True(clone.IncludeStandardFontToUnicodeMaps);
+    }
+
+    [Fact]
+    public void XmpMetadata_CanBeEmittedAndSynchronizedWithInfoDictionary() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                IncludeXmpMetadata = true
+            })
+            .Meta(
+                title: "R&D <PDF>",
+                author: "OfficeIMO Team",
+                subject: "Compliance & metadata",
+                keywords: "pdf/a, ua; xmp")
+            .Paragraph(p => p.Text("XMP metadata body."))
+            .ToBytes();
+        string raw = Encoding.UTF8.GetString(bytes);
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(bytes);
+        PdfOptions clone = new PdfOptions {
+            IncludeXmpMetadata = true
+        }.Clone();
+
+        Assert.Contains("/Metadata", raw, StringComparison.Ordinal);
+        Assert.Contains("/Type /Metadata /Subtype /XML", raw, StringComparison.Ordinal);
+        Assert.Contains("<?xpacket begin=", raw, StringComparison.Ordinal);
+        Assert.Contains("<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">R&amp;D &lt;PDF&gt;</rdf:li></rdf:Alt></dc:title>", raw, StringComparison.Ordinal);
+        Assert.Contains("<dc:creator><rdf:Seq><rdf:li>OfficeIMO Team</rdf:li></rdf:Seq></dc:creator>", raw, StringComparison.Ordinal);
+        Assert.Contains("<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">Compliance &amp; metadata</rdf:li></rdf:Alt></dc:description>", raw, StringComparison.Ordinal);
+        Assert.Contains("<pdf:Keywords>pdf/a, ua; xmp</pdf:Keywords>", raw, StringComparison.Ordinal);
+        Assert.Contains("<rdf:li>pdf/a</rdf:li>", raw, StringComparison.Ordinal);
+        Assert.Contains("<rdf:li>ua</rdf:li>", raw, StringComparison.Ordinal);
+        Assert.Contains("<rdf:li>xmp</rdf:li>", raw, StringComparison.Ordinal);
+        Assert.Equal("R&D <PDF>", info.Metadata.Title);
+        Assert.Equal("OfficeIMO Team", info.Metadata.Author);
+        Assert.Equal("Compliance & metadata", info.Metadata.Subject);
+        Assert.Equal("pdf/a, ua; xmp", info.Metadata.Keywords);
+        Assert.True(info.HasXmpMetadata);
+        Assert.True(preflight.Probe.HasXmpMetadata);
+        Assert.True(preflight.CanRewrite);
+        Assert.True(clone.IncludeXmpMetadata);
+    }
+
+    [Fact]
+    public void OutputIntent_CanEmbedIccProfileAndRemainRewriteSafe() {
+        byte[] profile = CreateMinimalIccProfile();
+        var outputIntent = new PdfOutputIntent(profile, "OfficeIMO RGB") {
+            OutputCondition = "OfficeIMO test RGB",
+            RegistryName = "https://officeimo.dev/pdf/output-intents",
+            Info = "Dependency-free test profile"
+        };
+        var options = new PdfOptions {
+            OutputIntent = outputIntent
+        };
+        profile[36] = 0;
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("Output intent body."))
+            .ToBytes();
+        string raw = Encoding.ASCII.GetString(bytes);
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(bytes);
+        PdfOptions clone = options.Clone();
+
+        Assert.Contains("/OutputIntents [", raw, StringComparison.Ordinal);
+        Assert.Contains("/Type /OutputIntent /S /GTS_PDFA1", raw, StringComparison.Ordinal);
+        Assert.Contains("/DestOutputProfile", raw, StringComparison.Ordinal);
+        Assert.Contains("/N 3", raw, StringComparison.Ordinal);
+        Assert.Contains("<4F6666696365494D4F20524742>", raw, StringComparison.Ordinal);
+        Assert.True(info.HasOutputIntents);
+        Assert.True(preflight.Probe.HasOutputIntents);
+        Assert.True(preflight.CanRewrite);
+        Assert.Equal(3, clone.OutputIntent!.ColorComponents);
+        Assert.Equal((byte)'a', clone.OutputIntent.IccProfile[36]);
+    }
+
+    [Fact]
+    public void OutputIntent_ValidatesIccProfileAndSnapshotsState() {
+        byte[] grayProfile = CreateMinimalIccProfile("GRAY");
+        byte[] cmykProfile = CreateMinimalIccProfile("CMYK");
+        byte[] badSignature = CreateMinimalIccProfile();
+        badSignature[36] = (byte)'x';
+        byte[] badColorSpace = CreateMinimalIccProfile("LAB ");
+
+        var gray = new PdfOutputIntent(grayProfile, "Gray profile");
+        var cmyk = new PdfOutputIntent(cmykProfile, "CMYK profile");
+        var options = new PdfOptions().SetOutputIntent(grayProfile, "Snapshot profile");
+        grayProfile[36] = 0;
+
+        Assert.Equal(1, gray.ColorComponents);
+        Assert.Equal(4, cmyk.ColorComponents);
+        Assert.Equal((byte)'a', options.OutputIntent!.IccProfile[36]);
+        Assert.Throws<ArgumentException>(() => new PdfOutputIntent(Array.Empty<byte>()));
+        Assert.Throws<ArgumentException>(() => new PdfOutputIntent(badSignature));
+        Assert.Throws<ArgumentException>(() => new PdfOutputIntent(badColorSpace));
+        Assert.Throws<ArgumentException>(() => new PdfOutputIntent(CreateMinimalIccProfile(), ""));
+        Assert.Throws<ArgumentException>(() => new PdfOutputIntent(CreateMinimalIccProfile()) { Info = "" });
+    }
+
+    [Fact]
+    public void DocumentLanguage_CanBeEmittedAndInspected() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                Language = "en-US"
+            })
+            .Paragraph(p => p.Text("Language body."))
+            .ToBytes();
+        string raw = Encoding.ASCII.GetString(bytes);
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(bytes);
+        PdfOptions clone = new PdfOptions {
+            Language = "pl-PL"
+        }.Clone();
+
+        Assert.Contains("/Lang <656E2D5553>", raw, StringComparison.Ordinal);
+        Assert.Equal("en-US", info.CatalogLanguage);
+        Assert.Equal("en-US", preflight.DocumentInfo!.CatalogLanguage);
+        Assert.Equal("pl-PL", clone.Language);
+        Assert.Throws<ArgumentException>(() => new PdfOptions { Language = "" });
+        Assert.Throws<ArgumentException>(() => PdfDoc.Create().Language("bad\u0001lang"));
+    }
+
+    [Fact]
+    public void PageLabels_CanBeEmittedAndInspected() {
+        var options = new PdfOptions {
+            IncludePageLabels = true,
+            PageNumberStyle = PdfPageNumberStyle.UpperRoman,
+            PageNumberStart = 3,
+            PageLabelPrefix = "A-"
+        };
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("Page label proof."))
+            .PageBreak()
+            .Paragraph(p => p.Text("Second labelled page."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(bytes);
+        PdfPageLabel label = Assert.Single(info.PageLabels);
+        PdfOptions clone = options.Clone();
+
+        Assert.Contains("/PageLabels ", raw, StringComparison.Ordinal);
+        Assert.Contains("/S /R", raw, StringComparison.Ordinal);
+        Assert.Contains("/St 3", raw, StringComparison.Ordinal);
+        Assert.Contains("/P <412D>", raw, StringComparison.Ordinal);
+        Assert.True(info.HasPageLabels);
+        Assert.True(info.HasReadablePageLabels);
+        Assert.True(preflight.Probe.HasPageLabels);
+        Assert.True(preflight.CanRewrite);
+        Assert.Equal(0, label.StartPageIndex);
+        Assert.Equal(1, label.StartPageNumber);
+        Assert.Equal("R", label.Style);
+        Assert.Equal("A-", label.Prefix);
+        Assert.Equal(3, label.StartNumber);
+        Assert.True(clone.IncludePageLabels);
+        Assert.Equal("A-", clone.PageLabelPrefix);
+
+        byte[] extracted = PdfPageExtractor.ExtractPages(bytes, 2);
+        PdfPageLabel extractedLabel = Assert.Single(PdfInspector.Inspect(extracted).PageLabels);
+        Assert.Equal(0, extractedLabel.StartPageIndex);
+        Assert.Equal("A-", extractedLabel.Prefix);
+        Assert.Equal(4, extractedLabel.StartNumber);
+
+        Assert.Throws<ArgumentException>(() => new PdfOptions { PageLabelPrefix = "" });
+        Assert.Throws<ArgumentException>(() => PdfDoc.Create().PageLabels("bad\u0001prefix"));
+    }
+
+    [Fact]
+    public void ViewerPreferences_CanBeEmittedAndInspected() {
+        var options = new PdfOptions {
+            ViewerPreferences = new PdfViewerPreferencesOptions {
+                DisplayDocTitle = true,
+                HideToolbar = true,
+                FitWindow = false
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Meta(title: "Viewer preference proof")
+            .ViewerPreferences(preferences => {
+                preferences.CenterWindow = true;
+                preferences.HideMenubar = false;
+            })
+            .Paragraph(p => p.Text("Viewer preferences proof."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(bytes);
+        PdfViewerPreferences viewerPreferences = Assert.IsType<PdfViewerPreferences>(info.ViewerPreferences);
+        PdfViewerPreferencesOptions clone = options.Clone().ViewerPreferences!;
+
+        Assert.Contains("/ViewerPreferences ", raw, StringComparison.Ordinal);
+        Assert.Contains("/DisplayDocTitle true", raw, StringComparison.Ordinal);
+        Assert.Contains("/HideToolbar true", raw, StringComparison.Ordinal);
+        Assert.Contains("/FitWindow false", raw, StringComparison.Ordinal);
+        Assert.Contains("/CenterWindow true", raw, StringComparison.Ordinal);
+        Assert.Contains("/HideMenubar false", raw, StringComparison.Ordinal);
+        Assert.True(info.HasViewerPreferences);
+        Assert.True(info.HasReadableViewerPreferences);
+        Assert.True(preflight.Probe.HasViewerPreferences);
+        Assert.True(preflight.CanRewrite);
+        Assert.True(viewerPreferences.GetBoolean("DisplayDocTitle"));
+        Assert.True(viewerPreferences.GetBoolean("HideToolbar"));
+        Assert.False(viewerPreferences.GetBoolean("FitWindow"));
+        Assert.True(viewerPreferences.GetBoolean("CenterWindow"));
+        Assert.False(viewerPreferences.GetBoolean("HideMenubar"));
+        Assert.True(clone.DisplayDocTitle);
+        Assert.True(clone.HideToolbar);
+        Assert.False(clone.FitWindow);
+        Assert.Null(clone.CenterWindow);
+
+        byte[] extracted = PdfPageExtractor.ExtractPages(bytes, 1);
+        Assert.True(PdfInspector.Inspect(extracted).ViewerPreferences!.GetBoolean("DisplayDocTitle"));
+    }
+
+    [Fact]
+    public void EmbeddedFiles_CanBeEmittedAsNameTreeAndAssociatedFiles() {
+        byte[] invoiceXml = Encoding.UTF8.GetBytes("<rsm:CrossIndustryInvoice>42</rsm:CrossIndustryInvoice>");
+        byte[] sourceText = Encoding.UTF8.GetBytes("Generated from OfficeIMO");
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions()
+                .AddEmbeddedFile("invoice.xml", invoiceXml, "application/xml", PdfAssociatedFileRelationship.Data, "Structured invoice XML"))
+            .AttachFile("source.txt", sourceText, "text/plain", PdfAssociatedFileRelationship.Source)
+            .Paragraph(p => p.Text("Embedded file proof."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("/Names << /EmbeddedFiles", raw, StringComparison.Ordinal);
+        Assert.Contains("/AF [", raw, StringComparison.Ordinal);
+        Assert.Contains("/Type /Filespec", raw, StringComparison.Ordinal);
+        Assert.Contains("/Type /EmbeddedFile", raw, StringComparison.Ordinal);
+        Assert.Contains("/AFRelationship /Data", raw, StringComparison.Ordinal);
+        Assert.Contains("/AFRelationship /Source", raw, StringComparison.Ordinal);
+        Assert.Contains("/Subtype /application#2Fxml", raw, StringComparison.Ordinal);
+        Assert.Contains("/Subtype /text#2Fplain", raw, StringComparison.Ordinal);
+        Assert.Contains("CrossIndustryInvoice", raw, StringComparison.Ordinal);
+
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(bytes);
+        Assert.True(info.HasEmbeddedFiles);
+        Assert.True(preflight.Probe.HasEmbeddedFiles);
+        Assert.True(preflight.CanRewrite);
+
+        byte[] extracted = PdfPageExtractor.ExtractPages(bytes, 1);
+        Assert.Contains("/EmbeddedFiles", Encoding.ASCII.GetString(extracted), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmbeddedFiles_SnapshotDataAndRejectInvalidInputs() {
+        byte[] data = { 1, 2, 3 };
+        var file = new PdfEmbeddedFile("note.txt", data, "text/plain", PdfAssociatedFileRelationship.Supplement, "Note");
+        data[0] = 9;
+
+        byte[] snapshot = file.Data;
+        snapshot[1] = 9;
+
+        Assert.Equal(1, file.Data[0]);
+        Assert.Equal(2, file.Data[1]);
+        Assert.Equal("Supplement", PdfEmbeddedFileDictionaryBuilder.GetRelationshipName(file.Relationship));
+
+        var options = new PdfOptions().AddEmbeddedFile(file);
+        file.FileName = "changed.txt";
+        PdfEmbeddedFile stored = Assert.Single(options.EmbeddedFiles);
+        stored.FileName = "snapshot.txt";
+
+        Assert.Equal("note.txt", Assert.Single(options.EmbeddedFiles).FileName);
+        Assert.Equal("note.txt", Assert.Single(options.Clone().EmbeddedFiles).FileName);
+
+        options.ClearEmbeddedFiles();
+        Assert.Empty(options.EmbeddedFiles);
+
+        Assert.Throws<ArgumentNullException>(() => new PdfOptions().AddEmbeddedFile(null!));
+        Assert.Throws<ArgumentException>(() => new PdfOptions()
+            .AddEmbeddedFile("note.txt", new byte[] { 1 })
+            .AddEmbeddedFile("note.txt", new byte[] { 2 }));
+        Assert.Throws<ArgumentException>(() => new PdfEmbeddedFile("folder/note.txt", new byte[] { 1 }));
+        Assert.Throws<ArgumentException>(() => new PdfEmbeddedFile("note.txt", Array.Empty<byte>()));
+        Assert.Throws<ArgumentException>(() => new PdfEmbeddedFile("note.txt", new byte[] { 1 }, "text plain"));
+        Assert.Throws<ArgumentException>(() => new PdfEmbeddedFile("note.txt", new byte[] { 1 }) { Description = "" });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfEmbeddedFile("note.txt", new byte[] { 1 }, relationship: (PdfAssociatedFileRelationship)99));
+    }
+
+    [Fact]
+    public void ComplianceProfile_ValidatesAndClonesOptions() {
+        var options = new PdfOptions {
+            ComplianceProfile = PdfComplianceProfile.PdfA3U,
+            IncludeXmpMetadata = true,
+            IncludeStandardFontToUnicodeMaps = true
+        };
+        PdfOptions clone = options.Clone();
+
+        var invalidException = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new PdfOptions {
+                ComplianceProfile = (PdfComplianceProfile)999
+            });
+
+        Assert.Equal(PdfComplianceProfile.PdfA3U, clone.ComplianceProfile);
+        Assert.True(clone.IncludeXmpMetadata);
+        Assert.True(clone.IncludeStandardFontToUnicodeMaps);
+        Assert.Contains("PDF compliance profile must be None", invalidException.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(PdfComplianceProfile.PdfA2B, "PDF/A-2b", "output-intent validation", "veraPDF")]
+    [InlineData(PdfComplianceProfile.PdfA2U, "PDF/A-2u", "Unicode text mapping", "veraPDF")]
+    [InlineData(PdfComplianceProfile.PdfA2A, "PDF/A-2a", "tagged PDF structure tree", "alternate text")]
+    [InlineData(PdfComplianceProfile.PdfA3B, "PDF/A-3b", "embedded-font coverage", "veraPDF")]
+    [InlineData(PdfComplianceProfile.PdfA3U, "PDF/A-3u", "Unicode text mapping", "veraPDF")]
+    [InlineData(PdfComplianceProfile.PdfA3A, "PDF/A-3a", "tagged PDF structure tree", "alternate text")]
+    [InlineData(PdfComplianceProfile.PdfUa1, "PDF/UA-1", "role map and reading order", "alternate text")]
+    [InlineData(PdfComplianceProfile.FacturX, "Factur-X", "embedded EN 16931 XML invoice payload", "Mustang")]
+    [InlineData(PdfComplianceProfile.Zugferd, "ZUGFeRD", "associated-file and embedded-file catalog entries", "Mustang")]
+    public void ComplianceProfile_RejectsFormalProfilesUntilCertifiedGenerationExists(PdfComplianceProfile profile, string displayName, string requirement, string validator) {
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            PdfDoc.Create()
+                .Compliance(profile)
+                .Meta(title: "Compliance probe")
+                .Paragraph(p => p.Text("Body"))
+                .ToBytes());
+
+        Assert.Contains(displayName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("cannot yet generate certified", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(requirement, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(validator, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(PdfComplianceProfile.None), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmbeddedStandardFonts_SnapshotDataAndRejectInvalidInputs() {
+        var data = new byte[] { 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        var options = new PdfOptions()
+            .EmbedStandardFont(PdfStandardFont.Helvetica, data, "Snapshot Font");
+        data[0] = 255;
+        PdfEmbeddedFont embeddedFont = options.EmbeddedFonts[PdfStandardFont.Helvetica];
+        byte[] readback = embeddedFont.Data;
+        readback[1] = 255;
+        PdfOptions clone = options.Clone();
+        var renderException = Assert.Throws<NotSupportedException>(() =>
+            PdfDoc.Create(options)
+                .Paragraph(p => p.Text("Invalid embedded font"))
+                .ToBytes());
+
+        Assert.Equal(0, embeddedFont.Data[0]);
+        Assert.Equal(1, embeddedFont.Data[1]);
+        Assert.Equal("Snapshot Font", clone.EmbeddedFonts[PdfStandardFont.Helvetica].FontName);
+        Assert.True(clone.CompressEmbeddedFonts);
+        Assert.Throws<ArgumentException>(() => new PdfOptions().EmbedStandardFont(PdfStandardFont.Helvetica, Array.Empty<byte>()));
+        Assert.Contains("TrueType font", renderException.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmbeddedStandardFonts_CanWriteTrueTypeFontFileResourcesWhenAvailable() {
+        string? fontPath = FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        byte[] fontData = File.ReadAllBytes(fontPath);
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                CompressEmbeddedFonts = true
+            })
+            .EmbedStandardFont(PdfStandardFont.Helvetica, fontData, "OfficeIMOEmbeddedArial")
+            .Paragraph(p => p.Text("Embedded font Cafe é and Euro €"))
+            .ToBytes();
+        byte[] uncompressed = PdfDoc.Create(new PdfOptions {
+                CompressEmbeddedFonts = false
+            })
+            .EmbedStandardFont(PdfStandardFont.Helvetica, fontData, "OfficeIMOEmbeddedArial")
+            .Paragraph(p => p.Text("Embedded font Cafe é and Euro €"))
+            .ToBytes();
+        string raw = Encoding.ASCII.GetString(bytes);
+        string rawUncompressed = Encoding.ASCII.GetString(uncompressed);
+        string text = PdfReadDocument.Load(bytes).ExtractText();
+
+        Assert.True(bytes.Length < uncompressed.Length, $"Expected compressed embedded font PDF to be smaller. Compressed: {bytes.Length}, uncompressed: {uncompressed.Length}.");
+        Assert.Contains("/Subtype /TrueType", raw, StringComparison.Ordinal);
+        Assert.Contains("/BaseFont /OfficeIMOEmbeddedArial", raw, StringComparison.Ordinal);
+        Assert.Contains("/FontDescriptor", raw, StringComparison.Ordinal);
+        Assert.Contains("/FontFile2", raw, StringComparison.Ordinal);
+        Assert.Contains("/Length1 " + fontData.Length.ToString(CultureInfo.InvariantCulture), raw, StringComparison.Ordinal);
+        Assert.Contains("/Filter /FlateDecode", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Filter /FlateDecode", rawUncompressed, StringComparison.Ordinal);
+        Assert.Contains("/FirstChar 32 /LastChar 255 /Widths [", raw, StringComparison.Ordinal);
+        Assert.Contains("/ToUnicode", raw, StringComparison.Ordinal);
+        Assert.Contains("Embedded font Cafe é and Euro", text, StringComparison.Ordinal);
+        Assert.Contains("€", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PageBorder_RendersAsPageDecorationWithOpacityAndDashStyle() {
+        byte[] bytes = PdfDoc.Create()
+            .PageBorder(PdfColor.FromRgb(30, 64, 175), width: 2, inset: 30, opacity: 0.4, dashStyle: OfficeStrokeDashStyle.Dash)
+            .H1("Page border proof")
+            .Paragraph(p => p.Text("Body content stays inside the reusable page frame."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string stream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        int borderDraw = stream.IndexOf("30 30 552 732 re", StringComparison.Ordinal);
+        int firstTextBlock = stream.IndexOf("BT", StringComparison.Ordinal);
+
+        Assert.Contains("/ExtGState", raw, StringComparison.Ordinal);
+        Assert.Contains("/CA 0.4", raw, StringComparison.Ordinal);
+        Assert.Contains("[6 3] 0 d", stream, StringComparison.Ordinal);
+        Assert.True(borderDraw >= 0, "Expected the page border rectangle to be drawn.");
+        Assert.True(firstTextBlock > borderDraw, "Expected body text to be emitted after the page border decoration.");
+    }
+
+    [Fact]
+    public void PageBorder_CanBeScopedAndClearedPerComposedPage() {
+        byte[] bytes = PdfDoc.Create()
+            .PageBorder(inset: 36)
+            .Page(page => {
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Framed page"))));
+            })
+            .Page(page => {
+                page.PageBorder((PdfPageBorder?)null);
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Clean page"))));
+            })
+            .ToBytes();
+
+        string firstPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        string secondPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 2));
+
+        Assert.Contains("36 36 540 720 re", firstPageStream, StringComparison.Ordinal);
+        Assert.DoesNotContain("36 36 540 720 re", secondPageStream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PageBorder_ValidatesAndClonesOptions() {
+        var options = new PdfOptions {
+            PageBorder = new PdfPageBorder {
+                Color = PdfColor.FromRgb(1, 2, 3),
+                Width = 2,
+                Inset = 24,
+                Opacity = 0.75,
+                DashStyle = OfficeStrokeDashStyle.Dot
+            }
+        };
+
+        PdfPageBorder snapshot = options.PageBorder!;
+        snapshot.Width = 6;
+
+        Assert.Equal(2, options.PageBorder!.Width);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfPageBorder { Width = 0 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfPageBorder { Inset = -1 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfPageBorder { Opacity = double.NaN });
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create(new PdfOptions {
+                    PageBorder = new PdfPageBorder {
+                        Inset = 400
+                    }
+                })
+                .Paragraph(p => p.Text("Invalid border frame"))
+                .ToBytes());
+
+        Assert.Contains("PDF page border inset must leave a positive border rectangle.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BackgroundImage_RendersBehindContentWithOpacityAndFit() {
+        byte[] bytes = PdfDoc.Create()
+            .BackgroundImage(CreateMinimalRgbPng(), OfficeImageFit.Stretch, opacity: 0.3)
+            .H1("Background image proof")
+            .Paragraph(p => p.Text("Body content stays above the fitted page background image."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string stream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        int imageDraw = stream.IndexOf("/Im", StringComparison.Ordinal);
+        int firstTextBlock = stream.IndexOf("BT", StringComparison.Ordinal);
+
+        Assert.Contains("/Subtype /Image", raw, StringComparison.Ordinal);
+        Assert.Contains("/ExtGState", raw, StringComparison.Ordinal);
+        Assert.Contains("/ca 0.3", raw, StringComparison.Ordinal);
+        Assert.Matches(@"612 0 -?0 792 0 0 cm", stream);
+        Assert.True(imageDraw >= 0, "Expected the page background image XObject to be drawn.");
+        Assert.True(firstTextBlock > imageDraw, "Expected body text to be emitted after the page background image.");
+    }
+
+    [Fact]
+    public void BackgroundImage_CanBeScopedAndClearedPerComposedPage() {
+        byte[] image = CreateMinimalRgbPng();
+        byte[] bytes = PdfDoc.Create()
+            .BackgroundImage(image, OfficeImageFit.Stretch, opacity: 0.2)
+            .Page(page => {
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Background page"))));
+            })
+            .Page(page => {
+                page.BackgroundImage((PdfPageBackgroundImage?)null);
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Clean page"))));
+            })
+            .ToBytes();
+
+        string firstPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        string secondPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 2));
+
+        Assert.Contains("/Im", firstPageStream, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Im", secondPageStream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BackgroundImage_ValidatesAndClonesOptions() {
+        byte[] image = CreateMinimalRgbPng();
+        var options = new PdfOptions {
+            PageBackgroundImage = new PdfPageBackgroundImage(image) {
+                Fit = OfficeImageFit.Contain,
+                Opacity = 0.25
+            }
+        };
+
+        PdfPageBackgroundImage snapshot = options.PageBackgroundImage!;
+        snapshot.Opacity = 0.9;
+
+        Assert.Equal(0.25, options.PageBackgroundImage!.Opacity);
+        Assert.Throws<ArgumentException>(() => new PdfPageBackgroundImage(Array.Empty<byte>()));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfPageBackgroundImage(image) { Opacity = 1.5 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfPageBackgroundImage(image) { Fit = (OfficeImageFit)99 });
+    }
+
+    [Fact]
+    public void BackgroundShape_RendersBehindContentWithOpacityAndVectorGeometry() {
+        var shape = OfficeShape.RoundedRectangle(540, 86, 18);
+        shape.FillColor = PdfColor.FromRgb(234, 244, 255).ToOfficeColor();
+        shape.StrokeColor = PdfColor.FromRgb(96, 165, 250).ToOfficeColor();
+        shape.StrokeWidth = 1.25;
+        shape.FillOpacity = 0.34;
+        shape.StrokeOpacity = 0.6;
+
+        byte[] bytes = PdfDoc.Create()
+            .BackgroundShape(new PdfPageBackgroundShape(shape, 36, 640))
+            .H1("Background shape proof")
+            .Paragraph(p => p.Text("Body content stays above reusable vector page decoration."))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string stream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        int shapePath = stream.IndexOf("54 640", StringComparison.Ordinal);
+        int firstTextBlock = stream.IndexOf("BT", StringComparison.Ordinal);
+
+        Assert.Contains("/ExtGState", raw, StringComparison.Ordinal);
+        Assert.Contains("/ca 0.34", raw, StringComparison.Ordinal);
+        Assert.Contains("/CA 0.6", raw, StringComparison.Ordinal);
+        Assert.True(shapePath >= 0, "Expected the rounded background shape path to be drawn.");
+        Assert.True(firstTextBlock > shapePath, "Expected body text to be emitted after the background shape.");
+    }
+
+    [Fact]
+    public void BackgroundShape_CanBeScopedAndClearedPerComposedPage() {
+        byte[] bytes = PdfDoc.Create()
+            .BackgroundRectangle(36, 640, 540, 86, PdfColor.FromRgb(238, 242, 255))
+            .Page(page => {
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Decorated page"))));
+            })
+            .Page(page => {
+                page.ClearBackgroundShapes();
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Clean page"))));
+            })
+            .ToBytes();
+
+        string firstPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        string secondPageStream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 2));
+
+        Assert.Contains("36 640 540 86 re", firstPageStream, StringComparison.Ordinal);
+        Assert.DoesNotContain("36 640 540 86 re", secondPageStream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BackgroundBands_ComputePageAnchoredGeometry() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 300,
+                PageHeight = 400,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 40,
+                MarginBottom = 40
+            })
+            .BackgroundTopBand(50, PdfColor.FromRgb(238, 242, 255), insetX: 12, offsetY: 8, stroke: PdfColor.FromRgb(96, 165, 250), strokeWidth: 0.8, fillOpacity: 0.42, strokeOpacity: 0.7, fillGradient: OfficeLinearGradient.Horizontal(OfficeColor.LightBlue, OfficeColor.WhiteSmoke))
+            .BackgroundBottomBand(30, PdfColor.FromRgb(240, 253, 244), insetX: 20, offsetY: 10)
+            .BackgroundLeftBand(18, PdfColor.FromRgb(254, 249, 195), insetY: 24, offsetX: 6)
+            .BackgroundRightBand(22, PdfColor.FromRgb(255, 237, 213), insetY: 30, offsetX: 9)
+            .Paragraph(p => p.Text("Anchored bands"))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        string stream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+        int topBand = stream.IndexOf("12 342 276 50 re", StringComparison.Ordinal);
+        int bottomBand = stream.IndexOf("20 10 260 30 re", StringComparison.Ordinal);
+        int leftBand = stream.IndexOf("6 24 18 352 re", StringComparison.Ordinal);
+        int rightBand = stream.IndexOf("269 30 22 340 re", StringComparison.Ordinal);
+        int firstTextBlock = stream.IndexOf("BT", StringComparison.Ordinal);
+
+        Assert.True(topBand >= 0, "Expected a top band anchored to the page top.");
+        Assert.True(bottomBand > topBand, "Expected the bottom band after the top band in insertion order.");
+        Assert.True(leftBand > bottomBand, "Expected the left band after the bottom band in insertion order.");
+        Assert.True(rightBand > leftBand, "Expected the right band after the left band in insertion order.");
+        Assert.True(firstTextBlock > rightBand, "Expected body text to be emitted after all background bands.");
+        Assert.Contains("/ca 0.42", raw, StringComparison.Ordinal);
+        Assert.Contains("/CA 0.7", raw, StringComparison.Ordinal);
+        Assert.Contains("/Shading << /SH", raw, StringComparison.Ordinal);
+        Assert.Contains("/SH1 sh", stream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BackgroundBands_CanBePageScopedWithCurrentPageSize() {
+        byte[] bytes = PdfDoc.Create()
+            .Page(page => {
+                page.Size(300, 400);
+                page.Margin(30, 40, 30, 40);
+                page.BackgroundTopBand(50, PdfColor.FromRgb(238, 242, 255), insetX: 12, offsetY: 8);
+                page.Content(content => content.Column(column => column.Item().Paragraph(p => p.Text("Scoped band"))));
+            })
+            .ToBytes();
+
+        string stream = Assert.Single(GetPageContentStreams(bytes, pageNumber: 1));
+
+        Assert.Contains("12 342 276 50 re", stream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BackgroundShape_ValidatesAndClonesOptions() {
+        var shape = PdfPageBackgroundShape.Rectangle(12, 24, 120, 48, PdfColor.FromRgb(224, 242, 254), fillGradient: OfficeLinearGradient.Horizontal(OfficeColor.LightBlue, OfficeColor.WhiteSmoke));
+        var options = new PdfOptions {
+            PageBackgroundShapes = new[] { shape }
+        };
+
+        shape.X = 300;
+        PdfPageBackgroundShape snapshot = Assert.Single(options.PageBackgroundShapes!);
+        snapshot.X = 500;
+        OfficeShape snapshotShape = snapshot.Shape;
+        snapshotShape.FillColor = OfficeColor.Red;
+        snapshot.Shape = snapshotShape;
+
+        PdfPageBackgroundShape stored = Assert.Single(options.PageBackgroundShapes!);
+        Assert.Equal(12, stored.X);
+        Assert.NotEqual(OfficeColor.Red, stored.Shape.FillColor);
+        Assert.NotNull(stored.Shape.FillGradient);
+        Assert.Throws<ArgumentNullException>(() => new PdfPageBackgroundShape(null!, 0, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfPageBackgroundShape(OfficeShape.Rectangle(10, 10), double.NaN, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfPageBackgroundShape.Rectangle(0, 0, 10, 10, stroke: PdfColor.Black, strokeWidth: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfPageBackgroundShape.Rectangle(0, 0, 10, 10, fill: PdfColor.Black, fillOpacity: 1.1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfPageBackgroundShape.Rectangle(0, 0, 10, 10, stroke: PdfColor.Black, strokeWidth: 1, strokeOpacity: double.NaN));
+        Assert.Throws<ArgumentException>(() => PdfPageBackgroundShape.TopBand(300, 400, 50, insetX: 160));
+        Assert.Throws<ArgumentException>(() => PdfPageBackgroundShape.RightBand(300, 400, 80, offsetX: 240));
+    }
+
+    [Fact]
+    public void RichParagraph_ResetColor_ReturnsToDefaultTextColor() {
+        byte[] bytes = PdfDoc.Create()
+            .Paragraph(p => p
+                .Text("Before ")
+                .Color(new PdfColor(1, 0, 0))
+                .Text("Red")
+                .ResetColor()
+                .Text("After"))
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+        int redText = content.IndexOf("<526564>", StringComparison.Ordinal);
+        int afterText = content.IndexOf("<4166746572>", StringComparison.Ordinal);
+
+        Assert.True(redText >= 0, "Expected encoded 'Red' text in the generated PDF content stream.");
+        Assert.True(afterText > redText, "Expected encoded 'After' text after the red run.");
+
+        int redColorBeforeRed = content.LastIndexOf("1 0 0 rg", redText, StringComparison.Ordinal);
+        int blackColorBeforeAfter = content.LastIndexOf("0 0 0 rg", afterText, StringComparison.Ordinal);
+        int redColorBeforeAfter = content.LastIndexOf("1 0 0 rg", afterText, StringComparison.Ordinal);
+
+        Assert.True(redColorBeforeRed >= 0, "Expected the red run to emit a red fill color.");
+        Assert.True(blackColorBeforeAfter > redText, "Expected ResetColor to emit black/default fill color before the following run.");
+        Assert.True(redColorBeforeAfter < blackColorBeforeAfter, "Expected the following run not to inherit the previous red fill color.");
+    }
+
+    [Fact]
+    public void RichParagraph_FontSize_AppliesOnlyToScopedRuns() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                DefaultFontSize = 11
+            })
+            .Paragraph(p => p
+                .Text("Small")
+                .FontSize(18)
+                .Text("Large")
+                .ResetFontSize()
+                .Text("Normal"))
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+        int smallText = content.IndexOf("<536D616C6C>", StringComparison.Ordinal);
+        int largeText = content.IndexOf("<4C61726765>", StringComparison.Ordinal);
+        int normalText = content.IndexOf("<4E6F726D616C>", StringComparison.Ordinal);
+
+        Assert.True(smallText >= 0, "Expected encoded 'Small' text in the generated PDF content stream.");
+        Assert.True(largeText > smallText, "Expected encoded 'Large' text after the default-sized run.");
+        Assert.True(normalText > largeText, "Expected encoded 'Normal' text after the large run.");
+
+        int defaultSizeBeforeSmall = content.LastIndexOf("/F1 11 Tf", smallText, StringComparison.Ordinal);
+        int largeSizeBeforeLarge = content.LastIndexOf("/F1 18 Tf", largeText, StringComparison.Ordinal);
+        int defaultSizeBeforeNormal = content.LastIndexOf("/F1 11 Tf", normalText, StringComparison.Ordinal);
+
+        Assert.True(defaultSizeBeforeSmall >= 0, "Expected the first run to use the paragraph/default font size.");
+        Assert.True(largeSizeBeforeLarge > smallText, "Expected FontSize(18) to emit an 18-point font before the scoped run.");
+        Assert.True(defaultSizeBeforeNormal > largeText, "Expected ResetFontSize to restore the paragraph/default font size for later runs.");
+    }
+
+    [Fact]
+    public void RichParagraph_BackgroundColor_RendersBehindScopedRuns() {
+        byte[] bytes = PdfDoc.Create()
+            .Paragraph(p => p
+                .Text("Before ")
+                .BackgroundColor(PdfColor.FromRgb(255, 255, 0))
+                .Text("Marked")
+                .ResetBackgroundColor()
+                .Text("After"))
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+        int markedText = content.IndexOf("<4D61726B6564>", StringComparison.Ordinal);
+        int afterText = content.IndexOf("<4166746572>", StringComparison.Ordinal);
+
+        Assert.True(markedText >= 0, "Expected encoded 'Marked' text in the generated PDF content stream.");
+        Assert.True(afterText > markedText, "Expected encoded 'After' text after the highlighted run.");
+
+        int highlightFill = content.LastIndexOf("1 1 0 rg", markedText, StringComparison.Ordinal);
+        int highlightRect = content.LastIndexOf(" re f", markedText, StringComparison.Ordinal);
+
+        Assert.True(highlightFill >= 0, "Expected the highlighted run to emit a yellow fill color.");
+        Assert.True(highlightRect > highlightFill, "Expected the highlighted run to emit a filled rectangle before the text.");
+        Assert.Single(Regex.Matches(content, "1 1 0 rg").Cast<Match>());
+    }
+
+    [Fact]
+    public void RichParagraph_BackgroundColor_MergesMultiWordRunsIntoContinuousHighlight() {
+        byte[] bytes = PdfDoc.Create()
+            .Paragraph(p => p
+                .Text("Before ")
+                .BackgroundColor(PdfColor.FromRgb(255, 255, 0))
+                .Text("Marked Words")
+                .ResetBackgroundColor()
+                .Text(" After"))
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+        int markedText = content.IndexOf("<4D61726B6564>", StringComparison.Ordinal);
+        int wordsText = content.IndexOf("<576F726473>", StringComparison.Ordinal);
+
+        Assert.True(markedText >= 0, "Expected encoded 'Marked' text in the generated PDF content stream.");
+        Assert.True(wordsText > markedText, "Expected encoded 'Words' text after the first highlighted word.");
+        Assert.Single(Regex.Matches(content, "1 1 0 rg").Cast<Match>());
+        Match highlightRect = Regex.Match(content, @"1 1 0 rg\s+([0-9.]+) ([0-9.]+) ([0-9.]+) ([0-9.]+) re\s+f");
+        Assert.True(highlightRect.Success, "Expected one continuous yellow rectangle for the whole highlighted phrase.");
+        double width = double.Parse(highlightRect.Groups[3].Value, CultureInfo.InvariantCulture);
+        Assert.True(width > 76D, $"Expected the highlight rectangle to include the space between highlighted words. Width: {width:0.##}.");
+    }
+
+    [Fact]
+    public void Table_RichTextCell_RendersScopedRunStyles() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                DefaultFontSize = 11
+            })
+            .Table(new[] {
+                new[] {
+                    PdfTableCell.RichTextCell(new[] {
+                        TextRun.Normal("Plain "),
+                        new TextRun("CellRed", color: PdfColor.FromRgb(255, 0, 0)),
+                        TextRun.Normal(" "),
+                        TextRun.Bolded("CellBold"),
+                        TextRun.Normal(" "),
+                        TextRun.Normal("CellMarked", backgroundColor: PdfColor.FromRgb(255, 255, 0)),
+                        TextRun.Normal(" "),
+                        TextRun.Normal("CellLarge", fontSize: 18)
+                    })
+                }
+            }, style: new PdfTableStyle {
+                HeaderRowCount = 0
+            })
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+        int redText = content.IndexOf("<43656C6C526564>", StringComparison.Ordinal);
+        int boldText = content.IndexOf("<43656C6C426F6C64>", StringComparison.Ordinal);
+        int markedText = content.IndexOf("<43656C6C4D61726B6564>", StringComparison.Ordinal);
+        int largeText = content.IndexOf("<43656C6C4C61726765>", StringComparison.Ordinal);
+
+        Assert.True(redText >= 0, "Expected encoded rich table cell red text in the PDF content stream.");
+        Assert.True(boldText > redText, "Expected encoded bold table cell text after the red run.");
+        Assert.True(markedText > boldText, "Expected encoded highlighted table cell text after the bold run.");
+        Assert.True(largeText > markedText, "Expected encoded large table cell text after the highlighted run.");
+
+        Assert.True(content.LastIndexOf("1 0 0 rg", redText, StringComparison.Ordinal) >= 0, "Expected rich table cell color to emit a red fill color.");
+        Assert.True(content.LastIndexOf("/F2 11 Tf", boldText, StringComparison.Ordinal) >= 0, "Expected rich table cell bold run to use the bold font resource.");
+        Assert.True(content.LastIndexOf("1 1 0 rg", markedText, StringComparison.Ordinal) >= 0, "Expected rich table cell highlight to emit a yellow fill color.");
+        Assert.True(content.LastIndexOf("/F1 18 Tf", largeText, StringComparison.Ordinal) >= 0, "Expected rich table cell font size to emit an 18-point run.");
+    }
+
+    [Fact]
     public void RichText_RejectsNullRunTextBeforeRendering() {
         Assert.Throws<ArgumentNullException>(() =>
             PdfDoc.Create().Paragraph(p => p.Text(null!)));
@@ -455,6 +1439,8 @@ public class PdfDocVisualQualityTests {
             SpacingBefore = 4,
             SpacingAfter = 12,
             Color = PdfColor.FromRgb(10, 20, 30),
+            Bold = false,
+            ApplySpacingBeforeAtTop = true,
             KeepWithNext = false
         };
         var styles = new PdfHeadingStyles {
@@ -482,8 +1468,12 @@ public class PdfDocVisualQualityTests {
         Assert.Equal(4, options.DefaultHeadingStyles.Level1.SpacingBefore);
         Assert.Equal(12, options.DefaultHeadingStyles.Level1.SpacingAfter);
         Assert.Equal(PdfColor.FromRgb(10, 20, 30), options.DefaultHeadingStyles.Level1.Color);
+        Assert.False(options.DefaultHeadingStyles.Level1.Bold);
+        Assert.True(options.DefaultHeadingStyles.Level1.ApplySpacingBeforeAtTop);
         Assert.False(options.DefaultHeadingStyles.Level1.KeepWithNext);
         Assert.Equal(16, clone.DefaultHeadingStyles!.Level1!.FontSize);
+        Assert.False(clone.DefaultHeadingStyles.Level1.Bold);
+        Assert.True(clone.DefaultHeadingStyles.Level1.ApplySpacingBeforeAtTop);
     }
 
     [Fact]
@@ -528,6 +1518,65 @@ public class PdfDocVisualQualityTests {
         Assert.True(options.DefaultPanelStyle.KeepWithNext);
         Assert.Equal(12, clone.DefaultPanelStyle!.PaddingX);
         Assert.True(clone.DefaultPanelStyle.KeepWithNext);
+    }
+
+    [Fact]
+    public void PanelParagraph_RendersAndSnapshotsSideSpecificPanelBorders() {
+        PdfColor red = PdfColor.FromRgb(255, 0, 0);
+        PdfColor blue = PdfColor.FromRgb(0, 0, 255);
+        var style = new PanelStyle {
+            Background = PdfColor.FromRgb(245, 245, 245),
+            TopBorder = new PdfPanelBorder {
+                Color = red,
+                Width = 2
+            },
+            LeftBorder = new PdfPanelBorder {
+                Color = blue,
+                Width = 1.5
+            },
+            PaddingX = 8,
+            PaddingY = 6,
+            SpacingAfter = 0
+        };
+        var options = new PdfOptions {
+            PageWidth = 260,
+            PageHeight = 180,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultPanelStyle = style
+        };
+
+        style.TopBorder = new PdfPanelBorder {
+            Color = PdfColor.FromRgb(0, 128, 0),
+            Width = 4
+        };
+        PanelStyle readback = options.DefaultPanelStyle!;
+        readback.LeftBorder = new PdfPanelBorder {
+            Color = PdfColor.Black,
+            Width = 3
+        };
+
+        PdfOptions clone = options.Clone();
+        byte[] bytes = PdfDoc.Create(options)
+            .PanelParagraph(p => p.Text("PanelSideBorders"))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+
+        Assert.Equal(red, options.DefaultPanelStyle!.TopBorder!.Color);
+        Assert.Equal(2, options.DefaultPanelStyle.TopBorder.Width);
+        Assert.Equal(blue, options.DefaultPanelStyle.LeftBorder!.Color);
+        Assert.Equal(1.5, options.DefaultPanelStyle.LeftBorder.Width);
+        Assert.Equal(red, clone.DefaultPanelStyle!.TopBorder!.Color);
+        Assert.Equal(blue, clone.DefaultPanelStyle.LeftBorder!.Color);
+        Assert.Contains("PanelSideBorders", pdf.GetPage(1).Text);
+        Assert.Contains("1 0 0 RG", raw);
+        Assert.Contains("2 w", raw);
+        Assert.Contains("0 0 1 RG", raw);
+        Assert.Contains("1.5 w", raw);
     }
 
     [Fact]
@@ -801,6 +1850,32 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void HeadingStyle_BoldFalse_UsesNormalFontResource() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 300,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30,
+                DefaultFont = PdfStandardFont.Helvetica,
+                DefaultFontSize = 10
+            })
+            .H1("RegularHeading", style: new PdfHeadingStyle {
+                FontSize = 14,
+                Bold = false
+            })
+            .ToBytes();
+
+        string rawPdf = Encoding.ASCII.GetString(bytes);
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+
+        Assert.Contains("RegularHeading", pdf.GetPage(1).Text);
+        Assert.Contains("/BaseFont /Helvetica", rawPdf, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Helvetica-Bold", rawPdf, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Heading_UsesConfiguredSpacingBeforeAndAfter() {
         var options = new PdfOptions {
             PageWidth = 320,
@@ -889,6 +1964,97 @@ public class PdfDocVisualQualityTests {
         double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "TopHeadingMarker");
 
         Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Fact]
+    public void Heading_CanApplySpacingBeforeAtPageTop() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        var defaultStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 0,
+            SpacingAfter = 0
+        };
+        var spacedStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 28,
+            SpacingAfter = 0,
+            ApplySpacingBeforeAtTop = true
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .H2("TopHeadingMarker", style: defaultStyle)
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .H2("TopHeadingMarker", style: spacedStyle)
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), "TopHeadingMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "TopHeadingMarker");
+
+        Assert.True(defaultTopY - spacedTopY >= 26, $"Expected opt-in top spacing to move heading text down. Default y: {defaultTopY:0.##}, spaced y: {spacedTopY:0.##}.");
+    }
+
+    [Fact]
+    public void Heading_CanApplySpacingBeforeAfterAutomaticPageBreak() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 160,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        var defaultStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 0,
+            SpacingAfter = 0
+        };
+        var spacedStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 24,
+            SpacingAfter = 0,
+            ApplySpacingBeforeAtTop = true
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("BeforeMarker"), style: new PdfParagraphStyle { SpacingAfter = 0 })
+            .Spacer(80)
+            .H2("PagedHeadingMarker", style: defaultStyle)
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("BeforeMarker"), style: new PdfParagraphStyle { SpacingAfter = 0 })
+            .Spacer(80)
+            .H2("PagedHeadingMarker", style: spacedStyle)
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        Assert.Equal(2, defaultPdf.NumberOfPages);
+        Assert.Equal(2, spacedPdf.NumberOfPages);
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(2), "PagedHeadingMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(2), "PagedHeadingMarker");
+
+        Assert.True(defaultTopY - spacedTopY >= 22, $"Expected opt-in top spacing after a page break to move heading text down. Default y: {defaultTopY:0.##}, spaced y: {spacedTopY:0.##}.");
     }
 
     [Fact]
@@ -1214,6 +2380,33 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void PdfTheme_BuiltInVisualProfilesExposeReusableDocumentRhythm() {
+        PdfOptions technical = new PdfOptions().ApplyTheme(PdfTheme.TechnicalDocument());
+        PdfOptions compact = new PdfOptions().ApplyTheme(PdfTheme.Compact());
+        PdfOptions report = new PdfOptions().ApplyTheme(PdfTheme.Report());
+
+        Assert.Equal(PdfColor.FromRgb(15, 23, 42), technical.DefaultTableStyle!.HeaderFill);
+        Assert.Equal(9.75, technical.DefaultTableStyle.FontSize);
+        Assert.Equal(1.2, technical.DefaultTableStyle.LineHeight);
+        Assert.True(technical.DefaultTableStyle.AutoFitColumns);
+        Assert.Equal(9, technical.DefaultPanelStyle!.SpacingAfter);
+        Assert.Equal(0.6, technical.DefaultHorizontalRuleStyle!.Thickness);
+
+        Assert.Equal(10, compact.DefaultFontSize);
+        Assert.Equal(1.08, compact.DefaultParagraphStyle!.LineHeight);
+        Assert.Equal(4, compact.DefaultParagraphStyle.SpacingAfter);
+        Assert.Equal(9, compact.DefaultTableStyle!.FontSize);
+        Assert.Equal(14, compact.DefaultRowStyle!.Gap);
+
+        Assert.Equal(PdfColor.FromRgb(30, 64, 175), report.DefaultTableStyle!.HeaderFill);
+        Assert.Equal(PdfColor.FromRgb(239, 246, 255), report.DefaultTableStyle.RowStripeFill);
+        Assert.Equal(9.25, report.DefaultTableStyle.FontSize);
+        Assert.Equal(21, report.DefaultHeadingStyles!.Level1!.FontSize);
+        Assert.Equal(PdfColor.FromRgb(30, 64, 175), report.DefaultHeadingStyles.Level2!.Color);
+        Assert.Equal(10, report.DefaultPanelStyle!.SpacingAfter);
+    }
+
+    [Fact]
     public void PdfDoc_WordLikeThemeRendersReadableMixedFlowRhythm() {
         byte[] bytes = PdfDoc.Create(new PdfOptions {
                 PageWidth = 420,
@@ -1256,6 +2449,44 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("0.122 0.161 0.216 rg", rawPdf, StringComparison.Ordinal);
         Assert.Contains("0.067 0.094 0.153 rg", rawPdf, StringComparison.Ordinal);
         AssertNoSameBaselineTextCollisions(page, "Word-like theme flow");
+    }
+
+    [Fact]
+    public void PdfDoc_ReportThemeRendersStrongerTableAndPanelHierarchy() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 420,
+                PageHeight = 520,
+                MarginLeft = 42,
+                MarginRight = 42,
+                MarginTop = 42,
+                MarginBottom = 42
+            })
+            .Theme(PdfTheme.Report())
+            .H1("ReportThemeHeading")
+            .H2("ReportThemeSection")
+            .Paragraph(p => p.Text("ReportThemeBody keeps the body calm while tables carry the hierarchy."))
+            .PanelParagraph(p => p.Text("ReportThemePanel"))
+            .Table(new[] {
+                new[] { "ReportThemeTable", "Value" },
+                new[] { "Alpha", "42" },
+                new[] { "Beta", "84" }
+            })
+            .ToBytes();
+
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+        var page = pdf.GetPage(1);
+        string rawPdf = Encoding.ASCII.GetString(bytes);
+        double headingY = FindWordStartY(page, "ReportThemeHeading");
+        double sectionY = FindWordStartY(page, "ReportThemeSection");
+        double bodyY = FindWordStartY(page, "ReportThemeBody");
+        double tableY = FindWordStartY(page, "ReportThemeTable");
+
+        Assert.True(headingY - sectionY >= 22, $"Expected report H1/H2 rhythm. Gap: {headingY - sectionY:0.##}pt.");
+        Assert.True(sectionY - bodyY >= 18, $"Expected report H2/body rhythm. Gap: {sectionY - bodyY:0.##}pt.");
+        Assert.True(bodyY - tableY >= 32, $"Expected report body/table rhythm. Gap: {bodyY - tableY:0.##}pt.");
+        Assert.Contains("0.118 0.251 0.686 rg", rawPdf, StringComparison.Ordinal);
+        Assert.Contains("0.937 0.965 1 rg", rawPdf, StringComparison.Ordinal);
+        AssertNoSameBaselineTextCollisions(page, "report theme flow");
     }
 
     [Fact]
@@ -1557,6 +2788,12 @@ public class PdfDocVisualQualityTests {
         Assert.Throws<ArgumentException>(() =>
             PdfDoc.Create().H1("Plain heading", linkContents: "metadata without link"));
 
+        Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create().H1("Conflicting heading link", linkUri: "https://evotec.xyz", linkDestinationName: "Intro"));
+
+        Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create().H1("Bookmark heading link", linkDestinationName: " ", linkContents: "metadata"));
+
         byte[] png = CreateMinimalRgbPng();
         Assert.Throws<ArgumentException>(() =>
             PdfDoc.Create().Image(png, 24, 24, linkUri: "not-a-uri"));
@@ -1824,18 +3061,18 @@ public class PdfDocVisualQualityTests {
         string pdf = Encoding.ASCII.GetString(bytes);
 
         Assert.Contains("/Annots [", pdf, StringComparison.Ordinal);
-        Assert.Equal(4, CountOccurrences(pdf, "/Subtype /Link"));
-        Assert.Equal(4, CountOccurrences(pdf, "/S /URI"));
+        Assert.Equal(3, CountOccurrences(pdf, "/Subtype /Link"));
+        Assert.Equal(3, CountOccurrences(pdf, "/S /URI"));
         Assert.Equal(1, CountOccurrences(pdf, "/URI (https://evotec.xyz/heading)"));
-        Assert.Equal(2, CountOccurrences(pdf, "/URI (https://evotec.xyz/paragraph)"));
+        Assert.Equal(1, CountOccurrences(pdf, "/URI (https://evotec.xyz/paragraph)"));
         Assert.Equal(1, CountOccurrences(pdf, "/URI (https://evotec.xyz/table)"));
-        Assert.Equal(4, CountOccurrences(pdf, "/Contents ("));
+        Assert.Equal(3, CountOccurrences(pdf, "/Contents ("));
         Assert.Equal(1, CountOccurrences(pdf, "/Contents (Heading \\(metadata\\))"));
-        Assert.Equal(2, CountOccurrences(pdf, "/Contents (Paragraph \\\\ metadata)"));
+        Assert.Equal(1, CountOccurrences(pdf, "/Contents (Paragraph \\\\ metadata)"));
         Assert.Equal(1, CountOccurrences(pdf, "/Contents (Open)"));
 
         var rectangles = ExtractLinkRectangles(pdf);
-        Assert.Equal(4, rectangles.Count);
+        Assert.Equal(3, rectangles.Count);
         foreach (var rect in rectangles) {
             Assert.True(rect.X2 > rect.X1, "Link annotation rectangle must have positive width.");
             Assert.True(rect.Y2 > rect.Y1, "Link annotation rectangle must have positive height.");
@@ -2240,6 +3477,35 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Tables_DeclareRichCellRunFontsBeforeRendering() {
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                DefaultFont = PdfStandardFont.Helvetica,
+                DefaultFontSize = 11
+            })
+            .Table(new[] {
+                new[] {
+                    PdfTableCell.RichTextCell(new[] { TextRun.Normal("Direct table Times", font: PdfStandardFont.TimesRoman) })
+                }
+            })
+            .Compose(document =>
+                document.Page(page =>
+                    page.Content(content =>
+                        content.Row(row =>
+                            row.Column(100, column =>
+                                column.Table(new[] {
+                                    new[] {
+                                        PdfTableCell.RichTextCell(new[] { TextRun.Normal("Column table Courier", font: PdfStandardFont.Courier) })
+                                    }
+                                }))))))
+            .ToBytes();
+
+        string pdf = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("/BaseFont /Times-Roman", pdf, StringComparison.Ordinal);
+        Assert.Contains("/BaseFont /Courier", pdf, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Bookmark_RejectsInvalidNamesAndDuplicateNames() {
         Assert.Throws<ArgumentNullException>(() =>
             PdfDoc.Create().Bookmark(null!));
@@ -2278,6 +3544,13 @@ public class PdfDocVisualQualityTests {
                 .ToBytes());
 
         Assert.Contains("PDF bookmark link target 'MissingBookmark' was not found.", missingTargetException.Message, StringComparison.Ordinal);
+
+        var missingHeadingTargetException = Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create()
+                .H1("Jump to missing bookmark", linkDestinationName: "MissingHeadingBookmark")
+                .ToBytes());
+
+        Assert.Contains("PDF bookmark link target 'MissingHeadingBookmark' was not found.", missingHeadingTargetException.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -4441,6 +5714,138 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Panel_ComposesCommonFlowBlocksIntoStyledPanel() {
+        byte[] pdf = PdfDoc.Create()
+            .Panel(panel => panel
+                    .H3("Panel Snapshot")
+                    .Paragraph(p => p.Text("A reusable panel can combine regular document blocks."))
+                    .RichBullets(new[] {
+                        PdfListItem.Rich(new[] {
+                            TextRun.Bolded("Reusable"),
+                            TextRun.Normal(" core behavior")
+                        })
+                    })
+                    .Table(new[] {
+                        new[] { "Area", "State" },
+                        new[] { "Markdown", "Ready" }
+                    }, style: new PdfTableStyle {
+                        HeaderRowCount = 1
+                    })
+                    .HR()
+                    .PanelParagraph(p => p.Bold("Nested note").Text(": still uses panel text rendering.")),
+                new PanelStyle {
+                    Background = PdfColor.FromRgb(248, 250, 252),
+                    BorderColor = PdfColor.FromRgb(37, 99, 235),
+                    BorderWidth = 0.8,
+                    PaddingX = 10,
+                    PaddingY = 8
+                })
+            .ToBytes();
+
+        string text = PdfReadDocument.Load(pdf).ExtractText();
+
+        Assert.Contains("Panel Snapshot", text);
+        Assert.Contains("reusable panel", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Reusable core behavior", text);
+        Assert.Contains("Area: Markdown", text);
+        Assert.Contains("State: Ready", text);
+        Assert.Contains("Nested note", text);
+    }
+
+    [Fact]
+    public void Panel_ComposesChecklistTablesAsReadableTaskStates() {
+        var checklistStyle = TableStyles.Minimal();
+        checklistStyle.CellIcons = new Dictionary<(int Row, int Column), PdfCellIcon> {
+            [(0, 0)] = new PdfCellIcon {
+                Kind = PdfCellIconKind.CheckBoxChecked,
+                Color = PdfColor.FromRgb(22, 163, 74)
+            },
+            [(1, 0)] = new PdfCellIcon {
+                Kind = PdfCellIconKind.CheckBoxUnchecked,
+                Color = PdfColor.FromRgb(100, 116, 139)
+            }
+        };
+
+        byte[] pdf = PdfDoc.Create()
+            .Panel(panel => panel.Table(new[] {
+                new[] { string.Empty, "Ship polished Markdown checklist visuals" },
+                new[] { string.Empty, "Keep literal task markers out of the PDF text" }
+            }, style: checklistStyle))
+            .ToBytes();
+
+        string text = PdfReadDocument.Load(pdf).ExtractText();
+
+        Assert.Contains("Done: Ship polished Markdown checklist visuals", text, StringComparison.Ordinal);
+        Assert.Contains("Open: Keep literal task markers out of the PDF text", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("[x]", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("[ ]", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ElementCompose_CanComposePanel() {
+        byte[] pdf = PdfDoc.Create()
+            .Compose(document =>
+                document.Page(page =>
+                    page.Content(content =>
+                        content.Item(item =>
+                            item.Element(element =>
+                                element.Panel(panel => panel
+                                        .H3("Element Panel")
+                                        .Paragraph(p => p.Text("Nested element groups can use composed panels.")),
+                                    new PanelStyle {
+                                        Background = PdfColor.FromRgb(248, 250, 252),
+                                        BorderColor = PdfColor.FromRgb(148, 163, 184),
+                                        PaddingX = 8,
+                                        PaddingY = 6
+                                    }))))))
+            .ToBytes();
+
+        string text = PdfReadDocument.Load(pdf).ExtractText();
+
+        Assert.Contains("Element Panel", text, StringComparison.Ordinal);
+        Assert.Contains("Nested element groups can use composed panels.", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ElementCompose_CanComposeCommonDocumentPrimitives() {
+        byte[] pdf = PdfDoc.Create()
+            .Compose(document =>
+                document.Page(page =>
+                    page.Content(content =>
+                        content.Item(item =>
+                            item.Element(element => element
+                                .RichBullets(new[] {
+                                    PdfListItem.Rich(new[] {
+                                        TextRun.Bolded("Rich"),
+                                        TextRun.Normal(" bullet")
+                                    })
+                                })
+                                .RichNumbered(new[] {
+                                    PdfListItem.Rich(new[] {
+                                        TextRun.Normal("Numbered element item")
+                                    })
+                                })
+                                .HR()
+                                .PanelParagraph(p => p.Bold("Element note").Text(": composed in a grouped flow.")))))))
+            .ToBytes();
+
+        string text = PdfReadDocument.Load(pdf).ExtractText();
+
+        Assert.Contains("Rich bullet", text, StringComparison.Ordinal);
+        Assert.Contains("Numbered element item", text, StringComparison.Ordinal);
+        Assert.Contains("Element note", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Panel_RejectsUnsupportedNestedFlowBlocks() {
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            PdfDoc.Create()
+                .Panel(panel => panel.TextField("InsidePanel")));
+
+        Assert.Contains("Panel currently supports paragraphs, headings, lists, simple tables, horizontal rules, spacers, bookmarks, and nested panel paragraphs.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PanelParagraph_SnapshotsStyleBeforeRendering() {
         var style = new PanelStyle {
             Background = PdfColor.FromRgb(26, 51, 77),
@@ -5997,6 +7402,153 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void TableStyle_UsesConfiguredPerCellPadding() {
+        var options = new PdfOptions {
+            PageWidth = 260,
+            PageHeight = 180,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        byte[] defaultBytes = CreateTablePerCellPaddingProbe(options, useRowColumnFlow: false, useCellPadding: false);
+        byte[] paddedBytes = CreateTablePerCellPaddingProbe(options, useRowColumnFlow: false, useCellPadding: true);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var paddedPdf = PdfDocument.Open(new MemoryStream(paddedBytes));
+        var defaultPage = defaultPdf.GetPage(1);
+        var paddedPage = paddedPdf.GetPage(1);
+
+        double defaultX = FindWordStartX(defaultPage, "CellPadMarker");
+        double paddedX = FindWordStartX(paddedPage, "CellPadMarker");
+        double defaultY = FindWordStartY(defaultPage, "CellPadMarker");
+        double paddedY = FindWordStartY(paddedPage, "CellPadMarker");
+
+        Assert.True(paddedX > defaultX + 16, $"Expected per-cell left padding to move text right. Default x: {defaultX:0.##}, padded x: {paddedX:0.##}.");
+        Assert.True(defaultY > paddedY + 10, $"Expected per-cell top padding to move text down. Default y: {defaultY:0.##}, padded y: {paddedY:0.##}.");
+    }
+
+    [Fact]
+    public void RowColumnTableStyle_UsesConfiguredPerCellPadding() {
+        var options = new PdfOptions {
+            PageWidth = 260,
+            PageHeight = 180,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        byte[] defaultBytes = CreateTablePerCellPaddingProbe(options, useRowColumnFlow: true, useCellPadding: false);
+        byte[] paddedBytes = CreateTablePerCellPaddingProbe(options, useRowColumnFlow: true, useCellPadding: true);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var paddedPdf = PdfDocument.Open(new MemoryStream(paddedBytes));
+        var defaultPage = defaultPdf.GetPage(1);
+        var paddedPage = paddedPdf.GetPage(1);
+
+        double defaultX = FindWordStartX(defaultPage, "CellPadMarker");
+        double paddedX = FindWordStartX(paddedPage, "CellPadMarker");
+        double defaultY = FindWordStartY(defaultPage, "CellPadMarker");
+        double paddedY = FindWordStartY(paddedPage, "CellPadMarker");
+
+        Assert.True(paddedX > defaultX + 16, $"Expected row-column per-cell left padding to move text right. Default x: {defaultX:0.##}, padded x: {paddedX:0.##}.");
+        Assert.True(defaultY > paddedY + 10, $"Expected row-column per-cell top padding to move text down. Default y: {defaultY:0.##}, padded y: {paddedY:0.##}.");
+    }
+
+    [Fact]
+    public void TableStyle_UsesConfiguredPerCellAlignment() {
+        var options = new PdfOptions {
+            PageWidth = 280,
+            PageHeight = 200,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        byte[] defaultBytes = CreateTablePerCellAlignmentProbe(options, useRowColumnFlow: false, useCellAlignment: false);
+        byte[] alignedBytes = CreateTablePerCellAlignmentProbe(options, useRowColumnFlow: false, useCellAlignment: true);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var alignedPdf = PdfDocument.Open(new MemoryStream(alignedBytes));
+        var defaultPage = defaultPdf.GetPage(1);
+        var alignedPage = alignedPdf.GetPage(1);
+
+        double defaultX = FindWordStartX(defaultPage, "CellAlignMarker");
+        double alignedX = FindWordStartX(alignedPage, "CellAlignMarker");
+        double defaultY = FindWordStartY(defaultPage, "CellAlignMarker");
+        double alignedY = FindWordStartY(alignedPage, "CellAlignMarker");
+
+        Assert.True(alignedX > defaultX + 30, $"Expected per-cell right alignment to move text right. Default x: {defaultX:0.##}, aligned x: {alignedX:0.##}.");
+        Assert.True(defaultY > alignedY + 30, $"Expected per-cell bottom alignment to move text down. Default y: {defaultY:0.##}, aligned y: {alignedY:0.##}.");
+    }
+
+    [Fact]
+    public void RowColumnTableStyle_UsesConfiguredPerCellAlignment() {
+        var options = new PdfOptions {
+            PageWidth = 280,
+            PageHeight = 200,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        byte[] defaultBytes = CreateTablePerCellAlignmentProbe(options, useRowColumnFlow: true, useCellAlignment: false);
+        byte[] alignedBytes = CreateTablePerCellAlignmentProbe(options, useRowColumnFlow: true, useCellAlignment: true);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var alignedPdf = PdfDocument.Open(new MemoryStream(alignedBytes));
+        var defaultPage = defaultPdf.GetPage(1);
+        var alignedPage = alignedPdf.GetPage(1);
+
+        double defaultX = FindWordStartX(defaultPage, "CellAlignMarker");
+        double alignedX = FindWordStartX(alignedPage, "CellAlignMarker");
+        double defaultY = FindWordStartY(defaultPage, "CellAlignMarker");
+        double alignedY = FindWordStartY(alignedPage, "CellAlignMarker");
+
+        Assert.True(alignedX > defaultX + 30, $"Expected row-column per-cell right alignment to move text right. Default x: {defaultX:0.##}, aligned x: {alignedX:0.##}.");
+        Assert.True(defaultY > alignedY + 30, $"Expected row-column per-cell bottom alignment to move text down. Default y: {defaultY:0.##}, aligned y: {alignedY:0.##}.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TableStyle_UsesConfiguredCellSpacing(bool useRowColumnFlow) {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 240,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        byte[] defaultBytes = CreateTableCellSpacingProbe(options, 0, useRowColumnFlow);
+        byte[] spacedBytes = CreateTableCellSpacingProbe(options, 12, useRowColumnFlow);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+        var defaultPage = defaultPdf.GetPage(1);
+        var spacedPage = spacedPdf.GetPage(1);
+
+        double defaultHorizontalGap = FindWordStartX(defaultPage, "SpacingB1") - FindWordStartX(defaultPage, "SpacingA1");
+        double spacedHorizontalGap = FindWordStartX(spacedPage, "SpacingB1") - FindWordStartX(spacedPage, "SpacingA1");
+        double defaultVerticalGap = FindWordStartY(defaultPage, "SpacingA1") - FindWordStartY(defaultPage, "SpacingA2");
+        double spacedVerticalGap = FindWordStartY(spacedPage, "SpacingA1") - FindWordStartY(spacedPage, "SpacingA2");
+
+        Assert.True(spacedHorizontalGap > defaultHorizontalGap + 10, $"Expected cell spacing to increase horizontal cell distance. Default: {defaultHorizontalGap:0.##}, spaced: {spacedHorizontalGap:0.##}.");
+        Assert.True(spacedVerticalGap > defaultVerticalGap + 10, $"Expected cell spacing to increase vertical row distance. Default: {defaultVerticalGap:0.##}, spaced: {spacedVerticalGap:0.##}.");
+    }
+
+    [Fact]
     public void TableStyle_CanDisableHeaderAndFooterBoldWithoutChangingDocumentFont() {
         var style = TableStyles.Minimal();
         style.HeaderBold = false;
@@ -7060,8 +8612,8 @@ public class PdfDocVisualQualityTests {
             .ToBytes();
 
         string topLevelContent = string.Join("\n", GetPageContentStreams(topLevelBytes, 1));
-        int topLevelClipCount = Regex.Matches(topLevelContent, " re W n\\nBT\\n/F").Count;
-        Assert.True(topLevelClipCount >= 5, "Expected top-level table cell text to be clipped by PDF cell rectangles.");
+        int topLevelClipCount = Regex.Matches(topLevelContent, " re W n\\nBT\\n[\\s\\S]{0,160}?/F").Count;
+        Assert.True(topLevelClipCount >= 4, "Expected top-level table cell text to be clipped by PDF cell rectangles.");
 
         byte[] rowColumnBytes = PdfDoc.Create(new PdfOptions {
                 PageWidth = 320,
@@ -7085,8 +8637,8 @@ public class PdfDocVisualQualityTests {
             .ToBytes();
 
         string rowColumnContent = string.Join("\n", GetPageContentStreams(rowColumnBytes, 1));
-        int rowColumnClipCount = Regex.Matches(rowColumnContent, " re W n\\nBT\\n/F").Count;
-        Assert.True(rowColumnClipCount >= 5, "Expected row-column table cell text to be clipped by PDF cell rectangles.");
+        int rowColumnClipCount = Regex.Matches(rowColumnContent, " re W n\\nBT\\n[\\s\\S]{0,160}?/F").Count;
+        Assert.True(rowColumnClipCount >= 4, "Expected row-column table cell text to be clipped by PDF cell rectangles.");
     }
 
     [Fact]
@@ -7172,6 +8724,44 @@ public class PdfDocVisualQualityTests {
 
         Assert.Contains("Check 1", pdf.GetPage(1).Text);
         Assert.Contains("Check 30", pdf.GetPage(pdf.NumberOfPages).Text);
+    }
+
+    [Fact]
+    public void Table_CanStyleHeaderRowsWithoutRepeatingThemAcrossPages() {
+        var options = new PdfOptions {
+            PageWidth = 360,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9
+        };
+        var style = TableStyles.Minimal();
+        style.HeaderRowCount = 1;
+        style.RepeatHeaderRowCount = 0;
+        style.ColumnWidthWeights = new List<double> { 1, 1 };
+
+        var rows = new List<string[]> {
+            new[] { "VisualHdr", "State" }
+        };
+        for (int i = 1; i <= 30; i++) {
+            rows.Add(new[] { "StyledOnly " + i.ToString(CultureInfo.InvariantCulture), "Ready" });
+        }
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Table(rows, style: style)
+            .ToBytes();
+
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+        Assert.True(pdf.NumberOfPages > 1, "Expected the visually styled header table to continue onto another page.");
+
+        int headerOccurrences = pdf.GetPages()
+            .SelectMany(page => page.GetWords())
+            .Count(word => word.Text == "VisualHdr");
+        Assert.Equal(1, headerOccurrences);
+        Assert.Contains("StyledOnly 30", pdf.GetPage(pdf.NumberOfPages).Text);
     }
 
     [Fact]
@@ -7623,6 +9213,172 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Table_RendersConfiguredCellDataBarsBehindText() {
+        var style = TableStyles.Minimal();
+        style.HeaderFill = null;
+        style.RowStripeFill = null;
+        style.CellDataBars = new Dictionary<(int Row, int Column), PdfCellDataBar> {
+            [(1, 1)] = new PdfCellDataBar {
+                Color = new PdfColor(0.12, 0.34, 0.56),
+                Ratio = 0.5
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 320,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30
+            })
+            .Table(new[] {
+                new[] { "Metric", "Status" },
+                new[] { "Progress", "50" },
+                new[] { "Done", "100" }
+            }, style: style)
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("0.12 0.34 0.56 rg", content, StringComparison.Ordinal);
+        using (PdfDocument pdf = PdfDocument.Open(new MemoryStream(bytes))) {
+            Assert.Contains("50", pdf.GetPage(1).Text, StringComparison.Ordinal);
+        }
+        Assert.Contains(" re f", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RowColumnTable_RendersConfiguredCellDataBarsBehindText() {
+        var style = TableStyles.Minimal();
+        style.HeaderFill = null;
+        style.RowStripeFill = null;
+        style.CellDataBars = new Dictionary<(int Row, int Column), PdfCellDataBar> {
+            [(1, 1)] = new PdfCellDataBar {
+                Color = new PdfColor(0.12, 0.34, 0.56),
+                Ratio = 0.5
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 320,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30
+            })
+            .Compose(document =>
+                document.Page(page =>
+                    page.Content(content =>
+                        content.Row(row =>
+                            row.Column(100, column =>
+                                column.Table(new[] {
+                                    new[] { "Metric", "Status" },
+                                    new[] { "Progress", "50" },
+                                    new[] { "Done", "100" }
+                                }, style: style))))))
+            .ToBytes();
+
+        string contentStream = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("0.12 0.34 0.56 rg", contentStream, StringComparison.Ordinal);
+        using (PdfDocument pdf = PdfDocument.Open(new MemoryStream(bytes))) {
+            Assert.Contains("50", pdf.GetPage(1).Text, StringComparison.Ordinal);
+        }
+        Assert.Contains(" re f", contentStream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Table_RendersConfiguredCellIconsBeforeText() {
+        var style = TableStyles.Minimal();
+        style.HeaderFill = null;
+        style.RowStripeFill = null;
+        style.CellIcons = new Dictionary<(int Row, int Column), PdfCellIcon> {
+            [(1, 1)] = new PdfCellIcon {
+                Kind = PdfCellIconKind.Circle,
+                Color = new PdfColor(0.12, 0.34, 0.56),
+                Size = 8
+            }
+        };
+        style.CellPaddings = new Dictionary<(int Row, int Column), PdfCellPadding> {
+            [(1, 1)] = new PdfCellPadding {
+                Left = 16
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 320,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30
+            })
+            .Table(new[] {
+                new[] { "Metric", "Status" },
+                new[] { "Progress", "50" },
+                new[] { "Done", "100" }
+            }, style: style)
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("0.12 0.34 0.56 rg", content, StringComparison.Ordinal);
+        Assert.Contains(" c ", content, StringComparison.Ordinal);
+        using (PdfDocument pdf = PdfDocument.Open(new MemoryStream(bytes))) {
+            Assert.Contains("50", pdf.GetPage(1).Text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void RowColumnTable_RendersConfiguredCellIconsBeforeText() {
+        var style = TableStyles.Minimal();
+        style.HeaderFill = null;
+        style.RowStripeFill = null;
+        style.CellIcons = new Dictionary<(int Row, int Column), PdfCellIcon> {
+            [(1, 1)] = new PdfCellIcon {
+                Kind = PdfCellIconKind.TriangleUp,
+                Color = new PdfColor(0.12, 0.34, 0.56),
+                Size = 8
+            }
+        };
+        style.CellPaddings = new Dictionary<(int Row, int Column), PdfCellPadding> {
+            [(1, 1)] = new PdfCellPadding {
+                Left = 16
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 320,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30
+            })
+            .Compose(document =>
+                document.Page(page =>
+                    page.Content(content =>
+                        content.Row(row =>
+                            row.Column(100, column =>
+                                column.Table(new[] {
+                                    new[] { "Metric", "Status" },
+                                    new[] { "Progress", "50" },
+                                    new[] { "Done", "100" }
+                                }, style: style))))))
+            .ToBytes();
+
+        string contentStream = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("0.12 0.34 0.56 rg", contentStream, StringComparison.Ordinal);
+        Assert.Contains(" l ", contentStream, StringComparison.Ordinal);
+        using (PdfDocument pdf = PdfDocument.Open(new MemoryStream(bytes))) {
+            Assert.Contains("50", pdf.GetPage(1).Text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void Table_RendersConfiguredCellBorders() {
         var style = TableStyles.Minimal();
         style.BorderColor = null;
@@ -7654,6 +9410,151 @@ public class PdfDocVisualQualityTests {
         Assert.Equal(1, borderColorCount);
         Assert.Contains("1.7 w", content);
         Assert.Contains(" re S", content);
+    }
+
+    [Fact]
+    public void Table_RendersConfiguredSideSpecificCellBorders() {
+        var style = TableStyles.Minimal();
+        style.BorderColor = null;
+        style.CellBorders = new Dictionary<(int Row, int Column), PdfCellBorder> {
+            [(1, 0)] = new PdfCellBorder {
+                Color = null,
+                Width = 0,
+                Top = true,
+                Right = false,
+                Bottom = false,
+                Left = true,
+                TopBorder = new PdfCellBorderSide {
+                    Color = PdfColor.FromRgb(255, 0, 0),
+                    Width = 2
+                },
+                LeftBorder = new PdfCellBorderSide {
+                    Color = PdfColor.FromRgb(0, 0, 255),
+                    Width = 1.5
+                }
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 320,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30
+            })
+            .Table(new[] {
+                new[] { "Metric", "Status" },
+                new[] { "Queue", "Healthy" }
+            }, style: style)
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("1 0 0 RG", content);
+        Assert.Contains("2 w", content);
+        Assert.Contains("0 0 1 RG", content);
+        Assert.Contains("1.5 w", content);
+    }
+
+    [Fact]
+    public void Table_RendersConfiguredDashedCellBorders() {
+        var style = TableStyles.Minimal();
+        style.BorderColor = null;
+        style.CellBorders = new Dictionary<(int Row, int Column), PdfCellBorder> {
+            [(1, 0)] = new PdfCellBorder {
+                Color = PdfColor.FromRgb(18, 52, 86),
+                Width = 1,
+                DashStyle = OfficeStrokeDashStyle.Dash
+            },
+            [(1, 1)] = new PdfCellBorder {
+                Color = null,
+                TopBorder = new PdfCellBorderSide {
+                    Color = PdfColor.FromRgb(120, 80, 40),
+                    Width = 1.5,
+                    DashStyle = OfficeStrokeDashStyle.Dot
+                },
+                BottomBorder = new PdfCellBorderSide {
+                    Color = PdfColor.FromRgb(40, 120, 80),
+                    Width = 1.25,
+                    DashStyle = OfficeStrokeDashStyle.DashDot
+                }
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 320,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30
+            })
+            .Table(new[] {
+                new[] { "Metric", "Status" },
+                new[] { "Queue", "Healthy" }
+            }, style: style)
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("[3 1.5] 0 d", content, StringComparison.Ordinal);
+        Assert.Contains("[1.5 2.25] 0 d", content, StringComparison.Ordinal);
+        Assert.Contains("[3.75 1.875 1.25 1.875] 0 d", content, StringComparison.Ordinal);
+        Assert.Contains("1 J", content, StringComparison.Ordinal);
+        Assert.True(content.Contains(" m ", StringComparison.Ordinal) && content.Contains(" l S", StringComparison.Ordinal), "Expected diagonal cell borders to emit line segments instead of only rectangle borders.");
+    }
+
+    [Fact]
+    public void Table_RendersConfiguredDoubleAndDiagonalCellBorders() {
+        var style = TableStyles.Minimal();
+        style.BorderColor = null;
+        style.CellBorders = new Dictionary<(int Row, int Column), PdfCellBorder> {
+            [(1, 0)] = new PdfCellBorder {
+                Color = PdfColor.FromRgb(68, 85, 102),
+                Width = 1,
+                LineStyle = PdfCellBorderLineStyle.TwoLine,
+                DiagonalUp = true,
+                DiagonalDown = true
+            },
+            [(1, 1)] = new PdfCellBorder {
+                Color = null,
+                TopBorder = new PdfCellBorderSide {
+                    Color = PdfColor.FromRgb(120, 80, 40),
+                    Width = 1.25,
+                    LineStyle = PdfCellBorderLineStyle.TwoLine
+                },
+                DiagonalDown = true,
+                DiagonalDownBorder = new PdfCellBorderSide {
+                    Color = PdfColor.FromRgb(40, 120, 80),
+                    Width = 0.75,
+                    DashStyle = OfficeStrokeDashStyle.Dash,
+                    LineStyle = PdfCellBorderLineStyle.TwoLine
+                }
+            }
+        };
+
+        byte[] bytes = PdfDoc.Create(new PdfOptions {
+                PageWidth = 320,
+                PageHeight = 220,
+                MarginLeft = 30,
+                MarginRight = 30,
+                MarginTop = 30,
+                MarginBottom = 30
+            })
+            .Table(new[] {
+                new[] { "Metric", "Status" },
+                new[] { "Queue", "Healthy" }
+            }, style: style)
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+
+        Assert.Contains("0.267 0.333 0.4 RG", content, StringComparison.Ordinal);
+        Assert.Contains("0.157 0.471 0.314 RG", content, StringComparison.Ordinal);
+        Assert.Contains("[2.25 1.125] 0 d", content, StringComparison.Ordinal);
+        Assert.True(content.Split(new[] { " S" }, StringSplitOptions.None).Length - 1 >= 10, "Expected double and diagonal cell borders to emit multiple stroked lines.");
+        Assert.True(content.Contains(" m ", StringComparison.Ordinal) && content.Contains(" l S", StringComparison.Ordinal), "Expected diagonal cell borders to emit line segments instead of only rectangle borders.");
     }
 
     [Fact]
@@ -8134,6 +10035,41 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void TableStyles_DocumentPresetsExposeReusableVisualRhythm() {
+        PdfTableStyle technical = TableStyles.TechnicalDocument();
+        PdfTableStyle compact = TableStyles.Compact();
+        PdfTableStyle report = TableStyles.Report();
+        PdfTableStyle freshReport = TableStyles.Report();
+
+        Assert.Equal(PdfColor.FromRgb(15, 23, 42), technical.HeaderFill);
+        Assert.Equal(PdfColor.White, technical.HeaderTextColor);
+        Assert.Equal(PdfColor.FromRgb(226, 232, 240), technical.RowSeparatorColor);
+        Assert.Equal(9.75, technical.FontSize);
+        Assert.Equal(1.2, technical.LineHeight);
+        Assert.Equal(6, technical.SpacingBefore);
+        Assert.True(technical.AutoFitColumns);
+
+        Assert.Null(compact.HeaderFill);
+        Assert.Equal(9, compact.FontSize);
+        Assert.Equal(1.12, compact.LineHeight);
+        Assert.Equal(4, compact.CellPaddingX);
+        Assert.Equal(3, compact.CellPaddingY);
+        Assert.Equal(7, compact.SpacingAfter);
+        Assert.True(compact.AutoFitColumns);
+
+        Assert.Equal(PdfColor.FromRgb(30, 64, 175), report.HeaderFill);
+        Assert.Equal(PdfColor.FromRgb(239, 246, 255), report.RowStripeFill);
+        Assert.Equal(PdfColor.FromRgb(191, 219, 254), report.BorderColor);
+        Assert.Equal(9.25, report.FontSize);
+        Assert.Equal(1.18, report.LineHeight);
+        Assert.Equal(10, report.SpacingAfter);
+        Assert.True(report.AutoFitColumns);
+
+        report.HeaderFill = PdfColor.Black;
+        Assert.Equal(PdfColor.FromRgb(30, 64, 175), freshReport.HeaderFill);
+    }
+
+    [Fact]
     public void Table_UsesConfiguredMinimumRowHeight() {
         var options = new PdfOptions {
             PageWidth = 320,
@@ -8169,6 +10105,83 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Table_UsesConfiguredPerRowMinimumHeights() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 260,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9
+        };
+        var style = TableStyles.Minimal();
+        style.HeaderRowCount = 0;
+        style.MinRowHeight = 18;
+        style.RowMinHeights = new List<double?> { 18, 54, 18 };
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Table(new[] {
+                new[] { "Alpha", "Ready" },
+                new[] { "Beta", "Ready" },
+                new[] { "Gamma", "Ready" }
+            }, style: style)
+            .ToBytes();
+
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+        var page = pdf.GetPage(1);
+
+        double alphaY = FindWordStartY(page, "Alpha");
+        double betaY = FindWordStartY(page, "Beta");
+        double gammaY = FindWordStartY(page, "Gamma");
+
+        Assert.InRange(alphaY - betaY, 16D, 28D);
+        Assert.True(betaY - gammaY >= 52D, $"Expected second row-specific minimum height to push the third row down. Beta y: {betaY:0.##}, Gamma y: {gammaY:0.##}.");
+    }
+
+    [Fact]
+    public void RowColumnTable_UsesConfiguredPerRowMinimumHeights() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 260,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9
+        };
+        var style = TableStyles.Minimal();
+        style.HeaderRowCount = 0;
+        style.MinRowHeight = 18;
+        style.RowMinHeights = new List<double?> { 18, 54, 18 };
+        var rows = new[] {
+            new[] { "Alpha", "Ready" },
+            new[] { "Beta", "Ready" },
+            new[] { "Gamma", "Ready" }
+        };
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Compose(compose =>
+                compose.Page(page =>
+                        page.Content(content =>
+                            content.Row(row =>
+                            row.Column(100, column => column.Table(rows, style: style))))))
+            .ToBytes();
+
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+        var page = pdf.GetPage(1);
+
+        double alphaY = FindWordStartY(page, "Alpha");
+        double betaY = FindWordStartY(page, "Beta");
+        double gammaY = FindWordStartY(page, "Gamma");
+
+        Assert.InRange(alphaY - betaY, 16D, 28D);
+        Assert.True(betaY - gammaY >= 52D, $"Expected row-column table row-specific minimum height to push the third row down. Beta y: {betaY:0.##}, Gamma y: {gammaY:0.##}.");
+    }
+
+    [Fact]
     public void Table_UsesConfiguredSpacingBeforeAndAfter() {
         var options = new PdfOptions {
             PageWidth = 320,
@@ -8196,6 +10209,45 @@ public class PdfDocVisualQualityTests {
 
         Assert.True(defaultTableY - spacedTableY >= 10, $"Expected table spacing before to move table content down. Default y: {defaultTableY:0.##}, spaced y: {spacedTableY:0.##}.");
         Assert.True(defaultAfterY - spacedAfterY >= 28, $"Expected table spacing before and after to move following content down. Default y: {defaultAfterY:0.##}, spaced y: {spacedAfterY:0.##}.");
+    }
+
+    [Fact]
+    public void TableStylesLight_ProvidesDefaultFlowRhythmAroundTables() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 260,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9,
+            DefaultParagraphStyle = new PdfParagraphStyle {
+                SpacingAfter = 0
+            }
+        };
+        PdfTableStyle defaultLight = TableStyles.Light();
+        var cramped = TableStyles.Light();
+        cramped.SpacingBefore = 0;
+        cramped.SpacingAfter = 0;
+
+        byte[] defaultBytes = CreateLightTableRhythmProbe(options, style: null);
+        byte[] crampedBytes = CreateLightTableRhythmProbe(options, cramped);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var crampedPdf = PdfDocument.Open(new MemoryStream(crampedBytes));
+        var defaultPage = defaultPdf.GetPage(1);
+        var crampedPage = crampedPdf.GetPage(1);
+
+        double defaultTableY = FindWordStartY(defaultPage, "Alpha");
+        double crampedTableY = FindWordStartY(crampedPage, "Alpha");
+        double defaultAfterY = FindWordStartY(defaultPage, "AfterMarker");
+        double crampedAfterY = FindWordStartY(crampedPage, "AfterMarker");
+
+        Assert.Equal(4, defaultLight.SpacingBefore);
+        Assert.Equal(8, defaultLight.SpacingAfter);
+        Assert.True(crampedTableY - defaultTableY >= 3, $"Expected default light-table spacing before to move table content down. Cramped y: {crampedTableY:0.##}, default y: {defaultTableY:0.##}.");
+        Assert.True(crampedAfterY - defaultAfterY >= 10, $"Expected default light-table rhythm to separate following paragraphs from the grid. Cramped y: {crampedAfterY:0.##}, default y: {defaultAfterY:0.##}.");
     }
 
     [Fact]
@@ -10595,9 +12647,141 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Table_RowBreakPolicyAllowsSingleTallRows() {
+        var options = new PdfOptions {
+            PageWidth = 360,
+            PageHeight = 180,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9
+        };
+        var style = TableStyles.Minimal();
+        style.AllowRowBreakAcrossPages = false;
+        style.RowAllowBreakAcrossPages = new List<bool?> { null, true };
+        style.ColumnWidthPoints = new List<double?> { 70, null };
+
+        string longValue = string.Join(" ", Enumerable.Range(1, 60).Select(i => "segment" + i.ToString("00")));
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Table(new[] {
+                new[] { "Type", "Description" },
+                new[] { "Finding", longValue }
+            }, style: style)
+            .ToBytes();
+
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+        Assert.True(pdf.NumberOfPages > 1, "Expected the per-row break policy to allow the tall row to split.");
+        Assert.Contains("segment01", pdf.GetPage(1).Text);
+        Assert.Contains("segment60", pdf.GetPage(pdf.NumberOfPages).Text);
+    }
+
+    [Fact]
+    public void Table_RowBreakPolicyRejectsSingleTallRows() {
+        var style = TableStyles.Minimal();
+        style.AllowRowBreakAcrossPages = true;
+        style.RowAllowBreakAcrossPages = new List<bool?> { null, false };
+        style.ColumnWidthPoints = new List<double?> { 70, null };
+
+        string longValue = string.Join(" ", Enumerable.Range(1, 60).Select(i => "segment" + i.ToString("00")));
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 180,
+                    MarginLeft = 30,
+                    MarginRight = 30,
+                    MarginTop = 30,
+                    MarginBottom = 30,
+                    DefaultFont = PdfStandardFont.Helvetica,
+                    DefaultFontSize = 9
+                })
+                .Table(new[] {
+                    new[] { "Type", "Description" },
+                    new[] { "Finding", longValue }
+                }, style: style)
+                .ToBytes());
+
+        Assert.Contains("Table row height exceeds the available page content height and row splitting is disabled.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RowColumnTable_RowBreakPolicyAllowsSingleTallRows() {
+        var options = new PdfOptions {
+            PageWidth = 360,
+            PageHeight = 180,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9
+        };
+        var style = TableStyles.Minimal();
+        style.AllowRowBreakAcrossPages = false;
+        style.RowAllowBreakAcrossPages = new List<bool?> { null, true };
+        style.ColumnWidthPoints = new List<double?> { 70, null };
+
+        string longValue = string.Join(" ", Enumerable.Range(1, 60).Select(i => "segment" + i.ToString("00")));
+
+        byte[] bytes = PdfDoc.Create(options)
+            .Compose(document =>
+                document.Page(page =>
+                    page.Content(content =>
+                        content.Row(row =>
+                            row.Column(100, column =>
+                                column.Table(new[] {
+                                    new[] { "Type", "Description" },
+                                    new[] { "Finding", longValue }
+                                }, style: style))))))
+            .ToBytes();
+
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+        Assert.True(pdf.NumberOfPages > 1, "Expected the per-row break policy to allow the row-column table row to split.");
+        Assert.Contains("segment01", pdf.GetPage(1).Text);
+        Assert.Contains("segment60", pdf.GetPage(pdf.NumberOfPages).Text);
+    }
+
+    [Fact]
     public void RowColumnTable_DisallowRowBreakRejectsSingleTallRows() {
         var style = TableStyles.Minimal();
         style.AllowRowBreakAcrossPages = false;
+        style.ColumnWidthPoints = new List<double?> { 70, null };
+
+        string longValue = string.Join(" ", Enumerable.Range(1, 60).Select(i => "segment" + i.ToString("00")));
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 180,
+                    MarginLeft = 30,
+                    MarginRight = 30,
+                    MarginTop = 30,
+                    MarginBottom = 30,
+                    DefaultFont = PdfStandardFont.Helvetica,
+                    DefaultFontSize = 9
+                })
+                .Compose(document =>
+                    document.Page(page =>
+                        page.Content(content =>
+                            content.Row(row =>
+                                row.Column(100, column =>
+                                    column.Table(new[] {
+                                        new[] { "Type", "Description" },
+                                        new[] { "Finding", longValue }
+                                    }, style: style))))))
+                .ToBytes());
+
+        Assert.Contains("Table row height exceeds the available page content height and row splitting is disabled.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RowColumnTable_RowBreakPolicyRejectsSingleTallRows() {
+        var style = TableStyles.Minimal();
+        style.AllowRowBreakAcrossPages = true;
+        style.RowAllowBreakAcrossPages = new List<bool?> { null, false };
         style.ColumnWidthPoints = new List<double?> { 70, null };
 
         string longValue = string.Join(" ", Enumerable.Range(1, 60).Select(i => "segment" + i.ToString("00")));
@@ -10638,7 +12822,7 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
-    public void Table_RejectsInvalidFixedColumnWidthPoints() {
+    public void Table_RejectsInvalidFixedColumnWidthPoints_AndFitsOversizedFixedColumns() {
         var invalidStyle = TableStyles.Minimal();
 
         var invalidException = Assert.Throws<ArgumentException>(() =>
@@ -10649,13 +12833,19 @@ public class PdfDocVisualQualityTests {
         var tooWideStyle = TableStyles.Minimal();
         tooWideStyle.ColumnWidthPoints = new List<double?> { 400, 400 };
 
-        Assert.Throws<ArgumentException>(() =>
-            PdfDoc.Create()
-                .Table(new[] {
-                    new[] { "A", "B" },
-                    new[] { "1", "2" }
-                }, style: tooWideStyle)
-                .ToBytes());
+        byte[] bytes = PdfDoc.Create()
+            .Table(new[] {
+                new[] { "A", "B" },
+                new[] { "1", "2" }
+            }, style: tooWideStyle)
+            .ToBytes();
+
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+        var page = pdf.GetPage(1);
+        double firstColumnX = FindWordStartX(page, "A");
+        double secondColumnX = FindWordStartX(page, "B");
+
+        Assert.InRange(secondColumnX - firstColumnX, 210D, 240D);
     }
 
     [Fact]
@@ -10697,6 +12887,13 @@ public class PdfDocVisualQualityTests {
 
         Assert.Contains("Table header row count cannot be negative.", invalidHeaderRowsException.Message, StringComparison.Ordinal);
 
+        var invalidRepeatHeaderRows = TableStyles.Minimal();
+
+        var invalidRepeatHeaderRowsException = Assert.Throws<ArgumentException>(() =>
+            invalidRepeatHeaderRows.RepeatHeaderRowCount = -1);
+
+        Assert.Contains("Table repeating header row count cannot be negative.", invalidRepeatHeaderRowsException.Message, StringComparison.Ordinal);
+
         var invalidFooterRows = TableStyles.Minimal();
 
         var invalidFooterRowsException = Assert.Throws<ArgumentException>(() =>
@@ -10710,6 +12907,13 @@ public class PdfDocVisualQualityTests {
             invalidMinimumRowHeight.MinRowHeight = -1);
 
         Assert.Contains("Table minimum row height must be a non-negative finite value.", invalidMinimumRowHeightException.Message, StringComparison.Ordinal);
+
+        var invalidRowMinimumHeights = TableStyles.Minimal();
+
+        var invalidRowMinimumHeightsException = Assert.Throws<ArgumentException>(() =>
+            invalidRowMinimumHeights.RowMinHeights = new List<double?> { 18, double.NaN });
+
+        Assert.Contains("Table row minimum heights must be non-negative finite values.", invalidRowMinimumHeightsException.Message, StringComparison.Ordinal);
 
         var invalidSpacingBefore = TableStyles.Minimal();
 
@@ -10954,6 +13158,24 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Table_RejectsRepeatHeaderRowCountBeyondHeaderRows() {
+        var style = TableStyles.Minimal();
+        style.HeaderRowCount = 1;
+        style.RepeatHeaderRowCount = 2;
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create()
+                .Table(new[] {
+                    new[] { "H1", "H2" },
+                    new[] { "B1", "B2" },
+                    new[] { "B3", "B4" }
+                }, style: style)
+                .ToBytes());
+
+        Assert.Contains("Table repeating header row count cannot exceed the table header row count.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Table_RejectsCombinedHeaderAndFooterRowsBeyondRows() {
         var style = TableStyles.Minimal();
         style.HeaderRowCount = 1;
@@ -11113,6 +13335,46 @@ public class PdfDocVisualQualityTests {
                 .ToBytes());
 
         Assert.Contains("Table cell fill coordinates must fit inside the table grid.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Table_RejectsOutOfRangeRowMinimumHeights() {
+        var style = TableStyles.Minimal();
+        style.RowMinHeights = new List<double?> {
+            null,
+            null,
+            24
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create()
+                .Table(new[] {
+                    new[] { "A", "B" },
+                    new[] { "1", "2" }
+                }, style: style)
+                .ToBytes());
+
+        Assert.Contains("Table row minimum heights must fit inside the table grid.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Table_RejectsOutOfRangeRowBreakPolicies() {
+        var style = TableStyles.Minimal();
+        style.RowAllowBreakAcrossPages = new List<bool?> {
+            null,
+            null,
+            false
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            PdfDoc.Create()
+                .Table(new[] {
+                    new[] { "A", "B" },
+                    new[] { "1", "2" }
+                }, style: style)
+                .ToBytes());
+
+        Assert.Contains("Table row break policies must fit inside the table grid.", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11414,6 +13676,13 @@ public class PdfDocVisualQualityTests {
 
         Assert.Contains("Table bottom cell padding must be a non-negative finite value.", bottomPaddingException.Message, StringComparison.Ordinal);
 
+        var invalidCellSpacing = TableStyles.Minimal();
+
+        var cellSpacingException = Assert.Throws<ArgumentException>(() =>
+            invalidCellSpacing.CellSpacing = -1);
+
+        Assert.Contains("Table cell spacing must be a non-negative finite value.", cellSpacingException.Message, StringComparison.Ordinal);
+
         var excessiveHorizontalPadding = TableStyles.Minimal();
         excessiveHorizontalPadding.ColumnWidthPoints = new List<double?> { 12 };
         excessiveHorizontalPadding.CellPaddingX = 6;
@@ -11462,6 +13731,71 @@ public class PdfDocVisualQualityTests {
             });
 
         Assert.Contains("Table cell fill coordinates cannot be negative.", fillException.Message, StringComparison.Ordinal);
+
+        var invalidCellDataBar = TableStyles.Minimal();
+
+        var dataBarCoordinateException = Assert.Throws<ArgumentException>(() =>
+            invalidCellDataBar.CellDataBars = new Dictionary<(int Row, int Column), PdfCellDataBar> {
+                [(-1, 0)] = new PdfCellDataBar { Ratio = 0.5 }
+            });
+
+        Assert.Contains("Table cell data bar coordinates cannot be negative.", dataBarCoordinateException.Message, StringComparison.Ordinal);
+
+        var dataBarRatioException = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new PdfCellDataBar { Ratio = double.NaN });
+
+        Assert.Contains("PDF table data bar ratio must be a finite value between 0 and 1.", dataBarRatioException.Message, StringComparison.Ordinal);
+
+        var invalidCellIcon = TableStyles.Minimal();
+
+        var iconCoordinateException = Assert.Throws<ArgumentException>(() =>
+            invalidCellIcon.CellIcons = new Dictionary<(int Row, int Column), PdfCellIcon> {
+                [(-1, 0)] = new PdfCellIcon()
+            });
+
+        Assert.Contains("Table cell icon coordinates cannot be negative.", iconCoordinateException.Message, StringComparison.Ordinal);
+
+        var iconSizeException = Assert.Throws<ArgumentException>(() =>
+            new PdfCellIcon { Size = double.PositiveInfinity });
+
+        Assert.Contains("PDF table cell icon size must be a positive finite value.", iconSizeException.Message, StringComparison.Ordinal);
+
+        var iconOffsetException = Assert.Throws<ArgumentException>(() =>
+            new PdfCellIcon { OffsetY = double.NaN });
+
+        Assert.Contains("PDF table cell icon offsets must be finite values.", iconOffsetException.Message, StringComparison.Ordinal);
+
+        var invalidCellPadding = TableStyles.Minimal();
+
+        var paddingException = Assert.Throws<ArgumentException>(() =>
+            invalidCellPadding.CellPaddings = new Dictionary<(int Row, int Column), PdfCellPadding> {
+                [(-1, 0)] = new PdfCellPadding { Left = 4 }
+            });
+
+        Assert.Contains("Table cell padding coordinates cannot be negative.", paddingException.Message, StringComparison.Ordinal);
+
+        var invalidCellPaddingValueException = Assert.Throws<ArgumentException>(() =>
+            new PdfCellPadding { Left = double.NaN });
+
+        Assert.Contains("Table cell padding values must be non-negative finite values.", invalidCellPaddingValueException.Message, StringComparison.Ordinal);
+
+        var invalidCellAlignment = TableStyles.Minimal();
+
+        var cellAlignmentException = Assert.Throws<ArgumentException>(() =>
+            invalidCellAlignment.CellAlignments = new Dictionary<(int Row, int Column), PdfColumnAlign> {
+                [(-1, 0)] = PdfColumnAlign.Center
+            });
+
+        Assert.Contains("Table cell alignment coordinates cannot be negative.", cellAlignmentException.Message, StringComparison.Ordinal);
+
+        var invalidCellVerticalAlignment = TableStyles.Minimal();
+
+        var cellVerticalAlignmentException = Assert.Throws<ArgumentException>(() =>
+            invalidCellVerticalAlignment.CellVerticalAlignments = new Dictionary<(int Row, int Column), PdfCellVerticalAlign> {
+                [(-1, 0)] = PdfCellVerticalAlign.Middle
+            });
+
+        Assert.Contains("Table cell vertical alignment coordinates cannot be negative.", cellVerticalAlignmentException.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11543,24 +13877,56 @@ public class PdfDocVisualQualityTests {
             invalidVerticalAlign.VerticalAlignments = new List<PdfCellVerticalAlign> { (PdfCellVerticalAlign)99 });
 
         Assert.Contains("Table vertical alignments must be defined PDF cell vertical alignment values.", invalidVerticalAlignException.Message, StringComparison.Ordinal);
+
+        var invalidCellAlign = TableStyles.Minimal();
+
+        var invalidCellAlignException = Assert.Throws<ArgumentException>(() =>
+            invalidCellAlign.CellAlignments = new Dictionary<(int Row, int Column), PdfColumnAlign> {
+                [(0, 0)] = (PdfColumnAlign)99
+            });
+
+        Assert.Contains("Table column alignments must be Left, Center, or Right.", invalidCellAlignException.Message, StringComparison.Ordinal);
+
+        var invalidCellVerticalAlign = TableStyles.Minimal();
+
+        var invalidCellVerticalAlignException = Assert.Throws<ArgumentException>(() =>
+            invalidCellVerticalAlign.CellVerticalAlignments = new Dictionary<(int Row, int Column), PdfCellVerticalAlign> {
+                [(0, 0)] = (PdfCellVerticalAlign)99
+            });
+
+        Assert.Contains("Table vertical alignments must be defined PDF cell vertical alignment values.", invalidCellVerticalAlignException.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void TableStyle_AlignmentListsSnapshotAssignedCollections() {
         var horizontal = new List<PdfColumnAlign> { PdfColumnAlign.Left, PdfColumnAlign.Center };
         var vertical = new List<PdfCellVerticalAlign> { PdfCellVerticalAlign.Top, PdfCellVerticalAlign.Middle };
+        var cellHorizontal = new Dictionary<(int Row, int Column), PdfColumnAlign> {
+            [(1, 1)] = PdfColumnAlign.Right
+        };
+        var cellVertical = new Dictionary<(int Row, int Column), PdfCellVerticalAlign> {
+            [(1, 1)] = PdfCellVerticalAlign.Bottom
+        };
         var style = TableStyles.Minimal();
 
         style.Alignments = horizontal;
         style.VerticalAlignments = vertical;
+        style.CellAlignments = cellHorizontal;
+        style.CellVerticalAlignments = cellVertical;
 
         horizontal[0] = PdfColumnAlign.Right;
         vertical[0] = PdfCellVerticalAlign.Bottom;
+        cellHorizontal[(1, 1)] = PdfColumnAlign.Center;
+        cellVertical[(1, 1)] = PdfCellVerticalAlign.Middle;
 
         Assert.NotNull(style.Alignments);
         Assert.NotNull(style.VerticalAlignments);
+        Assert.NotNull(style.CellAlignments);
+        Assert.NotNull(style.CellVerticalAlignments);
         Assert.Equal(PdfColumnAlign.Left, style.Alignments![0]);
         Assert.Equal(PdfCellVerticalAlign.Top, style.VerticalAlignments![0]);
+        Assert.Equal(PdfColumnAlign.Right, style.CellAlignments![(1, 1)]);
+        Assert.Equal(PdfCellVerticalAlign.Bottom, style.CellVerticalAlignments![(1, 1)]);
     }
 
     [Fact]
@@ -11569,26 +13935,40 @@ public class PdfDocVisualQualityTests {
         var minWidths = new List<double?> { 40, null };
         var maxWidths = new List<double?> { null, 120 };
         var weights = new List<double> { 1, 2 };
+        var rowMinHeights = new List<double?> { 18, null, 36 };
+        var rowBreakPolicies = new List<bool?> { false, null, true };
         var style = TableStyles.Minimal();
 
         style.ColumnWidthPoints = fixedWidths;
         style.ColumnMinWidthPoints = minWidths;
         style.ColumnMaxWidthPoints = maxWidths;
         style.ColumnWidthWeights = weights;
+        style.RowMinHeights = rowMinHeights;
+        style.RowAllowBreakAcrossPages = rowBreakPolicies;
 
         fixedWidths[0] = 10;
         minWidths[0] = 10;
         maxWidths[1] = 10;
         weights[1] = 10;
+        rowMinHeights[0] = 99;
+        rowBreakPolicies[0] = true;
 
         Assert.NotNull(style.ColumnWidthPoints);
         Assert.NotNull(style.ColumnMinWidthPoints);
         Assert.NotNull(style.ColumnMaxWidthPoints);
         Assert.NotNull(style.ColumnWidthWeights);
+        Assert.NotNull(style.RowMinHeights);
+        Assert.NotNull(style.RowAllowBreakAcrossPages);
         Assert.Equal(60, style.ColumnWidthPoints![0]);
         Assert.Equal(40, style.ColumnMinWidthPoints![0]);
         Assert.Equal(120, style.ColumnMaxWidthPoints![1]);
         Assert.Equal(2, style.ColumnWidthWeights![1]);
+        Assert.Equal(18, style.RowMinHeights![0]);
+        Assert.Null(style.RowMinHeights![1]);
+        Assert.Equal(36, style.RowMinHeights![2]);
+        Assert.False(style.RowAllowBreakAcrossPages![0]);
+        Assert.Null(style.RowAllowBreakAcrossPages![1]);
+        Assert.True(style.RowAllowBreakAcrossPages![2]);
     }
 
     [Fact]
@@ -11597,32 +13977,114 @@ public class PdfDocVisualQualityTests {
         var cellFills = new Dictionary<(int Row, int Column), PdfColor> {
             [(1, 1)] = new PdfColor(0.1, 0.2, 0.3)
         };
+        var cellDataBar = new PdfCellDataBar {
+            Color = new PdfColor(0.2, 0.3, 0.4),
+            Ratio = 0.25
+        };
+        var cellDataBars = new Dictionary<(int Row, int Column), PdfCellDataBar> {
+            [(1, 1)] = cellDataBar
+        };
+        var cellIcon = new PdfCellIcon {
+            Kind = PdfCellIconKind.Circle,
+            Color = new PdfColor(0.25, 0.35, 0.45),
+            Size = 9,
+            OffsetX = 1.25,
+            OffsetY = -0.5
+        };
+        var cellIcons = new Dictionary<(int Row, int Column), PdfCellIcon> {
+            [(1, 1)] = cellIcon
+        };
         var cellBorder = new PdfCellBorder {
             Color = new PdfColor(0.4, 0.5, 0.6),
             Width = 1.25,
-            Left = false
+            DashStyle = OfficeStrokeDashStyle.Dash,
+            LineStyle = PdfCellBorderLineStyle.TwoLine,
+            Left = false,
+            DiagonalUp = true,
+            DiagonalUpBorder = new PdfCellBorderSide {
+                Color = new PdfColor(0.11, 0.22, 0.33),
+                Width = 1.75,
+                LineStyle = PdfCellBorderLineStyle.TwoLine
+            },
+            TopBorder = new PdfCellBorderSide {
+                Color = new PdfColor(0.7, 0.8, 0.9),
+                Width = 2.25,
+                DashStyle = OfficeStrokeDashStyle.Dot,
+                LineStyle = PdfCellBorderLineStyle.TwoLine
+            }
         };
         var cellBorders = new Dictionary<(int Row, int Column), PdfCellBorder> {
             [(1, 1)] = cellBorder
+        };
+        var cellPadding = new PdfCellPadding {
+            Left = 7,
+            Right = 8,
+            Top = 9,
+            Bottom = 10
+        };
+        var cellPaddings = new Dictionary<(int Row, int Column), PdfCellPadding> {
+            [(1, 1)] = cellPadding
         };
         var style = TableStyles.Minimal();
 
         style.BodyColumnFills = columnFills;
         style.CellFills = cellFills;
+        style.CellDataBars = cellDataBars;
+        style.CellIcons = cellIcons;
         style.CellBorders = cellBorders;
+        style.CellPaddings = cellPaddings;
 
         columnFills[0] = PdfColor.White;
         cellFills[(1, 1)] = PdfColor.Black;
+        cellDataBar.Ratio = 0.75;
+        cellDataBar.Color = PdfColor.Black;
+        cellIcon.Kind = PdfCellIconKind.Diamond;
+        cellIcon.Color = PdfColor.Black;
+        cellIcon.Size = 12;
+        cellIcon.OffsetX = 3;
+        cellIcon.OffsetY = 4;
         cellBorder.Width = 4;
+        cellBorder.LineStyle = PdfCellBorderLineStyle.Standard;
         cellBorder.Left = true;
+        cellBorder.DiagonalUp = false;
+        cellBorder.TopBorder = new PdfCellBorderSide {
+            Color = PdfColor.Black,
+            Width = 5
+        };
+        cellPadding.Left = 30;
+        cellPadding.Top = 31;
 
         Assert.NotNull(style.BodyColumnFills);
         Assert.NotNull(style.CellFills);
+        Assert.NotNull(style.CellDataBars);
+        Assert.NotNull(style.CellIcons);
         Assert.NotNull(style.CellBorders);
+        Assert.NotNull(style.CellPaddings);
         Assert.Equal(PdfColor.Gray, style.BodyColumnFills![0]);
         Assert.Equal(new PdfColor(0.1, 0.2, 0.3), style.CellFills![(1, 1)]);
+        Assert.Equal(new PdfColor(0.2, 0.3, 0.4), style.CellDataBars![(1, 1)].Color);
+        Assert.Equal(0.25, style.CellDataBars![(1, 1)].Ratio);
+        Assert.Equal(PdfCellIconKind.Circle, style.CellIcons![(1, 1)].Kind);
+        Assert.Equal(new PdfColor(0.25, 0.35, 0.45), style.CellIcons![(1, 1)].Color);
+        Assert.Equal(9, style.CellIcons![(1, 1)].Size);
+        Assert.Equal(1.25, style.CellIcons![(1, 1)].OffsetX);
+        Assert.Equal(-0.5, style.CellIcons![(1, 1)].OffsetY);
         Assert.Equal(1.25, style.CellBorders![(1, 1)].Width);
+        Assert.Equal(OfficeStrokeDashStyle.Dash, style.CellBorders![(1, 1)].DashStyle);
+        Assert.Equal(PdfCellBorderLineStyle.TwoLine, style.CellBorders![(1, 1)].LineStyle);
         Assert.False(style.CellBorders![(1, 1)].Left);
+        Assert.True(style.CellBorders![(1, 1)].DiagonalUp);
+        Assert.Equal(new PdfColor(0.11, 0.22, 0.33), style.CellBorders![(1, 1)].DiagonalUpBorder!.Color);
+        Assert.Equal(1.75, style.CellBorders![(1, 1)].DiagonalUpBorder!.Width);
+        Assert.Equal(PdfCellBorderLineStyle.TwoLine, style.CellBorders![(1, 1)].DiagonalUpBorder!.LineStyle);
+        Assert.Equal(new PdfColor(0.7, 0.8, 0.9), style.CellBorders![(1, 1)].TopBorder!.Color);
+        Assert.Equal(2.25, style.CellBorders![(1, 1)].TopBorder!.Width);
+        Assert.Equal(OfficeStrokeDashStyle.Dot, style.CellBorders![(1, 1)].TopBorder!.DashStyle);
+        Assert.Equal(PdfCellBorderLineStyle.TwoLine, style.CellBorders![(1, 1)].TopBorder!.LineStyle);
+        Assert.Equal(7, style.CellPaddings![(1, 1)].Left);
+        Assert.Equal(8, style.CellPaddings![(1, 1)].Right);
+        Assert.Equal(9, style.CellPaddings![(1, 1)].Top);
+        Assert.Equal(10, style.CellPaddings![(1, 1)].Bottom);
     }
 
     [Fact]
@@ -11643,6 +14105,33 @@ public class PdfDocVisualQualityTests {
         style.CellPaddingRight = 8;
         style.CellPaddingTop = 9;
         style.CellPaddingBottom = 10;
+        style.CellPaddings = new Dictionary<(int Row, int Column), PdfCellPadding> {
+            [(0, 0)] = new PdfCellPadding { Left = 12, Top = 13 }
+        };
+        style.CellDataBars = new Dictionary<(int Row, int Column), PdfCellDataBar> {
+            [(0, 0)] = new PdfCellDataBar {
+                Color = new PdfColor(0.2, 0.3, 0.4),
+                Ratio = 0.5
+            }
+        };
+        style.CellIcons = new Dictionary<(int Row, int Column), PdfCellIcon> {
+            [(0, 0)] = new PdfCellIcon {
+                Kind = PdfCellIconKind.Diamond,
+                Color = new PdfColor(0.2, 0.3, 0.4),
+                Size = 9,
+                OffsetX = 1.25,
+                OffsetY = -0.5
+            }
+        };
+        style.CellAlignments = new Dictionary<(int Row, int Column), PdfColumnAlign> {
+            [(0, 0)] = PdfColumnAlign.Right
+        };
+        style.CellVerticalAlignments = new Dictionary<(int Row, int Column), PdfCellVerticalAlign> {
+            [(0, 0)] = PdfCellVerticalAlign.Bottom
+        };
+        style.CellSpacing = 11;
+        style.RowMinHeights = new List<double?> { 16, null, 48 };
+        style.RowAllowBreakAcrossPages = new List<bool?> { false, null, true };
 
         PdfTableStyle clone = style.Clone();
 
@@ -11661,6 +14150,59 @@ public class PdfDocVisualQualityTests {
         Assert.Equal(8, clone.CellPaddingRight);
         Assert.Equal(9, clone.CellPaddingTop);
         Assert.Equal(10, clone.CellPaddingBottom);
+        Assert.NotNull(clone.CellPaddings);
+        Assert.Equal(12, clone.CellPaddings![(0, 0)].Left);
+        Assert.Equal(13, clone.CellPaddings![(0, 0)].Top);
+        Assert.NotNull(clone.CellDataBars);
+        Assert.Equal(new PdfColor(0.2, 0.3, 0.4), clone.CellDataBars![(0, 0)].Color);
+        Assert.Equal(0.5, clone.CellDataBars![(0, 0)].Ratio);
+        Assert.NotNull(clone.CellIcons);
+        Assert.Equal(PdfCellIconKind.Diamond, clone.CellIcons![(0, 0)].Kind);
+        Assert.Equal(new PdfColor(0.2, 0.3, 0.4), clone.CellIcons![(0, 0)].Color);
+        Assert.Equal(9, clone.CellIcons![(0, 0)].Size);
+        Assert.Equal(1.25, clone.CellIcons![(0, 0)].OffsetX);
+        Assert.Equal(-0.5, clone.CellIcons![(0, 0)].OffsetY);
+        Assert.NotNull(clone.CellAlignments);
+        Assert.NotNull(clone.CellVerticalAlignments);
+        Assert.Equal(PdfColumnAlign.Right, clone.CellAlignments![(0, 0)]);
+        Assert.Equal(PdfCellVerticalAlign.Bottom, clone.CellVerticalAlignments![(0, 0)]);
+        Assert.Equal(11, clone.CellSpacing);
+        Assert.NotNull(clone.RowMinHeights);
+        Assert.Equal(16, clone.RowMinHeights![0]);
+        Assert.Null(clone.RowMinHeights![1]);
+        Assert.Equal(48, clone.RowMinHeights![2]);
+        Assert.NotNull(clone.RowAllowBreakAcrossPages);
+        Assert.False(clone.RowAllowBreakAcrossPages![0]);
+        Assert.Null(clone.RowAllowBreakAcrossPages![1]);
+        Assert.True(clone.RowAllowBreakAcrossPages![2]);
+    }
+
+    private static byte[] CreateTableCellSpacingProbe(PdfOptions options, double cellSpacing, bool useRowColumnFlow) {
+        var style = TableStyles.Minimal();
+        style.HeaderRowCount = 0;
+        style.CellPaddingX = 1;
+        style.CellPaddingY = 1;
+        style.CellSpacing = cellSpacing;
+        style.ColumnWidthPoints = new List<double?> { 90, 90 };
+
+        var rows = new[] {
+            new[] { "SpacingA1", "SpacingB1" },
+            new[] { "SpacingA2", "SpacingB2" }
+        };
+
+        if (useRowColumnFlow) {
+            return PdfDoc.Create(options)
+                .Compose(compose =>
+                    compose.Page(page =>
+                        page.Content(content =>
+                            content.Row(row =>
+                                row.Column(100, column => column.Table(rows, style: style))))))
+                .ToBytes();
+        }
+
+        return PdfDoc.Create(options)
+            .Table(rows, style: style)
+            .ToBytes();
     }
 
     private static byte[] CreateTablePaddingProbe(PdfOptions options, bool useRowColumnFlow, bool useSidePadding) {
@@ -11678,6 +14220,77 @@ public class PdfDocVisualQualityTests {
 
         var rows = new[] {
             new[] { "PadMarker" }
+        };
+
+        if (useRowColumnFlow) {
+            return PdfDoc.Create(options)
+                .Compose(compose =>
+                    compose.Page(page =>
+                        page.Content(content =>
+                            content.Row(row =>
+                                row.Column(100, column => column.Table(rows, style: style))))))
+                .ToBytes();
+        }
+
+        return PdfDoc.Create(options)
+            .Table(rows, style: style)
+            .ToBytes();
+    }
+
+    private static byte[] CreateTablePerCellPaddingProbe(PdfOptions options, bool useRowColumnFlow, bool useCellPadding) {
+        var style = TableStyles.Minimal();
+        style.HeaderRowCount = 0;
+        style.CellPaddingX = 0;
+        style.CellPaddingY = 0;
+        style.ColumnWidthPoints = new List<double?> { 110 };
+        if (useCellPadding) {
+            style.CellPaddings = new Dictionary<(int Row, int Column), PdfCellPadding> {
+                [(0, 0)] = new PdfCellPadding {
+                    Left = 22,
+                    Right = 3,
+                    Top = 16,
+                    Bottom = 4
+                }
+            };
+        }
+
+        var rows = new[] {
+            new[] { "CellPadMarker" }
+        };
+
+        if (useRowColumnFlow) {
+            return PdfDoc.Create(options)
+                .Compose(compose =>
+                    compose.Page(page =>
+                        page.Content(content =>
+                            content.Row(row =>
+                                row.Column(100, column => column.Table(rows, style: style))))))
+                .ToBytes();
+        }
+
+        return PdfDoc.Create(options)
+            .Table(rows, style: style)
+            .ToBytes();
+    }
+
+    private static byte[] CreateTablePerCellAlignmentProbe(PdfOptions options, bool useRowColumnFlow, bool useCellAlignment) {
+        var style = TableStyles.Minimal();
+        style.HeaderRowCount = 0;
+        style.CellPaddingX = 2;
+        style.CellPaddingY = 2;
+        style.MinRowHeight = 72;
+        style.ColumnWidthPoints = new List<double?> { 130 };
+        if (useCellAlignment) {
+            style.CellAlignments = new Dictionary<(int Row, int Column), PdfColumnAlign> {
+                [(0, 0)] = PdfColumnAlign.Right
+            };
+            style.CellVerticalAlignments = new Dictionary<(int Row, int Column), PdfCellVerticalAlign> {
+                [(0, 0)] = PdfCellVerticalAlign.Bottom
+            };
+        }
+
+        var rows = new[] {
+            new[] { "CellAlignMarker" }
         };
 
         if (useRowColumnFlow) {
@@ -11735,6 +14348,70 @@ public class PdfDocVisualQualityTests {
             }, style: style)
             .Paragraph(p => p.Text("AfterMarker"))
             .ToBytes();
+    }
+
+    private static byte[] CreateLightTableRhythmProbe(PdfOptions options, PdfTableStyle? style) {
+        return PdfDoc.Create(options)
+            .Paragraph(p => p.Text("BeforeMarker"))
+            .Table(new[] {
+                new[] { "Alpha", "Ready" },
+                new[] { "Beta", "Ready" }
+            }, style: style)
+            .Paragraph(p => p.Text("AfterMarker"))
+            .ToBytes();
+    }
+
+    private static byte[] CreateCompressionProbe(bool compressContentStreams) {
+        PdfDoc doc = PdfDoc.Create(new PdfOptions {
+            PageWidth = 420,
+            PageHeight = 1200,
+            MarginLeft = 42,
+            MarginRight = 42,
+            MarginTop = 42,
+            MarginBottom = 42,
+            CompressContentStreams = compressContentStreams
+        })
+            .H1("CompressionProbe");
+
+        for (int i = 0; i < 18; i++) {
+            doc.Paragraph(p => p.Text("CompressionProbe repeated body repeated body repeated body repeated body repeated body " + i.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        return doc.ToBytes();
+    }
+
+    private static byte[] CreateMinimalIccProfile(string colorSpace = "RGB ") {
+        byte[] profile = new byte[132];
+        profile[0] = 0;
+        profile[1] = 0;
+        profile[2] = 0;
+        profile[3] = 132;
+        Encoding.ASCII.GetBytes(colorSpace, 0, 4, profile, 16);
+        profile[36] = (byte)'a';
+        profile[37] = (byte)'c';
+        profile[38] = (byte)'s';
+        profile[39] = (byte)'p';
+        return profile;
+    }
+
+    private static string? FindLocalTrueTypeFont() {
+        string windowsFont = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts", "arial.ttf");
+        if (File.Exists(windowsFont)) {
+            return windowsFont;
+        }
+
+        string[] candidates = {
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/Library/Fonts/Arial.ttf"
+        };
+        foreach (string candidate in candidates) {
+            if (File.Exists(candidate)) {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     private static string RenderTableStyleContent(PdfTableStyle style) {

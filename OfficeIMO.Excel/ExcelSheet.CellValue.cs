@@ -200,6 +200,20 @@ namespace OfficeIMO.Excel {
         }
 
         private bool TrySetPendingDirectCellValue(int row, int column, object? value) {
+            if (_isBatchOperation || Locking.IsNoLock) {
+                return TrySetPendingDirectCellValueLocked(row, column, value);
+            }
+
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                return TrySetPendingDirectCellValueLocked(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        private bool TrySetPendingDirectCellValueLocked(int row, int column, object? value) {
             using var preserveFastSaveState = _excelDocument.PreserveDirectDataSetFastSaveStateForExternalCellMutation(this, row, column);
             if (!EnablePendingDirectCellValueBuffer
                 || _materializingPendingCellValueDirectSaveBuffer
@@ -212,20 +226,24 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
+            return TrySetPendingDirectCellValueCore(row, column, directValue);
+        }
+
+        private bool TrySetPendingDirectCellFormula(int row, int column, string formula) {
             if (_isBatchOperation || Locking.IsNoLock) {
-                return TrySetPendingDirectCellValueCore(row, column, directValue);
+                return TrySetPendingDirectCellFormulaLocked(row, column, formula);
             }
 
             var lck = _excelDocument.EnsureLock();
             lck.EnterWriteLock();
             try {
-                return TrySetPendingDirectCellValueCore(row, column, directValue);
+                return TrySetPendingDirectCellFormulaLocked(row, column, formula);
             } finally {
                 lck.ExitWriteLock();
             }
         }
 
-        private bool TrySetPendingDirectCellFormula(int row, int column, string formula) {
+        private bool TrySetPendingDirectCellFormulaLocked(int row, int column, string formula) {
             using var preserveFastSaveState = _excelDocument.PreserveDirectDataSetFastSaveStateForExternalCellMutation(this, row, column);
             if (!EnablePendingDirectCellValueBuffer
                 || _materializingPendingCellValueDirectSaveBuffer
@@ -237,17 +255,7 @@ namespace OfficeIMO.Excel {
             }
 
             var directValue = new DirectFormulaCellValue(Utilities.ExcelSanitizer.SanitizeFormula(formula));
-            if (_isBatchOperation || Locking.IsNoLock) {
-                return TrySetPendingDirectCellValueCore(row, column, directValue);
-            }
-
-            var lck = _excelDocument.EnsureLock();
-            lck.EnterWriteLock();
-            try {
-                return TrySetPendingDirectCellValueCore(row, column, directValue);
-            } finally {
-                lck.ExitWriteLock();
-            }
+            return TrySetPendingDirectCellValueCore(row, column, directValue);
         }
 
         private bool TrySetPendingDirectCellValueCore(int row, int column, object? value) {
@@ -374,10 +382,6 @@ namespace OfficeIMO.Excel {
 
             _pendingCellValueDirectSaveBuffer = null;
             _excelDocument.ClearPendingDirectCellValueSheet(this);
-            if (MirrorPendingDirectCellValueBufferToWorksheet
-                || buffer.CellCount < PendingDirectCellValueMinimumCellCount) {
-                return;
-            }
 
             _materializingPendingCellValueDirectSaveBuffer = true;
             try {
@@ -497,7 +501,7 @@ namespace OfficeIMO.Excel {
             cell.CellValue = cellValue;
             cell.DataType = dataType;
             ApplyAutomaticCellFormatting(cell, value, dataType);
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void CellStringValueCore(int row, int column, string? value) {
@@ -522,7 +526,7 @@ namespace OfficeIMO.Excel {
                 SetExistingCellPlainStringValue(cell, text);
             }
 
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private bool TryGetCellValueSharedStringIndex(string text, out int index, out bool containsLineBreak) {
@@ -555,7 +559,7 @@ namespace OfficeIMO.Excel {
             cell.CellValue = new CellValue(string.Empty);
             cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.String;
             cell.InlineString = null;
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void SetExistingCellSharedStringValue(Cell cell, string value, int sharedStringIndex) {
@@ -585,7 +589,7 @@ namespace OfficeIMO.Excel {
             var cell = GetCell(row, column);
             cell.CellValue = new CellValue(FormatDoubleCellValue(value));
             cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private static string FormatDoubleCellValue(double value) {
@@ -603,21 +607,21 @@ namespace OfficeIMO.Excel {
             var cell = GetCell(row, column);
             cell.CellValue = new CellValue(value.ToString(CultureInfo.InvariantCulture));
             cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void CellNumberTextValueCore(int row, int column, string text) {
             var cell = GetCell(row, column);
             cell.CellValue = new CellValue(text);
             cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void CellBooleanValueCore(int row, int column, bool value) {
             var cell = GetCell(row, column);
             cell.CellValue = new CellValue(value ? "1" : "0");
             cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Boolean;
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void CellDateTimeValueCore(int row, int column, DateTime value) {
@@ -629,7 +633,7 @@ namespace OfficeIMO.Excel {
             cell.StyleIndex = baseStyleIndex == 0U
                 ? (_cellValueDefaultDateStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 14))
                 : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDateStyleIndexes, baseStyleIndex, 14);
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void CellDateTimeOffsetValueCore(int row, int column, DateTimeOffset value) {
@@ -654,7 +658,7 @@ namespace OfficeIMO.Excel {
                         ? (_cellValueDefaultDateStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 14))
                         : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDateStyleIndexes, baseStyleIndex, 14);
 
-                    ClearHeaderCacheForCellMutation(row);
+                    ClearHeaderCacheForCellMutation(row, column);
                     return;
                 } catch (ArgumentException) {
                     // Fall back to ISO text below for values Excel cannot represent numerically.
@@ -666,7 +670,7 @@ namespace OfficeIMO.Excel {
             string fallbackText = value.ToString("o", CultureInfo.InvariantCulture);
             int sharedStringIndex = _excelDocument.GetSharedStringIndex(fallbackText, validateNewString: true, out bool containsLineBreak);
             SetExistingCellSharedStringValue(cell, sharedStringIndex, containsLineBreak);
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
 #if NET6_0_OR_GREATER
@@ -678,7 +682,7 @@ namespace OfficeIMO.Excel {
             cell.StyleIndex = baseStyleIndex == 0U
                 ? (_cellValueDefaultDateStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 14))
                 : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDateStyleIndexes, baseStyleIndex, 14);
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void CellTimeOnlyValueCore(int row, int column, TimeOnly value) {
@@ -689,7 +693,7 @@ namespace OfficeIMO.Excel {
             cell.StyleIndex = baseStyleIndex == 0U
                 ? (_cellValueDefaultDurationStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 46))
                 : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDurationStyleIndexes, baseStyleIndex, 46);
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 #endif
 
@@ -698,7 +702,7 @@ namespace OfficeIMO.Excel {
             // Excel formulas in XML should not start with '=' and must not include illegal control characters
             var safe = Utilities.ExcelSanitizer.SanitizeFormula(formula);
             cell.CellFormula = new CellFormula(safe);
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         private void CellTimeSpanValueCore(int row, int column, TimeSpan value) {
@@ -710,7 +714,7 @@ namespace OfficeIMO.Excel {
             cell.StyleIndex = baseStyleIndex == 0U
                 ? (_cellValueDefaultDurationStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 46))
                 : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDurationStyleIndexes, baseStyleIndex, 46);
-            ClearHeaderCacheForCellMutation(row);
+            ClearHeaderCacheForCellMutation(row, column);
         }
 
         // Core coercion logic shared between sequential and parallel operations
@@ -1281,7 +1285,11 @@ namespace OfficeIMO.Excel {
             text = string.Empty;
             try {
                 if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
-                    MaterializeDeferredDataSetImportIfNeeded();
+                    if (_excelDocument.HasDeferredDirectDataSetImport) {
+                        _excelDocument.MaterializeDeferredDataSetImportPreservingFastSaveModel();
+                    } else {
+                        MaterializeDeferredDataSetImportIfNeeded();
+                    }
                 }
 
                 var cell = TryGetCell(row, column);
@@ -1585,6 +1593,34 @@ namespace OfficeIMO.Excel {
 
                 var baseFormat = GetBaseCellFormat(stylesheet, cell.StyleIndex?.Value ?? 0U);
                 var borderId = GetOrCreateBorderVariant(stylesheet, GetOptionalValue(baseFormat.BorderId), border => SetUniformBorder(border, style, hexColor));
+                ApplyCellFormatOverride(stylesheet, cell, format => {
+                    format.BorderId = borderId;
+                    format.ApplyBorder = true;
+                });
+
+                stylesPart.Stylesheet.Save();
+            });
+        }
+
+        /// <summary>
+        /// Applies diagonal border lines to a single cell.
+        /// </summary>
+        /// <param name="row">The 1-based row index of the cell to style.</param>
+        /// <param name="column">The 1-based column index of the cell to style.</param>
+        /// <param name="style">The diagonal border style.</param>
+        /// <param name="hexColor">Optional border color expressed as ARGB or RGB hex.</param>
+        /// <param name="diagonalUp">Whether to draw the bottom-left to top-right diagonal.</param>
+        /// <param name="diagonalDown">Whether to draw the top-left to bottom-right diagonal.</param>
+        public void CellDiagonalBorder(int row, int column, BorderStyleValues style, string? hexColor = null, bool diagonalUp = true, bool diagonalDown = true) {
+            WriteLockConditional(() => {
+                var cell = GetCell(row, column);
+                var workbookPart = _excelDocument.WorkbookPartRoot ?? throw new InvalidOperationException("WorkbookPart is null");
+                var stylesPart = workbookPart.WorkbookStylesPart ?? workbookPart.AddNewPart<WorkbookStylesPart>();
+                var stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
+                EnsureDefaultStylePrimitives(stylesheet);
+
+                var baseFormat = GetBaseCellFormat(stylesheet, cell.StyleIndex?.Value ?? 0U);
+                var borderId = GetOrCreateBorderVariant(stylesheet, GetOptionalValue(baseFormat.BorderId), border => SetDiagonalBorder(border, style, hexColor, diagonalUp, diagonalDown));
                 ApplyCellFormatOverride(stylesheet, cell, format => {
                     format.BorderId = borderId;
                     format.ApplyBorder = true;
@@ -1971,6 +2007,13 @@ namespace OfficeIMO.Excel {
             border.RightBorder = CreateBorderSide<RightBorder>(style, argb);
             border.TopBorder = CreateBorderSide<TopBorder>(style, argb);
             border.BottomBorder = CreateBorderSide<BottomBorder>(style, argb);
+        }
+
+        private static void SetDiagonalBorder(Border border, BorderStyleValues style, string? hexColor, bool diagonalUp, bool diagonalDown) {
+            var argb = string.IsNullOrWhiteSpace(hexColor) ? null : NormalizeHexColor(hexColor!);
+            border.DiagonalBorder = CreateBorderSide<DiagonalBorder>(style, argb);
+            border.DiagonalUp = diagonalUp;
+            border.DiagonalDown = diagonalDown;
         }
 
         private static T CreateBorderSide<T>(BorderStyleValues style, string? argb) where T : BorderPropertiesType, new() {

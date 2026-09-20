@@ -325,6 +325,7 @@ namespace OfficeIMO.Excel {
         private bool _simplePackageContentKnown;
         private DirectDataSetSaveCandidate? _directDataSetSaveCandidate;
         private DirectDataSetWorkbookModel? _materializedDirectDataSetFastSaveModel;
+        private bool _materializedDirectDataSetFastSaveModelHasMaterializedWorksheet;
         private ExcelSheet? _directDataSetMetadataSourceSheet;
         private ExcelSheet? _pendingDirectCellValueSheet;
         private bool _materializingDeferredDataSetImport;
@@ -348,6 +349,7 @@ namespace OfficeIMO.Excel {
                 || _materializedDirectDataSetFastSaveModelPreservationDepth > 0;
             if (!preserveMaterializedDirectModel && !_materializingDeferredDataSetImport) {
                 _materializedDirectDataSetFastSaveModel = null;
+                _materializedDirectDataSetFastSaveModelHasMaterializedWorksheet = false;
             }
 
             if (IsPackageDirtyWithoutPendingSaveCandidate) {
@@ -390,6 +392,16 @@ namespace OfficeIMO.Excel {
         internal bool HasPackagePropertiesDirty => _packagePropertiesDirty;
 
         internal bool IsMaterializingDeferredDataSetImport => _materializingDeferredDataSetImport;
+
+        internal bool CanWriteDirectDataSetPackageOnDispose
+            => _copyPackageToSourceOnDispose
+               && _sourceStream != null
+               && _spreadSheetDocument != null
+               && !_spreadSheetDocument.AutoSave;
+
+        internal bool CanDeferDirectCellValuesAppendCandidate
+            => _spreadSheetDocument != null
+               && !_spreadSheetDocument.AutoSave;
 
         internal bool IsPreservingDirectDataSetExternalCellMutation
             => _directDataSetExternalCellMutationPreservationDepth > 0;
@@ -445,6 +457,7 @@ namespace OfficeIMO.Excel {
 
                 if (hasMaterializedModel) {
                     _materializedDirectDataSetFastSaveModel = null;
+                    _materializedDirectDataSetFastSaveModelHasMaterializedWorksheet = false;
                 } else {
                     ClearDirectDataSetSaveCandidate();
                 }
@@ -1701,6 +1714,7 @@ namespace OfficeIMO.Excel {
         /// and header/footer references, and cleans up invalid table references.
         /// </summary>
         public void PreflightWorkbook() {
+            MaterializePendingDirectCellValueSheetIfNeeded();
             PreflightWorkbook(Sheets);
             _requiresSavePreflight = false;
         }
@@ -2254,6 +2268,7 @@ namespace OfficeIMO.Excel {
             // Run the heavier repair sweep only when workbook-level operations requested it.
             if (_requiresSavePreflight || options?.SafePreflight == true) {
                 if (!skipDirectFastSaveSheetPreparation || options?.SafePreflight == true) {
+                    MaterializePendingDirectCellValueSheetIfNeeded();
                     try { PreflightWorkbook(sheets); } catch { }
                     _requiresSavePreflight = false;
                 } else {

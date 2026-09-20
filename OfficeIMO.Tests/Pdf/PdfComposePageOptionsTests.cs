@@ -101,6 +101,38 @@ namespace OfficeIMO.Tests.Pdf {
         }
 
         [Fact]
+        public void PageBackground_RendersBeforePageContent() {
+            byte[] pdfBytes = PdfDoc.Create()
+                .Background(PdfColor.FromRgb(240, 248, 255))
+                .Paragraph(paragraph => paragraph.Text("DocBackgroundMarker"))
+                .ToBytes();
+
+            string content = Encoding.ASCII.GetString(pdfBytes);
+            int backgroundFill = content.IndexOf("0.941 0.973 1 rg\n0 0 612 792 re f", StringComparison.Ordinal);
+            int markerText = content.IndexOf("<446F634261636B67726F756E644D61726B6572>", StringComparison.Ordinal);
+
+            Assert.True(backgroundFill >= 0, "Expected the document background to emit a full-page PDF fill.");
+            Assert.True(markerText > backgroundFill, "Expected the page background to render before text content.");
+        }
+
+        [Fact]
+        public void PageBackground_CanBeOverriddenPerComposedPage() {
+            byte[] pdfBytes = PdfDoc.Create(new PdfOptions {
+                    BackgroundColor = PdfColor.White
+                })
+                .Page(page => page
+                    .Size(300, 400)
+                    .Background(PdfColor.FromRgb(238, 242, 255))
+                    .Content(content => content.Item(item => item.Paragraph(paragraph => paragraph.Text("PageBackgroundMarker")))))
+                .ToBytes();
+
+            string content = Encoding.ASCII.GetString(pdfBytes);
+
+            Assert.Contains("0.933 0.949 1 rg\n0 0 300 400 re f", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("1 1 1 rg\n0 0 300 400 re f", content, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ComposeContent_ItemAndSpacerProvideDirectWordLikeFlow() {
             byte[] pdfBytes = PdfDoc.Create(new PdfOptions {
                     DefaultFont = PdfStandardFont.Helvetica,
@@ -442,6 +474,9 @@ namespace OfficeIMO.Tests.Pdf {
             Assert.Equal(
                 "<< /Type /Font /Subtype /Type1 /BaseFont /Times-BoldItalic /Encoding /WinAnsiEncoding >>\n",
                 PdfStandardFontDictionaryBuilder.BuildStandardType1FontObject(PdfStandardFont.TimesBoldItalic));
+            Assert.Equal(
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Times-BoldItalic /Encoding /WinAnsiEncoding /ToUnicode 7 0 R >>\n",
+                PdfStandardFontDictionaryBuilder.BuildStandardType1FontObject(PdfStandardFont.TimesBoldItalic, 7));
 
             PdfDictionary dictionary = PdfStandardFontDictionaryBuilder.BuildStandardType1FontDictionary(PdfStandardFont.CourierOblique);
 
@@ -452,6 +487,8 @@ namespace OfficeIMO.Tests.Pdf {
 
             Assert.Throws<ArgumentOutOfRangeException>(() =>
                 PdfStandardFontDictionaryBuilder.BuildStandardType1FontObject((PdfStandardFont)99));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                PdfStandardFontDictionaryBuilder.BuildStandardType1FontObject(PdfStandardFont.Helvetica, -1));
         }
 
         [Fact]
@@ -476,17 +513,108 @@ namespace OfficeIMO.Tests.Pdf {
                 "<< /Type /Catalog /Pages 2 0 R /AcroForm 8 0 R >>\n",
                 PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 8));
 
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Metadata 9 0 R >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 9));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /OutputIntents [10 0 R] >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 0, 10));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Metadata 9 0 R /OutputIntents [10 0 R] >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 9, 10));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Lang <656E2D5553> >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 0, 0, "en-US"));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Lang <656E2D5553> /Metadata 9 0 R /OutputIntents [10 0 R] >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 9, 10, "en-US"));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /PageLabels 14 0 R >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, pageLabelsId: 14));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Lang <656E2D5553> /PageLabels 14 0 R /Metadata 9 0 R /OutputIntents [10 0 R] >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 9, 10, "en-US", pageLabelsId: 14));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /ViewerPreferences 15 0 R >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, viewerPreferencesId: 15));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Lang <656E2D5553> /PageLabels 14 0 R /ViewerPreferences 15 0 R /Metadata 9 0 R /OutputIntents [10 0 R] >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 9, 10, "en-US", pageLabelsId: 14, viewerPreferencesId: 15));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 11 0 R >> /AF [12 0 R] >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, embeddedFilesNameTreeId: 11, associatedFileIds: new[] { 12 }));
+
+            Assert.Equal(
+                "<< /Type /Catalog /Pages 2 0 R /Names << /Dests 7 0 R /EmbeddedFiles 11 0 R >> /AF [12 0 R 13 0 R] >>\n",
+                PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 7, embeddedFilesNameTreeId: 11, associatedFileIds: new[] { 12, 13 }));
+
             var sb = new StringBuilder();
             PdfCatalogDictionaryBuilder.AppendCatalogStart(sb, 3);
             PdfCatalogDictionaryBuilder.AppendNameEntry(sb, "PageLayout", "TwoColumnLeft");
+            PdfCatalogDictionaryBuilder.AppendTextStringEntry(sb, "Lang", "pl-PL");
             PdfCatalogDictionaryBuilder.AppendReferenceEntry(sb, "Outlines", 9);
             sb.Append(" >>\n");
 
-            Assert.Equal("<< /Type /Catalog /Pages 3 0 R /PageLayout /TwoColumnLeft /Outlines 9 0 R >>\n", sb.ToString());
+            Assert.Equal("<< /Type /Catalog /Pages 3 0 R /PageLayout /TwoColumnLeft /Lang <706C2D504C> /Outlines 9 0 R >>\n", sb.ToString());
             Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(0, 0));
             Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, -1));
             Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, -1));
             Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 0, -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, embeddedFilesNameTreeId: -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, associatedFileIds: new[] { 0 }));
+            Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, pageLabelsId: -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, viewerPreferencesId: -1));
+            Assert.Throws<ArgumentException>(() => PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(2, 0, 0, 0, 0, 0, ""));
+        }
+
+        [Fact]
+        public void PageLabelDictionaryBuilder_EmitsSimpleNumberTree() {
+            Assert.Equal(
+                "<< /Nums [0 << /S /D /St 1 >>] >>\n",
+                PdfPageLabelDictionaryBuilder.BuildGeneratedPageLabelsDictionary(PdfPageNumberStyle.Arabic, 1));
+
+            Assert.Equal(
+                "<< /Nums [0 << /S /R /St 5 /P <412D> >>] >>\n",
+                PdfPageLabelDictionaryBuilder.BuildGeneratedPageLabelsDictionary(PdfPageNumberStyle.UpperRoman, 5, "A-"));
+
+            Assert.Equal("r", PdfPageLabelDictionaryBuilder.GetStyleName(PdfPageNumberStyle.LowerRoman));
+            Assert.Equal("a", PdfPageLabelDictionaryBuilder.GetStyleName(PdfPageNumberStyle.LowerLetter));
+            Assert.Equal("A", PdfPageLabelDictionaryBuilder.GetStyleName(PdfPageNumberStyle.UpperLetter));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                PdfPageLabelDictionaryBuilder.BuildGeneratedPageLabelsDictionary(PdfPageNumberStyle.Arabic, 0));
+            Assert.Throws<ArgumentException>(() =>
+                PdfPageLabelDictionaryBuilder.BuildGeneratedPageLabelsDictionary(PdfPageNumberStyle.Arabic, 1, ""));
+            Assert.Throws<ArgumentException>(() =>
+                PdfPageLabelDictionaryBuilder.BuildGeneratedPageLabelsDictionary((PdfPageNumberStyle)99, 1));
+        }
+
+        [Fact]
+        public void ViewerPreferenceDictionaryBuilder_EmitsConfiguredBooleans() {
+            var preferences = new PdfViewerPreferencesOptions {
+                HideToolbar = true,
+                FitWindow = false,
+                DisplayDocTitle = true
+            };
+
+            Assert.Equal(
+                "<< /HideToolbar true /FitWindow false /DisplayDocTitle true >>\n",
+                PdfViewerPreferenceDictionaryBuilder.BuildGeneratedViewerPreferencesDictionary(preferences));
+
+            Assert.Throws<ArgumentNullException>(() =>
+                PdfViewerPreferenceDictionaryBuilder.BuildGeneratedViewerPreferencesDictionary(null!));
+            Assert.Throws<ArgumentException>(() =>
+                PdfViewerPreferenceDictionaryBuilder.BuildGeneratedViewerPreferencesDictionary(new PdfViewerPreferencesOptions()));
         }
 
         [Fact]
@@ -531,7 +659,7 @@ namespace OfficeIMO.Tests.Pdf {
                 PdfAnnotationDictionaryBuilder.BuildGoToNamedDestinationLinkAnnotation(10, 20.5, 110, 44.25, "Intro(A)", "Jump metadata"));
 
             Assert.Equal(
-                "<< /Type /Annot /Subtype /Widget /FT /Tx /T <506572736F6E2E4E616D65> /V <416461> /DV <416461> /Rect [10 20.5 110 44.25] /F 4 /DA (/Helv 10 Tf 0 g) /MK << /BC [0.75 0.75 0.75] /BG [1 1 1] >> /AP << /N 12 0 R >> >>\n",
+                "<< /Type /Annot /Subtype /Widget /FT /Tx /T <506572736F6E2E4E616D65> /V <416461> /DV <416461> /Rect [10 20.5 110 44.25] /F 4 /DA (/Helv 10 Tf 0 0 0 rg) /MK << /BC [0.75 0.75 0.75] /BG [1 1 1] >> /AP << /N 12 0 R >> >>\n",
                 PdfAnnotationDictionaryBuilder.BuildTextFieldWidgetAnnotation(10, 20.5, 110, 44.25, "Person.Name", "Ada", 10, 12));
 
             Assert.Equal(
@@ -539,11 +667,11 @@ namespace OfficeIMO.Tests.Pdf {
                 PdfAnnotationDictionaryBuilder.BuildCheckBoxWidgetAnnotation(10, 20.5, 26, 36.5, "AcceptTerms", true, "Yes", 12, 13));
 
             Assert.Equal(
-                "<< /Type /Annot /Subtype /Widget /FT /Ch /T <436F756E747279> /V <506F6C616E64> /DV <506F6C616E64> /Opt [ <506F6C616E64> <556E6974656420537461746573> ] /Ff 131072 /Rect [10 20.5 110 44.25] /F 4 /DA (/Helv 10 Tf 0 g) /MK << /BC [0.75 0.75 0.75] /BG [1 1 1] >> /AP << /N 12 0 R >> >>\n",
+                "<< /Type /Annot /Subtype /Widget /FT /Ch /T <436F756E747279> /V <506F6C616E64> /DV <506F6C616E64> /Opt [ <506F6C616E64> <556E6974656420537461746573> ] /Ff 131072 /Rect [10 20.5 110 44.25] /F 4 /DA (/Helv 10 Tf 0 0 0 rg) /MK << /BC [0.75 0.75 0.75] /BG [1 1 1] >> /AP << /N 12 0 R >> >>\n",
                 PdfAnnotationDictionaryBuilder.BuildChoiceFieldWidgetAnnotation(10, 20.5, 110, 44.25, "Country", new[] { "Poland", "United States" }, "Poland", 10, 12, isComboBox: true));
 
             Assert.Equal(
-                "<< /Type /Annot /Subtype /Widget /FT /Ch /T <436F756E7472696573> /V [<506F6C616E64> <556E6974656420537461746573>] /DV [<506F6C616E64> <556E6974656420537461746573>] /Opt [ <506F6C616E64> <4765726D616E79> <556E6974656420537461746573> ] /Ff 2097152 /Rect [10 20.5 110 70] /F 4 /DA (/Helv 10 Tf 0 g) /MK << /BC [0.75 0.75 0.75] /BG [1 1 1] >> /AP << /N 12 0 R >> >>\n",
+                "<< /Type /Annot /Subtype /Widget /FT /Ch /T <436F756E7472696573> /V [<506F6C616E64> <556E6974656420537461746573>] /DV [<506F6C616E64> <556E6974656420537461746573>] /Opt [ <506F6C616E64> <4765726D616E79> <556E6974656420537461746573> ] /Ff 2097152 /Rect [10 20.5 110 70] /F 4 /DA (/Helv 10 Tf 0 0 0 rg) /MK << /BC [0.75 0.75 0.75] /BG [1 1 1] >> /AP << /N 12 0 R >> >>\n",
                 PdfAnnotationDictionaryBuilder.BuildChoiceFieldWidgetAnnotation(10, 20.5, 110, 70, "Countries", new[] { "Poland", "Germany", "United States" }, new[] { "Poland", "United States" }, 10, 12, isComboBox: false, allowsMultipleSelection: true));
 
             Assert.Contains("/T <FEFF540D>", PdfAnnotationDictionaryBuilder.BuildTextFieldWidgetAnnotation(10, 20, 110, 44, "名", "Ada", 10, 12), StringComparison.Ordinal);
@@ -575,7 +703,7 @@ namespace OfficeIMO.Tests.Pdf {
         [Fact]
         public void AcroFormDictionaryBuilder_EmitsFieldsAndTextAppearance() {
             Assert.Equal(
-                "<< /Fields [ 4 0 R 5 0 R ] /NeedAppearances true /DR << /Font << /Helv 3 0 R >> >> /DA (/Helv 10 Tf 0 g) >>\n",
+                "<< /Fields [ 4 0 R 5 0 R ] /NeedAppearances false /DR << /Font << /Helv 3 0 R >> >> /DA (/Helv 10 Tf 0 g) >>\n",
                 PdfAcroFormDictionaryBuilder.BuildAcroFormDictionary(new[] { 4, 5 }, 3));
 
             string content = PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceContent(120, 20, "Ada", 10);
@@ -1216,6 +1344,75 @@ namespace OfficeIMO.Tests.Pdf {
             Assert.Contains("OddFooterRight", page3Text, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("FirstLeft", page3Text, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("EvenLeft", page3Text, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void HeaderFooterImages_RenderInsideMarginAreasWithoutImplicitFooterText() {
+            byte[] png = CreateMinimalRgbPng();
+            var doc = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 300,
+                    PageHeight = 200,
+                    MarginLeft = 30,
+                    MarginRight = 30,
+                    MarginTop = 40,
+                    MarginBottom = 40,
+                    DefaultFont = PdfStandardFont.Helvetica,
+                    DefaultFontSize = 10
+                })
+                .Header(header => header.Image(png, 24, 12, PdfAlign.Left).Text("HeaderImageText"))
+                .Footer(footer => footer.Image(png, 30, 10, PdfAlign.Right))
+                .Paragraph(paragraph => paragraph.Text("Header footer image body"));
+
+            byte[] bytes = doc.ToBytes();
+            string rawPdf = Encoding.ASCII.GetString(bytes);
+
+            Assert.Contains("24 0 0 12 30 166 cm", rawPdf);
+            Assert.Contains("30 0 0 10 240 22 cm", rawPdf);
+            using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+            string text = pdf.GetPage(1).Text;
+            Assert.Contains("HeaderImageText", text);
+            Assert.Contains("Header footer image body", text);
+            Assert.DoesNotContain("Page 1", text, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void HeaderFooterShapes_RenderInsideMarginAreasWithoutImplicitFooterText() {
+            OfficeShape headerShape = OfficeShape.Rectangle(20, 10);
+            headerShape.FillColor = OfficeColor.Red;
+            headerShape.StrokeColor = OfficeColor.Black;
+            headerShape.StrokeWidth = 1;
+
+            OfficeShape footerShape = OfficeShape.Rectangle(22, 8);
+            footerShape.FillColor = OfficeColor.Blue;
+            footerShape.StrokeColor = OfficeColor.Green;
+            footerShape.StrokeWidth = 1.5;
+
+            var doc = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 300,
+                    PageHeight = 200,
+                    MarginLeft = 30,
+                    MarginRight = 30,
+                    MarginTop = 40,
+                    MarginBottom = 40,
+                    DefaultFont = PdfStandardFont.Helvetica,
+                    DefaultFontSize = 10
+                })
+                .Header(header => header.Shape(headerShape, PdfAlign.Center).Text("HeaderShapeText"))
+                .Footer(footer => footer.Shape(footerShape, PdfAlign.Right))
+                .Paragraph(paragraph => paragraph.Text("Header footer shape body"));
+
+            byte[] bytes = doc.ToBytes();
+            string rawPdf = Encoding.ASCII.GetString(bytes);
+
+            Assert.Contains("1 0 0 rg", rawPdf);
+            Assert.Contains("0 0 1 rg", rawPdf);
+            Assert.Contains("0 0.502 0 RG", rawPdf);
+            Assert.Contains(" re B", rawPdf);
+            using var pdf = PdfDocument.Open(new MemoryStream(bytes));
+            string text = pdf.GetPage(1).Text;
+            Assert.Contains("HeaderShapeText", text);
+            Assert.Contains("Header footer shape body", text);
+            Assert.DoesNotContain("Page 1", text, StringComparison.Ordinal);
         }
 
         [Fact]

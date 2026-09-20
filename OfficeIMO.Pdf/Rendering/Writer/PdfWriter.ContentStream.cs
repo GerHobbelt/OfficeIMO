@@ -97,6 +97,11 @@ internal sealed class ContentStreamBuilder {
         return this;
     }
 
+    public ContentStreamBuilder PathSeparator() {
+        _sb.Append('\n');
+        return this;
+    }
+
     public ContentStreamBuilder LineTo(double x, double y) {
         _sb.Append(' ').Append(F(x)).Append(' ').Append(F(y)).Append(" l");
         return this;
@@ -220,5 +225,11 @@ internal sealed class ContentStreamBuilder {
         return this;
     }
 
-    private static string F(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string F(double value) {
+        if (Math.Abs(value) < 0.0005D) {
+            value = 0D;
+        }
+
+        return value.ToString("0.###", CultureInfo.InvariantCulture);
+    }
 }

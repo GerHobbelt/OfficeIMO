@@ -174,7 +174,7 @@ namespace OfficeIMO.Tests {
 
                 ws.Save();
 
-                doc.Save(savePath, openExcel: false);
+                doc.Save(savePath, openExcel: false, new ExcelSaveOptions { DisableFastPackageWriter = true, SafePreflight = true });
             }
 
             using (var package = SpreadsheetDocument.Open(savePath, false)) {
@@ -1312,22 +1312,26 @@ namespace OfficeIMO.Tests {
             using (var doc = ExcelDocument.Create(path)) {
                 var sheet = doc.AddWorkSheet("Strings");
                 sheet.CellValue(1, 1, "Alpha");
+                doc.Save(path, openExcel: false);
+            }
 
-                var wsPartField = typeof(ExcelSheet).GetField("_worksheetPart", BindingFlags.NonPublic | BindingFlags.Instance);
-                Assert.NotNull(wsPartField);
-                var wsPart = (WorksheetPart)wsPartField!.GetValue(sheet)!;
+            using (var package = SpreadsheetDocument.Open(path, true)) {
+                var wsPart = package.WorkbookPart!.WorksheetParts.First();
                 var cell = wsPart.Worksheet.Descendants<Cell>().Single();
                 cell.DataType = CellValues.SharedString;
-                cell.CellValue = new CellValue("NotAnIndex");
-                cell.InlineString = null;
+                cell.RemoveAllChildren<CellValue>();
+                cell.RemoveAllChildren<InlineString>();
+                cell.AppendChild(new CellValue("NotAnIndex"));
                 wsPart.Worksheet.Save();
+            }
 
-                doc.Save(savePath, openExcel: false);
+            using (var doc = ExcelDocument.Load(path)) {
+                doc.Save(savePath, openExcel: false, new ExcelSaveOptions { DisableFastPackageWriter = true, SafePreflight = true });
             }
 
             using (var package = SpreadsheetDocument.Open(savePath, false)) {
                 var cell = package.WorkbookPart!.WorksheetParts.First().Worksheet.Descendants<Cell>().Single();
-                Assert.Equal(CellValues.InlineString, cell.DataType!.Value);
+                Assert.Equal("inlineStr", cell.DataType!.InnerText);
                 Assert.Null(cell.CellValue);
                 Assert.Equal("NotAnIndex", cell.InlineString!.InnerText);
             }

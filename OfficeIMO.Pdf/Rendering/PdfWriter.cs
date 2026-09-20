@@ -4,6 +4,8 @@ namespace OfficeIMO.Pdf;
 
 internal static partial class PdfWriter {
     public static byte[] Write(PdfDoc doc, IEnumerable<IPdfBlock> blocks, PdfOptions opts, string? title, string? author, string? subject, string? keywords) {
+        PdfComplianceValidator.ValidateGenerationOptions(opts);
+
         // Layout blocks into pages and create per-page content streams.
         var layout = LayoutBlocks(blocks, opts);
         ValidateNamedDestinationLinks(layout.Pages);
@@ -22,7 +24,26 @@ internal static partial class PdfWriter {
         var fontObjectIds = new Dictionary<PdfStandardFont, int>();
         int EnsureFont(PdfStandardFont font) {
             if (!fontObjectIds.TryGetValue(font, out int id)) {
-                id = AddObject(objects, PdfStandardFontDictionaryBuilder.BuildStandardType1FontObject(font));
+                if (opts.TryGetEmbeddedStandardFont(font, out PdfEmbeddedFont? embeddedFont) && embeddedFont != null) {
+                    PdfTrueTypeFontProgram fontProgram = PdfTrueTypeFontProgram.Parse(embeddedFont.DataSnapshot, embeddedFont.FontName);
+                    byte[] fontData = embeddedFont.DataSnapshot;
+                    string fontFileExtraEntries = "/Length1 " + fontData.Length.ToString(CultureInfo.InvariantCulture);
+                    int fontFileId = opts.CompressEmbeddedFonts
+                        ? AddFlateStreamObject(objects, fontData, fontFileExtraEntries)
+                        : AddStreamObject(
+                            objects,
+                            "<< /Length " + fontData.Length.ToString(CultureInfo.InvariantCulture) + " " + fontFileExtraEntries + " >>",
+                            fontData);
+                    int descriptorId = AddObject(objects, PdfStandardFontDictionaryBuilder.BuildTrueTypeFontDescriptorObject(fontProgram, fontFileId));
+                    int toUnicodeObjectId = AddStreamObject(objects, PdfToUnicodeCMapBuilder.BuildWinAnsiToUnicodeCMap());
+                    id = AddObject(objects, PdfStandardFontDictionaryBuilder.BuildEmbeddedTrueTypeFontObject(fontProgram, descriptorId, toUnicodeObjectId));
+                } else {
+                    int toUnicodeObjectId = opts.IncludeStandardFontToUnicodeMaps
+                        ? AddStreamObject(objects, PdfToUnicodeCMapBuilder.BuildWinAnsiToUnicodeCMap())
+                        : 0;
+                    id = AddObject(objects, PdfStandardFontDictionaryBuilder.BuildStandardType1FontObject(font, toUnicodeObjectId));
+                }
+
                 fontObjectIds[font] = id;
             }
             return id;
@@ -71,14 +92,42 @@ internal static partial class PdfWriter {
                 var biFont = ChooseBoldItalic(normalFont);
                 EnsurePageFontResource(biFont, "F4");
             }
+            foreach (PdfStandardFont usedFont in page.UsedFonts) {
+                EnsurePageFontResource(usedFont, GetStandardFontResourceName(usedFont, normalFont));
+            }
+            PdfTextWatermark? textWatermark = pageOpts.TextWatermarkSnapshot;
+            string? watermarkFontAlias = null;
+            string? textWatermarkGraphicsStateName = null;
+            if (textWatermark != null && textWatermark.Opacity > 0D) {
+                watermarkFontAlias = EnsurePageFontResource(GetTextWatermarkFont(textWatermark), "FW");
+                if (textWatermark.Opacity < 1D) {
+                    textWatermarkGraphicsStateName = EnsureHeaderFooterGraphicsState(page, textWatermark.Opacity, textWatermark.Opacity);
+                }
+            }
+            PdfPageBackgroundImage? pageBackgroundImage = pageOpts.PageBackgroundImageSnapshot;
+            if (pageBackgroundImage != null && pageBackgroundImage.Opacity > 0D) {
+                AddPageBackgroundImage(page, pageOpts, pageBackgroundImage);
+            }
+            PdfImageWatermark? imageWatermark = pageOpts.ImageWatermarkSnapshot;
+            if (imageWatermark != null && imageWatermark.Opacity > 0D) {
+                AddImageWatermark(page, pageOpts, imageWatermark);
+            }
+            PdfPageBorder? pageBorder = pageOpts.PageBorderSnapshot;
+            string? pageBorderGraphicsStateName = null;
+            if (pageBorder != null && pageBorder.Opacity > 0D && pageBorder.Opacity < 1D) {
+                pageBorderGraphicsStateName = EnsureHeaderFooterGraphicsState(page, 1D, pageBorder.Opacity);
+            }
+            string pageBackgroundShapeContent = BuildPageBackgroundShapes(page, pageOpts.PageBackgroundShapeSnapshots);
             string? headerFontAlias = null;
-            if (pageOpts.HasHeaderContentForPage(headerFooterVariantPageNumber)) {
+            if (pageOpts.HasHeaderTextContentForPage(headerFooterVariantPageNumber)) {
                 headerFontAlias = EnsurePageFontResource(pageOpts.HeaderFont, "F5");
             }
             string? footerFontAlias = null;
-            if (pageOpts.HasFooterContentForPage(headerFooterVariantPageNumber)) {
+            if (pageOpts.HasFooterTextContentForPage(headerFooterVariantPageNumber)) {
                 footerFontAlias = EnsurePageFontResource(pageOpts.FooterFont, "F6");
             }
+
+            string headerFooterShapeContent = BuildHeaderFooterShapes(page, pageOpts, headerFooterVariantPageNumber);
 
             var fontResources = new List<(string Name, int Id)>();
             foreach (var kvp in pageFontResources.OrderBy(kvp => kvp.Value, StringComparer.Ordinal)) {
@@ -108,11 +157,7 @@ internal static partial class PdfWriter {
             }
 
             // Content stream (append image draw commands at end)
-            string contentStr = page.Content;
-            if (pageOpts.HasHeaderContentForPage(headerFooterVariantPageNumber)) {
-                string headerContent = BuildHeader(pageOpts, headerFooterVariantPageNumber, headerFooterPageNumber, headerFooterTotalPages, pageOpts.HeaderFont, headerFontAlias!);
-                contentStr = headerContent + contentStr;
-            }
+            AddHeaderFooterImages(page, pageOpts, headerFooterVariantPageNumber);
             var xobjects = new List<(string Name, int Id)>();
             if (page.Images.Count > 0) {
                 for (int i = 0; i < page.Images.Count; i++) {
@@ -134,33 +179,35 @@ internal static partial class PdfWriter {
                     img.Name = name;
                     xobjects.Add((name, imgId));
                 }
-                // Append draw commands
+            }
+
+            string pageBackgroundContent = BuildPageBackground(page, pageOpts, pageBackgroundShapeContent, textWatermark, watermarkFontAlias, textWatermarkGraphicsStateName, pageBorder, pageBorderGraphicsStateName);
+            string contentStr = pageBackgroundContent + headerFooterShapeContent;
+            if (pageOpts.HasHeaderTextContentForPage(headerFooterVariantPageNumber)) {
+                string headerContent = BuildHeader(pageOpts, headerFooterVariantPageNumber, headerFooterPageNumber, headerFooterTotalPages, totalPages, pageOpts.HeaderFont, headerFontAlias!);
+                contentStr += headerContent;
+            }
+            contentStr += page.Content;
+            if (page.Images.Count > 0) {
                 var sbImgs = new StringBuilder();
                 foreach (var img in page.Images) {
-                    if (img.ClipPath != null) {
-                        new ContentStreamBuilder(sbImgs)
-                            .SaveState();
-                        AppendClipPath(sbImgs, img.ClipPath, img.ClipX, img.ClipY, img.ClipHeight);
+                    if (img.IsBackgroundDecoration) {
+                        continue;
                     }
 
-                    new ContentStreamBuilder(sbImgs)
-                        .SaveState()
-                        .TransformMatrix(img.W, 0, 0, img.H, img.X, img.Y)
-                        .XObject(img.Name)
-                        .RestoreState();
-
-                    if (img.ClipPath != null) {
-                        new ContentStreamBuilder(sbImgs)
-                            .RestoreState();
-                    }
+                    AppendPageImageDraw(sbImgs, img);
                 }
+
                 contentStr += sbImgs.ToString();
             }
-            if (pageOpts.HasFooterContentForPage(headerFooterVariantPageNumber)) {
-                string footer = BuildFooter(pageOpts, headerFooterVariantPageNumber, headerFooterPageNumber, headerFooterTotalPages, pageOpts.FooterFont, footerFontAlias!);
+            if (pageOpts.HasFooterTextContentForPage(headerFooterVariantPageNumber)) {
+                string footer = BuildFooter(pageOpts, headerFooterVariantPageNumber, headerFooterPageNumber, headerFooterTotalPages, totalPages, pageOpts.FooterFont, footerFontAlias!);
                 contentStr += footer;
             }
-            int contentId = AddStreamObject(objects, Encoding.ASCII.GetBytes(contentStr));
+            byte[] contentBytes = Encoding.ASCII.GetBytes(contentStr);
+            int contentId = pageOpts.CompressContentStreams
+                ? AddFlateStreamObject(objects, contentBytes)
+                : AddStreamObject(objects, contentBytes);
             // Annotations (links and form widgets)
             var pageAnnotIds = new List<int>();
             if (page.Annotations.Count > 0) {
@@ -184,31 +231,68 @@ internal static partial class PdfWriter {
                     string formField;
                     double appearanceWidth = field.X2 - field.X1;
                     double appearanceHeight = field.Y2 - field.Y1;
+                    if (field.Kind == FormFieldAnnotationKind.RadioButtonGroup) {
+                        int parentFieldId = ReserveObject(objects);
+                        string offAppearance = PdfAcroFormDictionaryBuilder.BuildRadioButtonAppearanceContent(field.ButtonSize, field.ButtonSize, selected: false, field.Style);
+                        byte[] offAppearanceBytes = PdfEncoding.Latin1GetBytes(offAppearance);
+                        string offAppearanceDictionary = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceStreamDictionary(field.ButtonSize, field.ButtonSize, offAppearanceBytes.Length);
+                        int offAppearanceId = AddStreamObject(objects, offAppearanceDictionary, offAppearanceBytes);
+
+                        string selectedAppearance = PdfAcroFormDictionaryBuilder.BuildRadioButtonAppearanceContent(field.ButtonSize, field.ButtonSize, selected: true, field.Style);
+                        byte[] selectedAppearanceBytes = PdfEncoding.Latin1GetBytes(selectedAppearance);
+                        string selectedAppearanceDictionary = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceStreamDictionary(field.ButtonSize, field.ButtonSize, selectedAppearanceBytes.Length);
+                        int selectedAppearanceId = AddStreamObject(objects, selectedAppearanceDictionary, selectedAppearanceBytes);
+
+                        var widgetObjectIds = new List<int>(field.Options.Count);
+                        for (int optionIndex = 0; optionIndex < field.Options.Count; optionIndex++) {
+                            double widgetTop = field.Y2 - optionIndex * (field.ButtonSize + field.ButtonGap);
+                            double widgetBottom = widgetTop - field.ButtonSize;
+                            string widget = PdfAnnotationDictionaryBuilder.BuildRadioButtonWidgetAnnotation(
+                                field.X1,
+                                widgetBottom,
+                                field.X1 + field.ButtonSize,
+                                widgetTop,
+                                parentFieldId,
+                                field.Options[optionIndex],
+                                field.Value,
+                                offAppearanceId,
+                                selectedAppearanceId,
+                                field.Style);
+                            int widgetObjectId = AddObject(objects, widget);
+                            widgetObjectIds.Add(widgetObjectId);
+                            pageAnnotIds.Add(widgetObjectId);
+                        }
+
+                        ReplaceObject(objects, parentFieldId, PdfAnnotationDictionaryBuilder.BuildRadioButtonFieldDictionary(field.Name, field.Options, field.Value, widgetObjectIds));
+                        formFieldIds.Add(parentFieldId);
+                        continue;
+                    }
+
                     if (field.Kind == FormFieldAnnotationKind.CheckBox) {
-                        string offAppearance = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceContent(appearanceWidth, appearanceHeight, selected: false);
+                        string offAppearance = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceContent(appearanceWidth, appearanceHeight, selected: false, field.Style);
                         byte[] offAppearanceBytes = PdfEncoding.Latin1GetBytes(offAppearance);
                         string offAppearanceDictionary = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceStreamDictionary(appearanceWidth, appearanceHeight, offAppearanceBytes.Length);
                         int offAppearanceId = AddStreamObject(objects, offAppearanceDictionary, offAppearanceBytes);
 
-                        string checkedAppearance = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceContent(appearanceWidth, appearanceHeight, selected: true);
+                        string checkedAppearance = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceContent(appearanceWidth, appearanceHeight, selected: true, field.Style);
                         byte[] checkedAppearanceBytes = PdfEncoding.Latin1GetBytes(checkedAppearance);
                         string checkedAppearanceDictionary = PdfAcroFormDictionaryBuilder.BuildCheckBoxAppearanceStreamDictionary(appearanceWidth, appearanceHeight, checkedAppearanceBytes.Length);
                         int checkedAppearanceId = AddStreamObject(objects, checkedAppearanceDictionary, checkedAppearanceBytes);
 
-                        formField = PdfAnnotationDictionaryBuilder.BuildCheckBoxWidgetAnnotation(field.X1, field.Y1, field.X2, field.Y2, field.Name, field.IsChecked, field.CheckedValueName, offAppearanceId, checkedAppearanceId);
+                        formField = PdfAnnotationDictionaryBuilder.BuildCheckBoxWidgetAnnotation(field.X1, field.Y1, field.X2, field.Y2, field.Name, field.IsChecked, field.CheckedValueName, offAppearanceId, checkedAppearanceId, field.Style);
                     } else if (field.Kind == FormFieldAnnotationKind.Choice) {
                         string appearanceValue = field.Values.Count > 1 ? string.Join(", ", field.Values) : field.Value;
-                        string appearanceContent = PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceContent(appearanceWidth, appearanceHeight, appearanceValue, field.FontSize);
+                        string appearanceContent = PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceContent(appearanceWidth, appearanceHeight, appearanceValue, field.FontSize, field.Style);
                         byte[] appearanceBytes = PdfEncoding.Latin1GetBytes(appearanceContent);
                         string appearanceDictionary = PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceStreamDictionary(appearanceWidth, appearanceHeight, helveticaFontId, appearanceBytes.Length);
                         int appearanceId = AddStreamObject(objects, appearanceDictionary, appearanceBytes);
-                        formField = PdfAnnotationDictionaryBuilder.BuildChoiceFieldWidgetAnnotation(field.X1, field.Y1, field.X2, field.Y2, field.Name, field.Options, field.Values.Count == 0 ? new[] { field.Value } : field.Values, field.FontSize, appearanceId, field.IsComboBox, field.AllowsMultipleSelection);
+                        formField = PdfAnnotationDictionaryBuilder.BuildChoiceFieldWidgetAnnotation(field.X1, field.Y1, field.X2, field.Y2, field.Name, field.Options, field.Values.Count == 0 ? new[] { field.Value } : field.Values, field.FontSize, appearanceId, field.IsComboBox, field.AllowsMultipleSelection, field.Style);
                     } else {
-                        string appearanceContent = PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceContent(appearanceWidth, appearanceHeight, field.Value, field.FontSize);
+                        string appearanceContent = PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceContent(appearanceWidth, appearanceHeight, field.Value, field.FontSize, field.Style);
                         byte[] appearanceBytes = PdfEncoding.Latin1GetBytes(appearanceContent);
                         string appearanceDictionary = PdfAcroFormDictionaryBuilder.BuildTextFieldAppearanceStreamDictionary(appearanceWidth, appearanceHeight, helveticaFontId, appearanceBytes.Length);
                         int appearanceId = AddStreamObject(objects, appearanceDictionary, appearanceBytes);
-                        formField = PdfAnnotationDictionaryBuilder.BuildTextFieldWidgetAnnotation(field.X1, field.Y1, field.X2, field.Y2, field.Name, field.Value, field.FontSize, appearanceId);
+                        formField = PdfAnnotationDictionaryBuilder.BuildTextFieldWidgetAnnotation(field.X1, field.Y1, field.X2, field.Y2, field.Name, field.Value, field.FontSize, appearanceId, field.Style);
                     }
 
                     int formFieldId = AddObject(objects, formField);
@@ -242,12 +326,280 @@ internal static partial class PdfWriter {
             acroFormId = AddObject(objects, PdfAcroFormDictionaryBuilder.BuildAcroFormDictionary(formFieldIds, helveticaFontId));
         }
 
+        int metadataId = 0;
+        if (opts.IncludeXmpMetadata) {
+            byte[] xmpMetadata = PdfXmpMetadataBuilder.Build(title, author, subject, keywords);
+            metadataId = AddStreamObject(
+                objects,
+                "<< /Type /Metadata /Subtype /XML /Length " + xmpMetadata.Length.ToString(CultureInfo.InvariantCulture) + " >>",
+                xmpMetadata);
+        }
+
+        int outputIntentId = 0;
+        PdfOutputIntent? outputIntent = opts.OutputIntentSnapshot;
+        if (outputIntent != null) {
+            byte[] iccProfile = outputIntent.IccProfileSnapshot;
+            int iccProfileId = AddStreamObject(objects, PdfOutputIntentDictionaryBuilder.BuildIccProfileStreamDictionary(outputIntent, iccProfile.Length), iccProfile);
+            outputIntentId = AddObject(objects, PdfOutputIntentDictionaryBuilder.BuildOutputIntentObject(outputIntent, iccProfileId));
+        }
+
+        int embeddedFilesNameTreeId = 0;
+        var associatedFileIds = new List<int>();
+        IReadOnlyList<PdfEmbeddedFile> embeddedFiles = opts.EmbeddedFileSnapshots;
+        if (embeddedFiles.Count > 0) {
+            var nameTreeEntries = new List<(string FileName, int FileSpecId)>(embeddedFiles.Count);
+            foreach (PdfEmbeddedFile embeddedFile in embeddedFiles.OrderBy(file => file.FileName, StringComparer.Ordinal)) {
+                byte[] fileBytes = embeddedFile.DataSnapshot;
+                int embeddedFileId = AddStreamObject(
+                    objects,
+                    PdfEmbeddedFileDictionaryBuilder.BuildEmbeddedFileStreamDictionary(embeddedFile, fileBytes.Length),
+                    fileBytes);
+                int fileSpecId = AddObject(objects, PdfEmbeddedFileDictionaryBuilder.BuildFileSpecificationObject(embeddedFile, embeddedFileId));
+                nameTreeEntries.Add((embeddedFile.FileName, fileSpecId));
+                associatedFileIds.Add(fileSpecId);
+            }
+
+            embeddedFilesNameTreeId = AddObject(objects, PdfEmbeddedFileDictionaryBuilder.BuildEmbeddedFilesNameTree(nameTreeEntries));
+        }
+
+        int pageLabelsId = 0;
+        if (opts.IncludePageLabels) {
+            pageLabelsId = AddObject(objects, PdfPageLabelDictionaryBuilder.BuildGeneratedPageLabelsDictionary(
+                opts.PageNumberStyle,
+                opts.PageNumberStart,
+                opts.PageLabelPrefix));
+        }
+
+        int viewerPreferencesId = 0;
+        PdfViewerPreferencesOptions? viewerPreferences = opts.ViewerPreferencesSnapshot;
+        if (viewerPreferences != null && viewerPreferences.HasAny) {
+            viewerPreferencesId = AddObject(objects, PdfViewerPreferenceDictionaryBuilder.BuildGeneratedViewerPreferencesDictionary(viewerPreferences));
+        }
+
         // Catalog
-        catalogId = AddObject(objects, PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(pagesId, outlinesId, namedDestinationsId, acroFormId));
+        catalogId = AddObject(objects, PdfCatalogDictionaryBuilder.BuildGeneratedCatalogDictionary(
+            pagesId,
+            outlinesId,
+            namedDestinationsId,
+            acroFormId,
+            metadataId,
+            outputIntentId,
+            opts.Language,
+            embeddedFilesNameTreeId,
+            associatedFileIds,
+            pageLabelsId,
+            viewerPreferencesId));
 
         infoId = AddObject(objects, PdfInfoDictionaryBuilder.Build(title, author, subject, keywords));
 
         return PdfFileAssembler.Assemble(objects, catalogId, infoId);
+    }
+
+    private static string BuildPageBackground(LayoutResult.Page page, PdfOptions options, string pageBackgroundShapeContent, PdfTextWatermark? watermark, string? watermarkFontAlias, string? textWatermarkGraphicsStateName, PdfPageBorder? pageBorder, string? pageBorderGraphicsStateName) {
+        var sb = new StringBuilder();
+        if (options.BackgroundColor.HasValue) {
+            new ContentStreamBuilder(sb)
+                .SaveState()
+                .FillColor(options.BackgroundColor.Value)
+                .Rectangle(0, 0, options.PageWidth, options.PageHeight)
+                .FillPath()
+                .RestoreState();
+        }
+
+        sb.Append(pageBackgroundShapeContent);
+
+        foreach (PageImage image in page.Images) {
+            if (image.IsBackgroundDecoration) {
+                AppendPageImageDraw(sb, image);
+            }
+        }
+
+        if (watermark != null && watermark.Opacity > 0D && !string.IsNullOrEmpty(watermarkFontAlias)) {
+            AppendTextWatermark(sb, options, watermark, watermarkFontAlias!, textWatermarkGraphicsStateName);
+        }
+
+        if (pageBorder != null && pageBorder.Opacity > 0D) {
+            AppendPageBorder(sb, options, pageBorder, pageBorderGraphicsStateName);
+        }
+
+        return sb.ToString();
+    }
+
+    private static string BuildPageBackgroundShapes(LayoutResult.Page page, System.Collections.Generic.IReadOnlyList<PdfPageBackgroundShape> shapes) {
+        if (shapes.Count == 0) {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        foreach (PdfPageBackgroundShape backgroundShape in shapes) {
+            OfficeIMO.Drawing.OfficeShape shape = backgroundShape.Shape;
+            DrawHeaderFooterShapeGeometryAt(sb, page, shape, backgroundShape.X, backgroundShape.Y);
+        }
+
+        return sb.ToString();
+    }
+
+    private static void AppendPageBorder(StringBuilder sb, PdfOptions options, PdfPageBorder border, string? graphicsStateName) {
+        double inset = border.Inset;
+        double pathX = inset;
+        double pathY = inset;
+        double pathWidth = options.PageWidth - (inset * 2D);
+        double pathHeight = options.PageHeight - (inset * 2D);
+        if (pathWidth <= 0D || pathHeight <= 0D || double.IsNaN(pathWidth) || double.IsInfinity(pathWidth) || double.IsNaN(pathHeight) || double.IsInfinity(pathHeight)) {
+            throw new ArgumentException("PDF page border inset must leave a positive border rectangle.");
+        }
+
+        var content = new ContentStreamBuilder(sb)
+            .SaveState();
+        if (!string.IsNullOrEmpty(graphicsStateName)) {
+            content.GraphicsState(graphicsStateName!);
+        }
+
+        content
+            .StrokeColor(border.Color)
+            .LineWidth(border.Width);
+        ApplyStrokeStyle(content, border.DashStyle, border.Width, strokeLineCap: null, strokeLineJoin: null);
+        content
+            .Rectangle(pathX, pathY, pathWidth, pathHeight)
+            .StrokePath()
+            .RestoreState();
+    }
+
+    private static void AddPageBackgroundImage(LayoutResult.Page page, PdfOptions options, PdfPageBackgroundImage image) {
+        (double x, double y, double width, double height) = FitImageToBox(image.ImageInfo, image.Fit, 0D, 0D, options.PageWidth, options.PageHeight);
+        string? stateName = image.Opacity < 1D
+            ? EnsureHeaderFooterGraphicsState(page, image.Opacity, image.Opacity)
+            : null;
+
+        page.Images.Add(new PageImage {
+            Data = image.DataSnapshot,
+            Info = image.ImageInfo,
+            X = x,
+            Y = y,
+            W = width,
+            H = height,
+            IsBackgroundDecoration = true,
+            Opacity = image.Opacity,
+            GraphicsStateName = stateName
+        });
+    }
+
+    private static (double X, double Y, double Width, double Height) FitImageToBox(OfficeIMO.Drawing.OfficeImageInfo imageInfo, OfficeIMO.Drawing.OfficeImageFit fit, double boxX, double boxY, double boxWidth, double boxHeight) {
+        if (fit == OfficeIMO.Drawing.OfficeImageFit.Stretch) {
+            return (boxX, boxY, boxWidth, boxHeight);
+        }
+
+        double imageWidth = imageInfo.Width > 0 ? imageInfo.Width : boxWidth;
+        double imageHeight = imageInfo.Height > 0 ? imageInfo.Height : boxHeight;
+        double scaleX = boxWidth / imageWidth;
+        double scaleY = boxHeight / imageHeight;
+        double scale = fit == OfficeIMO.Drawing.OfficeImageFit.Contain ? System.Math.Min(scaleX, scaleY) : System.Math.Max(scaleX, scaleY);
+        double width = imageWidth * scale;
+        double height = imageHeight * scale;
+        double x = boxX + (boxWidth - width) / 2D;
+        double y = boxY + (boxHeight - height) / 2D;
+        return (x, y, width, height);
+    }
+
+    private static void AddImageWatermark(LayoutResult.Page page, PdfOptions options, PdfImageWatermark watermark) {
+        double x = (options.PageWidth - watermark.Width) / 2D;
+        double y = (options.PageHeight - watermark.Height) / 2D;
+        string? stateName = watermark.Opacity < 1D
+            ? EnsureHeaderFooterGraphicsState(page, watermark.Opacity, watermark.Opacity)
+            : null;
+
+        page.Images.Add(new PageImage {
+            Data = watermark.DataSnapshot,
+            Info = watermark.ImageInfo,
+            X = x,
+            Y = y,
+            W = watermark.Width,
+            H = watermark.Height,
+            IsBackgroundDecoration = true,
+            Opacity = watermark.Opacity,
+            RotationAngle = watermark.RotationAngle,
+            GraphicsStateName = stateName
+        });
+    }
+
+    private static void AppendPageImageDraw(StringBuilder sb, PageImage img) {
+        if (img.ClipPath != null) {
+            new ContentStreamBuilder(sb)
+                .SaveState();
+            AppendClipPath(sb, img.ClipPath, img.ClipX, img.ClipY, img.ClipHeight);
+        }
+
+        double angle = img.RotationAngle * System.Math.PI / 180D;
+        double cos = System.Math.Cos(angle);
+        double sin = System.Math.Sin(angle);
+        double a = img.W * cos;
+        double b = img.W * sin;
+        double c = -img.H * sin;
+        double d = img.H * cos;
+        double centerX = img.X + img.W / 2D;
+        double centerY = img.Y + img.H / 2D;
+        double e = centerX - (a + c) / 2D;
+        double f = centerY - (b + d) / 2D;
+
+        var content = new ContentStreamBuilder(sb)
+            .SaveState();
+        if (!string.IsNullOrEmpty(img.GraphicsStateName)) {
+            content.GraphicsState(img.GraphicsStateName!);
+        }
+
+        content
+            .TransformMatrix(a, b, c, d, e, f)
+            .XObject(img.Name)
+            .RestoreState();
+
+        if (img.ClipPath != null) {
+            new ContentStreamBuilder(sb)
+                .RestoreState();
+        }
+    }
+
+    private static void AppendTextWatermark(StringBuilder sb, PdfOptions options, PdfTextWatermark watermark, string fontAlias, string? graphicsStateName) {
+        PdfStandardFont font = GetTextWatermarkFont(watermark);
+        double textWidth = EstimateSimpleTextWidth(watermark.Text, font, watermark.FontSize);
+        double angle = watermark.RotationAngle * System.Math.PI / 180D;
+        double cos = System.Math.Cos(angle);
+        double sin = System.Math.Sin(angle);
+        double centerX = options.PageWidth / 2D;
+        double centerY = options.PageHeight / 2D;
+        double originX = centerX - cos * textWidth / 2D + sin * watermark.FontSize / 2D;
+        double originY = centerY - sin * textWidth / 2D - cos * watermark.FontSize / 2D;
+
+        var content = new ContentStreamBuilder(sb)
+            .SaveState();
+        if (!string.IsNullOrEmpty(graphicsStateName)) {
+            content.GraphicsState(graphicsStateName!);
+        }
+
+        content
+            .BeginText()
+            .Font(fontAlias, watermark.FontSize)
+            .FillColor(watermark.Color)
+            .TextMatrix(cos, sin, -sin, cos, originX, originY)
+            .ShowHexText(EncodeWinAnsiHex(watermark.Text))
+            .EndText()
+            .RestoreState();
+    }
+
+    private static PdfStandardFont GetTextWatermarkFont(PdfTextWatermark watermark) {
+        PdfStandardFont normal = ChooseNormal(watermark.Font);
+        if (watermark.Bold && watermark.Italic) {
+            return ChooseBoldItalic(normal);
+        }
+
+        if (watermark.Bold) {
+            return ChooseBold(normal);
+        }
+
+        if (watermark.Italic) {
+            return ChooseItalic(normal);
+        }
+
+        return normal;
     }
 
     private static List<PageNumberInfo> BuildPageNumberInfos(IReadOnlyList<LayoutResult.Page> pages) {

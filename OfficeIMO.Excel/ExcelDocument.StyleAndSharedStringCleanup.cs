@@ -88,15 +88,16 @@ namespace OfficeIMO.Excel {
                 if (sheetData != null) {
                     foreach (var row in sheetData.Elements<Row>()) {
                         foreach (var cell in row.Elements<Cell>()) {
-                            if (cell.DataType?.Value != CellValues.SharedString) {
+                            if (!IsSharedStringCell(cell)) {
                                 continue;
                             }
 
                             string rawValue = cell.CellValue?.Text ?? cell.InnerText ?? string.Empty;
                             if (!TryParseSharedStringIndex(rawValue, out int sharedStringIndex)) {
                                 cell.DataType = CellValues.InlineString;
-                                cell.CellValue = null;
-                                cell.InlineString = new InlineString(new Text(rawValue));
+                                cell.RemoveAllChildren<CellValue>();
+                                cell.RemoveAllChildren<InlineString>();
+                                cell.AppendChild(new InlineString(new Text(rawValue)));
                                 worksheetChanged = true;
                                 continue;
                             }
@@ -172,6 +173,12 @@ namespace OfficeIMO.Excel {
 
             index = parsed;
             return true;
+        }
+
+        private static bool IsSharedStringCell(Cell cell) {
+            var dataType = cell.DataType;
+            return dataType?.Value == CellValues.SharedString
+                || string.Equals(dataType?.InnerText, "s", StringComparison.Ordinal);
         }
 
         private static void EnsureStylesheetPrimitives(Stylesheet stylesheet) {

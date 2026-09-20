@@ -125,6 +125,17 @@ r.AddFootNote("This is a footnote.");
 ```csharp
 var sdtPara = doc.AddParagraph("Name: ");
 var dd = sdtPara.AddDropDownList(new[]{"Alpha","Beta","Gamma"});
+
+doc.FillContentControlValues(new Dictionary<string, object?> {
+    ["Name"] = "Ada Lovelace",
+    ["Approved"] = true,
+    ["DueDate"] = DateTime.Today,
+    ["Status"] = "Beta"
+});
+
+Dictionary<string, object?> values = doc.ExtractContentControlValues();
+
+doc.ValidateContentControlValues(values).EnsureValid();
 ```
 
 ### Shapes and charts (basic)
@@ -256,6 +267,7 @@ var fluent = new WordFluentDocument(doc)
   - ✅ Footnotes and endnotes: add/read/remove
 - 🧩 Content Controls (SDT)
   - ✅ Checkbox, date picker, dropdown, combobox, picture, repeating section
+  - ✅ Form-map fill/extraction and preflight validation for text, checkbox, date picker, dropdown, combobox, picture controls, repeating-section item text, and ambiguous tag/alias keys
 - 📊 Charts
   - ✅ Pie/Bar/Line/Combo/Scatter/Area/Radar; axes/legends/series; axis titles
   - ⚠️ Formatting depth varies by chart type
@@ -273,7 +285,7 @@ var fluent = new WordFluentDocument(doc)
 
 - HTML: `OfficeIMO.Word.Html` (AngleSharp) — convert to/from HTML
 - Markdown: `OfficeIMO.Word.Markdown` — convert to/from Markdown using OfficeIMO.Markdown
-- PDF: `OfficeIMO.Word.Pdf` (QuestPDF/SkiaSharp) — export to PDF
+- PDF: `OfficeIMO.Word.Pdf` (first-party OfficeIMO.Pdf engine) — export to PDF
 
 > Note: Converters ship as adjacent packages so consumers can opt into the extra dependency surface only when needed.
 

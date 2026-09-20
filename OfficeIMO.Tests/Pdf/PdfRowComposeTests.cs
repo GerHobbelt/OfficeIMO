@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text;
 using OfficeIMO.Pdf;
 using Xunit;
 
@@ -122,6 +123,8 @@ namespace OfficeIMO.Tests.Pdf {
                 Gap = 18,
                 SpacingBefore = 7,
                 SpacingAfter = 9,
+                ColumnSeparatorColor = new PdfColor(0.12, 0.34, 0.56),
+                ColumnSeparatorWidth = 1.25,
                 KeepTogether = true,
                 KeepWithNext = true
             };
@@ -138,6 +141,8 @@ namespace OfficeIMO.Tests.Pdf {
             style.Gap = 4;
             style.SpacingBefore = 1;
             style.SpacingAfter = 2;
+            style.ColumnSeparatorColor = PdfColor.Black;
+            style.ColumnSeparatorWidth = 0.5;
             style.KeepTogether = false;
             style.KeepWithNext = false;
 
@@ -148,6 +153,8 @@ namespace OfficeIMO.Tests.Pdf {
             Assert.Equal(18, row.Style!.Gap);
             Assert.Equal(7, row.Style.SpacingBefore);
             Assert.Equal(9, row.Style.SpacingAfter);
+            Assert.Equal(new PdfColor(0.12, 0.34, 0.56), row.Style.ColumnSeparatorColor);
+            Assert.Equal(1.25, row.Style.ColumnSeparatorWidth);
             Assert.True(row.Style.KeepTogether);
             Assert.True(row.Style.KeepWithNext);
         }
@@ -207,12 +214,42 @@ namespace OfficeIMO.Tests.Pdf {
             Assert.Throws<ArgumentException>(() => new PdfRowStyle { Gap = -1 });
             Assert.Throws<ArgumentException>(() => new PdfRowStyle { SpacingBefore = double.PositiveInfinity });
             Assert.Throws<ArgumentException>(() => new PdfRowStyle { SpacingAfter = -1 });
+            Assert.Throws<ArgumentException>(() => new PdfRowStyle { ColumnSeparatorWidth = double.NaN });
+            Assert.Throws<ArgumentException>(() => new PdfRowStyle { ColumnSeparatorWidth = -1 });
 
             Assert.Throws<ArgumentNullException>(() =>
                 PdfDoc.Create().Compose(compose =>
                     compose.Page(page =>
                         page.Content(content =>
                             content.Row(row => row.Style(null!))))));
+        }
+
+        [Fact]
+        public void RowColumnSeparator_RendersBetweenColumns() {
+            byte[] bytes = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 180,
+                    MarginLeft = 30,
+                    MarginRight = 30,
+                    MarginTop = 30,
+                    MarginBottom = 30,
+                    DefaultFontSize = 10
+                })
+                .Compose(compose =>
+                    compose.Page(page =>
+                        page.Content(content =>
+                            content.Row(row => row
+                                .Gap(20)
+                                .ColumnSeparator(new PdfColor(0.12, 0.34, 0.56), 1.25)
+                                .Column(50, column => column.Paragraph(paragraph => paragraph.Text("LeftSeparatorMarker")))
+                                .Column(50, column => column.Paragraph(paragraph => paragraph.Text("RightSeparatorMarker")))))))
+                .ToBytes();
+
+            string rawPdf = Encoding.ASCII.GetString(bytes);
+
+            Assert.Contains("0.12 0.34 0.56 RG", rawPdf, StringComparison.Ordinal);
+            Assert.Contains("1.25 w", rawPdf, StringComparison.Ordinal);
+            Assert.Contains("180 150 m 180 ", rawPdf, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -360,6 +397,29 @@ namespace OfficeIMO.Tests.Pdf {
             Assert.True(panel.Style!.KeepTogether);
             Assert.Equal(PdfColor.FromRgb(248, 250, 252), panel.Style.Background);
             Assert.Contains(panel.Runs, run => run.Bold);
+        }
+
+        [Fact]
+        public void RowColumn_CanComposePanelFromCommonFlowBlocks() {
+            var doc = PdfDoc.Create();
+
+            doc.Compose(compose =>
+                compose.Page(page =>
+                    page.Content(content =>
+                        content.Row(row =>
+                            row.Column(100, column => column.Panel(panel => panel
+                                .H3("Column Panel")
+                                .Paragraph(paragraph => paragraph.Text("Column-local composed panels reuse the same core primitive."))
+                                .Bullets(new[] { "Stable in row flow" })))))));
+
+            var page = Assert.IsType<PageBlock>(Assert.Single(doc.Blocks));
+            var row = Assert.IsType<RowBlock>(Assert.Single(page.Blocks));
+            var panel = Assert.IsType<PanelParagraphBlock>(Assert.Single(row.Columns[0].Blocks));
+            string text = string.Concat(panel.Runs.Select(run => run.Text));
+
+            Assert.Contains("Column Panel", text, StringComparison.Ordinal);
+            Assert.Contains("Column-local composed panels", text, StringComparison.Ordinal);
+            Assert.Contains("Stable in row flow", text, StringComparison.Ordinal);
         }
 
         [Fact]

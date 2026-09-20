@@ -67,10 +67,12 @@ namespace OfficeIMO.Examples {
             bool exportPreviews = HasArgument(args, "--visio-export")
                 || HasArgument(args, "--visio-showcase-export")
                 || HasArgument(args, "--visio-preview");
+            bool exportNativePreviews = HasArgument(args, "--visio-native-preview")
+                || HasArgument(args, "--visio-native-export");
             bool openVisio = HasArgument(args, "--open-visio")
                 || HasArgument(args, "--visio-open");
 
-            Visio.VisioShowcase.Example_VisioShowcase(folderPath, openVisio, exportPreviews);
+            Visio.VisioShowcase.Example_VisioShowcase(folderPath, openVisio, exportPreviews, exportNativePreviews);
         }
 
         private static void RunPowerPointExamples(string folderPath) {
@@ -182,6 +184,11 @@ namespace OfficeIMO.Examples {
 
             if (HasArgument(args, "--pdf")) {
                 RunPdfExamples(folderPath);
+                return;
+            }
+
+            if (HasArgument(args, "--visio-premium") || HasArgument(args, "--premium-visio")) {
+                Visio.PremiumVisioShowcase.Example_PremiumVisioShowcase(folderPath, HasArgument(args, "--open-visio") || HasArgument(args, "--visio-open"));
                 return;
             }
 
@@ -649,7 +656,7 @@ namespace OfficeIMO.Examples {
             // Word.Pdf.Example_SaveAsPdfRelative(folderPath, false);
             // Word.Pdf.Example_SaveAsPdfWithHyperlinks(folderPath, false);
             // Word.Pdf.Example_SaveAsPdfWithMetadata(folderPath, false);
-            // Word.Pdf.Example_SaveAsPdfWithLicense(folderPath, false);
+            // Word.Pdf.Example_SaveAsPdfWithFirstPartyOptions(folderPath, false);
             // Word.Pdf.Example_SaveLists(folderPath, false);
             // Word.Pdf.Example_TableStyles(folderPath, false);
             // Word.Pdf.Example_PdfCustomFonts(folderPath, false);
