@@ -14,14 +14,14 @@ namespace OfficeIMO.Excel {
         private readonly bool _owns;
         private readonly ExcelReadOptions _opt;
         private readonly SharedStringCache _sst;
-        private readonly StylesCache _styles;
+        private readonly StylesCacheProvider _styles;
 
         private ExcelDocumentReader(SpreadsheetDocument doc, ExcelReadOptions opt, bool owns) {
             _doc = doc;
             _owns = owns;
             _opt = opt ?? new ExcelReadOptions();
             _sst = SharedStringCache.Build(doc);
-            _styles = StylesCache.Build(doc);
+            _styles = new StylesCacheProvider(doc);
         }
 
         /// <summary>
@@ -82,7 +82,12 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public IReadOnlyList<string> GetSheetNames() {
             var wb = WorkbookRoot;
-            return wb.Sheets!.Elements<Sheet>().Select(s => s.Name!.Value!).ToList();
+            var names = new List<string>();
+            foreach (var sheet in wb.Sheets!.Elements<Sheet>()) {
+                names.Add(sheet.Name!.Value!);
+            }
+
+            return names;
         }
 
         /// <summary>
@@ -90,7 +95,14 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public ExcelSheetReader GetSheet(string name) {
             var wb = WorkbookRoot;
-            var sheet = wb.Sheets!.Elements<Sheet>().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+            Sheet? sheet = null;
+            foreach (var candidate in wb.Sheets!.Elements<Sheet>()) {
+                if (string.Equals(candidate.Name?.Value, name, StringComparison.OrdinalIgnoreCase)) {
+                    sheet = candidate;
+                    break;
+                }
+            }
+
             if (sheet is null) throw new KeyNotFoundException($"Sheet '{name}' not found.");
             var wsPart = (WorksheetPart)WorkbookPartRoot.GetPartById(sheet.Id!);
             return new ExcelSheetReader(sheet.Name!, wsPart, _sst, _styles, _opt, _owns);
@@ -136,8 +148,34 @@ namespace OfficeIMO.Excel {
         }
 
         private static byte[] ReadAllBytes(Stream stream) {
+            if (stream is MemoryStream memoryStream) {
+                return memoryStream.ToArray();
+            }
+
             if (stream.CanSeek) {
                 stream.Seek(0, SeekOrigin.Begin);
+                long length = stream.Length;
+                if (length > int.MaxValue) {
+                    throw new IOException("Workbook stream is too large to read into memory.");
+                }
+
+                var bytes = new byte[(int)length];
+                int offset = 0;
+                while (offset < bytes.Length) {
+                    int read = stream.Read(bytes, offset, bytes.Length - offset);
+                    if (read == 0) {
+                        break;
+                    }
+
+                    offset += read;
+                }
+
+                if (offset == bytes.Length) {
+                    return bytes;
+                }
+
+                Array.Resize(ref bytes, offset);
+                return bytes;
             }
 
             using var buffer = new MemoryStream();

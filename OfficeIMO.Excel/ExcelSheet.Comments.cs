@@ -6,6 +6,52 @@ using System.Xml.Linq;
 
 namespace OfficeIMO.Excel {
     /// <summary>
+    /// Immutable worksheet comment metadata.
+    /// </summary>
+    public sealed class ExcelCommentInfo {
+        internal ExcelCommentInfo(string cellReference, int row, int column, string? author, string text, IReadOnlyList<ExcelRichTextRun>? richTextRuns = null) {
+            CellReference = cellReference;
+            Row = row;
+            Column = column;
+            Author = author;
+            Text = text;
+            RichTextRuns = richTextRuns ?? Array.Empty<ExcelRichTextRun>();
+        }
+
+        /// <summary>A1 cell reference where the comment is attached.</summary>
+        public string CellReference { get; }
+
+        /// <summary>1-based row index where the comment is attached.</summary>
+        public int Row { get; }
+
+        /// <summary>1-based column index where the comment is attached.</summary>
+        public int Column { get; }
+
+        /// <summary>Comment author display name, when available.</summary>
+        public string? Author { get; }
+
+        /// <summary>Comment text content.</summary>
+        public string Text { get; }
+
+        /// <summary>Rich text runs stored in the legacy comment text.</summary>
+        public IReadOnlyList<ExcelRichTextRun> RichTextRuns { get; }
+    }
+
+    /// <summary>
+    /// Filters worksheet comments by author, text, and A1 range.
+    /// </summary>
+    public sealed class ExcelCommentFilter {
+        /// <summary>Only match comments whose author equals this value, ignoring case.</summary>
+        public string? Author { get; set; }
+
+        /// <summary>Only match comments whose text contains this value, ignoring case.</summary>
+        public string? TextContains { get; set; }
+
+        /// <summary>Only match comments attached to cells inside this A1 cell or range.</summary>
+        public string? A1Range { get; set; }
+    }
+
+    /// <summary>
     /// Helpers for worksheet cell comments (notes).
     /// </summary>
     public partial class ExcelSheet {
@@ -21,7 +67,24 @@ namespace OfficeIMO.Excel {
             if (row <= 0) throw new ArgumentOutOfRangeException(nameof(row), "Row and column are 1-based and must be positive.");
             if (column <= 0) throw new ArgumentOutOfRangeException(nameof(column), "Row and column are 1-based and must be positive.");
             if (string.IsNullOrEmpty(text)) throw new ArgumentException("Comment text is required.", nameof(text));
+            SetCommentInternal(row, column, BuildCommentText(text), author, initials);
+        }
 
+        /// <summary>
+        /// Adds or replaces a rich-text comment on the specified cell.
+        /// </summary>
+        /// <param name="row">1-based row index.</param>
+        /// <param name="column">1-based column index.</param>
+        /// <param name="runs">Rich text runs that make up the comment text.</param>
+        /// <param name="author">Author name (optional).</param>
+        /// <param name="initials">Author initials (optional).</param>
+        public void SetCommentRichText(int row, int column, IEnumerable<ExcelRichTextRun> runs, string author = "OfficeIMO", string? initials = null) {
+            if (row <= 0) throw new ArgumentOutOfRangeException(nameof(row), "Row and column are 1-based and must be positive.");
+            if (column <= 0) throw new ArgumentOutOfRangeException(nameof(column), "Row and column are 1-based and must be positive.");
+            SetCommentInternal(row, column, BuildCommentText(runs), author, initials);
+        }
+
+        private void SetCommentInternal(int row, int column, CommentText commentText, string author, string? initials) {
             WriteLock(() => {
                 string reference = A1.CellReference(row, column);
                 string authorDisplay = NormalizeAuthor(author, initials);
@@ -35,7 +98,7 @@ namespace OfficeIMO.Excel {
                 RemoveCommentInternal(comments.CommentList, reference);
 
                 var comment = new Comment { Reference = reference, AuthorId = authorId };
-                comment.Append(BuildCommentText(text));
+                comment.Append(commentText);
                 comments.CommentList.Append(comment);
                 comments.Save();
 
@@ -58,6 +121,19 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
+        /// Adds or replaces a rich-text comment on the specified A1 cell reference.
+        /// </summary>
+        /// <param name="a1">A1 cell reference (e.g., "B5").</param>
+        /// <param name="runs">Rich text runs that make up the comment text.</param>
+        /// <param name="author">Author name (optional).</param>
+        /// <param name="initials">Author initials (optional).</param>
+        public void SetCommentRichText(string a1, IEnumerable<ExcelRichTextRun> runs, string author = "OfficeIMO", string? initials = null) {
+            var (row, col) = A1.ParseCellRef(a1);
+            if (row <= 0 || col <= 0) throw new ArgumentException($"Address '{a1}' is not a valid A1 reference.", nameof(a1));
+            SetCommentRichText(row, col, runs, author, initials);
+        }
+
+        /// <summary>
         /// Removes a comment from the specified cell (if present).
         /// </summary>
         /// <param name="row">1-based row index.</param>
@@ -75,11 +151,16 @@ namespace OfficeIMO.Excel {
                     return;
                 }
 
-                RemoveCommentInternal(commentsPart.Comments.CommentList, reference);
-                commentsPart.Comments.Save();
+                bool removedComment = RemoveCommentInternal(commentsPart.Comments.CommentList, reference);
+                if (removedComment) {
+                    commentsPart.Comments.Save();
+                }
+
                 RemoveCommentVmlShape(row, column);
-                CleanupCommentArtifacts();
-                WorksheetRoot.Save();
+                bool removedArtifacts = CleanupCommentArtifacts();
+                if (removedArtifacts) {
+                    WorksheetRoot.Save();
+                }
             });
         }
 
@@ -108,6 +189,148 @@ namespace OfficeIMO.Excel {
                 .Any(c => string.Equals(c.Reference?.Value, reference, StringComparison.OrdinalIgnoreCase)) is true;
         }
 
+        /// <summary>
+        /// Gets all legacy worksheet comments (notes) on this sheet.
+        /// </summary>
+        public IReadOnlyList<ExcelCommentInfo> GetComments() {
+            return FindComments(null);
+        }
+
+        /// <summary>
+        /// Finds legacy worksheet comments (notes) that match the supplied filter.
+        /// </summary>
+        /// <param name="filter">Optional author, text, and A1 range filter.</param>
+        public IReadOnlyList<ExcelCommentInfo> FindComments(ExcelCommentFilter? filter) {
+            var commentsPart = WorksheetCommentsPartRoot;
+            var comments = commentsPart?.Comments;
+            if (comments?.CommentList == null) {
+                return Array.Empty<ExcelCommentInfo>();
+            }
+
+            var authors = comments.Authors?.Elements<Author>().Select(author => author.Text ?? string.Empty).ToList()
+                ?? new List<string>();
+            var results = new List<ExcelCommentInfo>();
+            foreach (var comment in comments.CommentList.Elements<Comment>()) {
+                var info = CreateCommentInfo(comment, authors);
+                if (info != null && CommentMatchesFilter(info, filter)) {
+                    results.Add(info);
+                }
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Replaces the text, and optionally author, for comments that match the supplied filter.
+        /// </summary>
+        /// <param name="filter">Author, text, and/or A1 range filter used to choose comments.</param>
+        /// <param name="text">Replacement comment text.</param>
+        /// <param name="author">Optional replacement author.</param>
+        /// <param name="initials">Optional replacement author initials.</param>
+        /// <returns>Number of comments updated.</returns>
+        public int UpdateComments(ExcelCommentFilter filter, string text, string? author = null, string? initials = null) {
+            if (filter == null) throw new ArgumentNullException(nameof(filter));
+            if (string.IsNullOrEmpty(text)) throw new ArgumentException("Comment text is required.", nameof(text));
+
+            return UpdateCommentsInternal(filter, BuildCommentText(text), author, initials);
+        }
+
+        /// <summary>
+        /// Replaces rich text, and optionally author, for comments that match the supplied filter.
+        /// </summary>
+        /// <param name="filter">Author, text, and/or A1 range filter used to choose comments.</param>
+        /// <param name="runs">Replacement rich text runs.</param>
+        /// <param name="author">Optional replacement author.</param>
+        /// <param name="initials">Optional replacement author initials.</param>
+        /// <returns>Number of comments updated.</returns>
+        public int UpdateCommentsRichText(ExcelCommentFilter filter, IEnumerable<ExcelRichTextRun> runs, string? author = null, string? initials = null) {
+            if (filter == null) throw new ArgumentNullException(nameof(filter));
+
+            return UpdateCommentsInternal(filter, BuildCommentText(runs), author, initials);
+        }
+
+        private int UpdateCommentsInternal(ExcelCommentFilter filter, CommentText commentText, string? author, string? initials) {
+            int updated = 0;
+            WriteLock(() => {
+                var commentsPart = WorksheetCommentsPartRoot;
+                var comments = commentsPart?.Comments;
+                if (comments?.CommentList == null) {
+                    return;
+                }
+
+                comments.Authors ??= new Authors();
+                var authors = comments.Authors.Elements<Author>().Select(item => item.Text ?? string.Empty).ToList();
+                uint? newAuthorId = string.IsNullOrWhiteSpace(author)
+                    ? null
+                    : EnsureAuthorId(comments.Authors, NormalizeAuthor(author!, initials));
+
+                foreach (var comment in comments.CommentList.Elements<Comment>()) {
+                    var info = CreateCommentInfo(comment, authors);
+                    if (info == null || !CommentMatchesFilter(info, filter)) {
+                        continue;
+                    }
+
+                    comment.RemoveAllChildren<CommentText>();
+                    comment.Append((CommentText)commentText.CloneNode(true));
+                    if (newAuthorId.HasValue) {
+                        comment.AuthorId = newAuthorId.Value;
+                    }
+
+                    updated++;
+                }
+
+                if (updated > 0) {
+                    comments.Save();
+                }
+            });
+
+            return updated;
+        }
+
+        /// <summary>
+        /// Removes comments that match the supplied filter.
+        /// </summary>
+        /// <param name="filter">Author, text, and/or A1 range filter used to choose comments.</param>
+        /// <returns>Number of comments removed.</returns>
+        public int ClearComments(ExcelCommentFilter filter) {
+            if (filter == null) throw new ArgumentNullException(nameof(filter));
+
+            int removed = 0;
+            WriteLock(() => {
+                var commentsPart = WorksheetCommentsPartRoot;
+                var comments = commentsPart?.Comments;
+                if (comments?.CommentList == null) {
+                    return;
+                }
+
+                var authors = comments.Authors?.Elements<Author>().Select(author => author.Text ?? string.Empty).ToList()
+                    ?? new List<string>();
+                var removals = new List<(Comment Comment, int Row, int Column)>();
+                foreach (var comment in comments.CommentList.Elements<Comment>()) {
+                    var info = CreateCommentInfo(comment, authors);
+                    if (info != null && CommentMatchesFilter(info, filter)) {
+                        removals.Add((comment, info.Row, info.Column));
+                    }
+                }
+
+                foreach (var removal in removals) {
+                    removal.Comment.Remove();
+                    RemoveCommentVmlShape(removal.Row, removal.Column);
+                }
+
+                removed = removals.Count;
+                if (removed > 0) {
+                    comments.Save();
+                    bool removedArtifacts = CleanupCommentArtifacts();
+                    if (removedArtifacts) {
+                        WorksheetRoot.Save();
+                    }
+                }
+            });
+
+            return removed;
+        }
+
         private static string NormalizeAuthor(string author, string? initials) {
             string name = string.IsNullOrWhiteSpace(author) ? "OfficeIMO" : author.Trim();
             if (string.IsNullOrWhiteSpace(initials)) return name;
@@ -127,19 +350,164 @@ namespace OfficeIMO.Excel {
             return (uint)idx;
         }
 
-        private static void RemoveCommentInternal(CommentList list, string reference) {
+        private static bool RemoveCommentInternal(CommentList list, string reference) {
             var existing = list.Elements<Comment>()
                 .FirstOrDefault(c => string.Equals(c.Reference?.Value, reference, StringComparison.OrdinalIgnoreCase));
-            existing?.Remove();
+            if (existing == null) {
+                return false;
+            }
+
+            existing.Remove();
+            return true;
         }
 
         private static CommentText BuildCommentText(string text) {
+            return BuildCommentText(new[] { new ExcelRichTextRun(text) });
+        }
+
+        private static CommentText BuildCommentText(IEnumerable<ExcelRichTextRun> runs) {
+            var normalizedRuns = NormalizeCommentRuns(runs);
             var commentText = new CommentText();
-            var run = new Run();
-            string normalizedText = text.Replace("\r\n", "\n").Replace('\r', '\n');
-            run.Append(new Text(normalizedText) { Space = SpaceProcessingModeValues.Preserve });
-            commentText.Append(run);
+            foreach (var richRun in normalizedRuns) {
+                var run = new Run();
+                var properties = new RunProperties();
+                if (richRun.Bold) properties.Append(new Bold());
+                if (richRun.Italic) properties.Append(new Italic());
+                if (richRun.Underline) properties.Append(new Underline());
+                if (!string.IsNullOrWhiteSpace(richRun.FontColor)) properties.Append(new Color { Rgb = NormalizeHexColor(richRun.FontColor!) });
+                if (!string.IsNullOrWhiteSpace(richRun.FontName)) properties.Append(new RunFont { Val = richRun.FontName });
+                if (richRun.FontSize.HasValue) properties.Append(new FontSize { Val = richRun.FontSize.Value });
+                if (properties.HasChildren) {
+                    run.Append(properties);
+                }
+
+                run.Append(new Text(NormalizeCommentText(richRun.Text)) { Space = SpaceProcessingModeValues.Preserve });
+                commentText.Append(run);
+            }
+
             return commentText;
+        }
+
+        private static IReadOnlyList<ExcelRichTextRun> NormalizeCommentRuns(IEnumerable<ExcelRichTextRun> runs) {
+            if (runs == null) throw new ArgumentNullException(nameof(runs));
+            var normalized = new List<ExcelRichTextRun>();
+            foreach (var run in runs) {
+                if (run == null) continue;
+                normalized.Add(new ExcelRichTextRun(run.Text ?? string.Empty) {
+                    Bold = run.Bold,
+                    Italic = run.Italic,
+                    Underline = run.Underline,
+                    FontColor = run.FontColor,
+                    FontName = run.FontName,
+                    FontSize = run.FontSize
+                });
+            }
+
+            if (normalized.Count == 0 || normalized.All(run => string.IsNullOrEmpty(run.Text))) {
+                throw new ArgumentException("At least one comment text run is required.", nameof(runs));
+            }
+
+            return normalized;
+        }
+
+        private static string NormalizeCommentText(string? text) {
+            return (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+
+        private static ExcelCommentInfo? CreateCommentInfo(Comment comment, IReadOnlyList<string> authors) {
+            string? reference = comment.Reference?.Value;
+            if (string.IsNullOrWhiteSpace(reference)) {
+                return null;
+            }
+
+            var parsed = A1.ParseCellRef(reference!);
+            if (parsed.Row <= 0 || parsed.Col <= 0) {
+                return null;
+            }
+
+            string? author = null;
+            if (comment.AuthorId != null && comment.AuthorId.Value < authors.Count) {
+                author = authors[(int)comment.AuthorId.Value];
+            }
+
+            return new ExcelCommentInfo(reference!, parsed.Row, parsed.Col, author, ExtractCommentText(comment.CommentText), ExtractCommentRuns(comment.CommentText));
+        }
+
+        private static string ExtractCommentText(CommentText? commentText) {
+            if (commentText == null) {
+                return string.Empty;
+            }
+
+            return string.Concat(commentText.Descendants<Text>().Select(text => text.Text ?? string.Empty));
+        }
+
+        private static IReadOnlyList<ExcelRichTextRun> ExtractCommentRuns(CommentText? commentText) {
+            if (commentText == null) {
+                return Array.Empty<ExcelRichTextRun>();
+            }
+
+            var runs = new List<ExcelRichTextRun>();
+            foreach (var run in commentText.Elements<Run>()) {
+                var properties = run.RunProperties;
+                runs.Add(new ExcelRichTextRun(run.Text?.Text ?? string.Empty) {
+                    Bold = properties?.GetFirstChild<Bold>() != null,
+                    Italic = properties?.GetFirstChild<Italic>() != null,
+                    Underline = properties?.GetFirstChild<Underline>() != null,
+                    FontColor = properties?.GetFirstChild<Color>()?.Rgb?.Value,
+                    FontName = properties?.GetFirstChild<RunFont>()?.Val?.Value,
+                    FontSize = properties?.GetFirstChild<FontSize>()?.Val?.Value
+                });
+            }
+
+            if (runs.Count == 0) {
+                string plainText = ExtractCommentText(commentText);
+                if (!string.IsNullOrEmpty(plainText)) {
+                    runs.Add(new ExcelRichTextRun(plainText));
+                }
+            }
+
+            return runs;
+        }
+
+        private static bool CommentMatchesFilter(ExcelCommentInfo info, ExcelCommentFilter? filter) {
+            if (filter == null) {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.Author)
+                && !string.Equals(info.Author, filter.Author!.Trim(), StringComparison.OrdinalIgnoreCase)) {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.TextContains)
+                && info.Text.IndexOf(filter.TextContains!.Trim(), StringComparison.OrdinalIgnoreCase) < 0) {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.A1Range)) {
+                var bounds = ParseCommentFilterRange(filter.A1Range!);
+                if (info.Row < bounds.FirstRow
+                    || info.Row > bounds.LastRow
+                    || info.Column < bounds.FirstColumn
+                    || info.Column > bounds.LastColumn) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static (int FirstRow, int FirstColumn, int LastRow, int LastColumn) ParseCommentFilterRange(string a1Range) {
+            if (A1.TryParseRange(a1Range, out int r1, out int c1, out int r2, out int c2)) {
+                return (r1, c1, r2, c2);
+            }
+
+            var cell = A1.ParseCellRef(a1Range);
+            if (cell.Row > 0 && cell.Col > 0) {
+                return (cell.Row, cell.Col, cell.Row, cell.Col);
+            }
+
+            throw new ArgumentException($"Address '{a1Range}' is not a valid A1 cell or range.", nameof(a1Range));
         }
 
         private WorksheetCommentsPart GetOrCreateCommentsPart() {
@@ -192,18 +560,20 @@ namespace OfficeIMO.Excel {
             SaveVmlDocument(vmlPart, doc);
         }
 
-        private void RemoveCommentVmlShape(int row, int column) {
+        private bool RemoveCommentVmlShape(int row, int column) {
             var vmlPart = TryGetCommentVmlPart();
-            if (vmlPart == null) return;
+            if (vmlPart == null) return false;
 
             var doc = LoadOrCreateVmlDocument(vmlPart);
             var root = doc.Root;
-            if (root == null) return;
+            if (root == null) return false;
 
             bool removed = RemoveVmlShape(root, row, column);
             if (removed) {
                 SaveVmlDocument(vmlPart, doc);
             }
+
+            return removed;
         }
 
         private static bool RemoveVmlShape(XElement root, int row, int column) {
@@ -212,16 +582,14 @@ namespace OfficeIMO.Excel {
             string rowText = (row - 1).ToString(CultureInfo.InvariantCulture);
             string colText = (column - 1).ToString(CultureInfo.InvariantCulture);
 
+            if (!VmlShapesContainCell(root, v, x, rowText, colText)) {
+                return false;
+            }
+
             var shapes = root.Elements(v + "shape").ToList();
             bool removed = false;
             foreach (var shape in shapes) {
-                var clientData = shape.Element(x + "ClientData");
-                if (clientData == null) continue;
-                var rowEl = clientData.Element(x + "Row");
-                var colEl = clientData.Element(x + "Column");
-                if (rowEl != null && colEl != null
-                    && string.Equals(rowEl.Value?.Trim(), rowText, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(colEl.Value?.Trim(), colText, StringComparison.OrdinalIgnoreCase)) {
+                if (VmlShapeMatchesCell(shape, x, rowText, colText)) {
                     shape.Remove();
                     removed = true;
                 }
@@ -229,18 +597,120 @@ namespace OfficeIMO.Excel {
             return removed;
         }
 
-        internal void CleanupCommentArtifacts() {
+        private static bool VmlShapesContainCell(XElement root, XNamespace v, XNamespace x, string rowText, string colText) {
+            foreach (var shape in root.Elements(v + "shape")) {
+                if (VmlShapeMatchesCell(shape, x, rowText, colText)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool VmlShapeMatchesCell(XElement shape, XNamespace x, string rowText, string colText) {
+            var clientData = shape.Element(x + "ClientData");
+            if (clientData == null) return false;
+            var rowEl = clientData.Element(x + "Row");
+            var colEl = clientData.Element(x + "Column");
+            return rowEl != null
+                && colEl != null
+                && string.Equals(rowEl.Value?.Trim(), rowText, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(colEl.Value?.Trim(), colText, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool RemoveCommentVmlShapesInRange(int firstRow, int firstColumn, int lastRow, int lastColumn) {
+            var vmlPart = TryGetCommentVmlPart();
+            if (vmlPart == null) return false;
+
+            var doc = LoadOrCreateVmlDocument(vmlPart);
+            var root = doc.Root;
+            if (root == null) return false;
+
+            if (RemoveVmlShapesInRange(root, firstRow, firstColumn, lastRow, lastColumn)) {
+                SaveVmlDocument(vmlPart, doc);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool RemoveVmlShapesInRange(XElement root, int firstRow, int firstColumn, int lastRow, int lastColumn) {
+            var v = XNamespace.Get("urn:schemas-microsoft-com:vml");
+            var x = XNamespace.Get("urn:schemas-microsoft-com:office:excel");
+            int firstZeroBasedRow = firstRow - 1;
+            int lastZeroBasedRow = lastRow - 1;
+            int firstZeroBasedColumn = firstColumn - 1;
+            int lastZeroBasedColumn = lastColumn - 1;
+            bool removed = false;
+
+            if (!VmlShapesOverlapRange(root, firstZeroBasedRow, firstZeroBasedColumn, lastZeroBasedRow, lastZeroBasedColumn)) {
+                return false;
+            }
+
+            foreach (var shape in root.Elements(v + "shape").ToList()) {
+                var clientData = shape.Element(x + "ClientData");
+                if (clientData == null) continue;
+
+                if (!TryParseVmlCoordinate(clientData.Element(x + "Row")?.Value, out int row)
+                    || !TryParseVmlCoordinate(clientData.Element(x + "Column")?.Value, out int column)) {
+                    continue;
+                }
+
+                if (row >= firstZeroBasedRow
+                    && row <= lastZeroBasedRow
+                    && column >= firstZeroBasedColumn
+                    && column <= lastZeroBasedColumn) {
+                    shape.Remove();
+                    removed = true;
+                }
+            }
+
+            return removed;
+        }
+
+        private static bool VmlShapesOverlapRange(XElement root, int firstZeroBasedRow, int firstZeroBasedColumn, int lastZeroBasedRow, int lastZeroBasedColumn) {
+            var v = XNamespace.Get("urn:schemas-microsoft-com:vml");
+            var x = XNamespace.Get("urn:schemas-microsoft-com:office:excel");
+
+            foreach (var shape in root.Elements(v + "shape")) {
+                var clientData = shape.Element(x + "ClientData");
+                if (clientData == null) continue;
+
+                if (!TryParseVmlCoordinate(clientData.Element(x + "Row")?.Value, out int row)
+                    || !TryParseVmlCoordinate(clientData.Element(x + "Column")?.Value, out int column)) {
+                    continue;
+                }
+
+                if (row >= firstZeroBasedRow
+                    && row <= lastZeroBasedRow
+                    && column >= firstZeroBasedColumn
+                    && column <= lastZeroBasedColumn) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryParseVmlCoordinate(string? text, out int value) {
+            value = 0;
+            return int.TryParse(text?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        }
+
+        internal bool CleanupCommentArtifacts() {
             var ws = WorksheetRoot;
             var commentsPart = WorksheetCommentsPartRoot;
             bool hasComments = commentsPart?.Comments?.CommentList?.Elements<Comment>().Any() is true;
+            bool changed = false;
 
             if (!hasComments && commentsPart != null) {
                 _worksheetPart.DeletePart(commentsPart);
+                changed = true;
             }
 
             var legacy = ws.GetFirstChild<LegacyDrawing>();
             if (legacy?.Id?.Value is not string legacyRelId || string.IsNullOrWhiteSpace(legacyRelId)) {
-                return;
+                return changed;
             }
 
             OpenXmlPart? legacyPart = null;
@@ -248,13 +718,16 @@ namespace OfficeIMO.Excel {
                 legacyPart = _worksheetPart.GetPartById(legacyRelId);
             } catch {
                 ws.RemoveChild(legacy);
-                return;
+                return true;
             }
 
             if (!hasComments && legacyPart is VmlDrawingPart vmlPart) {
                 _worksheetPart.DeletePart(vmlPart);
                 ws.RemoveChild(legacy);
+                changed = true;
             }
+
+            return changed;
         }
 
         private VmlDrawingPart GetOrCreateCommentVmlPart() {

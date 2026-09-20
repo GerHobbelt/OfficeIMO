@@ -4,17 +4,689 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using System.Globalization;
 
 namespace OfficeIMO.Excel {
+    internal readonly struct DirectFormulaCellValue {
+        internal DirectFormulaCellValue(string formula) {
+            Formula = formula;
+        }
+
+        internal string Formula { get; }
+
+        public override string ToString() => Formula;
+    }
+
     public partial class ExcelSheet {
+        internal const int CellValuePlainStringPromotionSharedStringCount = 4096;
+        private const int CellValueSharedStringIndexCacheLimit = 256;
+        private const int PendingDirectCellValueMinimumCellCount = 128;
+        private static readonly bool EnablePendingDirectCellValueBuffer = true;
+        private static readonly bool MirrorPendingDirectCellValueBufferToWorksheet = false;
+        private static readonly DateTime CellValueExcelMinimumSupportedDate = DateTime.FromOADate(2d);
+        private Dictionary<uint, uint>? _cellValueDateStyleIndexes;
+        private Dictionary<uint, uint>? _cellValueDurationStyleIndexes;
+        private Dictionary<string, CellValueSharedStringIndexCacheEntry>? _cellValueSharedStringIndexCache;
+        private uint? _cellValueDefaultDateStyleIndex;
+        private uint? _cellValueDefaultDurationStyleIndex;
+        private CellValueDirectSaveBuffer? _pendingCellValueDirectSaveBuffer;
+        private int _pendingCellValueDirectSaveThreadId;
+        private bool _disablePendingCellValueDirectSaveBuffer;
+        private bool _materializingPendingCellValueDirectSaveBuffer;
+        private bool _hasCellValueDomWrites;
+
+        private readonly struct CellValueSharedStringIndexCacheEntry {
+            internal CellValueSharedStringIndexCacheEntry(int index, bool containsLineBreak) {
+                Index = index;
+                ContainsLineBreak = containsLineBreak;
+            }
+
+            internal int Index { get; }
+
+            internal bool ContainsLineBreak { get; }
+        }
+
+        private sealed class CellValueDirectSaveBuffer {
+            private readonly List<object?[]> _rows = new();
+            private readonly List<int> _filledCounts = new();
+            private Type[] _columnTypes = Array.Empty<Type>();
+            private int _columnCount;
+            private int _lockedColumnCount;
+            private int _lastRow;
+            private int _lastColumn;
+
+            internal IReadOnlyList<object?[]> Rows => _rows;
+
+            internal Type[] ColumnTypes => _columnTypes;
+
+            internal int ColumnCount => _columnCount;
+
+            internal int RowCount => _rows.Count;
+
+            internal int CellCount => _filledCounts.Count == 0 ? 0 : ((_rows.Count - 1) * _columnCount) + _filledCounts[_filledCounts.Count - 1];
+
+            internal bool TryAdd(int row, int column, object? value) {
+                if (row <= 0 || column <= 0) {
+                    return false;
+                }
+
+                if (_rows.Count == 0) {
+                    if (row != 1 || column != 1) {
+                        return false;
+                    }
+
+                    EnsureColumnCount(1);
+                    _rows.Add(new object?[1]);
+                    _filledCounts.Add(0);
+                    SetValue(0, 1, value);
+                    _lastRow = 1;
+                    _lastColumn = 1;
+                    return true;
+                }
+
+                if (row == _lastRow && column == _lastColumn + 1) {
+                    if (_lockedColumnCount > 0 && column > _lockedColumnCount) {
+                        return false;
+                    }
+
+                    EnsureColumnCount(column);
+                    SetValue(row - 1, column, value);
+                    _lastColumn = column;
+                    return true;
+                }
+
+                if (row == _lastRow + 1 && column == 1) {
+                    if (_lockedColumnCount == 0) {
+                        _lockedColumnCount = _columnCount;
+                    }
+
+                    if (_lastColumn != _lockedColumnCount) {
+                        return false;
+                    }
+
+                    _rows.Add(new object?[_columnCount]);
+                    _filledCounts.Add(0);
+                    SetValue(row - 1, 1, value);
+                    _lastRow = row;
+                    _lastColumn = 1;
+                    return true;
+                }
+
+                return false;
+            }
+
+            internal bool IsComplete {
+                get {
+                    if (_rows.Count == 0 || _columnCount == 0) {
+                        return false;
+                    }
+
+                    for (int i = 0; i < _filledCounts.Count; i++) {
+                        if (_filledCounts[i] != _columnCount) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+            }
+
+            internal IEnumerable<(int Row, int Column, object? Value)> EnumerateWrittenCells() {
+                for (int row = 0; row < _rows.Count; row++) {
+                    object?[] values = _rows[row];
+                    int count = _filledCounts[row];
+                    for (int column = 0; column < count; column++) {
+                        yield return (row + 1, column + 1, values[column]);
+                    }
+                }
+            }
+
+            private void EnsureColumnCount(int column) {
+                if (column <= _columnCount) {
+                    return;
+                }
+
+                int oldColumnCount = _columnCount;
+                _columnCount = column;
+                Array.Resize(ref _columnTypes, _columnCount);
+                for (int i = oldColumnCount; i < _columnTypes.Length; i++) {
+                    _columnTypes[i] = typeof(object);
+                }
+
+                for (int i = 0; i < _rows.Count; i++) {
+                    object?[] row = _rows[i];
+                    Array.Resize(ref row, _columnCount);
+                    _rows[i] = row;
+                }
+            }
+
+            private void SetValue(int rowIndex, int column, object? value) {
+                _rows[rowIndex][column - 1] = value;
+                _filledCounts[rowIndex] = column;
+                if (value == null || value == DBNull.Value) {
+                    return;
+                }
+
+                Type valueType = value.GetType();
+                int columnIndex = column - 1;
+                Type currentType = _columnTypes[columnIndex];
+                _columnTypes[columnIndex] = currentType == typeof(object) || currentType == valueType
+                    ? valueType
+                    : typeof(object);
+            }
+        }
 
         // Core implementation: single source of truth (no locks here)
         private void CellValueCore(int row, int column, object? value) {
+            MaterializeDeferredDataSetImportIfNeeded();
+            CellValueCoreNoMaterialize(row, column, value);
+        }
+
+        private bool TrySetPendingDirectCellValue(int row, int column, object? value) {
+            if (!EnablePendingDirectCellValueBuffer
+                || _materializingPendingCellValueDirectSaveBuffer
+                || _disablePendingCellValueDirectSaveBuffer
+                || _excelDocument.HasDeferredDirectDataSetImport
+                || !TryPreparePendingDirectCellValue(value, out object? directValue)
+                || (_pendingCellValueDirectSaveBuffer == null && _hasCellValueDomWrites)
+                || (_pendingCellValueDirectSaveBuffer == null && !CanRegisterDirectTabularSaveCandidate(1, 1, Math.Max(1, column)))) {
+                return false;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                return TrySetPendingDirectCellValueCore(row, column, directValue);
+            }
+
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                return TrySetPendingDirectCellValueCore(row, column, directValue);
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        private bool TrySetPendingDirectCellFormula(int row, int column, string formula) {
+            if (!EnablePendingDirectCellValueBuffer
+                || _materializingPendingCellValueDirectSaveBuffer
+                || _excelDocument.HasDeferredDirectDataSetImport
+                || (_pendingCellValueDirectSaveBuffer == null && _hasCellValueDomWrites)
+                || (_pendingCellValueDirectSaveBuffer == null && !CanRegisterDirectTabularSaveCandidate(1, 1, Math.Max(1, column)))) {
+                return false;
+            }
+
+            var directValue = new DirectFormulaCellValue(Utilities.ExcelSanitizer.SanitizeFormula(formula));
+            if (_isBatchOperation || Locking.IsNoLock) {
+                return TrySetPendingDirectCellValueCore(row, column, directValue);
+            }
+
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                return TrySetPendingDirectCellValueCore(row, column, directValue);
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        private bool TrySetPendingDirectCellValueCore(int row, int column, object? value) {
+            if (!_excelDocument.TryReservePendingDirectCellValueSheet(this)) {
+                return false;
+            }
+
+            int currentThreadId = Environment.CurrentManagedThreadId;
+            if (_pendingCellValueDirectSaveBuffer == null) {
+                _pendingCellValueDirectSaveThreadId = currentThreadId;
+            } else if (_pendingCellValueDirectSaveThreadId != currentThreadId) {
+                _disablePendingCellValueDirectSaveBuffer = true;
+                MaterializePendingDirectCellValues();
+                return false;
+            }
+
+            var buffer = _pendingCellValueDirectSaveBuffer ??= new CellValueDirectSaveBuffer();
+            if (!buffer.TryAdd(row, column, value)) {
+                MaterializePendingDirectCellValues();
+                return false;
+            }
+
+            if (MirrorPendingDirectCellValueBufferToWorksheet || buffer.CellCount < PendingDirectCellValueMinimumCellCount) {
+                ApplyPendingDirectCellValueToDom(row, column, value);
+            }
+
+            if (!_excelDocument.IsPackageDirty) {
+                _excelDocument.MarkPackageDirty();
+            }
+
+            return true;
+        }
+
+        private void ApplyPendingDirectCellValueToDom(int row, int column, object? value) {
+            if (value is DirectFormulaCellValue formula) {
+                CellFormulaCore(row, column, formula.Formula);
+                return;
+            }
+
+            CellValueCoreNoMaterialize(row, column, value);
+        }
+
+        private bool TryPreparePendingDirectCellValue(object? value, out object? directValue) {
+            if (value == null || value == DBNull.Value) {
+                directValue = null;
+                return true;
+            }
+
+            switch (value) {
+                case string text:
+                    CoerceValueHelper.ValidateSharedStringLength(text, nameof(value));
+                    directValue = text;
+                    return text.IndexOf('\n') < 0 && text.IndexOf('\r') < 0;
+                case double:
+                case float:
+                case decimal:
+                case int:
+                case long:
+                case short:
+                case uint:
+                case ulong:
+                case ushort:
+                case byte:
+                case sbyte:
+                case bool:
+                    directValue = value;
+                    return true;
+                case DateTime dateTime:
+                    _ = dateTime.ToOADate();
+                    directValue = dateTime;
+                    return true;
+                case DateTimeOffset dateTimeOffset:
+                    if (TryPrepareDateTimeOffsetPendingDirectCellValue(dateTimeOffset, out DateTime convertedDateTime)) {
+                        directValue = convertedDateTime;
+                        return true;
+                    }
+
+                    directValue = value;
+                    return false;
+                case TimeSpan:
+                    directValue = value;
+                    return true;
+#if NET6_0_OR_GREATER
+                case DateOnly dateOnly:
+                    _ = dateOnly.ToDateTime(TimeOnly.MinValue).ToOADate();
+                    directValue = dateOnly;
+                    return true;
+                case TimeOnly:
+                    directValue = value;
+                    return true;
+#endif
+                default:
+                    directValue = value;
+                    return false;
+            }
+        }
+
+        private bool TryPrepareDateTimeOffsetPendingDirectCellValue(DateTimeOffset value, out DateTime converted) {
+            try {
+                converted = _excelDocument.DateTimeOffsetWriteStrategy(value);
+            } catch (Exception ex) {
+                throw new InvalidOperationException("The configured DateTimeOffset write strategy threw an exception.", ex);
+            }
+
+            if (value.UtcDateTime < CellValueExcelMinimumSupportedDate) {
+                return false;
+            }
+
+            try {
+                _ = converted.ToOADate();
+                return true;
+            } catch (ArgumentException) {
+                return false;
+            } catch (OverflowException) {
+                return false;
+            }
+        }
+
+        internal void MaterializePendingDirectCellValues() {
+            var buffer = _pendingCellValueDirectSaveBuffer;
+            if (buffer == null) {
+                return;
+            }
+
+            _pendingCellValueDirectSaveBuffer = null;
+            _excelDocument.ClearPendingDirectCellValueSheet(this);
+            if (MirrorPendingDirectCellValueBufferToWorksheet
+                || buffer.CellCount < PendingDirectCellValueMinimumCellCount) {
+                return;
+            }
+
+            _materializingPendingCellValueDirectSaveBuffer = true;
+            try {
+                foreach (var cell in buffer.EnumerateWrittenCells()) {
+                    ApplyPendingDirectCellValueToDom(cell.Row, cell.Column, cell.Value);
+                }
+            } finally {
+                _materializingPendingCellValueDirectSaveBuffer = false;
+            }
+        }
+
+        internal bool TryPromotePendingDirectCellValuesToSaveCandidate() {
+            var buffer = _pendingCellValueDirectSaveBuffer;
+            if (buffer == null) {
+                return false;
+            }
+
+            if (!buffer.IsComplete
+                || buffer.ColumnCount <= 0
+                || buffer.RowCount <= 0
+                || buffer.CellCount < PendingDirectCellValueMinimumCellCount) {
+                return false;
+            }
+
+            var columnNames = new string[buffer.ColumnCount];
+            for (int i = 0; i < columnNames.Length; i++) {
+                columnNames[i] = "Column" + (i + 1).ToString(CultureInfo.InvariantCulture);
+            }
+
+            string range = A1.CellReference(1, 1) + ":" + A1.CellReference(buffer.RowCount, buffer.ColumnCount);
+            bool registered = _excelDocument.RegisterDeferredDirectTabularSaveCandidate(
+                this,
+                "Cells",
+                columnNames,
+                buffer.ColumnTypes,
+                buffer.Rows,
+                includeHeaders: false,
+                range,
+                useCellValueNumberFormats: true,
+                replacingPendingDirectCellValues: true);
+            if (registered) {
+                _pendingCellValueDirectSaveBuffer = null;
+                _excelDocument.ClearPendingDirectCellValueSheet(this);
+            }
+
+            return registered;
+        }
+
+        private void CellValueCoreNoMaterialize(int row, int column, object? value) {
+            if (value == null || value == DBNull.Value) {
+                CellEmptyStringValueCore(row, column);
+                return;
+            }
+
+            switch (value) {
+                case string text:
+                    CellStringValueCore(row, column, text);
+                    return;
+                case double number:
+                    CellDoubleValueCore(row, column, number);
+                    return;
+                case float number:
+                    CellDoubleValueCore(row, column, (double)number);
+                    return;
+                case decimal number:
+                    CellDecimalValueCore(row, column, number);
+                    return;
+                case int number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case long number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case short number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case uint number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case ulong number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case ushort number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case byte number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case sbyte number:
+                    CellNumberTextValueCore(row, column, InvariantNumberText.Get(number));
+                    return;
+                case bool boolean:
+                    CellBooleanValueCore(row, column, boolean);
+                    return;
+                case DateTime dateTime:
+                    CellDateTimeValueCore(row, column, dateTime);
+                    return;
+                case DateTimeOffset dateTimeOffset:
+                    CellDateTimeOffsetValueCore(row, column, dateTimeOffset);
+                    return;
+#if NET6_0_OR_GREATER
+                case DateOnly dateOnly:
+                    CellDateOnlyValueCore(row, column, dateOnly);
+                    return;
+                case TimeOnly timeOnly:
+                    CellTimeOnlyValueCore(row, column, timeOnly);
+                    return;
+#endif
+                case TimeSpan timeSpan:
+                    CellTimeSpanValueCore(row, column, timeSpan);
+                    return;
+            }
+
             var (cellValue, dataType) = CoerceForCell(value);
 
             var cell = GetCell(row, column);
             cell.CellValue = cellValue;
             cell.DataType = dataType;
             ApplyAutomaticCellFormatting(cell, value, dataType);
-            ClearHeaderCache();
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void CellStringValueCore(int row, int column, string? value) {
+            if (string.IsNullOrEmpty(value)) {
+                CellEmptyStringValueCore(row, column);
+                return;
+            }
+
+            var cell = GetCell(row, column);
+            string text = value!;
+            if (TryGetCellValueSharedStringIndex(text, out int cachedSharedStringIndex, out bool cachedContainsLineBreak)) {
+                SetExistingCellSharedStringValue(cell, cachedSharedStringIndex, cachedContainsLineBreak);
+            } else if (_excelDocument.TryGetOrAddSharedStringIndexBelowLimit(
+                    text,
+                    CellValuePlainStringPromotionSharedStringCount,
+                    validateNewString: true,
+                    out int sharedStringIndex,
+                    out bool containsLineBreak)) {
+                AddCellValueSharedStringIndex(text, sharedStringIndex, containsLineBreak);
+                SetExistingCellSharedStringValue(cell, sharedStringIndex, containsLineBreak);
+            } else {
+                SetExistingCellPlainStringValue(cell, text);
+            }
+
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private bool TryGetCellValueSharedStringIndex(string text, out int index, out bool containsLineBreak) {
+            if (_cellValueSharedStringIndexCache != null
+                && _cellValueSharedStringIndexCache.TryGetValue(text, out CellValueSharedStringIndexCacheEntry entry)) {
+                index = entry.Index;
+                containsLineBreak = entry.ContainsLineBreak;
+                return true;
+            }
+
+            index = -1;
+            containsLineBreak = false;
+            return false;
+        }
+
+        private void AddCellValueSharedStringIndex(string text, int index, bool containsLineBreak) {
+            var cache = _cellValueSharedStringIndexCache;
+            if (cache == null) {
+                cache = new Dictionary<string, CellValueSharedStringIndexCacheEntry>(StringComparer.Ordinal);
+                _cellValueSharedStringIndexCache = cache;
+            } else if (cache.Count >= CellValueSharedStringIndexCacheLimit) {
+                return;
+            }
+
+            cache[text] = new CellValueSharedStringIndexCacheEntry(index, containsLineBreak);
+        }
+
+        private void CellEmptyStringValueCore(int row, int column) {
+            var cell = GetCell(row, column);
+            cell.CellValue = new CellValue(string.Empty);
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.String;
+            cell.InlineString = null;
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void SetExistingCellSharedStringValue(Cell cell, string value, int sharedStringIndex) {
+            SetExistingCellSharedStringValue(cell, sharedStringIndex, value.IndexOf('\n') >= 0 || value.IndexOf('\r') >= 0);
+        }
+
+        private void SetExistingCellSharedStringValue(Cell cell, int sharedStringIndex, bool containsLineBreak) {
+            cell.CellValue = new CellValue(SharedStringIndexText.Get(sharedStringIndex));
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString;
+            cell.InlineString = null;
+            if (containsLineBreak) {
+                ApplyWrapText(cell);
+            }
+        }
+
+        private void SetExistingCellPlainStringValue(Cell cell, string value) {
+            CoerceValueHelper.ValidateSharedStringLength(value, nameof(value));
+            cell.CellValue = new CellValue(value);
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.String;
+            cell.InlineString = null;
+            if (value.IndexOf('\n') >= 0 || value.IndexOf('\r') >= 0) {
+                ApplyWrapText(cell);
+            }
+        }
+
+        private void CellDoubleValueCore(int row, int column, double value) {
+            var cell = GetCell(row, column);
+            cell.CellValue = new CellValue(FormatDoubleCellValue(value));
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private static string FormatDoubleCellValue(double value) {
+            if (value >= int.MinValue && value <= int.MaxValue) {
+                int integer = (int)value;
+                if (value == integer) {
+                    return InvariantNumberText.Get(integer);
+                }
+            }
+
+            return value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private void CellDecimalValueCore(int row, int column, decimal value) {
+            var cell = GetCell(row, column);
+            cell.CellValue = new CellValue(value.ToString(CultureInfo.InvariantCulture));
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void CellNumberTextValueCore(int row, int column, string text) {
+            var cell = GetCell(row, column);
+            cell.CellValue = new CellValue(text);
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void CellBooleanValueCore(int row, int column, bool value) {
+            var cell = GetCell(row, column);
+            cell.CellValue = new CellValue(value ? "1" : "0");
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Boolean;
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void CellDateTimeValueCore(int row, int column, DateTime value) {
+            double serial = value.ToOADate();
+            var cell = GetCell(row, column);
+            uint baseStyleIndex = cell.StyleIndex?.Value ?? 0U;
+            cell.CellValue = new CellValue(serial.ToString(CultureInfo.InvariantCulture));
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+            cell.StyleIndex = baseStyleIndex == 0U
+                ? (_cellValueDefaultDateStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 14))
+                : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDateStyleIndexes, baseStyleIndex, 14);
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void CellDateTimeOffsetValueCore(int row, int column, DateTimeOffset value) {
+            var dateTimeOffsetStrategy = _excelDocument.DateTimeOffsetWriteStrategy;
+            var cell = GetCell(row, column);
+
+            DateTime converted;
+            try {
+                converted = dateTimeOffsetStrategy(value);
+            } catch (Exception ex) {
+                throw new InvalidOperationException("The configured DateTimeOffset write strategy threw an exception.", ex);
+            }
+
+            if (value.UtcDateTime >= CellValueExcelMinimumSupportedDate) {
+                try {
+                    double serial = converted.ToOADate();
+                    cell.CellValue = new CellValue(serial.ToString(CultureInfo.InvariantCulture));
+                    cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+
+                    uint baseStyleIndex = cell.StyleIndex?.Value ?? 0U;
+                    cell.StyleIndex = baseStyleIndex == 0U
+                        ? (_cellValueDefaultDateStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 14))
+                        : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDateStyleIndexes, baseStyleIndex, 14);
+
+                    ClearHeaderCacheForCellMutation(row);
+                    return;
+                } catch (ArgumentException) {
+                    // Fall back to ISO text below for values Excel cannot represent numerically.
+                } catch (OverflowException) {
+                    // Fall back to ISO text below for values Excel cannot represent numerically.
+                }
+            }
+
+            string fallbackText = value.ToString("o", CultureInfo.InvariantCulture);
+            int sharedStringIndex = _excelDocument.GetSharedStringIndex(fallbackText, validateNewString: true, out bool containsLineBreak);
+            SetExistingCellSharedStringValue(cell, sharedStringIndex, containsLineBreak);
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+#if NET6_0_OR_GREATER
+        private void CellDateOnlyValueCore(int row, int column, DateOnly value) {
+            var cell = GetCell(row, column);
+            uint baseStyleIndex = cell.StyleIndex?.Value ?? 0U;
+            cell.CellValue = new CellValue(value.ToDateTime(TimeOnly.MinValue).ToOADate().ToString(CultureInfo.InvariantCulture));
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+            cell.StyleIndex = baseStyleIndex == 0U
+                ? (_cellValueDefaultDateStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 14))
+                : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDateStyleIndexes, baseStyleIndex, 14);
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void CellTimeOnlyValueCore(int row, int column, TimeOnly value) {
+            var cell = GetCell(row, column);
+            uint baseStyleIndex = cell.StyleIndex?.Value ?? 0U;
+            cell.CellValue = new CellValue(value.ToTimeSpan().TotalDays.ToString(CultureInfo.InvariantCulture));
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+            cell.StyleIndex = baseStyleIndex == 0U
+                ? (_cellValueDefaultDurationStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 46))
+                : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDurationStyleIndexes, baseStyleIndex, 46);
+            ClearHeaderCacheForCellMutation(row);
+        }
+#endif
+
+        private void CellFormulaCore(int row, int column, string formula) {
+            Cell cell = GetCell(row, column);
+            // Excel formulas in XML should not start with '=' and must not include illegal control characters
+            var safe = Utilities.ExcelSanitizer.SanitizeFormula(formula);
+            cell.CellFormula = new CellFormula(safe);
+            ClearHeaderCacheForCellMutation(row);
+        }
+
+        private void CellTimeSpanValueCore(int row, int column, TimeSpan value) {
+            double serial = value.TotalDays;
+            var cell = GetCell(row, column);
+            uint baseStyleIndex = cell.StyleIndex?.Value ?? 0U;
+            cell.CellValue = new CellValue(serial.ToString(CultureInfo.InvariantCulture));
+            cell.DataType = DocumentFormat.OpenXml.Spreadsheet.CellValues.Number;
+            cell.StyleIndex = baseStyleIndex == 0U
+                ? (_cellValueDefaultDurationStyleIndex ??= GetOrCreateBuiltInNumberFormatStyleIndex(0U, 46))
+                : GetOrAddBuiltInNumberFormatStyleIndex(ref _cellValueDurationStyleIndexes, baseStyleIndex, 46);
+            ClearHeaderCacheForCellMutation(row);
         }
 
         // Core coercion logic shared between sequential and parallel operations
@@ -24,75 +696,408 @@ namespace OfficeIMO.Excel {
                 value,
                 s => {
                     int idx = _excelDocument.GetSharedStringIndex(s);
-                    return new CellValue(idx.ToString(CultureInfo.InvariantCulture));
+                    return new CellValue(SharedStringIndexText.Get(idx));
                 },
                 dateTimeOffsetStrategy);
             return (cellValue, new EnumValue<DocumentFormat.OpenXml.Spreadsheet.CellValues>(cellType));
         }
 
-
-
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, string value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellStringValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellStringValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, double value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellDoubleValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellDoubleValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        /// <inheritdoc cref="CellValue(int,int,object)" />
+        public void CellValue(int row, int column, float value) {
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellDoubleValueCore(row, column, (double)value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellDoubleValueCore(row, column, (double)value);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, decimal value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellDecimalValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellDecimalValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        /// <inheritdoc cref="CellValue(int,int,object)" />
+        public void CellValue(int row, int column, int value) {
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        /// <inheritdoc cref="CellValue(int,int,object)" />
+        public void CellValue(int row, int column, long value) {
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        /// <inheritdoc cref="CellValue(int,int,object)" />
+        public void CellValue(int row, int column, short value) {
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, DateTime value) {
-            WriteLockConditional(() => {
-                CellValueCore(row, column, value);
-                // DateTime formatting is now handled in CellValueCore
-            });
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellDateTimeValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellDateTimeValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, DateTimeOffset value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellDateTimeOffsetValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellDateTimeOffsetValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
+#if NET6_0_OR_GREATER
+        public void CellValue(int row, int column, DateOnly value) {
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellDateOnlyValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellDateOnlyValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        /// <inheritdoc cref="CellValue(int,int,object)" />
+        public void CellValue(int row, int column, TimeOnly value) {
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellTimeOnlyValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellTimeOnlyValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
+        }
+
+        /// <inheritdoc cref="CellValue(int,int,object)" />
+#endif
         public void CellValue(int row, int column, TimeSpan value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellTimeSpanValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellTimeSpanValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, uint value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, ulong value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, ushort value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, byte value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, sbyte value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellNumberTextValueCore(row, column, InvariantNumberText.Get(value));
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <inheritdoc cref="CellValue(int,int,object)" />
         public void CellValue(int row, int column, bool value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellBooleanValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellBooleanValueCore(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <summary>
@@ -102,13 +1107,25 @@ namespace OfficeIMO.Excel {
         /// <param name="column">The 1-based column index.</param>
         /// <param name="formula">The formula expression.</param>
         public void CellFormula(int row, int column, string formula) {
-            WriteLock(() => {
-                Cell cell = GetCell(row, column);
-                // Excel formulas in XML should not start with '=' and must not include illegal control characters
-                var safe = Utilities.ExcelSanitizer.SanitizeFormula(formula);
-                cell.CellFormula = new CellFormula(safe);
-                ClearHeaderCache();
-            });
+            if (TrySetPendingDirectCellFormula(row, column, formula)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellFormulaCore(row, column, formula);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellFormulaCore(row, column, formula);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <summary>
@@ -202,6 +1219,10 @@ namespace OfficeIMO.Excel {
         /// <param name="column">The 1-based column index.</param>
         /// <param name="numberFormat">The number format code to apply.</param>
         public void FormatCell(int row, int column, string numberFormat) {
+            if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                MaterializeDeferredDataSetImportIfNeeded();
+            }
+
             WriteLockConditional(() => FormatCellCore(row, column, numberFormat));
         }
 
@@ -216,24 +1237,30 @@ namespace OfficeIMO.Excel {
         public bool TryGetCellText(int row, int column, out string text) {
             text = string.Empty;
             try {
-                var cell = GetCell(row, column);
+                if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                    MaterializeDeferredDataSetImportIfNeeded();
+                }
+
+                var cell = TryGetCell(row, column);
                 if (cell == null) return false;
                 // Resolve shared string if needed
                 if (cell.DataType != null && cell.DataType.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) {
-                    if (int.TryParse(cell.InnerText, System.Globalization.NumberStyles.Integer, CultureInfo.InvariantCulture, out int ssid)) {
-                        var wb = _excelDocument.WorkbookPartRoot;
-                        var sst = wb?.SharedStringTablePart?.SharedStringTable;
-                        var si = sst?.Elements<SharedStringItem>().ElementAtOrDefault(ssid);
-                        if (si != null) {
-                            text = si.InnerText ?? string.Empty;
+                    if (TryParseCellTextSharedStringIndex(cell.InnerText, out int ssid)) {
+                        string? sharedText = BuildCellTextSharedStringSnapshot().Get(ssid);
+                        if (sharedText != null) {
+                            text = sharedText;
                             return true;
                         }
+
                         return false;
                     }
                 }
-                // Otherwise, return inner text (numbers/booleans as invariant string)
-                text = cell.InnerText ?? string.Empty;
-                return !string.IsNullOrEmpty(text);
+                text = GetCellText(cell);
+                if (string.IsNullOrEmpty(text) && cell.CellFormula != null && cell.CellValue == null && cell.InlineString == null) {
+                    text = cell.CellFormula.Text ?? string.Empty;
+                }
+
+                return cell.CellValue != null || cell.InlineString != null || !string.IsNullOrEmpty(text);
             } catch { return false; }
         }
 
@@ -643,6 +1670,38 @@ namespace OfficeIMO.Excel {
             stylesPart.Stylesheet.Save();
         }
 
+        private void FillRangeCore(int firstRow, int firstColumn, int lastRow, int lastColumn, string hexColor) {
+            var workbookPart = _excelDocument.WorkbookPartRoot ?? throw new InvalidOperationException("WorkbookPart is null");
+            var stylesPart = workbookPart.WorkbookStylesPart;
+            if (stylesPart == null)
+                stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
+
+            var stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
+            EnsureDefaultStylePrimitives(stylesheet);
+
+            string argb = NormalizeHexColor(hexColor);
+            var fill = new Fill(new PatternFill {
+                PatternType = PatternValues.Solid,
+                ForegroundColor = new ForegroundColor { Rgb = argb },
+                BackgroundColor = new BackgroundColor { Rgb = argb }
+            });
+            uint fillId = GetOrCreateFill(stylesheet, fill);
+            var styleIndexes = new Dictionary<uint, uint>();
+
+            for (int row = firstRow; row <= lastRow; row++) {
+                for (int column = firstColumn; column <= lastColumn; column++) {
+                    Cell cell = GetCell(row, column);
+                    uint baseStyleIndex = cell.StyleIndex?.Value ?? 0U;
+                    cell.StyleIndex = GetOrAddCellFormatOverride(styleIndexes, stylesheet, baseStyleIndex, format => {
+                        format.FillId = fillId;
+                        format.ApplyFill = true;
+                    });
+                }
+            }
+
+            stylesPart.Stylesheet.Save();
+        }
+
         private void ApplyBuiltInNumberFormat(int row, int column, uint builtInFormatId) {
             Cell cell = GetCell(row, column);
             ApplyBuiltInNumberFormat(cell, builtInFormatId);
@@ -677,29 +1736,39 @@ namespace OfficeIMO.Excel {
             Stylesheet stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
             EnsureDefaultStylePrimitives(stylesheet);
 
-            stylesheet.NumberingFormats ??= new NumberingFormats();
-            NumberingFormat? existingFormat = stylesheet.NumberingFormats.Elements<NumberingFormat>()
-                .FirstOrDefault(n => n.FormatCode != null && n.FormatCode.Value == numberFormat);
-
-            uint numberFormatId;
-            if (existingFormat != null) {
-                numberFormatId = existingFormat.NumberFormatId!.Value;
-            } else {
-                numberFormatId = stylesheet.NumberingFormats.Elements<NumberingFormat>().Any()
-                    ? stylesheet.NumberingFormats.Elements<NumberingFormat>().Max(n => n.NumberFormatId!.Value) + 1
-                    : 164U;
-                NumberingFormat numberingFormat = new NumberingFormat {
-                    NumberFormatId = numberFormatId,
-                    FormatCode = StringValue.FromString(numberFormat)
-                };
-                stylesheet.NumberingFormats.Append(numberingFormat);
-                stylesheet.NumberingFormats.Count = (uint)stylesheet.NumberingFormats.Count();
-            }
+            uint numberFormatId = GetOrCreateNumberFormatId(stylesheet, numberFormat);
 
             ApplyCellFormatOverride(stylesheet, cell, format => {
                 format.NumberFormatId = numberFormatId;
                 format.ApplyNumberFormat = true;
             });
+            stylesPart.Stylesheet.Save();
+        }
+
+        private void FormatRangeCore(int firstRow, int firstColumn, int lastRow, int lastColumn, string numberFormat) {
+            var workbookPart = _excelDocument.WorkbookPartRoot ?? throw new InvalidOperationException("WorkbookPart is null");
+            WorkbookStylesPart? stylesPart = workbookPart.WorkbookStylesPart;
+            if (stylesPart == null) {
+                stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
+            }
+
+            Stylesheet stylesheet = stylesPart.Stylesheet ??= new Stylesheet();
+            EnsureDefaultStylePrimitives(stylesheet);
+
+            uint numberFormatId = GetOrCreateNumberFormatId(stylesheet, numberFormat);
+            var styleIndexes = new Dictionary<uint, uint>();
+
+            for (int row = firstRow; row <= lastRow; row++) {
+                for (int column = firstColumn; column <= lastColumn; column++) {
+                    Cell cell = GetCell(row, column);
+                    uint baseStyleIndex = cell.StyleIndex?.Value ?? 0U;
+                    cell.StyleIndex = GetOrAddCellFormatOverride(styleIndexes, stylesheet, baseStyleIndex, format => {
+                        format.NumberFormatId = numberFormatId;
+                        format.ApplyNumberFormat = true;
+                    });
+                }
+            }
+
             stylesPart.Stylesheet.Save();
         }
 
@@ -723,6 +1792,21 @@ namespace OfficeIMO.Excel {
             var baseFormat = GetBaseCellFormat(stylesheet, cell.StyleIndex?.Value ?? 0U);
             mutate(baseFormat);
             cell.StyleIndex = AppendOrReuseCellFormat(stylesheet, baseFormat);
+        }
+
+        private static uint GetOrAddCellFormatOverride(
+            Dictionary<uint, uint> styleIndexes,
+            Stylesheet stylesheet,
+            uint baseStyleIndex,
+            Action<CellFormat> mutate) {
+            if (!styleIndexes.TryGetValue(baseStyleIndex, out uint styleIndex)) {
+                var format = GetBaseCellFormat(stylesheet, baseStyleIndex);
+                mutate(format);
+                styleIndex = AppendOrReuseCellFormat(stylesheet, format);
+                styleIndexes.Add(baseStyleIndex, styleIndex);
+            }
+
+            return styleIndex;
         }
 
         private static uint AppendOrReuseCellFormat(Stylesheet stylesheet, CellFormat candidate) {
@@ -751,6 +1835,27 @@ namespace OfficeIMO.Excel {
             fills.Append(candidate);
             fills.Count = (uint)fills.Count();
             return fills.Count!.Value - 1;
+        }
+
+        private static uint GetOrCreateNumberFormatId(Stylesheet stylesheet, string numberFormat) {
+            stylesheet.NumberingFormats ??= new NumberingFormats();
+            NumberingFormat? existingFormat = stylesheet.NumberingFormats.Elements<NumberingFormat>()
+                .FirstOrDefault(n => n.FormatCode != null && n.FormatCode.Value == numberFormat);
+
+            if (existingFormat != null) {
+                return existingFormat.NumberFormatId!.Value;
+            }
+
+            uint numberFormatId = stylesheet.NumberingFormats.Elements<NumberingFormat>().Any()
+                ? stylesheet.NumberingFormats.Elements<NumberingFormat>().Max(n => n.NumberFormatId!.Value) + 1
+                : 164U;
+            NumberingFormat numberingFormat = new NumberingFormat {
+                NumberFormatId = numberFormatId,
+                FormatCode = StringValue.FromString(numberFormat)
+            };
+            stylesheet.NumberingFormats.Append(numberingFormat);
+            stylesheet.NumberingFormats.Count = (uint)stylesheet.NumberingFormats.Count();
+            return numberFormatId;
         }
 
         private static uint GetOrCreateBorderVariant(Stylesheet stylesheet, uint? baseBorderId, Action<Border> mutate) {
@@ -930,7 +2035,23 @@ namespace OfficeIMO.Excel {
         /// <param name="column">The 1-based column index.</param>
         /// <param name="value">The value to assign.</param>
         public void CellValue(int row, int column, object? value) {
-            WriteLockConditional(() => CellValueCore(row, column, value));
+            if (TrySetPendingDirectCellValue(row, column, value)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                CellValueCore(row, column, value);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellValueCoreNoMaterialize(row, column, value);
+            } finally {
+                lck.ExitWriteLock();
+            }
         }
 
         /// <summary>
@@ -941,10 +2062,23 @@ namespace OfficeIMO.Excel {
         /// <param name="column">The 1-based column index.</param>
         /// <param name="value">The nullable value to assign.</param>
         public void CellValue<T>(int row, int column, T? value) where T : struct {
-            if (value.HasValue) {
-                CellValue(row, column, value.Value);
-            } else {
-                CellValue(row, column, string.Empty);
+            if (TrySetPendingDirectCellValue(row, column, value.HasValue ? value.Value : null)) {
+                return;
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                CellValueCore(row, column, value.HasValue ? value.Value : null);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            try {
+                CellValueCoreNoMaterialize(row, column, value.HasValue ? value.Value : null);
+            } finally {
+                lck.ExitWriteLock();
             }
         }
 

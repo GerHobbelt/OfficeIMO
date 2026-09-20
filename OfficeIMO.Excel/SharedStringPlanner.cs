@@ -1,6 +1,5 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Spreadsheet;
-using System.Globalization;
 
 namespace OfficeIMO.Excel {
     /// <summary>
@@ -30,7 +29,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 distinct ??= new HashSet<string>(StringComparer.Ordinal);
-                distinct.Add(prepared[i].Val?.Text ?? string.Empty);
+                distinct.Add(GetPreparedText(prepared[i].Val));
             }
 
             if (distinct == null || distinct.Count == 0) {
@@ -38,7 +37,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            _finalIndex = doc.GetSharedStringIndices(distinct);
+            _finalIndex = doc.GetSharedStringIndices(distinct, assumeDistinct: true);
         }
 
         /// <summary>
@@ -49,9 +48,9 @@ namespace OfficeIMO.Excel {
             if (prepared.Type?.Value != DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) return;
 
             // prepared.Val.Text currently holds the raw string; replace with index text
-            var text = prepared.Val?.Text ?? string.Empty;
+            var text = GetPreparedText(prepared.Val);
             if (_finalIndex.TryGetValue(text, out int idx)) {
-                prepared.Val = new CellValue(idx.ToString(CultureInfo.InvariantCulture));
+                prepared.Val = new CellValue(SharedStringIndexText.Get(idx));
             } else {
                 // Fallback: if not found (shouldn't happen), keep as string cell
                 var sanitized = Utilities.ExcelSanitizer.SanitizeString(text);
@@ -69,6 +68,10 @@ namespace OfficeIMO.Excel {
             for (int i = 0; i < prepared.Length; i++) {
                 Fixup(ref prepared[i]);
             }
+        }
+
+        private static string GetPreparedText(CellValue? value) {
+            return value?.InnerText ?? string.Empty;
         }
     }
 }

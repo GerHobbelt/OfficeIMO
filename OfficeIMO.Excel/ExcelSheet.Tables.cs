@@ -154,6 +154,10 @@ namespace OfficeIMO.Excel {
                 throw new ArgumentNullException(nameof(range));
             }
 
+            if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                _excelDocument.MaterializeDeferredDataSetImport();
+            }
+
             WriteLock(() => {
                 // SMART DETECTION: Check if there's a table on this range
                 // If there is, we'll add the AutoFilter to the table instead of the worksheet
@@ -274,6 +278,10 @@ namespace OfficeIMO.Excel {
                 return null;
             }
 
+            if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                _excelDocument.MaterializeDeferredDataSetImport();
+            }
+
             return _worksheetPart.TableDefinitionParts
                 .Select(part => part.Table)
                 .FirstOrDefault(table => string.Equals(table?.Name?.Value ?? table?.DisplayName?.Value, tableName, StringComparison.OrdinalIgnoreCase))
@@ -303,13 +311,21 @@ namespace OfficeIMO.Excel {
             AddTableCore(range, hasHeader, name, style, includeAutoFilter, validationMode, ensureRangeCellsExist: true);
         }
 
-        internal string AddTableAndGetName(string range, bool hasHeader, string name, TableStyle style, bool includeAutoFilter, TableNameValidationMode validationMode = TableNameValidationMode.Sanitize, bool ensureRangeCellsExist = true) {
-            return AddTableCore(range, hasHeader, name, style, includeAutoFilter, validationMode, ensureRangeCellsExist);
+        internal string AddTableAndGetName(string range, bool hasHeader, string name, TableStyle style, bool includeAutoFilter, TableNameValidationMode validationMode = TableNameValidationMode.Sanitize, bool ensureRangeCellsExist = true, IReadOnlyList<string>? headerNames = null, bool deferPartSave = false, bool skipExistingTableScan = false) {
+            return AddTableCore(range, hasHeader, name, style, includeAutoFilter, validationMode, ensureRangeCellsExist, headerNames, deferPartSave, skipExistingTableScan);
         }
 
-        private string AddTableCore(string range, bool hasHeader, string name, TableStyle style, bool includeAutoFilter, TableNameValidationMode validationMode = TableNameValidationMode.Sanitize, bool ensureRangeCellsExist = true) {
+        private string AddTableCore(string range, bool hasHeader, string name, TableStyle style, bool includeAutoFilter, TableNameValidationMode validationMode = TableNameValidationMode.Sanitize, bool ensureRangeCellsExist = true, IReadOnlyList<string>? headerNames = null, bool deferPartSave = false, bool skipExistingTableScan = false) {
             if (string.IsNullOrEmpty(range)) {
                 throw new ArgumentNullException(nameof(range));
+            }
+
+            if (_excelDocument.HasPendingDirectCellValues) {
+                MaterializeDeferredDataSetImportIfNeeded();
+            }
+
+            if (_excelDocument.ShouldMaterializeDeferredDirectTabularSaveCandidateForTable(this, range, hasHeader)) {
+                _excelDocument.MaterializeDeferredDataSetImport();
             }
 
             string resolvedName = string.Empty;
@@ -332,26 +348,38 @@ namespace OfficeIMO.Excel {
                 }
 
                 uint columnsCount = (uint)(endColumnIndex - startColumnIndex + 1);
+                bool canUseDirectCandidateRange = _excelDocument.TryGetDirectTabularSaveCandidateHeaders(
+                    this,
+                    range,
+                    hasHeader,
+                    out IReadOnlyList<string>? directCandidateHeaders);
+                if (canUseDirectCandidateRange) {
+                    ensureRangeCellsExist = false;
+                    skipExistingTableScan = true;
+                    headerNames ??= directCandidateHeaders;
+                }
 
-                foreach (var existingPart in _worksheetPart.TableDefinitionParts) {
-                    var existingRange = existingPart.Table?.Reference?.Value;
-                    if (string.IsNullOrEmpty(existingRange)) continue;
-                    var existingCells = existingRange!.Split(':');
-                    if (existingCells.Length != 2) continue;
-                    string existingStartRef = existingCells[0];
-                    string existingEndRef = existingCells[1];
+                if (!skipExistingTableScan) {
+                    foreach (var existingPart in _worksheetPart.TableDefinitionParts) {
+                        var existingRange = existingPart.Table?.Reference?.Value;
+                        if (string.IsNullOrEmpty(existingRange)) continue;
+                        var existingCells = existingRange!.Split(':');
+                        if (existingCells.Length != 2) continue;
+                        string existingStartRef = existingCells[0];
+                        string existingEndRef = existingCells[1];
 
-                    int existingStartColumn = GetColumnIndex(existingStartRef);
-                    int existingEndColumn = GetColumnIndex(existingEndRef);
-                    int existingStartRow = GetRowIndex(existingStartRef);
-                    int existingEndRow = GetRowIndex(existingEndRef);
+                        int existingStartColumn = GetColumnIndex(existingStartRef);
+                        int existingEndColumn = GetColumnIndex(existingEndRef);
+                        int existingStartRow = GetRowIndex(existingStartRef);
+                        int existingEndRow = GetRowIndex(existingEndRef);
 
-                    bool overlaps = startColumnIndex <= existingEndColumn &&
-                                    endColumnIndex >= existingStartColumn &&
-                                    startRowIndex <= existingEndRow &&
-                                    endRowIndex >= existingStartRow;
-                    if (overlaps) {
-                        throw new InvalidOperationException("The specified range overlaps with an existing table.");
+                        bool overlaps = startColumnIndex <= existingEndColumn &&
+                                        endColumnIndex >= existingStartColumn &&
+                                        startRowIndex <= existingEndRow &&
+                                        endRowIndex >= existingStartRow;
+                        if (overlaps) {
+                            throw new InvalidOperationException("The specified range overlaps with an existing table.");
+                        }
                     }
                 }
 
@@ -359,25 +387,8 @@ namespace OfficeIMO.Excel {
                     EnsureRangeCellsExist(startRowIndex, endRowIndex, startColumnIndex, endColumnIndex);
                 }
 
-                // Generate unique table ID atomically (must be unique across the entire workbook)
-                uint tableId;
                 var swScan = System.Diagnostics.Stopwatch.StartNew();
-                lock (_tableIdLock) {
-                    // Get max existing table ID across all sheets to ensure uniqueness when opening existing files
-                    uint maxExistingId = 0;
-                    var wbPart = WorkbookPartRoot;
-                    foreach (var ws in wbPart.WorksheetParts) {
-                        foreach (var part in ws.TableDefinitionParts) {
-                            var idv = part.Table?.Id?.Value;
-                            if (idv != null && idv.Value > maxExistingId)
-                                maxExistingId = idv.Value;
-                        }
-                    }
-                    // Ensure _nextTableId always advances beyond any seen IDs
-                    var next = Math.Max(_nextTableId, (int)(maxExistingId + 1));
-                    tableId = (uint)next;
-                    _nextTableId = next + 1;
-                }
+                uint tableId = _excelDocument.AllocateTableId();
                 swScan.Stop();
                 EffectiveExecution.ReportTiming("AddTable.ScanExistingIds", swScan.Elapsed);
 
@@ -421,8 +432,15 @@ namespace OfficeIMO.Excel {
                     string baseName = $"Column{i + 1}";
                     string headerValue = string.Empty;
                     bool headerCellIsSharedString = false;
+                    bool headerValueProvided = false;
                     // If the table has headers, try to get the actual header value
-                    if (hasHeader && startRowIndex > 0) {
+                    if (hasHeader && headerNames != null && i < headerNames.Count) {
+                        headerValueProvided = true;
+                        headerValue = headerNames[(int)i] ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(headerValue)) {
+                            baseName = headerValue;
+                        }
+                    } else if (hasHeader && startRowIndex > 0) {
                         var headerCell = GetCell(startRowIndex, startColumnIndex + (int)i);
                         if (headerCell != null) {
                             headerCellIsSharedString = headerCell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString;
@@ -439,7 +457,11 @@ namespace OfficeIMO.Excel {
                     }
                     tableColumns.Append(new TableColumn { Id = i + 1, Name = candidate });
 
-                    if (hasHeader && (!headerCellIsSharedString || !string.Equals(headerValue, candidate, System.StringComparison.Ordinal))) {
+                    bool shouldRewriteHeader = headerValueProvided
+                        ? !string.Equals(headerValue, candidate, System.StringComparison.Ordinal)
+                        : (!headerCellIsSharedString || !string.Equals(headerValue, candidate, System.StringComparison.Ordinal));
+                    if (hasHeader && shouldRewriteHeader) {
+                        using var preserveDirectCandidate = _excelDocument.PreserveDirectDataSetSaveCandidateDuringDirtyMarks();
                         CellValueCore(startRowIndex, startColumnIndex + (int)i, candidate);
                     }
                 }
@@ -487,7 +509,11 @@ namespace OfficeIMO.Excel {
                 });
 
                 tableDefinitionPart.Table = table;
-                tableDefinitionPart.Table.Save();
+                if (deferPartSave) {
+                    DeferTableDefinitionPartSave(tableDefinitionPart);
+                } else {
+                    tableDefinitionPart.Table.Save();
+                }
 
                 var tableParts = WorksheetRoot.Elements<TableParts>().FirstOrDefault();
                 if (tableParts == null) {
@@ -501,7 +527,29 @@ namespace OfficeIMO.Excel {
                     tableParts.Append(new TablePart { Id = relId });
                 tableParts.Count = (uint)tableParts.Elements<TablePart>().Count();
 
-                WorksheetRoot.Save();
+                bool promotedDirectSaveCandidate = _excelDocument.TryPromoteDirectTabularSaveCandidateToTable(
+                    this,
+                    range,
+                    resolvedName,
+                    hasHeader,
+                    style,
+                    includeAutoFilter);
+
+                if (deferPartSave) {
+                    if (promotedDirectSaveCandidate) {
+                        _excelDocument.PreserveDirectDataSetSaveCandidateForNextDirtyMark();
+                    }
+
+                    MarkRequiresSavePreparation();
+                } else {
+                    if (promotedDirectSaveCandidate) {
+                        _excelDocument.PreserveDirectDataSetSaveCandidateForNextDirtyMark();
+                        _excelDocument.MarkPackageDirty();
+                        _excelDocument.PreserveDirectDataSetSaveCandidateForNextDirtyMark();
+                    }
+
+                    WorksheetRoot.Save();
+                }
             });
 
             return resolvedName;

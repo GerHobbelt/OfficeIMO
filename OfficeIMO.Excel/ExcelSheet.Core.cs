@@ -3,6 +3,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeIMO.Drawing;
 using System.Globalization;
+using System.IO;
 using System.Threading;
 
 namespace OfficeIMO.Excel {
@@ -26,15 +27,37 @@ namespace OfficeIMO.Excel {
         }
         private readonly UInt32Value _id;
         private readonly WorksheetPart _worksheetPart;
-        internal WorksheetPart WorksheetPart => _worksheetPart;
+        internal WorksheetPart WorksheetPart {
+            get {
+                if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                    MaterializeDeferredDataSetImportIfNeeded();
+                }
+
+                return _worksheetPart;
+            }
+        }
         private readonly SpreadsheetDocument _spreadSheetDocument;
         private readonly ExcelDocument _excelDocument;
         private bool _isBatchOperation = false;
+        private bool _batchHasCellMutations;
         private bool _hasWorksheetMutations;
         private bool _requiresSavePreparation;
+        private readonly List<TableDefinitionPart> _pendingTableDefinitionPartSaves = new();
         private readonly object _batchLock = new object();
-        private static int _nextTableId = 1;
-        private static readonly object _tableIdLock = new object();
+        private Row? _lastAccessedRow;
+        private int _lastAccessedRowIndex;
+        private Cell? _lastAccessedCell;
+        private int _lastAccessedCellRowIndex;
+        private int _lastAccessedCellColumnIndex;
+        private SheetData? _sheetDataCache;
+        private string?[]? _cellReferenceColumnNameCache;
+        private int _lastCellReferenceRowIndex;
+        private string? _lastCellReferenceRowText;
+        private SharedStringCache? _cellTextSharedStringCache;
+        private readonly object _findFirstCacheLock = new object();
+        private string? _findFirstCacheText;
+        private string? _findFirstCacheAddress;
+        private bool _findFirstCacheHasValue;
         private static int _instancesCreated;
 
         internal static int InstancesCreatedForTests => Volatile.Read(ref _instancesCreated);
@@ -55,6 +78,40 @@ namespace OfficeIMO.Excel {
         /// Begin a no-lock context where operations bypass locking.
         /// </summary>
         public NoLockContext BeginNoLock() => new();
+
+        /// <summary>
+        /// Executes multiple worksheet mutations under a single workbook write lock.
+        /// </summary>
+        /// <param name="action">The worksheet updates to execute.</param>
+        public void Batch(Action<ExcelSheet> action) {
+            if (action == null) {
+                throw new ArgumentNullException(nameof(action));
+            }
+
+            if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
+                action(this);
+                return;
+            }
+
+            MaterializeDeferredDataSetImportIfNeeded();
+            var lck = _excelDocument.EnsureLock();
+            lck.EnterWriteLock();
+            bool wasBatchOperation = _isBatchOperation;
+            bool hadBatchCellMutations = _batchHasCellMutations;
+            try {
+                _isBatchOperation = true;
+                _batchHasCellMutations = false;
+                action(this);
+                if (_batchHasCellMutations) {
+                    _excelDocument.MarkPackageDirty();
+                }
+            } finally {
+                _isBatchOperation = wasBatchOperation;
+                _batchHasCellMutations = hadBatchCellMutations;
+                lck.ExitWriteLock();
+            }
+        }
 
         /// <summary>
         /// Represents a scope where worksheet operations bypass locking.
@@ -153,32 +210,61 @@ namespace OfficeIMO.Excel {
                 throw new ArgumentOutOfRangeException(nameof(column));
             }
 
-            SheetData? sheetData = WorksheetRoot.GetFirstChild<SheetData>();
-            if (sheetData == null) {
-                sheetData = WorksheetRoot.AppendChild(new SheetData());
-            }
+            SheetData sheetData = GetOrCreateSheetData();
 
-            // Find or create row with proper ordering
             Row? rowElement = null;
             Row? insertAfterRow = null;
-            foreach (Row r in sheetData.Elements<Row>()) {
-                if (r.RowIndex != null) {
-                    if (r.RowIndex.Value == (uint)row) {
-                        rowElement = r;
-                        break;
+            bool createdRowElement = false;
+            if (_lastAccessedRow != null && ReferenceEquals(_lastAccessedRow.Parent, sheetData)) {
+                if (_lastAccessedRowIndex == row) {
+                    rowElement = _lastAccessedRow;
+                } else if (_lastAccessedRowIndex < row) {
+                    insertAfterRow = _lastAccessedRow;
+                    for (Row? next = _lastAccessedRow.NextSibling<Row>(); next != null; next = next.NextSibling<Row>()) {
+                        if (next.RowIndex == null) {
+                            continue;
+                        }
+
+                        int nextRowIndex = (int)next.RowIndex.Value;
+                        if (nextRowIndex == row) {
+                            rowElement = next;
+                            break;
+                        }
+
+                        if (nextRowIndex > row) {
+                            break;
+                        }
+
+                        insertAfterRow = next;
                     }
-                    if (r.RowIndex.Value < (uint)row) {
-                        insertAfterRow = r;
-                    } else {
-                        break;
+                }
+            }
+
+            if (rowElement == null && insertAfterRow == null) {
+                foreach (Row r in sheetData.Elements<Row>()) {
+                    if (r.RowIndex != null) {
+                        if (r.RowIndex.Value == (uint)row) {
+                            rowElement = r;
+                            break;
+                        }
+                        if (r.RowIndex.Value < (uint)row) {
+                            insertAfterRow = r;
+                        } else {
+                            break;
+                        }
                     }
                 }
             }
 
             if (rowElement == null) {
                 rowElement = new Row { RowIndex = (uint)row };
+                createdRowElement = true;
                 if (insertAfterRow != null) {
-                    sheetData.InsertAfter(rowElement, insertAfterRow);
+                    if (insertAfterRow.NextSibling<Row>() == null) {
+                        sheetData.Append(rowElement);
+                    } else {
+                        sheetData.InsertAfter(rowElement, insertAfterRow);
+                    }
                 } else {
                     // Insert at beginning
                     var firstRow = sheetData.Elements<Row>().FirstOrDefault();
@@ -190,34 +276,73 @@ namespace OfficeIMO.Excel {
                 }
             }
 
-            string cellReference = A1.CellReference(row, column);
+            if (createdRowElement) {
+                Cell createdCell = new Cell { CellReference = BuildCellReference(row, column) };
+                rowElement.Append(createdCell);
+                CacheLastAccessedCell(rowElement, row, column, createdCell);
+                return createdCell;
+            }
 
             // Find or create cell with proper ordering (by numeric column index)
             Cell? cell = null;
             Cell? insertAfterCell = null;
             int targetColumnIndex = column;
-            foreach (Cell c in rowElement.Elements<Cell>()) {
-                if (c.CellReference?.Value is not string existingRefValue || existingRefValue.Length == 0) {
-                    continue;
-                }
 
-                int existingColumnIndex = GetColumnIndex(existingRefValue);
-                if (existingColumnIndex == targetColumnIndex) {
-                    cell = c;
+            if (_lastAccessedCell != null
+                && _lastAccessedCellRowIndex == row
+                && ReferenceEquals(_lastAccessedCell.Parent, rowElement)) {
+                if (_lastAccessedCellColumnIndex == targetColumnIndex) {
+                    cell = _lastAccessedCell;
+                } else if (_lastAccessedCellColumnIndex < targetColumnIndex) {
+                    insertAfterCell = _lastAccessedCell;
+                    for (Cell? next = _lastAccessedCell.NextSibling<Cell>(); next != null; next = next.NextSibling<Cell>()) {
+                        if (next.CellReference?.Value is not string nextRefValue || nextRefValue.Length == 0) {
+                            continue;
+                        }
+
+                        int nextColumnIndex = GetColumnIndex(nextRefValue);
+                        if (nextColumnIndex == targetColumnIndex) {
+                            cell = next;
+                            break;
+                        }
+
+                        if (nextColumnIndex > targetColumnIndex) {
+                            break;
+                        }
+
+                        insertAfterCell = next;
+                    }
+                }
+            }
+
+            if (cell == null && insertAfterCell == null) {
+                foreach (Cell c in rowElement.Elements<Cell>()) {
+                    if (c.CellReference?.Value is not string existingRefValue || existingRefValue.Length == 0) {
+                        continue;
+                    }
+
+                    int existingColumnIndex = GetColumnIndex(existingRefValue);
+                    if (existingColumnIndex == targetColumnIndex) {
+                        cell = c;
+                        break;
+                    }
+                    if (existingColumnIndex < targetColumnIndex) {
+                        insertAfterCell = c;
+                        continue;
+                    }
+                    // existingColumnIndex > targetColumnIndex => insert before this cell
                     break;
                 }
-                if (existingColumnIndex < targetColumnIndex) {
-                    insertAfterCell = c;
-                    continue;
-                }
-                // existingColumnIndex > targetColumnIndex => insert before this cell
-                break;
             }
 
             if (cell == null) {
-                cell = new Cell { CellReference = cellReference };
+                cell = new Cell { CellReference = BuildCellReference(row, column) };
                 if (insertAfterCell != null) {
-                    rowElement.InsertAfter(cell, insertAfterCell);
+                    if (insertAfterCell.NextSibling<Cell>() == null) {
+                        rowElement.Append(cell);
+                    } else {
+                        rowElement.InsertAfter(cell, insertAfterCell);
+                    }
                 } else {
                     // Insert at beginning or append when row is empty or existing first cell has larger column index
                     var firstCell = rowElement.Elements<Cell>().FirstOrDefault();
@@ -237,11 +362,124 @@ namespace OfficeIMO.Excel {
                 }
             }
 
+            CacheLastAccessedCell(rowElement, row, column, cell);
             return cell;
         }
 
+        private Cell? TryGetCell(int row, int column) {
+            if (row <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(row));
+            }
+            if (column <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(column));
+            }
+
+            SheetData? sheetData = WorksheetRoot.GetFirstChild<SheetData>();
+            if (sheetData == null) {
+                return null;
+            }
+
+            Row? rowElement = null;
+            if (_lastAccessedRow != null && ReferenceEquals(_lastAccessedRow.Parent, sheetData)) {
+                if (_lastAccessedRowIndex == row) {
+                    rowElement = _lastAccessedRow;
+                } else if (_lastAccessedRowIndex < row) {
+                    for (Row? next = _lastAccessedRow.NextSibling<Row>(); next != null; next = next.NextSibling<Row>()) {
+                        if (next.RowIndex == null) {
+                            continue;
+                        }
+
+                        int nextRowIndex = (int)next.RowIndex.Value;
+                        if (nextRowIndex == row) {
+                            rowElement = next;
+                            break;
+                        }
+
+                    }
+                }
+            }
+
+            if (rowElement == null) {
+                foreach (Row r in sheetData.Elements<Row>()) {
+                    if (r.RowIndex == null) {
+                        continue;
+                    }
+
+                    uint rowIndex = r.RowIndex.Value;
+                    if (rowIndex == (uint)row) {
+                        rowElement = r;
+                        break;
+                    }
+
+                }
+            }
+
+            if (rowElement == null) {
+                return null;
+            }
+
+            CacheLastAccessedRow(rowElement, row);
+
+            int targetColumnIndex = column;
+            if (_lastAccessedCell != null
+                && _lastAccessedCellRowIndex == row
+                && ReferenceEquals(_lastAccessedCell.Parent, rowElement)) {
+                if (_lastAccessedCellColumnIndex == targetColumnIndex) {
+                    return _lastAccessedCell;
+                }
+
+                if (_lastAccessedCellColumnIndex < targetColumnIndex) {
+                    for (Cell? next = _lastAccessedCell.NextSibling<Cell>(); next != null; next = next.NextSibling<Cell>()) {
+                        if (next.CellReference?.Value is not string nextRefValue || nextRefValue.Length == 0) {
+                            continue;
+                        }
+
+                        int nextColumnIndex = GetColumnIndex(nextRefValue);
+                        if (nextColumnIndex == targetColumnIndex) {
+                            CacheLastAccessedCell(rowElement, row, column, next);
+                            return next;
+                        }
+
+                    }
+                }
+            }
+
+            foreach (Cell cell in rowElement.Elements<Cell>()) {
+                if (cell.CellReference?.Value is not string existingRefValue || existingRefValue.Length == 0) {
+                    continue;
+                }
+
+                int existingColumnIndex = GetColumnIndex(existingRefValue);
+                if (existingColumnIndex == targetColumnIndex) {
+                    CacheLastAccessedCell(rowElement, row, column, cell);
+                    return cell;
+                }
+
+            }
+
+            return null;
+        }
+
+        private void CacheLastAccessedRow(Row rowElement, int row) {
+            _lastAccessedRow = rowElement;
+            _lastAccessedRowIndex = row;
+        }
+
+        private void CacheLastAccessedCell(Row rowElement, int row, int column, Cell cell) {
+            CacheLastAccessedRow(rowElement, row);
+            _lastAccessedCell = cell;
+            _lastAccessedCellRowIndex = row;
+            _lastAccessedCellColumnIndex = column;
+        }
+
         private SheetData GetOrCreateSheetData() {
-            return WorksheetRoot.GetFirstChild<SheetData>() ?? WorksheetRoot.AppendChild(new SheetData());
+            var worksheet = WorksheetRoot;
+            if (_sheetDataCache != null && ReferenceEquals(_sheetDataCache.Parent, worksheet)) {
+                return _sheetDataCache;
+            }
+
+            _sheetDataCache = worksheet.GetFirstChild<SheetData>() ?? worksheet.AppendChild(new SheetData());
+            return _sheetDataCache;
         }
 
         private Row GetOrCreateRowElement(SheetData sheetData, int rowIndex) {
@@ -265,6 +503,43 @@ namespace OfficeIMO.Excel {
 
         private static string GetColumnName(int columnIndex) {
             return A1.ColumnIndexToLetters(columnIndex);
+        }
+
+        private string BuildCellReference(int row, int column) {
+            string columnName = GetCachedColumnName(column);
+            return columnName + GetCachedRowText(row);
+        }
+
+        private string GetCachedRowText(int rowIndex) {
+            if (_lastCellReferenceRowText != null && _lastCellReferenceRowIndex == rowIndex) {
+                return _lastCellReferenceRowText;
+            }
+
+            string rowText = InvariantNumberText.Get(rowIndex);
+            _lastCellReferenceRowIndex = rowIndex;
+            _lastCellReferenceRowText = rowText;
+            return rowText;
+        }
+
+        private string GetCachedColumnName(int columnIndex) {
+            const int MaxCachedColumn = 256;
+            if ((uint)(columnIndex - 1) >= MaxCachedColumn) {
+                return A1.ColumnIndexToLetters(columnIndex);
+            }
+
+            var cache = _cellReferenceColumnNameCache;
+            if (cache == null) {
+                cache = new string?[MaxCachedColumn];
+                _cellReferenceColumnNameCache = cache;
+            }
+
+            string? columnName = cache[columnIndex - 1];
+            if (columnName == null) {
+                columnName = A1.ColumnIndexToLetters(columnIndex);
+                cache[columnIndex - 1] = columnName;
+            }
+
+            return columnName;
         }
 
         private static int GetColumnIndex(string cellReference) {
@@ -307,23 +582,10 @@ namespace OfficeIMO.Excel {
             // Shared string lookup
             if (cell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) {
                 var raw = cell.CellValue?.InnerText;
-                if (!string.IsNullOrEmpty(raw) && int.TryParse(raw, out int id)) {
-                    var sst = _excelDocument.SharedStringTablePart?.SharedStringTable;
-                    if (sst != null) {
-                        var item = sst.Elements<SharedStringItem>().ElementAtOrDefault(id);
-                        if (item != null) {
-                            // Prefer direct Text element when present; otherwise concatenate run texts
-                            if (item.Text != null) {
-                                return item.Text.Text ?? string.Empty;
-                            }
-                            var sb = new StringBuilder();
-                            foreach (var t in item.Descendants<Text>()) {
-                                sb.Append(t.Text);
-                            }
-                            return sb.ToString();
-                        }
-                    }
+                if (!string.IsNullOrEmpty(raw) && TryParseCellTextSharedStringIndex(raw, out int id)) {
+                    return BuildCellTextSharedStringSnapshot().Get(id) ?? string.Empty;
                 }
+
                 return string.Empty;
             }
 
@@ -347,6 +609,81 @@ namespace OfficeIMO.Excel {
             return cell.CellValue?.InnerText ?? string.Empty;
         }
 
+        private SharedStringCache BuildCellTextSharedStringSnapshot() {
+            if (_spreadSheetDocument.FileOpenAccess != FileAccess.Read) {
+                return SharedStringCache.Build(_spreadSheetDocument);
+            }
+
+            var cache = Volatile.Read(ref _cellTextSharedStringCache);
+            if (cache != null) {
+                return cache;
+            }
+
+            cache = SharedStringCache.Build(_spreadSheetDocument);
+            var existing = Interlocked.CompareExchange(ref _cellTextSharedStringCache, cache, null);
+            return existing ?? cache;
+        }
+
+        private void ClearCellTextSharedStringCache() {
+            if (Volatile.Read(ref _cellTextSharedStringCache) != null) {
+                Volatile.Write(ref _cellTextSharedStringCache, null);
+            }
+
+            ClearFindFirstCache();
+        }
+
+        private bool TryGetFindFirstCache(string text, out string? address) {
+            lock (_findFirstCacheLock) {
+                if (_findFirstCacheHasValue && string.Equals(_findFirstCacheText, text, StringComparison.Ordinal)) {
+                    address = _findFirstCacheAddress;
+                    return true;
+                }
+            }
+
+            address = null;
+            return false;
+        }
+
+        private void SetFindFirstCache(string text, string? address) {
+            lock (_findFirstCacheLock) {
+                _findFirstCacheText = text;
+                _findFirstCacheAddress = address;
+                _findFirstCacheHasValue = true;
+            }
+        }
+
+        private void ClearFindFirstCache() {
+            if (!Volatile.Read(ref _findFirstCacheHasValue)) {
+                return;
+            }
+
+            lock (_findFirstCacheLock) {
+                _findFirstCacheText = null;
+                _findFirstCacheAddress = null;
+                _findFirstCacheHasValue = false;
+            }
+        }
+
+        private static bool TryParseCellTextSharedStringIndex(string? text, out int index) {
+            index = 0;
+            if (string.IsNullOrEmpty(text)) {
+                return false;
+            }
+
+            int parsed = 0;
+            for (int i = 0; i < text!.Length; i++) {
+                int digit = text[i] - '0';
+                if ((uint)digit > 9U || parsed > (int.MaxValue - digit) / 10) {
+                    return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out index);
+                }
+
+                parsed = (parsed * 10) + digit;
+            }
+
+            index = parsed;
+            return true;
+        }
+
         private void WriteLock(Action action) {
             Locking.ExecuteWrite(_excelDocument.EnsureLock(), () => {
                 action();
@@ -358,10 +695,18 @@ namespace OfficeIMO.Excel {
             // If we're already in a batch operation or in a NoLock scope,
             // just execute the action directly
             if (_isBatchOperation || Locking.IsNoLock) {
+                MaterializeDeferredDataSetImportIfNeeded();
                 action();
                 MarkRequiresSavePreparation();
             } else {
+                MaterializeDeferredDataSetImportIfNeeded();
                 WriteLock(action);
+            }
+        }
+
+        private void MaterializeDeferredDataSetImportIfNeeded() {
+            if (_excelDocument.HasDeferredDirectDataSetImport || _excelDocument.HasPendingDirectCellValues) {
+                _excelDocument.MaterializeDeferredDataSetImport();
             }
         }
 
@@ -437,6 +782,14 @@ namespace OfficeIMO.Excel {
         /// Persists pending changes on this worksheet to its underlying OpenXml part.
         /// </summary>
         internal void Commit() {
+            if (_pendingTableDefinitionPartSaves.Count > 0) {
+                foreach (var tableDefinitionPart in _pendingTableDefinitionPartSaves) {
+                    tableDefinitionPart.Table?.Save();
+                }
+
+                _pendingTableDefinitionPartSaves.Clear();
+            }
+
             _worksheetPart?.Worksheet?.Save();
             _requiresSavePreparation = false;
         }
@@ -444,8 +797,20 @@ namespace OfficeIMO.Excel {
         internal bool RequiresSavePreparation => _requiresSavePreparation;
 
         internal void MarkRequiresSavePreparation() {
+            if (_requiresSavePreparation) {
+                return;
+            }
+
             _requiresSavePreparation = true;
             _excelDocument.MarkRequiresSavePreflight();
+        }
+
+        internal void DeferTableDefinitionPartSave(TableDefinitionPart tableDefinitionPart) {
+            if (!_pendingTableDefinitionPartSaves.Contains(tableDefinitionPart)) {
+                _pendingTableDefinitionPartSaves.Add(tableDefinitionPart);
+            }
+
+            MarkRequiresSavePreparation();
         }
     }
 }

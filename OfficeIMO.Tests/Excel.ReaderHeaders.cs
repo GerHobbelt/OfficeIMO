@@ -4,6 +4,7 @@ using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.Serialization;
 using System.Threading;
 using DocumentFormat.OpenXml.Packaging;
@@ -56,6 +57,20 @@ namespace OfficeIMO.Tests {
             public bool? Active { get; set; }
             public DateTime? CreatedOn { get; set; }
             public double? Amount { get; set; }
+        }
+
+        private sealed class DecimalTypedRow {
+            public decimal Amount { get; set; }
+            public decimal? OptionalAmount { get; set; }
+        }
+
+        private sealed class IntegerBoundaryTypedRow {
+            public int IntValue { get; set; }
+            public long LongValue { get; set; }
+        }
+
+        private sealed class CultureDoubleTypedRow {
+            public double Amount { get; set; }
         }
 
         private sealed class DateStyledNumericTypedRow {
@@ -285,6 +300,62 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Reader_ReadRangeAsDataTable_MapsMemoryPackageWithInferredTypes() {
+            var expectedDate = new DateTime(2024, 1, 2);
+            using var memory = new MemoryStream();
+
+            using (var document = ExcelDocument.Create(memory)) {
+                var sheet = document.AddWorkSheet("Data");
+                sheet.CellValue(1, 1, "Name");
+                sheet.CellValue(1, 2, "Amount");
+                sheet.CellValue(1, 3, "Created");
+                sheet.CellValue(1, 4, "Active");
+                sheet.CellValue(2, 1, "Alpha");
+                sheet.CellValue(2, 2, 12.5d);
+                sheet.CellValue(2, 3, expectedDate);
+                sheet.CellValue(2, 4, true);
+            }
+
+            using var reader = ExcelDocumentReader.Open(memory.ToArray());
+            DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable("A1:D2");
+
+            Assert.Equal(typeof(string), table.Columns["Name"]!.DataType);
+            Assert.Equal(typeof(double), table.Columns["Amount"]!.DataType);
+            Assert.Equal(typeof(DateTime), table.Columns["Created"]!.DataType);
+            Assert.Equal(typeof(bool), table.Columns["Active"]!.DataType);
+            DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
+            Assert.Equal("Alpha", row["Name"]);
+            Assert.Equal(12.5d, row["Amount"]);
+            Assert.Equal(expectedDate, row["Created"]);
+            Assert.Equal(true, row["Active"]);
+        }
+
+        [Fact]
+        public void Reader_ReadColumn_MapsMemoryPackageWithWideRows() {
+            using var memory = new MemoryStream();
+
+            using (var document = ExcelDocument.Create(memory)) {
+                var sheet = document.AddWorkSheet("Data");
+                sheet.CellValue(1, 1, "Id");
+                sheet.CellValue(1, 2, "Name");
+                sheet.CellValue(1, 3, "Amount");
+                sheet.CellValue(2, 1, 1);
+                sheet.CellValue(2, 2, "Alpha");
+                sheet.CellValue(2, 3, 12.5d);
+                sheet.CellValue(3, 1, 2);
+                sheet.CellValue(3, 2, "Beta");
+                sheet.CellValue(3, 3, 25d);
+            }
+
+            using var reader = ExcelDocumentReader.Open(memory.ToArray());
+            var values = reader.GetSheet("Data").ReadColumn("A1:A3").ToList();
+
+            Assert.Equal("Id", values[0]);
+            Assert.Equal(1, Convert.ToInt32(values[1], CultureInfo.InvariantCulture));
+            Assert.Equal(2, Convert.ToInt32(values[2], CultureInfo.InvariantCulture));
+        }
+
+        [Fact]
         public void Reader_ReadRangeAsDataTable_KeepsMixedColumnObjectTyped() {
             string filePath = Path.Combine(_directoryWithFiles, "ReaderDataTableMixedColumn.xlsx");
 
@@ -422,6 +493,38 @@ namespace OfficeIMO.Tests {
 
                 Assert.Equal("Shared Rich", values[0, 0]);
                 Assert.Equal("Inline Rich", values[0, 1]);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_ReadRange_IgnoresSharedStringPhoneticRuns() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderPhoneticSharedStrings.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "placeholder");
+                    document.Save();
+                }
+
+                using (var spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
+                    var cell = worksheetPart.Worksheet.Descendants<Cell>().First(c => c.CellReference?.Value == "A1");
+                    int sharedIndex = int.Parse(cell.CellValue!.Text);
+                    var sharedTable = spreadsheet.WorkbookPart!.SharedStringTablePart!.SharedStringTable!;
+                    var item = sharedTable.Elements<SharedStringItem>().ElementAt(sharedIndex);
+                    item.InnerXml = "<r><t>Displayed</t></r><rPh sb=\"0\" eb=\"9\"><t>Phonetic</t></rPh>";
+                    sharedTable.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                object?[,] values = reader.GetSheet("Data").ReadRange("A1:A1");
+
+                Assert.Equal("Displayed", values[0, 0]);
             } finally {
                 if (File.Exists(filePath)) {
                     File.Delete(filePath);
@@ -870,6 +973,144 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Reader_GetUsedRangeA1_UsesSavedWorksheetDimension() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderUsedRangeSavedDimension.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Name");
+                    sheet.CellValue(1, 2, "Value");
+                    sheet.CellValue(2, 1, "Alpha");
+                    sheet.CellValue(2, 2, 10);
+                    document.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var sheetReader = reader.GetSheet("Data");
+                Assert.Equal("A1:B2", sheetReader.GetUsedRangeA1());
+                Assert.Equal("A1:B2", sheetReader.GetUsedRangeA1());
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_GetUsedRangeA1_FallsBackWhenDimensionIsDefaultA1() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderUsedRangeDefaultDimensionFallback.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(3, 2, "Value");
+                    document.Save();
+                }
+
+                using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheet = spreadsheet.WorkbookPart!.WorksheetParts.First().Worksheet;
+                    worksheet.GetFirstChild<SheetDimension>()!.Reference = "A1";
+                    worksheet.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var sheetReader = reader.GetSheet("Data");
+                Assert.Equal("B3:B3", sheetReader.GetUsedRangeA1());
+                Assert.Equal("B3:B3", sheetReader.GetUsedRangeA1());
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_GetUsedRangeA1_UsesCellReferenceRowWhenRowIndexIsMissing() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderUsedRangeMissingRowIndex.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(10, 2, "Value");
+                    document.Save();
+                }
+
+                using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheet = spreadsheet.WorkbookPart!.WorksheetParts.First().Worksheet;
+                    worksheet.GetFirstChild<SheetDimension>()!.Reference = "A1";
+                    Row row = worksheet.GetFirstChild<SheetData>()!.Elements<Row>().Single();
+                    row.RowIndex = null;
+                    worksheet.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                Assert.Equal("B10:B10", reader.GetSheet("Data").GetUsedRangeA1());
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_GetUsedRangeA1_AdvancesImplicitCellColumnAfterExplicitReference() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderUsedRangeMixedExplicitImplicitCells.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 3, "Explicit");
+                    sheet.CellValue(1, 4, "Implicit");
+                    document.Save();
+                }
+
+                using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheet = spreadsheet.WorkbookPart!.WorksheetParts.First().Worksheet;
+                    worksheet.GetFirstChild<SheetDimension>()!.Reference = "A1";
+                    Cell implicitCell = worksheet.Descendants<Cell>().Single(cell => cell.CellReference?.Value == "D1");
+                    implicitCell.CellReference = null;
+                    worksheet.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                Assert.Equal("C1:D1", reader.GetSheet("Data").GetUsedRangeA1());
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_GetUsedRangeA1_IgnoresStaleOversizedWorksheetDimension() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderUsedRangeStaleDimension.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(3, 2, "Value");
+                    document.Save();
+                }
+
+                using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheet = spreadsheet.WorkbookPart!.WorksheetParts.First().Worksheet;
+                    worksheet.GetFirstChild<SheetDimension>()!.Reference = "A1:Z1000";
+                    worksheet.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var sheetReader = reader.GetSheet("Data");
+                Assert.Equal("B3:B3", sheetReader.GetUsedRangeA1());
+                Assert.Equal("B3:B3", sheetReader.GetUsedRangeA1());
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
         public void Sheet_HeaderMapCache_RebuildsAfterHeaderRenameWithinSameUsedRange() {
             string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderCacheRename.xlsx");
 
@@ -902,6 +1143,120 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Sheet_HeaderMap_ReturnedMapDoesNotMutateCachedLookup() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderCacheDefensiveCopy.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Status");
+                    sheet.CellValue(1, 2, "Value");
+                    document.Save();
+                }
+
+                using var loadedDocument = ExcelDocument.Load(filePath);
+                var loadedSheet = loadedDocument.GetSheet("Data");
+
+                var map = loadedSheet.GetHeaderMap();
+                map["Status"] = 99;
+                map["Injected"] = 3;
+
+                Assert.True(loadedSheet.TryGetColumnIndexByHeader("Status", out int statusColumn));
+                Assert.Equal(1, statusColumn);
+                Assert.False(loadedSheet.TryGetColumnIndexByHeader("Injected", out _));
+
+                var secondMap = loadedSheet.GetHeaderMap();
+                Assert.Equal(1, secondMap["Status"]);
+                Assert.False(secondMap.ContainsKey("Injected"));
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Sheet_HeaderMapCache_RemainsWarmAfterDataRowWrites() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderCacheDataRowWrites.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Status");
+                    sheet.CellValue(1, 2, "Value");
+                    sheet.CellValue(2, 1, "Open");
+                    sheet.CellValue(2, 2, 10);
+                    document.Save();
+                }
+
+                using var loadedDocument = ExcelDocument.Load(filePath);
+                var loadedSheet = loadedDocument.GetSheet("Data");
+
+                Assert.Equal(1, loadedSheet.GetHeaderMap()["Status"]);
+                Assert.True(IsHeaderMapCachePopulated(loadedSheet));
+
+                loadedSheet.SetByHeader(2, "Status", "Closed");
+                loadedSheet.SetByHeader(2, "Value", 20);
+
+                Assert.True(IsHeaderMapCachePopulated(loadedSheet));
+                Assert.True(loadedSheet.TryGetColumnIndexByHeader("Status", out int statusColumn));
+                Assert.Equal(1, statusColumn);
+
+                loadedSheet.CellValue(1, 1, "State");
+
+                Assert.False(IsHeaderMapCachePopulated(loadedSheet));
+                var refreshedMap = loadedSheet.GetHeaderMap();
+                Assert.False(refreshedMap.ContainsKey("Status"));
+                Assert.Equal(1, refreshedMap["State"]);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Sheet_HeaderMapCache_RebuildsWhenDataRowExpandsUsedRangeColumns() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderCacheDataColumnExpansion.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Status");
+                    sheet.CellValue(1, 2, "Value");
+                    sheet.CellValue(2, 1, "Open");
+                    sheet.CellValue(2, 2, 10);
+                    document.Save();
+                }
+
+                using var loadedDocument = ExcelDocument.Load(filePath);
+                var loadedSheet = loadedDocument.GetSheet("Data");
+
+                var initialMap = loadedSheet.GetHeaderMap();
+                Assert.Equal(1, initialMap["Status"]);
+                Assert.Equal(2, initialMap["Value"]);
+
+                loadedSheet.CellValue(2, 3, "Expanded");
+
+                Assert.True(loadedSheet.TryGetColumnIndexByHeader("Column3", out int generatedColumn));
+                Assert.Equal(3, generatedColumn);
+
+                var refreshedMap = loadedSheet.GetHeaderMap();
+                Assert.Equal(3, refreshedMap["Column3"]);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        private static bool IsHeaderMapCachePopulated(ExcelSheet sheet) {
+            var field = typeof(ExcelSheet).GetField("_headerMapCachePopulated", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(field);
+            return (bool)field.GetValue(sheet)!;
+        }
+
+        [Fact]
         public void Sheet_HeaderMapCache_RebuildsWhenUsedRangeShiftsAfterWrite() {
             string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderCacheUsedRangeShift.xlsx");
 
@@ -930,6 +1285,120 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(1, refreshedMap["Id"]);
                 Assert.Equal(2, refreshedMap["Region"]);
                 Assert.Equal(3, refreshedMap["Amount"]);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Sheet_HeaderMapCache_RevalidatesUsedRangeAfterOpenXmlMutation() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderCacheOpenXmlUsedRangeShift.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Status");
+                    document.Save();
+                }
+
+                using var loadedDocument = ExcelDocument.Load(filePath);
+                var loadedSheet = loadedDocument.GetSheet("Data");
+
+                var initialMap = loadedSheet.GetHeaderMap();
+                Assert.Equal(1, initialMap["Status"]);
+
+                var workbookPart = loadedDocument._spreadSheetDocument.WorkbookPart!;
+                var sheetElement = workbookPart.Workbook.Sheets!.Elements<Sheet>().Single(sheet => sheet.Name == "Data");
+                var worksheetPart = (WorksheetPart)workbookPart.GetPartById(sheetElement.Id!);
+                var firstRow = worksheetPart.Worksheet.GetFirstChild<SheetData>()!.Elements<Row>().Single(row => row.RowIndex?.Value == 1U);
+                firstRow.Append(new Cell {
+                    CellReference = "B1",
+                    DataType = CellValues.InlineString,
+                    InlineString = new InlineString(new Text("Value"))
+                });
+
+                Assert.True(loadedSheet.TryGetColumnIndexByHeader("Value", out int valueColumn));
+                Assert.Equal(2, valueColumn);
+
+                var refreshedMap = loadedSheet.GetHeaderMap();
+                Assert.Equal(1, refreshedMap["Status"]);
+                Assert.Equal(2, refreshedMap["Value"]);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Sheet_HeaderMap_UsesReaderForDateStyledNumericHeaders() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderMapDateStyledNumericHeader.xlsx");
+            const double serialValue = 45292d;
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, serialValue);
+                    sheet.CellValue(2, 1, "Alpha");
+                    sheet.CellAt(1, 1).SetNumberFormat("yyyy-mm-dd");
+                    document.Save();
+                }
+
+                object? readerHeader;
+                using (var reader = ExcelDocumentReader.Open(filePath)) {
+                    readerHeader = reader.GetSheet("Data").ReadRange("A1:A1")[0, 0];
+                }
+
+                using var loadedDocument = ExcelDocument.Load(filePath);
+                var loadedSheet = loadedDocument.GetSheet("Data");
+                var map = loadedSheet.GetHeaderMap();
+
+                Assert.IsType<DateTime>(readerHeader);
+                Assert.Single(map);
+                Assert.Equal(1, map.Values.Single());
+                Assert.False(map.ContainsKey(serialValue.ToString(CultureInfo.InvariantCulture)));
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Sheet_HeaderMap_ReadsOnlyFirstUsedRow() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderHeaderMapFirstUsedRowOnly.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Id");
+                    sheet.CellValue(1, 2, "Value");
+                    for (int row = 2; row <= 1000; row++) {
+                        sheet.CellValue(row, 1, (double)(row - 1));
+                        sheet.CellValue(row, 2, 10d);
+                    }
+
+                    document.Save();
+                }
+
+                using var loadedDocument = ExcelDocument.Load(filePath);
+                var loadedSheet = loadedDocument.GetSheet("Data");
+                var options = new ExcelReadOptions {
+                    CellValueConverter = context => {
+                        if (context.TypeHint is null && context.RawText == "10") {
+                            throw new InvalidOperationException("Header map should not read data rows.");
+                        }
+
+                        return ExcelCellValue.NotHandled;
+                    }
+                };
+
+                var map = loadedSheet.GetHeaderMap(options);
+
+                Assert.Equal(1, map["Id"]);
+                Assert.Equal(2, map["Value"]);
             } finally {
                 if (File.Exists(filePath)) {
                     File.Delete(filePath);
@@ -1153,6 +1622,31 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Reader_TypedObjects_ParsesDoubleTextWithConfiguredCultureFirst() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderCultureDoubleTyped.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Amount");
+                    sheet.CellValue(2, 1, "1,23");
+                    document.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath, new ExcelReadOptions {
+                    Culture = CultureInfo.GetCultureInfo("pl-PL")
+                });
+                var row = Assert.Single(reader.GetSheet("Data").ReadObjects<CultureDoubleTypedRow>("A1:A2"));
+
+                Assert.Equal(1.23d, row.Amount, precision: 10);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
         public void Reader_TypedObjects_MapAttributeBasedHeaderAliases() {
             string filePath = Path.Combine(_directoryWithFiles, "ReaderAttributedTypedHeaders.xlsx");
 
@@ -1219,6 +1713,218 @@ namespace OfficeIMO.Tests {
                 Assert.Null(rows[1].Active);
                 Assert.Null(rows[1].CreatedOn);
                 Assert.Null(rows[1].Amount);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_HandleOutOfOrderCellsWithinWideRows() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderTypedOutOfOrderCellsWithinWideRows.xlsx");
+            var expectedDate = new DateTime(2024, 5, 12, 9, 30, 0);
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Score");
+                    sheet.CellValue(1, 2, "Active");
+                    sheet.CellValue(1, 3, "CreatedOn");
+                    sheet.CellValue(1, 4, "Amount");
+                    sheet.CellValue(1, 5, "Ignored");
+                    sheet.CellValue(2, 1, 42);
+                    sheet.CellValue(2, 2, true);
+                    sheet.CellValue(2, 3, expectedDate);
+                    sheet.CellValue(2, 4, 123.45);
+                    sheet.CellValue(2, 5, "tail");
+                    document.Save();
+                }
+
+                using (var spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
+                    var row = worksheetPart.Worksheet!.GetFirstChild<SheetData>()!.Elements<Row>().Single(r => r.RowIndex?.Value == 2U);
+                    var cells = row.Elements<Cell>().ToDictionary(c => c.CellReference!.Value!);
+                    row.RemoveAllChildren<Cell>();
+                    row.Append(cells["C2"]);
+                    row.Append(cells["A2"]);
+                    row.Append(cells["E2"]);
+                    row.Append(cells["B2"]);
+                    row.Append(cells["D2"]);
+                    worksheetPart.Worksheet.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var sheetReader = reader.GetSheet("Data");
+
+                var rowFromMaterializedReader = Assert.Single(sheetReader.ReadObjects<NullableTypedRow>("A1:E2"));
+                Assert.Equal(42, rowFromMaterializedReader.Score);
+                Assert.True(rowFromMaterializedReader.Active);
+                Assert.Equal(expectedDate, rowFromMaterializedReader.CreatedOn);
+                Assert.Equal(123.45, rowFromMaterializedReader.Amount);
+
+                var rowFromStreamingReader = Assert.Single(sheetReader.ReadObjectsStream<NullableTypedRow>("A1:E2"));
+                Assert.Equal(42, rowFromStreamingReader.Score);
+                Assert.True(rowFromStreamingReader.Active);
+                Assert.Equal(expectedDate, rowFromStreamingReader.CreatedOn);
+                Assert.Equal(123.45, rowFromStreamingReader.Amount);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_HandlePrefixThenOutOfOrderCellsWithinRows() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderTypedPrefixThenOutOfOrderCells.xlsx");
+            var expectedDate = new DateTime(2024, 5, 12, 9, 30, 0);
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Score");
+                    sheet.CellValue(1, 2, "Active");
+                    sheet.CellValue(1, 3, "CreatedOn");
+                    sheet.CellValue(1, 4, "Amount");
+                    sheet.CellValue(2, 1, 42);
+                    sheet.CellValue(2, 2, true);
+                    sheet.CellValue(2, 3, expectedDate);
+                    sheet.CellValue(2, 4, 123.45);
+                    document.Save();
+                }
+
+                using (var spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
+                    var row = worksheetPart.Worksheet!.GetFirstChild<SheetData>()!.Elements<Row>().Single(r => r.RowIndex?.Value == 2U);
+                    var cells = row.Elements<Cell>().ToDictionary(c => c.CellReference!.Value!);
+                    row.RemoveAllChildren<Cell>();
+                    row.Append(cells["A2"]);
+                    row.Append(cells["C2"]);
+                    row.Append(cells["B2"]);
+                    row.Append(cells["D2"]);
+                    worksheetPart.Worksheet.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var sheetReader = reader.GetSheet("Data");
+
+                var rowFromMaterializedReader = Assert.Single(sheetReader.ReadObjects<NullableTypedRow>("A1:D2"));
+                Assert.Equal(42, rowFromMaterializedReader.Score);
+                Assert.True(rowFromMaterializedReader.Active);
+                Assert.Equal(expectedDate, rowFromMaterializedReader.CreatedOn);
+                Assert.Equal(123.45, rowFromMaterializedReader.Amount);
+
+                var rowFromStreamingReader = Assert.Single(sheetReader.ReadObjectsStream<NullableTypedRow>("A1:D2"));
+                Assert.Equal(42, rowFromStreamingReader.Score);
+                Assert.True(rowFromStreamingReader.Active);
+                Assert.Equal(expectedDate, rowFromStreamingReader.CreatedOn);
+                Assert.Equal(123.45, rowFromStreamingReader.Amount);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_DictionaryObjects_HandlePrefixThenOutOfOrderCellsWithinRows() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderDictionaryPrefixThenOutOfOrderCells.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "First");
+                    sheet.CellValue(1, 2, "Second");
+                    sheet.CellValue(1, 3, "Third");
+                    sheet.CellValue(1, 4, "Fourth");
+                    sheet.CellValue(2, 1, "A");
+                    sheet.CellValue(2, 2, "B");
+                    sheet.CellValue(2, 3, "C");
+                    sheet.CellValue(2, 4, "D");
+                    document.Save();
+                }
+
+                using (var spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
+                    var row = worksheetPart.Worksheet!.GetFirstChild<SheetData>()!.Elements<Row>().Single(r => r.RowIndex?.Value == 2U);
+                    var cells = row.Elements<Cell>().ToDictionary(c => c.CellReference!.Value!);
+                    row.RemoveAllChildren<Cell>();
+                    row.Append(cells["A2"]);
+                    row.Append(cells["C2"]);
+                    row.Append(cells["B2"]);
+                    row.Append(cells["D2"]);
+                    worksheetPart.Worksheet.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var rowObject = Assert.Single(reader.GetSheet("Data").ReadObjects("A1:D2"));
+
+                Assert.Equal("A", rowObject["First"]);
+                Assert.Equal("B", rowObject["Second"]);
+                Assert.Equal("C", rowObject["Third"]);
+                Assert.Equal("D", rowObject["Fourth"]);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_MapDecimalValueTypes() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderDecimalTypedHeaders.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Amount");
+                    sheet.CellValue(1, 2, "OptionalAmount");
+                    sheet.CellValue(2, 1, 123.45m);
+                    sheet.CellValue(2, 2, 678.90m);
+                    sheet.CellValue(3, 1, 11.25m);
+                    document.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var rows = reader.GetSheet("Data").ReadObjects<DecimalTypedRow>("A1:B3").ToList();
+
+                Assert.Equal(2, rows.Count);
+                Assert.Equal(123.45m, rows[0].Amount);
+                Assert.Equal(678.90m, rows[0].OptionalAmount);
+                Assert.Equal(11.25m, rows[1].Amount);
+                Assert.Null(rows[1].OptionalAmount);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_MapIntegerBoundaries() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderIntegerBoundaryTypedHeaders.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "IntValue");
+                    sheet.CellValue(1, 2, "LongValue");
+                    sheet.CellValue(2, 1, int.MinValue);
+                    sheet.CellValue(2, 2, long.MinValue);
+                    sheet.CellValue(3, 1, int.MaxValue);
+                    sheet.CellValue(3, 2, long.MaxValue);
+                    document.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath);
+                var rows = reader.GetSheet("Data").ReadObjects<IntegerBoundaryTypedRow>("A1:B3").ToList();
+
+                Assert.Equal(2, rows.Count);
+                Assert.Equal(int.MinValue, rows[0].IntValue);
+                Assert.Equal(long.MinValue, rows[0].LongValue);
+                Assert.Equal(int.MaxValue, rows[1].IntValue);
+                Assert.Equal(long.MaxValue, rows[1].LongValue);
             } finally {
                 if (File.Exists(filePath)) {
                     File.Delete(filePath);
@@ -1358,6 +2064,210 @@ namespace OfficeIMO.Tests {
                     File.Delete(filePath);
                 }
             }
+        }
+
+        [Fact]
+        public void Reader_TypedObjectsStream_HonorsCellValueConverter() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderTypedObjectsStreamCellConverter.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Score");
+                    sheet.CellValue(2, 1, 42);
+                    document.Save();
+                }
+
+                var options = new ExcelReadOptions {
+                    CellValueConverter = context => context.RawText == "42" ? new ExcelCellValue("100") : ExcelCellValue.NotHandled
+                };
+
+                using var reader = ExcelDocumentReader.Open(filePath, options);
+                var row = Assert.Single(reader.GetSheet("Data").ReadObjectsStream<NullableTypedRow>("A1:A2"));
+
+                Assert.Equal(100, row.Score);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjectsStream_ParsesDoubleTextWithConfiguredCultureFirst() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderTypedObjectsStreamCultureDoubleTyped.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Amount");
+                    sheet.CellValue(2, 1, "1,23");
+                    document.Save();
+                }
+
+                using var reader = ExcelDocumentReader.Open(filePath, new ExcelReadOptions {
+                    Culture = CultureInfo.GetCultureInfo("pl-PL")
+                });
+                var row = Assert.Single(reader.GetSheet("Data").ReadObjectsStream<CultureDoubleTypedRow>("A1:A2"));
+
+                Assert.Equal(1.23d, row.Amount, precision: 10);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_HonorsCellValueConverter() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderTypedObjectsCellConverter.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Score");
+                    sheet.CellValue(2, 1, 42);
+                    document.Save();
+                }
+
+                var options = new ExcelReadOptions {
+                    CellValueConverter = context => context.RawText == "42" ? new ExcelCellValue("100") : ExcelCellValue.NotHandled
+                };
+
+                using var reader = ExcelDocumentReader.Open(filePath, options);
+                var row = Assert.Single(reader.GetSheet("Data").ReadObjects<NullableTypedRow>("A1:A2", ExecutionMode.Sequential));
+
+                Assert.Equal(100, row.Score);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_HonorsCellValueConverterStyleContextOnXmlPath() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderTypedObjectsCellConverterStyleContext.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Score");
+                    sheet.CellValue(2, 1, 42);
+                    sheet.CellAt(2, 1).SetNumberFormat("0.00");
+                    document.Save();
+                }
+
+                var options = new ExcelReadOptions {
+                    CellValueConverter = context =>
+                        context.RawText == "42" && context.StyleIndex != null
+                            ? new ExcelCellValue("100")
+                            : ExcelCellValue.NotHandled
+                };
+
+                using var reader = ExcelDocumentReader.Open(filePath, options);
+                var row = Assert.Single(reader.GetSheet("Data").ReadObjects<NullableTypedRow>("A1:A2", ExecutionMode.Sequential));
+
+                Assert.Equal(100, row.Score);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_HonorsCellValueConverterStyleContextForEmptyXmlCells() {
+            string filePath = Path.Combine(_directoryWithFiles, "ReaderTypedObjectsEmptyCellConverterStyleContext.xlsx");
+
+            try {
+                using (var document = ExcelDocument.Create(filePath)) {
+                    var sheet = document.AddWorkSheet("Data");
+                    sheet.CellValue(1, 1, "Score");
+                    sheet.CellValue(2, 1, 42);
+                    sheet.CellAt(2, 1).SetNumberFormat("0.00");
+                    document.Save();
+                }
+
+                using (var spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                    var worksheet = spreadsheet.WorkbookPart!.WorksheetParts.First().Worksheet;
+                    var cell = worksheet.Descendants<Cell>().Single(c => c.CellReference?.Value == "A2");
+                    cell.CellValue = null;
+                    cell.DataType = null;
+                    worksheet.Save();
+                }
+
+                var options = new ExcelReadOptions {
+                    CellValueConverter = context =>
+                        context.RawText == null && context.StyleIndex != null
+                            ? new ExcelCellValue("100")
+                            : ExcelCellValue.NotHandled
+                };
+
+                using var reader = ExcelDocumentReader.Open(filePath, options);
+                var row = Assert.Single(reader.GetSheet("Data").ReadObjects<NullableTypedRow>("A1:A2", ExecutionMode.Sequential));
+
+                Assert.Equal(100, row.Score);
+            } finally {
+                if (File.Exists(filePath)) {
+                    File.Delete(filePath);
+                }
+            }
+        }
+
+        [Fact]
+        public void Reader_TypedObjectsStream_MapsRowsFromMemoryPackage() {
+            var expectedDate = new DateTime(2024, 3, 2);
+            using var memory = new MemoryStream();
+
+            using (var document = ExcelDocument.Create(memory)) {
+                var sheet = document.AddWorkSheet("Data");
+                sheet.CellValue(1, 1, "Score");
+                sheet.CellValue(1, 2, "Active");
+                sheet.CellValue(1, 3, "CreatedOn");
+                sheet.CellValue(1, 4, "Amount");
+                sheet.CellValue(2, 1, 42);
+                sheet.CellValue(2, 2, true);
+                sheet.CellValue(2, 3, expectedDate);
+                sheet.CellValue(2, 4, 123.45);
+            }
+
+            using var reader = ExcelDocumentReader.Open(memory.ToArray());
+            var row = Assert.Single(reader.GetSheet("Data").ReadObjectsStream<NullableTypedRow>("A1:D2"));
+
+            Assert.Equal(42, row.Score);
+            Assert.True(row.Active);
+            Assert.Equal(expectedDate, row.CreatedOn);
+            Assert.Equal(123.45, row.Amount);
+        }
+
+        [Fact]
+        public void Reader_TypedObjects_AutomaticUsesSinglePassForMemoryPackage() {
+            var expectedDate = new DateTime(2024, 3, 2);
+            using var memory = new MemoryStream();
+
+            using (var document = ExcelDocument.Create(memory)) {
+                var sheet = document.AddWorkSheet("Data");
+                sheet.CellValue(1, 1, "Score");
+                sheet.CellValue(1, 2, "Active");
+                sheet.CellValue(1, 3, "CreatedOn");
+                sheet.CellValue(1, 4, "Amount");
+                sheet.CellValue(2, 1, 42);
+                sheet.CellValue(2, 2, true);
+                sheet.CellValue(2, 3, expectedDate);
+                sheet.CellValue(2, 4, 123.45);
+            }
+
+            var options = new ExcelReadOptions();
+            options.Execution.OperationThresholds["ReadObjectsAs"] = 1;
+
+            using var reader = ExcelDocumentReader.Open(memory.ToArray(), options);
+            var row = Assert.Single(reader.GetSheet("Data").ReadObjects<NullableTypedRow>("A1:D2"));
+
+            Assert.Equal(42, row.Score);
+            Assert.True(row.Active);
+            Assert.Equal(expectedDate, row.CreatedOn);
+            Assert.Equal(123.45, row.Amount);
         }
 
         [Fact]

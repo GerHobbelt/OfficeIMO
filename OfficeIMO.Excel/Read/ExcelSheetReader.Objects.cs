@@ -8,6 +8,8 @@ using System.Linq.Expressions;
 using System.Runtime.Serialization;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
+using System.Xml;
 using DocumentFormat.OpenXml.Spreadsheet;
 
 namespace OfficeIMO.Excel {
@@ -28,10 +30,36 @@ namespace OfficeIMO.Excel {
             if (rows <= 1 || cols == 0) return Array.Empty<T>();
 
             var policy = _opt.Execution;
-            var decided = mode ?? policy.Mode;
+            var requested = mode ?? policy.Mode;
+            var decided = requested;
             int workload = rows * cols;
             if (decided == OfficeIMO.Excel.ExecutionMode.Automatic) {
+                if (CanUseAutomaticXmlReadFastPath(policy)) {
+                    if (ShouldUseOrderedBufferedXmlStream(rows, c1, c2)
+                        && TryReadObjectsStreamOrderedXmlFast<T>(a1Range, r1, c1, r2, c2, rows, cols, ct, out var orderedRows)) {
+                        return orderedRows;
+                    }
+
+                    if (TryReadObjectsFromXmlMaterialized<T>(a1Range, r1, c1, r2, c2, rows, cols, ct, out var automaticStreamResult)) {
+                        return automaticStreamResult;
+                    }
+
+                    if (TryReadObjectsSequentialSinglePass<T>(a1Range, r1, c1, r2, c2, rows, cols, ct, out var automaticSinglePassResult)) {
+                        return automaticSinglePassResult;
+                    }
+                }
+
                 decided = policy.Decide("ReadObjectsAs", workload);
+            }
+
+            if (decided != OfficeIMO.Excel.ExecutionMode.Parallel
+                && TryReadObjectsFromXmlMaterialized<T>(a1Range, r1, c1, r2, c2, rows, cols, ct, out var streamResult)) {
+                return streamResult;
+            }
+
+            if (decided != OfficeIMO.Excel.ExecutionMode.Parallel
+                && TryReadObjectsSequentialSinglePass<T>(a1Range, r1, c1, r2, c2, rows, cols, ct, out var singlePassResult)) {
+                return singlePassResult;
             }
 
             if (decided != OfficeIMO.Excel.ExecutionMode.Parallel) {
@@ -124,6 +152,110 @@ namespace OfficeIMO.Excel {
             return result;
         }
 
+        private bool TryReadObjectsFromXmlMaterialized<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+            string a1Range,
+            int r1,
+            int c1,
+            int r2,
+            int c2,
+            int rows,
+            int cols,
+            CancellationToken ct,
+            out List<T> result) where T : new() {
+            result = [];
+
+            if (!CanStreamWorksheetPart()) {
+                return false;
+            }
+
+            int dataRowCount = rows - 1;
+            result = new List<T>(dataRowCount);
+            for (int i = 0; i < dataRowCount; i++) {
+                result.Add(new T());
+            }
+
+            using var stream = _wsPart.GetStream(FileMode.Open, FileAccess.Read);
+            RewindWorksheetStream(stream);
+            using var reader = OpenWorksheetXmlReader(stream);
+            bool canCancel = ct.CanBeCanceled;
+            TypedPropertyBinding<T>?[]? bindings = null;
+            bool canTrackMappedColumns = false;
+            ulong mappedColumns = 0;
+            int nextRowIndex = 1;
+            bool sawRow = false;
+            bool sawHeader = false;
+            bool[]? assignedRows = null;
+            int assignedRowCount = 0;
+
+            while (reader.Read()) {
+                if (canCancel) {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "row") {
+                    continue;
+                }
+
+                sawRow = true;
+                int rowIndex = ParsePositiveIntAttribute(reader.GetAttribute("r"));
+                if (rowIndex <= 0) {
+                    rowIndex = nextRowIndex;
+                }
+
+                nextRowIndex = rowIndex + 1;
+                if (rowIndex < r1 || rowIndex > r2) {
+                    if (rowIndex > r2 && sawHeader && assignedRowCount == dataRowCount) {
+                        break;
+                    }
+
+                    SkipXmlElement(reader, "row");
+                    continue;
+                }
+
+                if (rowIndex == r1) {
+                    object?[] headerValues = ReadXmlRowValues(reader, rowIndex, c1, c2, cols, ct);
+                    var headers = ExcelHeaderNameHelper.BuildUniqueHeaders(cols, c => headerValues[c]?.ToString(), _opt.NormalizeHeaders);
+                    bindings = GetTypedHeaderBindings<T>(headers, a1Range).Bindings;
+                    canTrackMappedColumns = TryGetMappedColumnMask(bindings, out mappedColumns);
+                    sawHeader = true;
+                    continue;
+                }
+
+                if (bindings == null) {
+                    result = [];
+                    return false;
+                }
+
+                int resultIndex = rowIndex - r1 - 1;
+                if ((uint)resultIndex >= (uint)result.Count) {
+                    SkipXmlElement(reader, "row");
+                    continue;
+                }
+
+                ReadXmlRowIntoTypedObject(reader, rowIndex, c1, c2, bindings, canTrackMappedColumns, mappedColumns, result[resultIndex], ct);
+                if (assignedRows == null && resultIndex == assignedRowCount) {
+                    assignedRowCount++;
+                } else {
+                    assignedRows ??= CreateAssignedRowTracker(assignedRowCount, result.Count);
+                    if (!assignedRows[resultIndex]) {
+                        assignedRows[resultIndex] = true;
+                        assignedRowCount++;
+                    }
+                }
+            }
+
+            if (!sawRow) {
+                result = [];
+                return false;
+            }
+
+            if (bindings == null) {
+                bindings = CreateTypedHeaderBindingsFromMissingRow<T>(a1Range, cols);
+            }
+
+            return bindings != null;
+        }
+
         private bool TryReadObjectsFromFastRange<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
             string a1Range,
             int r1,
@@ -171,7 +303,7 @@ namespace OfficeIMO.Excel {
 
                     if (_opt.TreatDatesUsingNumberFormat
                         && value is DateTime
-                        && IsNumericBindingDestination(binding.DestinationType)) {
+                        && IsNumericBindingDestination(binding.BindingKind)) {
                         result = [];
                         return false;
                     }
@@ -203,7 +335,695 @@ namespace OfficeIMO.Excel {
                 return Array.Empty<T>();
             }
 
+            if (CanUseTypedObjectXmlReader()) {
+                if (rows <= BufferedRangeStreamRowLimit
+                    && TryReadObjectsStreamOrderedXmlFast<T>(a1Range, r1, c1, r2, c2, rows, cols, ct, out var mediumRows)) {
+                    return mediumRows;
+                }
+
+                if (rows > BufferedRangeStreamRowLimit
+                    && ShouldUseOrderedBufferedXmlStream(rows, c1, c2)
+                    && TryReadObjectsStreamOrderedXmlFast<T>(a1Range, r1, c1, r2, c2, rows, cols, ct, out var orderedRows)) {
+                    return orderedRows;
+                }
+
+                if (RowsAreSortedWithinRangeXmlFast(r1, r2, ct)) {
+                    return ReadObjectsStreamXmlFast<T>(a1Range, r1, c1, r2, c2, cols, ct);
+                }
+            }
+
             return ReadObjectsStreamIterator<T>(a1Range, r1, c1, r2, c2, cols, ct);
+        }
+
+        private bool CanUseTypedObjectXmlReader() {
+            return CanStreamWorksheetPart();
+        }
+
+        private bool TryReadObjectsStreamOrderedXmlFast<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+            string a1Range,
+            int r1,
+            int c1,
+            int r2,
+            int c2,
+            int rows,
+            int cols,
+            CancellationToken ct,
+            out T[] results) where T : new() {
+            int dataRows = rows - 1;
+            results = dataRows <= 0 ? Array.Empty<T>() : new T[dataRows];
+            if (dataRows <= 0) {
+                return true;
+            }
+
+            bool[]? assignedRows = null;
+            int assignedRowCount = 0;
+            TypedPropertyBinding<T>?[]? bindings = null;
+            bool canTrackMappedColumns = false;
+            ulong mappedColumns = 0;
+            bool sawHeader = false;
+
+            try {
+                using var stream = _wsPart.GetStream(FileMode.Open, FileAccess.Read);
+                RewindWorksheetStream(stream);
+                using var reader = OpenWorksheetXmlReader(stream);
+                bool canCancel = ct.CanBeCanceled;
+                int nextRowIndex = 1;
+                while (reader.Read()) {
+                    if (canCancel) {
+                        ct.ThrowIfCancellationRequested();
+                    }
+
+                    if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "row") {
+                        continue;
+                    }
+
+                    int rowIndex = ParsePositiveIntAttribute(reader.GetAttribute("r"));
+                    if (rowIndex <= 0) {
+                        rowIndex = nextRowIndex;
+                    }
+
+                    nextRowIndex = rowIndex + 1;
+                    if (rowIndex < r1 || rowIndex > r2) {
+                        if (rowIndex > r2 && sawHeader && assignedRowCount == dataRows) {
+                            break;
+                        }
+
+                        SkipXmlElement(reader, "row");
+                        continue;
+                    }
+
+                    if (rowIndex == r1) {
+                        if (bindings != null && !sawHeader) {
+                            results = Array.Empty<T>();
+                            return false;
+                        }
+
+                        object?[] headerValues = ReadXmlRowValues(reader, rowIndex, c1, c2, cols, ct);
+                        var headers = ExcelHeaderNameHelper.BuildUniqueHeaders(cols, c => headerValues[c]?.ToString(), _opt.NormalizeHeaders);
+                        bindings = GetTypedHeaderBindings<T>(headers, a1Range).Bindings;
+                        canTrackMappedColumns = TryGetMappedColumnMask(bindings, out mappedColumns);
+                        sawHeader = true;
+                        continue;
+                    }
+
+                    if (bindings == null) {
+                        results = Array.Empty<T>();
+                        return false;
+                    }
+
+                    int dataRowOffset = rowIndex - (r1 + 1);
+                    if ((uint)dataRowOffset >= (uint)results.Length) {
+                        SkipXmlElement(reader, "row");
+                        continue;
+                    }
+
+                    var target = new T();
+                    ReadXmlRowIntoTypedObject(reader, rowIndex, c1, c2, bindings, canTrackMappedColumns, mappedColumns, target, ct);
+                    results[dataRowOffset] = target;
+                    if (assignedRows == null && dataRowOffset == assignedRowCount) {
+                        assignedRowCount++;
+                    } else {
+                        assignedRows ??= CreateAssignedRowTracker(assignedRowCount, results.Length);
+                        if (!assignedRows[dataRowOffset]) {
+                            assignedRows[dataRowOffset] = true;
+                            assignedRowCount++;
+                        }
+                    }
+                }
+
+                if (assignedRowCount != results.Length) {
+                    if (assignedRows == null) {
+                        for (int i = assignedRowCount; i < results.Length; i++) {
+                            results[i] = new T();
+                        }
+                    } else {
+                        for (int i = 0; i < results.Length; i++) {
+                            if (!assignedRows[i]) {
+                                results[i] = new T();
+                            }
+                        }
+                    }
+                }
+
+                return true;
+            } catch (XmlException) {
+                results = Array.Empty<T>();
+                return false;
+            } catch (IOException) {
+                results = Array.Empty<T>();
+                return false;
+            } catch (UnauthorizedAccessException) {
+                results = Array.Empty<T>();
+                return false;
+            } catch (ObjectDisposedException) {
+                results = Array.Empty<T>();
+                return false;
+            }
+        }
+
+        private static bool[] CreateAssignedRowTracker(int assignedDensePrefixLength, int rowCount) {
+            var assignedRows = new bool[rowCount];
+            for (int i = 0; i < assignedDensePrefixLength; i++) {
+                assignedRows[i] = true;
+            }
+
+            return assignedRows;
+        }
+
+        private IEnumerable<T> ReadObjectsStreamXmlFast<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+            string a1Range,
+            int r1,
+            int c1,
+            int r2,
+            int c2,
+            int cols,
+            CancellationToken ct) where T : new() {
+            using var stream = _wsPart.GetStream(FileMode.Open, FileAccess.Read);
+            RewindWorksheetStream(stream);
+            using var reader = OpenWorksheetXmlReader(stream);
+            bool canCancel = ct.CanBeCanceled;
+            TypedPropertyBinding<T>?[]? bindings = null;
+            bool canTrackMappedColumns = false;
+            ulong mappedColumns = 0;
+            int nextRowIndex = 1;
+            int nextDataRow = r1 + 1;
+
+            while (reader.Read()) {
+                if (canCancel) {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "row") {
+                    continue;
+                }
+
+                int rowIndex = ParsePositiveIntAttribute(reader.GetAttribute("r"));
+                if (rowIndex <= 0) {
+                    rowIndex = nextRowIndex;
+                }
+
+                nextRowIndex = rowIndex + 1;
+                if (rowIndex < r1) {
+                    SkipXmlElement(reader, "row");
+                    continue;
+                }
+
+                if (rowIndex > r2) {
+                    break;
+                }
+
+                if (rowIndex == r1) {
+                    object?[] headerValues = ReadXmlRowValues(reader, rowIndex, c1, c2, cols, ct);
+                    var headers = ExcelHeaderNameHelper.BuildUniqueHeaders(cols, c => headerValues[c]?.ToString(), _opt.NormalizeHeaders);
+                    bindings = GetTypedHeaderBindings<T>(headers, a1Range).Bindings;
+                    canTrackMappedColumns = TryGetMappedColumnMask(bindings, out mappedColumns);
+                    continue;
+                }
+
+                if (bindings == null) {
+                    bindings = CreateTypedHeaderBindingsFromMissingRow<T>(a1Range, cols);
+                    canTrackMappedColumns = TryGetMappedColumnMask(bindings, out mappedColumns);
+                }
+
+                while (nextDataRow < rowIndex && nextDataRow <= r2) {
+                    if (canCancel && ((nextDataRow - r1) & 1023) == 0) {
+                        ct.ThrowIfCancellationRequested();
+                    }
+
+                    yield return new T();
+                    nextDataRow++;
+                }
+
+                if (rowIndex < nextDataRow) {
+                    SkipXmlElement(reader, "row");
+                    continue;
+                }
+
+                var target = new T();
+                ReadXmlRowIntoTypedObject(reader, rowIndex, c1, c2, bindings, canTrackMappedColumns, mappedColumns, target, ct);
+                yield return target;
+                nextDataRow = rowIndex + 1;
+            }
+
+            bindings ??= CreateTypedHeaderBindingsFromMissingRow<T>(a1Range, cols);
+            while (nextDataRow <= r2) {
+                if (canCancel && ((nextDataRow - r1) & 1023) == 0) {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                yield return new T();
+                nextDataRow++;
+            }
+        }
+
+        private object?[] ReadXmlRowValues(XmlReader rowReader, int rowIndex, int c1, int c2, int cols, CancellationToken ct) {
+            var values = new object?[cols];
+            ReadXmlRowValuesInto(rowReader, rowIndex, c1, c2, values, ct);
+            return values;
+        }
+
+        private void ReadXmlRowValuesInto(XmlReader rowReader, int rowIndex, int c1, int c2, object?[] values, CancellationToken ct) {
+            if (rowReader.IsEmptyElement) {
+                return;
+            }
+
+            int depth = rowReader.Depth;
+            bool canCancel = ct.CanBeCanceled;
+            int nextColumnIndex = 1;
+            int cols = values.Length;
+            bool canTrackColumns = cols <= 64;
+            ulong allColumnsSeen = canTrackColumns ? CreateAllColumnsSeenMask(cols) : 0UL;
+            ulong seenColumns = 0;
+            int visitedNodes = 0;
+            while (rowReader.Read()) {
+                if (canCancel && (++visitedNodes & 1023) == 0) {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (rowReader.NodeType == XmlNodeType.EndElement && rowReader.Depth == depth && rowReader.LocalName == "row") {
+                    return;
+                }
+
+                if (rowReader.NodeType != XmlNodeType.Element || rowReader.LocalName != "c") {
+                    continue;
+                }
+
+                int columnIndex = GetXmlCellColumnIndex(rowReader, ref nextColumnIndex);
+                if (columnIndex < c1 || columnIndex > c2) {
+                    SkipXmlElement(rowReader, "c");
+                    continue;
+                }
+
+                object? value;
+                if (_opt.CellValueConverter == null) {
+                    value = ReadXmlCellValue(rowReader);
+                } else {
+                    CellRaw raw = ReadXmlCellRaw(rowReader, rowIndex, columnIndex);
+                    value = ConvertRaw(raw).TypedValue;
+                }
+
+                values[columnIndex - c1] = value;
+                if (canTrackColumns && MarkRequestedColumnSeen(columnIndex - c1, allColumnsSeen, ref seenColumns)) {
+                    SkipXmlElementContent(rowReader, depth, "row");
+                    return;
+                }
+            }
+        }
+
+        private void ReadXmlRowIntoTypedObject<T>(
+            XmlReader rowReader,
+            int rowIndex,
+            int c1,
+            int c2,
+            TypedPropertyBinding<T>?[] bindings,
+            bool canTrackMappedColumns,
+            ulong mappedColumns,
+            T target,
+            CancellationToken ct) {
+            if (rowReader.IsEmptyElement) {
+                return;
+            }
+
+            int depth = rowReader.Depth;
+            bool canCancel = ct.CanBeCanceled;
+            int nextColumnIndex = 1;
+            int convertedCells = 0;
+            ulong seenMappedColumns = 0;
+            bool canUseOrderedAllMappedExit = canTrackMappedColumns && mappedColumns == CreateAllColumnsSeenMask(bindings.Length);
+            int nextExpectedMappedColumn = c1;
+            while (rowReader.Read()) {
+                if (canCancel && (++convertedCells & 1023) == 0) {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (rowReader.NodeType == XmlNodeType.EndElement && rowReader.Depth == depth && rowReader.LocalName == "row") {
+                    return;
+                }
+
+                if (rowReader.NodeType != XmlNodeType.Element || rowReader.LocalName != "c") {
+                    continue;
+                }
+
+                int columnIndex = GetXmlCellColumnIndex(rowReader, ref nextColumnIndex);
+                if (columnIndex < c1 || columnIndex > c2) {
+                    if (canUseOrderedAllMappedExit && columnIndex > c2 && nextExpectedMappedColumn <= c2) {
+                        canUseOrderedAllMappedExit = false;
+                        int orderedSeen = nextExpectedMappedColumn - c1;
+                        seenMappedColumns = orderedSeen <= 0 ? 0UL : CreateAllColumnsSeenMask(orderedSeen);
+                    }
+
+                    SkipXmlElement(rowReader, "c");
+                    continue;
+                }
+
+                if (canUseOrderedAllMappedExit && columnIndex != nextExpectedMappedColumn) {
+                    canUseOrderedAllMappedExit = false;
+                    int orderedSeen = nextExpectedMappedColumn - c1;
+                    seenMappedColumns = orderedSeen <= 0 ? 0UL : CreateAllColumnsSeenMask(orderedSeen);
+                }
+
+                var binding = bindings[columnIndex - c1];
+                if (binding == null) {
+                    SkipXmlElement(rowReader, "c");
+                    continue;
+                }
+
+                ReadXmlCellIntoTypedObject(rowReader, rowIndex, columnIndex, binding, target);
+                if (canUseOrderedAllMappedExit) {
+                    nextExpectedMappedColumn++;
+                }
+
+                if (canUseOrderedAllMappedExit && columnIndex >= c2) {
+                    SkipXmlElementContent(rowReader, depth, "row");
+                    return;
+                }
+
+                if (canTrackMappedColumns && !canUseOrderedAllMappedExit) {
+                    seenMappedColumns |= 1UL << (columnIndex - c1);
+                    if (seenMappedColumns == mappedColumns) {
+                        SkipXmlElementContent(rowReader, depth, "row");
+                        return;
+                    }
+                }
+            }
+        }
+
+        private static bool TryGetMappedColumnMask<T>(TypedPropertyBinding<T>?[] bindings, out ulong mask) {
+            mask = 0;
+            for (int i = 0; i < bindings.Length; i++) {
+                if (bindings[i] == null) {
+                    continue;
+                }
+
+                if ((uint)i >= 64u) {
+                    mask = 0;
+                    return false;
+                }
+
+                mask |= 1UL << i;
+            }
+
+            return mask != 0;
+        }
+
+        private static int GetXmlCellColumnIndex(XmlReader cellReader, ref int nextColumnIndex) {
+            string? reference = cellReader.GetAttribute("r");
+            int columnIndex = A1.ParseColumnIndexFromCellReferenceWithKnownRowFast(reference);
+            if (columnIndex <= 0) {
+                columnIndex = string.IsNullOrEmpty(reference) ? nextColumnIndex : 0;
+            }
+
+            if (columnIndex > 0) {
+                nextColumnIndex = columnIndex + 1;
+            }
+
+            return columnIndex;
+        }
+
+        private CellRaw ReadXmlCellRaw(XmlReader cellReader, int rowIndex, int columnIndex) {
+            XmlCellKind cellKind = ParseXmlCellKind(cellReader.GetAttribute("t"));
+            bool readStyleIndex = _opt.TreatDatesUsingNumberFormat
+                && CellKindCanUseDateStyle(cellKind);
+            return ReadXmlCellRaw(cellReader, rowIndex, columnIndex, cellKind, readStyleIndex);
+        }
+
+        private CellRaw ReadXmlCellRaw<TTarget>(XmlReader cellReader, int rowIndex, int columnIndex, TypedPropertyBinding<TTarget> binding) {
+            XmlCellKind cellKind = ParseXmlCellKind(cellReader.GetAttribute("t"));
+            bool readStyleIndex = _opt.CellValueConverter != null
+                || (_opt.TreatDatesUsingNumberFormat
+                && binding.NeedsDateStyleConversion
+                && CellKindCanUseDateStyle(cellKind));
+            return ReadXmlCellRaw(cellReader, rowIndex, columnIndex, cellKind, readStyleIndex);
+        }
+
+        private void ReadXmlCellIntoTypedObject<TTarget>(XmlReader cellReader, int rowIndex, int columnIndex, TypedPropertyBinding<TTarget> binding, TTarget target) {
+            if (_opt.CellValueConverter != null || _opt.TypeConverter != null) {
+                CellRaw converterRaw = ReadXmlCellRaw(cellReader, rowIndex, columnIndex, binding);
+                TrySetRawCellForBinding(converterRaw, binding, target);
+                return;
+            }
+
+            XmlCellKind cellKind = ParseXmlCellKind(cellReader.GetAttribute("t"));
+            uint? styleIndex = null;
+            if (_opt.TreatDatesUsingNumberFormat
+                && binding.NeedsDateStyleConversion
+                && CellKindCanUseDateStyle(cellKind)
+                && TryParseUInt(cellReader.GetAttribute("s"), out uint parsedStyle)) {
+                if (Styles.HasDateStyles) {
+                    styleIndex = parsedStyle;
+                }
+            }
+
+            if (cellReader.IsEmptyElement) {
+                TrySetRawCellForBinding(CreateRawCell(rowIndex, columnIndex, cellKind, styleIndex, hasFormula: false, formulaText: null, rawText: null, inlineText: null), binding, target);
+                return;
+            }
+
+            int depth = cellReader.Depth;
+            string? rawText = null;
+            string? inlineText = null;
+            string? formulaText = null;
+            bool hasFormula = false;
+            bool sawUnsupportedNode = false;
+            bool hasNode = cellReader.Read();
+            while (hasNode) {
+                if (cellReader.NodeType == XmlNodeType.EndElement && cellReader.Depth == depth && cellReader.LocalName == "c") {
+                    break;
+                }
+
+                if (cellReader.NodeType == XmlNodeType.Element) {
+                    if (cellReader.LocalName == "v") {
+                        rawText = cellReader.ReadElementContentAsString();
+                        if (cellReader.NodeType == XmlNodeType.EndElement
+                            && cellReader.Depth == depth
+                            && cellReader.LocalName == "c"
+                            && TrySetSimpleRawTextCell(cellKind, styleIndex, rawText, binding, target)) {
+                            return;
+                        }
+
+                        hasNode = true;
+                        continue;
+                    }
+
+                    if (cellReader.LocalName == "f") {
+                        hasFormula = true;
+                        formulaText = cellReader.ReadElementContentAsString();
+                        if (!_opt.UseCachedFormulaResult) {
+                            SkipXmlElementContent(cellReader, depth, "c");
+                            TrySetRawCellForBinding(CreateRawCell(rowIndex, columnIndex, cellKind, styleIndex, hasFormula: true, formulaText, rawText: null, inlineText: null), binding, target);
+                            return;
+                        }
+
+                        hasNode = true;
+                        continue;
+                    }
+
+                    if (cellReader.LocalName == "is") {
+                        inlineText = ReadXmlInlineString(cellReader);
+                        hasNode = true;
+                        continue;
+                    }
+
+                    sawUnsupportedNode = true;
+                }
+
+                hasNode = cellReader.Read();
+            }
+
+            bool preferFormulaText = hasFormula && !_opt.UseCachedFormulaResult && formulaText != null;
+            if (!sawUnsupportedNode
+                && !hasFormula
+                && inlineText == null
+                && rawText != null
+                && TrySetSimpleRawTextCell(cellKind, styleIndex, rawText, binding, target)) {
+                return;
+            }
+
+            TrySetRawCellForBinding(CreateRawCell(
+                rowIndex,
+                columnIndex,
+                cellKind,
+                styleIndex,
+                hasFormula,
+                formulaText,
+                preferFormulaText ? null : rawText,
+                preferFormulaText ? null : inlineText),
+                binding,
+                target);
+        }
+
+        private bool TrySetSimpleRawTextCell<TTarget>(
+            XmlCellKind cellKind,
+            uint? styleIndex,
+            string rawText,
+            TypedPropertyBinding<TTarget> binding,
+            TTarget target) {
+            switch (cellKind) {
+                case XmlCellKind.SharedString: {
+                    string? text = TryParseSharedStringIndex(rawText, out int sstIndex) ? _sst.Get(sstIndex) : rawText;
+                    return TrySetStringTextBinding(text, binding, target);
+                }
+
+                case XmlCellKind.Boolean:
+                    if (binding.SetBoolean != null && binding.BindingKind == TypedBindingKind.Boolean) {
+                        binding.SetBoolean(target, rawText == "1");
+                        return true;
+                    }
+
+                    if (binding.SetString != null && binding.BindingKind == TypedBindingKind.String) {
+                        binding.SetString(target, (rawText == "1").ToString());
+                        return true;
+                    }
+
+                    return false;
+
+                case XmlCellKind.String:
+                case XmlCellKind.InlineString:
+                    return TrySetStringTextBinding(rawText, binding, target);
+
+                case XmlCellKind.Date:
+                    if (binding.SetDateTime != null
+                        && DateTime.TryParse(rawText, _opt.Culture, DateTimeStyles.AssumeLocal, out var dateValue)) {
+                        binding.SetDateTime(target, dateValue);
+                        return true;
+                    }
+
+                    return TrySetStringTextBinding(rawText, binding, target);
+            }
+
+            if (_opt.TreatDatesUsingNumberFormat
+                && binding.NeedsDateStyleConversion
+                && styleIndex is not null
+                && Styles.IsDateLike(styleIndex.Value)) {
+                if (TryParseInvariantDoubleFast(rawText, out var oa)
+                    || double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out oa)) {
+                    DateTime dateValue = DateTime.FromOADate(oa);
+                    if (binding.SetDateTime != null && binding.BindingKind == TypedBindingKind.DateTime) {
+                        binding.SetDateTime(target, dateValue);
+                        return true;
+                    }
+
+                    if (binding.SetString != null && binding.BindingKind == TypedBindingKind.String) {
+                        binding.SetString(target, dateValue.ToString(_opt.Culture));
+                        return true;
+                    }
+                }
+
+                return TrySetStringTextBinding(rawText, binding, target);
+            }
+
+            return TrySetNumericTextBinding(rawText, binding, target);
+        }
+
+        private static CellRaw CreateRawCell(
+            int rowIndex,
+            int columnIndex,
+            XmlCellKind cellKind,
+            uint? styleIndex,
+            bool hasFormula,
+            string? formulaText,
+            string? rawText,
+            string? inlineText) {
+            return new CellRaw {
+                Row = rowIndex,
+                Col = columnIndex,
+                TypeHint = ToCellValueType(cellKind),
+                StyleIndex = styleIndex,
+                HasFormula = hasFormula,
+                FormulaText = formulaText,
+                RawText = rawText,
+                InlineText = inlineText
+            };
+        }
+
+        private CellRaw ReadXmlCellRaw(XmlReader cellReader, int rowIndex, int columnIndex, XmlCellKind cellKind, bool readStyleIndex) {
+            var raw = new CellRaw {
+                Row = rowIndex,
+                Col = columnIndex,
+                TypeHint = ToCellValueType(cellKind)
+            };
+
+            if (readStyleIndex && TryParseUInt(cellReader.GetAttribute("s"), out uint parsedStyle)) {
+                raw.StyleIndex = parsedStyle;
+            }
+
+            if (cellReader.IsEmptyElement) {
+                return raw;
+            }
+
+            int depth = cellReader.Depth;
+            string? rawText = null;
+            string? inlineText = null;
+            string? formulaText = null;
+            bool hasFormula = false;
+            bool hasNode = cellReader.Read();
+            while (hasNode) {
+                if (cellReader.NodeType == XmlNodeType.EndElement && cellReader.Depth == depth && cellReader.LocalName == "c") {
+                    break;
+                }
+
+                if (cellReader.NodeType == XmlNodeType.Element) {
+                    if (cellReader.LocalName == "v") {
+                        rawText = cellReader.ReadElementContentAsString();
+                        hasNode = true;
+                        continue;
+                    }
+
+                    if (cellReader.LocalName == "f") {
+                        hasFormula = true;
+                        formulaText = cellReader.ReadElementContentAsString();
+                        if (!_opt.UseCachedFormulaResult) {
+                            SkipXmlElementContent(cellReader, depth, "c");
+                            raw.HasFormula = true;
+                            raw.FormulaText = formulaText;
+                            return raw;
+                        }
+
+                        hasNode = true;
+                        continue;
+                    }
+
+                    if (cellReader.LocalName == "is") {
+                        inlineText = ReadXmlInlineString(cellReader);
+                        hasNode = true;
+                        continue;
+                    }
+                }
+
+                hasNode = cellReader.Read();
+            }
+
+            bool preferFormulaText = hasFormula && !_opt.UseCachedFormulaResult && formulaText != null;
+            raw.HasFormula = hasFormula;
+            raw.FormulaText = formulaText;
+            raw.RawText = preferFormulaText ? null : rawText;
+            raw.InlineText = preferFormulaText ? null : inlineText;
+            return raw;
+        }
+
+        private static void SkipXmlElement(XmlReader reader, string localName) {
+            if (reader.IsEmptyElement) {
+                return;
+            }
+
+            int depth = reader.Depth;
+            while (reader.Read()) {
+                if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth && reader.LocalName == localName) {
+                    return;
+                }
+            }
+        }
+
+        private static void SkipXmlElementContent(XmlReader reader, int depth, string localName) {
+            if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth && reader.LocalName == localName) {
+                return;
+            }
+
+            while (reader.Read()) {
+                if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth && reader.LocalName == localName) {
+                    return;
+                }
+            }
         }
 
         private IEnumerable<T> ReadObjectsStreamIterator<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
@@ -524,26 +1344,61 @@ namespace OfficeIMO.Excel {
                 PropertyInfo property,
                 Type propertyType,
                 Type destinationType,
+                TypedBindingKind bindingKind,
                 bool isNullable,
                 bool needsDateStyleConversion,
                 Action<TTarget, object?> setValue,
+                Action<TTarget, string?>? setString,
+                Action<TTarget, int>? setInt32,
+                Action<TTarget, long>? setInt64,
+                Action<TTarget, double>? setDouble,
+                Action<TTarget, decimal>? setDecimal,
+                Action<TTarget, bool>? setBoolean,
+                Action<TTarget, DateTime>? setDateTime,
                 Func<object, CultureInfo, object?> convertValue) {
                 Property = property;
                 PropertyType = propertyType;
                 DestinationType = destinationType;
+                BindingKind = bindingKind;
                 IsNullable = isNullable;
                 NeedsDateStyleConversion = needsDateStyleConversion;
                 SetValue = setValue;
+                SetString = setString;
+                SetInt32 = setInt32;
+                SetInt64 = setInt64;
+                SetDouble = setDouble;
+                SetDecimal = setDecimal;
+                SetBoolean = setBoolean;
+                SetDateTime = setDateTime;
                 ConvertValue = convertValue;
             }
 
             internal PropertyInfo Property { get; }
             internal Type PropertyType { get; }
             internal Type DestinationType { get; }
+            internal TypedBindingKind BindingKind { get; }
             internal bool IsNullable { get; }
             internal bool NeedsDateStyleConversion { get; }
             internal Action<TTarget, object?> SetValue { get; }
+            internal Action<TTarget, string?>? SetString { get; }
+            internal Action<TTarget, int>? SetInt32 { get; }
+            internal Action<TTarget, long>? SetInt64 { get; }
+            internal Action<TTarget, double>? SetDouble { get; }
+            internal Action<TTarget, decimal>? SetDecimal { get; }
+            internal Action<TTarget, bool>? SetBoolean { get; }
+            internal Action<TTarget, DateTime>? SetDateTime { get; }
             internal Func<object, CultureInfo, object?> ConvertValue { get; }
+        }
+
+        private enum TypedBindingKind {
+            Other,
+            String,
+            Int32,
+            Int64,
+            Double,
+            Decimal,
+            Boolean,
+            DateTime
         }
 
         private sealed class TypedPropertyMapCache {
@@ -588,14 +1443,19 @@ namespace OfficeIMO.Excel {
                 .Where(p => p.CanWrite)
                 .ToArray();
 
-            internal static readonly Dictionary<PropertyInfo, TypedPropertyBinding<TTarget>> Bindings = WritableProperties
-                .ToDictionary(prop => prop, CreateBinding);
+            internal static readonly Dictionary<PropertyInfo, TypedPropertyBinding<TTarget>> Bindings = CreateBindings();
 
             internal static readonly TypedPropertyMapCache PropertyMaps = CreatePropertyMaps();
+
+            private static readonly TypedHeaderBindingCache<TTarget> WritablePropertyOrderBindings = CreateWritablePropertyOrderBindings();
 
             private static readonly ConcurrentDictionary<string, TypedHeaderBindingCache<TTarget>> HeaderBindings = new ConcurrentDictionary<string, TypedHeaderBindingCache<TTarget>>(StringComparer.Ordinal);
 
             internal static TypedHeaderBindingCache<TTarget> GetHeaderBindings(string[] headers) {
+                if (HeadersMatchWritablePropertyOrder(headers)) {
+                    return WritablePropertyOrderBindings;
+                }
+
                 string key = CreateHeaderBindingKey(headers);
                 if (HeaderBindings.TryGetValue(key, out var cached)) {
                     return cached;
@@ -609,17 +1469,90 @@ namespace OfficeIMO.Excel {
                 return created;
             }
 
+            private static Dictionary<PropertyInfo, TypedPropertyBinding<TTarget>> CreateBindings() {
+                var bindings = new Dictionary<PropertyInfo, TypedPropertyBinding<TTarget>>(WritableProperties.Length);
+                foreach (var property in WritableProperties) {
+                    bindings.Add(property, CreateBinding(property));
+                }
+
+                return bindings;
+            }
+
+            private static TypedHeaderBindingCache<TTarget> CreateWritablePropertyOrderBindings() {
+                var map = new TypedPropertyBinding<TTarget>?[WritableProperties.Length];
+                for (int i = 0; i < WritableProperties.Length; i++) {
+                    map[i] = Bindings[WritableProperties[i]];
+                }
+
+                return new TypedHeaderBindingCache<TTarget>(map, Array.Empty<string>());
+            }
+
+            private static bool HeadersMatchWritablePropertyOrder(string[] headers) {
+                if (headers.Length != WritableProperties.Length) {
+                    return false;
+                }
+
+                for (int i = 0; i < headers.Length; i++) {
+                    if (!string.Equals(headers[i], WritableProperties[i].Name, StringComparison.Ordinal)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
             private static TypedPropertyBinding<TTarget> CreateBinding(PropertyInfo property) {
                 var nullable = Nullable.GetUnderlyingType(property.PropertyType);
                 var destinationType = nullable ?? property.PropertyType;
+                var bindingKind = GetBindingKind(destinationType);
                 return new TypedPropertyBinding<TTarget>(
                     property,
                     property.PropertyType,
                     destinationType,
+                    bindingKind,
                     !property.PropertyType.IsValueType || nullable != null,
                     NeedsDateStyleConversion(destinationType),
                     CreateSetter(property),
+                    bindingKind == TypedBindingKind.String ? CreateTypedSetter<string?>(property) : null,
+                    bindingKind == TypedBindingKind.Int32 ? CreateTypedSetter<int>(property) : null,
+                    bindingKind == TypedBindingKind.Int64 ? CreateTypedSetter<long>(property) : null,
+                    bindingKind == TypedBindingKind.Double ? CreateTypedSetter<double>(property) : null,
+                    bindingKind == TypedBindingKind.Decimal ? CreateTypedSetter<decimal>(property) : null,
+                    bindingKind == TypedBindingKind.Boolean ? CreateTypedSetter<bool>(property) : null,
+                    bindingKind == TypedBindingKind.DateTime ? CreateTypedSetter<DateTime>(property) : null,
                     CreateConverter(destinationType));
+            }
+
+            private static TypedBindingKind GetBindingKind(Type destinationType) {
+                if (destinationType == typeof(string)) {
+                    return TypedBindingKind.String;
+                }
+
+                if (destinationType == typeof(int)) {
+                    return TypedBindingKind.Int32;
+                }
+
+                if (destinationType == typeof(long)) {
+                    return TypedBindingKind.Int64;
+                }
+
+                if (destinationType == typeof(double)) {
+                    return TypedBindingKind.Double;
+                }
+
+                if (destinationType == typeof(decimal)) {
+                    return TypedBindingKind.Decimal;
+                }
+
+                if (destinationType == typeof(bool)) {
+                    return TypedBindingKind.Boolean;
+                }
+
+                if (destinationType == typeof(DateTime)) {
+                    return TypedBindingKind.DateTime;
+                }
+
+                return TypedBindingKind.Other;
             }
 
             private static bool NeedsDateStyleConversion(Type destinationType) {
@@ -728,6 +1661,18 @@ namespace OfficeIMO.Excel {
                 }
             }
 
+            private static Action<TTarget, TValue>? CreateTypedSetter<TValue>(PropertyInfo property) {
+                try {
+                    var target = Expression.Parameter(typeof(TTarget), "target");
+                    var value = Expression.Parameter(typeof(TValue), "value");
+                    var converted = Expression.Convert(value, property.PropertyType);
+                    var body = Expression.Assign(Expression.Property(target, property), converted);
+                    return Expression.Lambda<Action<TTarget, TValue>>(body, target, value).Compile();
+                } catch {
+                    return null;
+                }
+            }
+
             private static TypedPropertyMapCache CreatePropertyMaps() {
                 string typeName = typeof(TTarget).Name;
                 var diagnostics = new List<string>();
@@ -743,13 +1688,24 @@ namespace OfficeIMO.Excel {
 
             private static TypedHeaderBindingCache<TTarget> CreateHeaderBindings(string[] headers) {
                 var map = new TypedPropertyBinding<TTarget>?[headers.Length];
-                var assignedProps = new HashSet<PropertyInfo>();
+                int mappedCount = 0;
 
                 // Exact property matches win first so alias/friendly fallback does not steal
                 // a property from a later exact-name column.
                 for (int c = 0; c < headers.Length; c++) {
                     if (PropertyMaps.ExactProperties.TryGetValue(headers[c], out var pi)) {
                         map[c] = Bindings[pi];
+                        mappedCount++;
+                    }
+                }
+
+                if (mappedCount == headers.Length) {
+                    return new TypedHeaderBindingCache<TTarget>(map, Array.Empty<string>());
+                }
+
+                var assignedProps = new HashSet<PropertyInfo>();
+                for (int c = 0; c < map.Length; c++) {
+                    if (map[c] != null && PropertyMaps.ExactProperties.TryGetValue(headers[c], out var pi)) {
                         assignedProps.Add(pi);
                     }
                 }
@@ -821,14 +1777,15 @@ namespace OfficeIMO.Excel {
 
         private object? TryChangeType<TTarget>(object value, TypedPropertyBinding<TTarget> binding, CultureInfo culture) {
             if (value == null) return null;
-            var srcType = value.GetType();
-            if (binding.PropertyType.IsAssignableFrom(srcType)) return value;
 
             var hook = _opt.TypeConverter;
             if (hook != null) {
                 var (ok, v) = hook(value, binding.DestinationType, culture);
                 if (ok) return v;
             }
+
+            var srcType = value.GetType();
+            if (binding.PropertyType.IsAssignableFrom(srcType)) return value;
 
             return binding.ConvertValue(value, culture);
         }
@@ -923,8 +1880,9 @@ namespace OfficeIMO.Excel {
             uint? styleIndex = null;
             if (_opt.TreatDatesUsingNumberFormat && binding.NeedsDateStyleConversion) {
                 styleIndex = cell.StyleIndex?.Value;
-                if (styleIndex is not null && _styles.IsDateLike(styleIndex.Value)) {
-                    if (double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var oa)
+                if (styleIndex is not null && Styles.IsDateLike(styleIndex.Value)) {
+                    if ((TryParseInvariantDoubleFast(rawText, out var oa)
+                            || double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out oa))
                         && ReturnBindingConversion(TryConvertDateTimeForBinding(DateTime.FromOADate(oa), binding, out converted), binding, converted)) {
                         return true;
                     }
@@ -1025,8 +1983,9 @@ namespace OfficeIMO.Excel {
             if (_opt.TreatDatesUsingNumberFormat
                 && binding.NeedsDateStyleConversion
                 && raw.StyleIndex is not null
-                && _styles.IsDateLike(raw.StyleIndex.Value)) {
-                if (double.TryParse(raw.RawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var oa)) {
+                && Styles.IsDateLike(raw.StyleIndex.Value)) {
+                if (TryParseInvariantDoubleFast(raw.RawText, out var oa)
+                    || double.TryParse(raw.RawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out oa)) {
                     return TryConvertDateTimeForBinding(DateTime.FromOADate(oa), binding, out converted);
                 }
 
@@ -1036,26 +1995,349 @@ namespace OfficeIMO.Excel {
             return TryConvertNumericTextForBinding(raw.RawText, binding, out converted);
         }
 
+        private bool TryConvertRawCellForBinding<TTarget>(
+            CellRaw raw,
+            TypedPropertyBinding<TTarget> binding,
+            out object? converted) {
+            converted = null;
+
+            if (raw.RawText == null && raw.InlineText == null && raw.FormulaText == null) {
+                return binding.IsNullable;
+            }
+
+            if (TryConvertRawForBinding(raw, binding, out converted)) {
+                return converted is not null || binding.IsNullable;
+            }
+
+            object? typedValue = ConvertRaw(raw).TypedValue;
+            if (typedValue is null) {
+                return binding.IsNullable;
+            }
+
+            converted = TryChangeType(typedValue, binding, _opt.Culture);
+            return converted is not null || binding.IsNullable;
+        }
+
+        private bool TrySetRawCellForBinding<TTarget>(
+            CellRaw raw,
+            TypedPropertyBinding<TTarget> binding,
+            TTarget target) {
+            if (_opt.CellValueConverter != null || _opt.TypeConverter != null) {
+                object? typedValue = ConvertRaw(raw).TypedValue;
+                if (typedValue is null) {
+                    if (binding.IsNullable) {
+                        binding.SetValue(target, null);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                object? converted = TryChangeType(typedValue, binding, _opt.Culture);
+                if (converted is not null || binding.IsNullable) {
+                    binding.SetValue(target, converted);
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (raw.RawText == null && raw.InlineText == null && raw.FormulaText == null) {
+                if (binding.IsNullable) {
+                    binding.SetValue(target, null);
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (raw.HasFormula && (!_opt.UseCachedFormulaResult || raw.RawText == null)) {
+                if (binding.BindingKind == TypedBindingKind.String) {
+                    string? formulaValue = raw.FormulaText ?? raw.RawText ?? raw.InlineText;
+                    SetStringBinding(binding, target, formulaValue);
+                    return formulaValue is not null || binding.IsNullable;
+                }
+
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(raw.InlineText)) {
+                if (TrySetStringTextBinding(raw.InlineText, binding, target)) {
+                    return true;
+                }
+
+                return TrySetRawCellForBindingFallback(raw, binding, target);
+            }
+
+            if (raw.TypeHint == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) {
+                string? text = TryParseSharedStringIndex(raw.RawText, out int sstIndex)
+                    ? _sst.Get(sstIndex)
+                    : raw.RawText;
+                if (TrySetStringTextBinding(text, binding, target)) {
+                    return true;
+                }
+
+                return TrySetRawCellForBindingFallback(raw, binding, target);
+            }
+
+            if (raw.TypeHint == DocumentFormat.OpenXml.Spreadsheet.CellValues.Boolean && raw.RawText != null) {
+                bool boolValue = raw.RawText == "1";
+                if (binding.SetBoolean != null && binding.BindingKind == TypedBindingKind.Boolean) {
+                    binding.SetBoolean(target, boolValue);
+                    return true;
+                }
+
+                if (binding.SetString != null && binding.BindingKind == TypedBindingKind.String) {
+                    binding.SetString(target, boolValue.ToString());
+                    return true;
+                }
+
+                return TrySetRawCellForBindingFallback(raw, binding, target);
+            }
+
+            if (raw.TypeHint == DocumentFormat.OpenXml.Spreadsheet.CellValues.String
+                || raw.TypeHint == DocumentFormat.OpenXml.Spreadsheet.CellValues.InlineString) {
+                if (TrySetStringTextBinding(raw.RawText ?? raw.InlineText, binding, target)) {
+                    return true;
+                }
+
+                return TrySetRawCellForBindingFallback(raw, binding, target);
+            }
+
+            if (raw.TypeHint == DocumentFormat.OpenXml.Spreadsheet.CellValues.Date && raw.RawText != null) {
+                if (binding.SetDateTime != null
+                    && DateTime.TryParse(raw.RawText, _opt.Culture, DateTimeStyles.AssumeLocal, out var dateValue)) {
+                    binding.SetDateTime(target, dateValue);
+                    return true;
+                }
+
+                if (TrySetStringTextBinding(raw.RawText, binding, target)) {
+                    return true;
+                }
+
+                return TrySetRawCellForBindingFallback(raw, binding, target);
+            }
+
+            if (raw.RawText == null) {
+                return false;
+            }
+
+            if (_opt.TreatDatesUsingNumberFormat
+                && binding.NeedsDateStyleConversion
+                && raw.StyleIndex is not null
+                && Styles.IsDateLike(raw.StyleIndex.Value)) {
+                if (TryParseInvariantDoubleFast(raw.RawText, out var oa)
+                    || double.TryParse(raw.RawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out oa)) {
+                    DateTime dateValue = DateTime.FromOADate(oa);
+                    if (binding.SetDateTime != null && binding.BindingKind == TypedBindingKind.DateTime) {
+                        binding.SetDateTime(target, dateValue);
+                        return true;
+                    }
+
+                    if (binding.SetString != null && binding.BindingKind == TypedBindingKind.String) {
+                        binding.SetString(target, dateValue.ToString(_opt.Culture));
+                        return true;
+                    }
+                }
+
+                if (TrySetStringTextBinding(raw.RawText, binding, target)) {
+                    return true;
+                }
+
+                return TrySetRawCellForBindingFallback(raw, binding, target);
+            }
+
+            if (TrySetNumericTextBinding(raw.RawText, binding, target)) {
+                return true;
+            }
+
+            return TrySetRawCellForBindingFallback(raw, binding, target);
+        }
+
+        private bool TrySetRawCellForBindingFallback<TTarget>(
+            CellRaw raw,
+            TypedPropertyBinding<TTarget> binding,
+            TTarget target) {
+            if (TryConvertRawCellForBinding(raw, binding, out object? converted)) {
+                binding.SetValue(target, converted);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TrySetStringTextBinding<TTarget>(
+            string? text,
+            TypedPropertyBinding<TTarget> binding,
+            TTarget target) {
+            if (text == null) {
+                if (binding.IsNullable) {
+                    binding.SetValue(target, null);
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (binding.SetString != null && binding.BindingKind == TypedBindingKind.String) {
+                binding.SetString(target, text);
+                return true;
+            }
+
+            if (binding.SetBoolean != null
+                && binding.BindingKind == TypedBindingKind.Boolean
+                && bool.TryParse(text, out bool boolValue)) {
+                binding.SetBoolean(target, boolValue);
+                return true;
+            }
+
+            if (binding.SetDateTime != null
+                && binding.BindingKind == TypedBindingKind.DateTime
+                && DateTime.TryParse(text, _opt.Culture, DateTimeStyles.AssumeLocal, out var dateValue)) {
+                binding.SetDateTime(target, dateValue);
+                return true;
+            }
+
+            return TrySetNumericTextBinding(text, binding, target);
+        }
+
+        private bool TrySetNumericTextBinding<TTarget>(
+            string rawText,
+            TypedPropertyBinding<TTarget> binding,
+            TTarget target) {
+            switch (binding.BindingKind) {
+                case TypedBindingKind.Int32: {
+                    if (binding.SetInt32 == null) {
+                        return false;
+                    }
+
+                    if (TryParseRawInt32(rawText, out int intValue)) {
+                        binding.SetInt32(target, intValue);
+                        return true;
+                    }
+
+                    if (TryParseRawDouble(rawText, out double doubleValue)
+                        && doubleValue >= int.MinValue
+                        && doubleValue <= int.MaxValue
+                        && Math.Truncate(doubleValue) == doubleValue) {
+                        binding.SetInt32(target, (int)doubleValue);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                case TypedBindingKind.Int64: {
+                    if (binding.SetInt64 == null) {
+                        return false;
+                    }
+
+                    if (TryParseRawInt64(rawText, out long longValue)) {
+                        binding.SetInt64(target, longValue);
+                        return true;
+                    }
+
+                    if (TryParseRawDouble(rawText, out double doubleValue)
+                        && doubleValue >= long.MinValue
+                        && doubleValue <= long.MaxValue
+                        && Math.Truncate(doubleValue) == doubleValue) {
+                        binding.SetInt64(target, (long)doubleValue);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                case TypedBindingKind.Double: {
+                    if (binding.SetDouble == null) {
+                        return false;
+                    }
+
+                    if (TryParseRawDouble(rawText, out double doubleValue)) {
+                        binding.SetDouble(target, doubleValue);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                case TypedBindingKind.Decimal: {
+                    if (binding.SetDecimal == null) {
+                        return false;
+                    }
+
+                    if (TryParseRawDecimal(rawText, out decimal decimalValue)) {
+                        binding.SetDecimal(target, decimalValue);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                case TypedBindingKind.Boolean: {
+                    if (binding.SetBoolean == null) {
+                        return false;
+                    }
+
+                    if (rawText == "1") {
+                        binding.SetBoolean(target, true);
+                        return true;
+                    }
+
+                    if (rawText == "0") {
+                        binding.SetBoolean(target, false);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                case TypedBindingKind.String: {
+                    if (binding.SetString == null) {
+                        return false;
+                    }
+
+                    binding.SetString(target, rawText);
+                    return true;
+                }
+
+                default:
+                    return false;
+            }
+        }
+
+        private static void SetStringBinding<TTarget>(
+            TypedPropertyBinding<TTarget> binding,
+            TTarget target,
+            string? value) {
+            if (binding.SetString != null && binding.BindingKind == TypedBindingKind.String) {
+                binding.SetString(target, value);
+            } else {
+                binding.SetValue(target, value);
+            }
+        }
+
         private bool ShouldRetryRawDateStyledNumericBinding<TTarget>(
             CellRaw raw,
             TypedPropertyBinding<TTarget> binding) {
             if (!_opt.TreatDatesUsingNumberFormat
                 || binding.NeedsDateStyleConversion
-                || !IsNumericBindingDestination(binding.DestinationType)
+                || !IsNumericBindingDestination(binding.BindingKind)
                 || raw.RawText == null
                 || raw.StyleIndex is null
-                || !_styles.IsDateLike(raw.StyleIndex.Value)) {
+                || !Styles.IsDateLike(raw.StyleIndex.Value)) {
                 return false;
             }
 
-            return double.TryParse(raw.RawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out _);
+            return TryParseInvariantDoubleFast(raw.RawText, out _)
+                || double.TryParse(raw.RawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out _);
         }
 
-        private static bool IsNumericBindingDestination(Type destinationType) {
-            return destinationType == typeof(int)
-                || destinationType == typeof(long)
-                || destinationType == typeof(double)
-                || destinationType == typeof(decimal);
+        private static bool IsNumericBindingDestination(TypedBindingKind bindingKind) {
+            return bindingKind == TypedBindingKind.Int32
+                || bindingKind == TypedBindingKind.Int64
+                || bindingKind == TypedBindingKind.Double
+                || bindingKind == TypedBindingKind.Decimal;
         }
 
         private bool TryConvertNumericTextForBinding<TTarget>(
@@ -1066,12 +2348,12 @@ namespace OfficeIMO.Excel {
             Type destinationType = binding.DestinationType;
 
             if (destinationType == typeof(int)) {
-                if (int.TryParse(rawText, NumberStyles.Integer, _opt.Culture, out int intValue)) {
+                if (TryParseRawInt32(rawText, out int intValue)) {
                     converted = intValue;
                     return true;
                 }
 
-                if (double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out double doubleValue)
+                if (TryParseRawDouble(rawText, out double doubleValue)
                     && doubleValue >= int.MinValue
                     && doubleValue <= int.MaxValue
                     && Math.Truncate(doubleValue) == doubleValue) {
@@ -1083,12 +2365,12 @@ namespace OfficeIMO.Excel {
             }
 
             if (destinationType == typeof(long)) {
-                if (long.TryParse(rawText, NumberStyles.Integer, _opt.Culture, out long longValue)) {
+                if (TryParseRawInt64(rawText, out long longValue)) {
                     converted = longValue;
                     return true;
                 }
 
-                if (double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out double doubleValue)
+                if (TryParseRawDouble(rawText, out double doubleValue)
                     && doubleValue >= long.MinValue
                     && doubleValue <= long.MaxValue
                     && Math.Truncate(doubleValue) == doubleValue) {
@@ -1100,7 +2382,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (destinationType == typeof(double)) {
-                if (double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out double doubleValue)) {
+                if (TryParseRawDouble(rawText, out double doubleValue)) {
                     converted = doubleValue;
                     return true;
                 }
@@ -1109,7 +2391,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (destinationType == typeof(decimal)) {
-                if (decimal.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out decimal decimalValue)) {
+                if (TryParseRawDecimal(rawText, out decimal decimalValue)) {
                     converted = decimalValue;
                     return true;
                 }
@@ -1305,8 +2587,6 @@ namespace OfficeIMO.Excel {
 
         private object? TryChangeType(object value, Type targetType, CultureInfo culture) {
             if (value == null) return null;
-            var srcType = value.GetType();
-            if (targetType.IsAssignableFrom(srcType)) return value;
 
             var nullable = Nullable.GetUnderlyingType(targetType);
             var destType = nullable ?? targetType;
@@ -1316,6 +2596,9 @@ namespace OfficeIMO.Excel {
                 var (ok, v) = hook(value, destType, culture);
                 if (ok) return v;
             }
+
+            var srcType = value.GetType();
+            if (targetType.IsAssignableFrom(srcType)) return value;
 
             return ConvertToDestinationType(value, destType, culture);
         }

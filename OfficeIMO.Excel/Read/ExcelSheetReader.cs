@@ -5,6 +5,7 @@ using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Threading;
+using System.Xml;
 
 namespace OfficeIMO.Excel {
     /// <summary>
@@ -14,12 +15,15 @@ namespace OfficeIMO.Excel {
         private readonly string _sheetName;
         private readonly WorksheetPart _wsPart;
         private readonly SharedStringCache _sst;
-        private readonly StylesCache _styles;
+        private readonly StylesCacheProvider _styles;
         private readonly ExcelReadOptions _opt;
         private readonly bool _canStreamWorksheetPart;
+        private StylesCache? _stylesCache;
         private bool? _hasWorksheetPartStreamContent;
+        private string? _usedRangeA1;
+        private static readonly XmlReaderSettings WorksheetXmlReaderSettings = CreateWorksheetXmlReaderSettings();
 
-        internal ExcelSheetReader(string sheetName, WorksheetPart wsPart, SharedStringCache sst, StylesCache styles, ExcelReadOptions opt, bool canStreamWorksheetPart) {
+        internal ExcelSheetReader(string sheetName, WorksheetPart wsPart, SharedStringCache sst, StylesCacheProvider styles, ExcelReadOptions opt, bool canStreamWorksheetPart) {
             _sheetName = sheetName;
             _wsPart = wsPart;
             _sst = sst;
@@ -27,6 +31,8 @@ namespace OfficeIMO.Excel {
             _opt = opt;
             _canStreamWorksheetPart = canStreamWorksheetPart;
         }
+
+        private StylesCache Styles => _stylesCache ??= _styles.Value;
 
         /// <summary>
         /// Worksheet name.
@@ -37,15 +43,120 @@ namespace OfficeIMO.Excel {
         /// Enumerates non-empty cells as (Row, Column, Value). Values are typed when possible.
         /// </summary>
         public IEnumerable<CellValueInfo> EnumerateCells() {
-            foreach (var row in EnumerateWorksheetRows()) {
+            return CanUseEnumerateCellsXmlReader()
+                ? EnumerateCellsXmlFast(CancellationToken.None)
+                : EnumerateCellsDom(CancellationToken.None);
+        }
+
+        private IEnumerable<CellValueInfo> EnumerateCellsDom(CancellationToken ct) {
+            bool canCancel = ct.CanBeCanceled;
+            foreach (var row in EnumerateWorksheetRows(ct)) {
+                if (canCancel) {
+                    ct.ThrowIfCancellationRequested();
+                }
+
                 var rIndex = checked((int)row.RowIndex!.Value);
                 foreach (var cell in row.Elements<Cell>()) {
+                    if (canCancel) {
+                        ct.ThrowIfCancellationRequested();
+                    }
+
                     int cIndex = A1.ParseColumnIndexFromCellReferenceFast(cell.CellReference?.Value);
                     var value = ConvertCell(cell);
                     if (value is not null || CellHasExplicitBlank(cell))
                         yield return new CellValueInfo(rIndex, cIndex, value);
                 }
             }
+        }
+
+        private IEnumerable<CellValueInfo> EnumerateCellsXmlFast(CancellationToken ct) {
+            using var stream = _wsPart.GetStream(FileMode.Open, FileAccess.Read);
+            RewindWorksheetStream(stream);
+            using var reader = OpenWorksheetXmlReader(stream);
+            bool canCancel = ct.CanBeCanceled;
+            bool hasCustomConverter = _opt.CellValueConverter != null;
+            int nextRowIndex = 1;
+
+            while (reader.Read()) {
+                if (canCancel) {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "row") {
+                    continue;
+                }
+
+                int rowIndex = ParsePositiveIntAttribute(reader.GetAttribute("r"));
+                if (rowIndex <= 0) {
+                    rowIndex = nextRowIndex;
+                }
+
+                nextRowIndex = rowIndex + 1;
+                if (reader.IsEmptyElement) {
+                    continue;
+                }
+
+                int depth = reader.Depth;
+                int nextColumnIndex = 1;
+                while (reader.Read()) {
+                    if (canCancel) {
+                        ct.ThrowIfCancellationRequested();
+                    }
+
+                    if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth && reader.LocalName == "row") {
+                        break;
+                    }
+
+                    if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "c") {
+                        continue;
+                    }
+
+                    int columnIndex = GetXmlCellColumnIndex(reader, ref nextColumnIndex);
+                    if (columnIndex <= 0) {
+                        SkipXmlElement(reader, "c");
+                        continue;
+                    }
+
+                    if (hasCustomConverter) {
+                        if (TryReadXmlCellValueForCellEnumeration(reader, rowIndex, columnIndex, out object? customValue, out bool explicitBlank)) {
+                            if (customValue != null || explicitBlank) {
+                                yield return new CellValueInfo(rowIndex, columnIndex, customValue);
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    if (reader.IsEmptyElement) {
+                        continue;
+                    }
+
+                    object? cellValue = ReadXmlCellValue(reader);
+                    if (cellValue != null) {
+                        yield return new CellValueInfo(rowIndex, columnIndex, cellValue);
+                    }
+                }
+            }
+        }
+
+        private bool TryReadXmlCellValueForCellEnumeration(XmlReader cellReader, int rowIndex, int columnIndex, out object? value, out bool explicitBlank) {
+            XmlCellKind cellKind = ParseXmlCellKind(cellReader.GetAttribute("t"));
+            bool readStyleIndex = true;
+
+            CellRaw raw = ReadXmlCellRaw(cellReader, rowIndex, columnIndex, cellKind, readStyleIndex);
+            explicitBlank = raw.RawText != null && raw.RawText.Length == 0 && raw.InlineText == null && raw.FormulaText == null;
+            if (raw.RawText == null && raw.InlineText == null && raw.FormulaText == null) {
+                value = null;
+                return false;
+            }
+
+            value = ConvertRaw(raw).TypedValue;
+            return true;
+        }
+
+        private bool CanUseEnumerateCellsXmlReader() {
+            return (_opt.CellValueConverter != null || _opt.Culture == CultureInfo.InvariantCulture)
+                && CanStreamWorksheetPart();
         }
 
         // ---------- Internals ----------
@@ -115,6 +226,7 @@ namespace OfficeIMO.Excel {
         private bool HasWorksheetPartStreamContent() {
             try {
                 using var stream = _wsPart.GetStream(FileMode.Open, FileAccess.Read);
+                RewindWorksheetStream(stream);
                 return !stream.CanSeek || stream.Length > 0;
             } catch (IOException) {
                 return false;
@@ -123,6 +235,39 @@ namespace OfficeIMO.Excel {
             } catch (ObjectDisposedException) {
                 return false;
             }
+        }
+
+        private static void RewindWorksheetStream(Stream stream) {
+            if (stream.CanSeek) {
+                stream.Position = 0;
+            }
+        }
+
+        private static bool TryPrepareWorksheetStream(Stream stream) {
+            if (!stream.CanSeek) {
+                return true;
+            }
+
+            if (stream.Length == 0) {
+                return false;
+            }
+
+            stream.Position = 0;
+            return true;
+        }
+
+        private static XmlReader OpenWorksheetXmlReader(Stream stream) {
+            return XmlReader.Create(stream, WorksheetXmlReaderSettings);
+        }
+
+        private static XmlReaderSettings CreateWorksheetXmlReaderSettings() {
+            return new XmlReaderSettings {
+                DtdProcessing = DtdProcessing.Prohibit,
+                IgnoreComments = true,
+                IgnoreProcessingInstructions = true,
+                IgnoreWhitespace = true,
+                CloseInput = false
+            };
         }
 
         private static string? ExtractFormulaText(Cell cell) {
@@ -176,9 +321,9 @@ namespace OfficeIMO.Excel {
                 return true;
             }
 
-            uint? styleIndex = null;
-            if (NeedsStyleForConversion(typeHint, rawText)) {
-                styleIndex = cell.StyleIndex?.Value;
+            uint? styleIndex = cell.StyleIndex?.Value;
+            if (!NeedsStyleForConversion(typeHint, rawText, styleIndex)) {
+                styleIndex = null;
             }
 
             value = TryConvertWithoutCustomHook(typeHint, styleIndex, rawText, inlineText, out object? converted)
@@ -187,14 +332,58 @@ namespace OfficeIMO.Excel {
             return true;
         }
 
-        private bool NeedsStyleForConversion(CellValues? typeHint, string? rawText) {
+        private bool NeedsStyleForConversion(CellValues? typeHint, string? rawText, uint? styleIndex) {
             return rawText != null
+                && styleIndex is not null
                 && _opt.TreatDatesUsingNumberFormat
                 && typeHint != CellValues.SharedString
                 && typeHint != CellValues.Boolean
                 && typeHint != CellValues.String
                 && typeHint != CellValues.InlineString
-                && typeHint != CellValues.Date;
+                && typeHint != CellValues.Date
+                && Styles.HasDateStyles;
+        }
+
+        private static XmlCellKind ParseXmlCellKind(string? type) {
+            if (string.IsNullOrEmpty(type)) {
+                return XmlCellKind.Default;
+            }
+
+            string text = type!;
+            switch (text.Length) {
+                case 1:
+                    return text[0] switch {
+                        'b' => XmlCellKind.Boolean,
+                        'd' => XmlCellKind.Date,
+                        'n' => XmlCellKind.Number,
+                        's' => XmlCellKind.SharedString,
+                        _ => XmlCellKind.Unknown
+                    };
+                case 3:
+                    return text == "str" ? XmlCellKind.String : XmlCellKind.Unknown;
+                case 9:
+                    return text == "inlineStr" ? XmlCellKind.InlineString : XmlCellKind.Unknown;
+                default:
+                    return XmlCellKind.Unknown;
+            }
+        }
+
+        private static bool CellKindCanUseDateStyle(XmlCellKind kind) {
+            return kind == XmlCellKind.Default
+                || kind == XmlCellKind.Number
+                || kind == XmlCellKind.Unknown;
+        }
+
+        private static CellValues? ToCellValueType(XmlCellKind kind) {
+            return kind switch {
+                XmlCellKind.Boolean => CellValues.Boolean,
+                XmlCellKind.Date => CellValues.Date,
+                XmlCellKind.InlineString => CellValues.InlineString,
+                XmlCellKind.Number => CellValues.Number,
+                XmlCellKind.SharedString => CellValues.SharedString,
+                XmlCellKind.String => CellValues.String,
+                _ => null
+            };
         }
 
         private CellRaw SnapshotCell(Cell cell, int row = 0, int col = 0) {
@@ -278,8 +467,9 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
-            if (_opt.TreatDatesUsingNumberFormat && styleIndex is not null && _styles.IsDateLike(styleIndex.Value)) {
-                if (double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var oa)) {
+            if (_opt.TreatDatesUsingNumberFormat && styleIndex is not null && Styles.IsDateLike(styleIndex.Value)) {
+                if (TryParseInvariantDoubleFast(rawText, out var oa)
+                    || double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out oa)) {
                     value = DateTime.FromOADate(oa);
                 } else {
                     value = rawText;
@@ -289,12 +479,12 @@ namespace OfficeIMO.Excel {
             }
 
             if (_opt.NumericAsDecimal) {
-                if (decimal.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out var dec)) {
+                if (TryParseRawDecimal(rawText, out var dec)) {
                     value = dec;
                     return true;
                 }
 
-                if (double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out var dbl)) {
+                if (TryParseRawDouble(rawText, out var dbl)) {
                     value = dbl;
                     return true;
                 }
@@ -303,7 +493,7 @@ namespace OfficeIMO.Excel {
                 return true;
             }
 
-            if (double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out var num)) {
+            if (TryParseRawDouble(rawText, out var num)) {
                 value = num;
             } else {
                 value = rawText;
@@ -337,6 +527,268 @@ namespace OfficeIMO.Excel {
             return true;
         }
 
+        private static bool TryParseInvariantDoubleFast(string? rawText, out double value) {
+            value = 0;
+            if (string.IsNullOrEmpty(rawText)) {
+                return false;
+            }
+
+            string text = rawText!;
+            int length = text.Length;
+            int index = 0;
+            bool negative = false;
+            if (text[0] == '-') {
+                negative = true;
+                index = 1;
+                if (index == length) {
+                    return false;
+                }
+            } else if (text[0] == '+') {
+                index = 1;
+                if (index == length) {
+                    return false;
+                }
+            }
+
+            long whole = 0;
+            bool hasDigit = false;
+            for (; index < length; index++) {
+                char ch = text[index];
+                int digit = ch - '0';
+                if ((uint)digit > 9U) {
+                    break;
+                }
+
+                if (whole > (long.MaxValue - digit) / 10) {
+                    return false;
+                }
+
+                whole = (whole * 10) + digit;
+                hasDigit = true;
+            }
+
+            double parsed = whole;
+            if (index < length && text[index] == '.') {
+                index++;
+                double scale = 0.1D;
+                for (; index < length; index++) {
+                    char ch = text[index];
+                    int digit = ch - '0';
+                    if ((uint)digit > 9U) {
+                        break;
+                    }
+
+                    parsed += digit * scale;
+                    scale *= 0.1D;
+                    hasDigit = true;
+                }
+            }
+
+            if (!hasDigit || index != length) {
+                return false;
+            }
+
+            value = negative ? -parsed : parsed;
+            return true;
+        }
+
+        private bool TryParseRawDouble(string rawText, out double value) {
+            if (_opt.Culture != CultureInfo.InvariantCulture
+                && double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, _opt.Culture, out value)) {
+                return true;
+            }
+
+            return TryParseInvariantDoubleFast(rawText, out value)
+                || double.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out value);
+        }
+
+        private bool TryParseRawInt32(string rawText, out int value) {
+            if (_opt.Culture == CultureInfo.InvariantCulture && TryParseInvariantInt32Fast(rawText, out value)) {
+                return true;
+            }
+
+            return int.TryParse(rawText, NumberStyles.Integer, _opt.Culture, out value);
+        }
+
+        private static bool TryParseInvariantInt32Fast(string rawText, out int value) {
+            value = 0;
+            if (string.IsNullOrEmpty(rawText)) {
+                return false;
+            }
+
+            int index = 0;
+            bool negative = false;
+            if (rawText[0] == '-') {
+                negative = true;
+                index = 1;
+                if (index == rawText.Length) {
+                    return false;
+                }
+            } else if (rawText[0] == '+') {
+                index = 1;
+                if (index == rawText.Length) {
+                    return false;
+                }
+            }
+
+            uint limit = negative ? 2147483648U : int.MaxValue;
+            uint parsed = 0U;
+            for (; index < rawText.Length; index++) {
+                int digit = rawText[index] - '0';
+                if ((uint)digit > 9U) {
+                    return false;
+                }
+
+                if (parsed > (limit - (uint)digit) / 10U) {
+                    return false;
+                }
+
+                parsed = (parsed * 10U) + (uint)digit;
+            }
+
+            if (negative) {
+                value = parsed == 2147483648U ? int.MinValue : -(int)parsed;
+            } else {
+                value = (int)parsed;
+            }
+
+            return true;
+        }
+
+        private bool TryParseRawInt64(string rawText, out long value) {
+            if (_opt.Culture == CultureInfo.InvariantCulture && TryParseInvariantInt64Fast(rawText, out value)) {
+                return true;
+            }
+
+            return long.TryParse(rawText, NumberStyles.Integer, _opt.Culture, out value);
+        }
+
+        private static bool TryParseInvariantInt64Fast(string rawText, out long value) {
+            value = 0;
+            if (string.IsNullOrEmpty(rawText)) {
+                return false;
+            }
+
+            int index = 0;
+            bool negative = false;
+            if (rawText[0] == '-') {
+                negative = true;
+                index = 1;
+                if (index == rawText.Length) {
+                    return false;
+                }
+            } else if (rawText[0] == '+') {
+                index = 1;
+                if (index == rawText.Length) {
+                    return false;
+                }
+            }
+
+            ulong limit = negative ? 9223372036854775808UL : long.MaxValue;
+            ulong parsed = 0UL;
+            for (; index < rawText.Length; index++) {
+                int digit = rawText[index] - '0';
+                if ((uint)digit > 9U) {
+                    return false;
+                }
+
+                if (parsed > (limit - (uint)digit) / 10UL) {
+                    return false;
+                }
+
+                parsed = (parsed * 10UL) + (uint)digit;
+            }
+
+            if (negative) {
+                value = parsed == 9223372036854775808UL ? long.MinValue : -(long)parsed;
+            } else {
+                value = (long)parsed;
+            }
+
+            return true;
+        }
+
+        private bool TryParseRawDecimal(string rawText, out decimal value) {
+            return TryParseRawDecimal(rawText, _opt.Culture, out value);
+        }
+
+        private static bool TryParseRawDecimal(string rawText, CultureInfo culture, out decimal value) {
+            if (culture == CultureInfo.InvariantCulture) {
+                return TryParseInvariantDecimalFast(rawText, out value)
+                    || decimal.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out value);
+            }
+
+            if (decimal.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, culture, out value)) {
+                return true;
+            }
+
+            return TryParseInvariantDecimalFast(rawText, out value)
+                || decimal.TryParse(rawText, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static bool TryParseInvariantDecimalFast(string rawText, out decimal value) {
+            value = 0m;
+            if (string.IsNullOrEmpty(rawText)) {
+                return false;
+            }
+
+            int index = 0;
+            bool negative = false;
+            if (rawText[0] == '-') {
+                negative = true;
+                index = 1;
+                if (index == rawText.Length) {
+                    return false;
+                }
+            } else if (rawText[0] == '+') {
+                index = 1;
+                if (index == rawText.Length) {
+                    return false;
+                }
+            }
+
+            ulong parsed = 0UL;
+            int scale = 0;
+            bool hasDigit = false;
+            bool hasDecimalPoint = false;
+            for (; index < rawText.Length; index++) {
+                char ch = rawText[index];
+                int digit = ch - '0';
+                if ((uint)digit <= 9U) {
+                    if (parsed > (ulong.MaxValue - (uint)digit) / 10UL) {
+                        return false;
+                    }
+
+                    parsed = (parsed * 10UL) + (uint)digit;
+                    hasDigit = true;
+                    if (hasDecimalPoint && ++scale > 28) {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (ch == '.' && !hasDecimalPoint) {
+                    hasDecimalPoint = true;
+                    continue;
+                }
+
+                return false;
+            }
+
+            if (!hasDigit) {
+                return false;
+            }
+
+            value = new decimal(
+                (int)(parsed & 0xFFFFFFFF),
+                (int)((parsed >> 32) & 0xFFFFFFFF),
+                0,
+                negative,
+                (byte)scale);
+            return true;
+        }
+
         private object? ConvertByHints(CellValues? type, uint? styleIndex, string? rawText, string? inlineText) {
             // Custom converter hook (cell-level). If provided and handled, honor it.
             var hook = _opt.CellValueConverter;
@@ -354,18 +806,19 @@ namespace OfficeIMO.Excel {
                 return rawText == "1";
 
             if (type == CellValues.Number && rawText != null) {
-                if (_opt.TreatDatesUsingNumberFormat && styleIndex is not null && _styles.IsDateLike(styleIndex.Value)) {
-                    if (double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var oa))
+                if (_opt.TreatDatesUsingNumberFormat && styleIndex is not null && Styles.IsDateLike(styleIndex.Value)) {
+                    if (TryParseInvariantDoubleFast(rawText, out var oa)
+                        || double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out oa))
                         return System.DateTime.FromOADate(oa);
                 }
                 if (_opt.NumericAsDecimal) {
-                    if (decimal.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, _opt.Culture, out var dec))
+                    if (TryParseRawDecimal(rawText, out var dec))
                         return dec;
-                    if (double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, _opt.Culture, out var dbl))
+                    if (TryParseRawDouble(rawText, out var dbl))
                         return dbl;
                     return rawText;
                 } else {
-                    if (double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, _opt.Culture, out var num))
+                    if (TryParseRawDouble(rawText, out var num))
                         return num;
                 }
                 return rawText;
@@ -384,19 +837,20 @@ namespace OfficeIMO.Excel {
             }
 
             if (rawText != null) {
-                if (_opt.TreatDatesUsingNumberFormat && styleIndex is not null && _styles.IsDateLike(styleIndex.Value)) {
-                    if (double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var oa))
+                if (_opt.TreatDatesUsingNumberFormat && styleIndex is not null && Styles.IsDateLike(styleIndex.Value)) {
+                    if (TryParseInvariantDoubleFast(rawText, out var oa)
+                        || double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out oa))
                         return System.DateTime.FromOADate(oa);
                     return rawText;
                 }
 
                 if (_opt.NumericAsDecimal) {
-                    if (decimal.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, _opt.Culture, out var dec2))
+                    if (TryParseRawDecimal(rawText, out var dec2))
                         return dec2;
-                    if (double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, _opt.Culture, out var dbl2))
+                    if (TryParseRawDouble(rawText, out var dbl2))
                         return dbl2;
                 } else {
-                    if (double.TryParse(rawText, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, _opt.Culture, out var num))
+                    if (TryParseRawDouble(rawText, out var num))
                         return num;
                 }
                 return rawText;
@@ -415,6 +869,17 @@ namespace OfficeIMO.Excel {
             public string? RawText;
             public string? InlineText;
             public object? TypedValue;
+        }
+
+        private enum XmlCellKind {
+            Default,
+            Boolean,
+            Date,
+            InlineString,
+            Number,
+            SharedString,
+            String,
+            Unknown
         }
     }
 }

@@ -1,6 +1,7 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Spreadsheet;
 using System.Globalization;
+using System.Text;
 
 namespace OfficeIMO.Excel {
     /// <summary>
@@ -89,9 +90,10 @@ namespace OfficeIMO.Excel {
             if (filters == null || filters.Length == 0) throw new ArgumentException("At least one filter must be provided.", nameof(filters));
             WriteLock(() => {
                 var toApply = new List<(int ColumnIndex, IEnumerable<string> Values)>();
+                var headerMap = GetHeaderMapCached(DefaultHeaderReadOptions);
                 foreach (var (header, values) in filters) {
                     if (string.IsNullOrWhiteSpace(header)) continue;
-                    if (!TryGetColumnIndexByHeader(header, out var colIndex)) continue;
+                    if (!headerMap.TryGetValue(header, out var colIndex)) continue;
                     toApply.Add((colIndex, values ?? Array.Empty<string>()));
                 }
                 if (toApply.Count == 0) return;
@@ -105,25 +107,73 @@ namespace OfficeIMO.Excel {
                 }
 
                 var (r1, c1, r2, c2) = A1.ParseRange(af.Reference!);
+                var existingColumns = new Dictionary<uint, FilterColumn>();
+                foreach (var existing in af.Elements<FilterColumn>()) {
+                    if (existing.ColumnId?.Value is uint existingColumnId) {
+                        existingColumns[existingColumnId] = existing;
+                    }
+                }
 
+                bool changed = false;
                 foreach (var (colIndex, values) in toApply) {
                     if (colIndex < c1 || colIndex > c2) continue;
                     uint columnId = (uint)(colIndex - c1);
+                    var filterValues = BuildDistinctFilterValues(values);
 
-                    var existingColumn = af.Elements<FilterColumn>().FirstOrDefault(fc => fc.ColumnId?.Value == columnId);
-                    existingColumn?.Remove();
+                    if (existingColumns.TryGetValue(columnId, out var existingColumn)) {
+                        if (FilterColumnMatchesValues(existingColumn, filterValues)) {
+                            continue;
+                        }
+
+                        existingColumn.Remove();
+                    }
 
                     var fcNew = new FilterColumn { ColumnId = columnId };
                     var filtersNode = new Filters();
-                    foreach (var v in values.Distinct(StringComparer.OrdinalIgnoreCase)) {
-                        if (v == null) continue;
+                    foreach (var v in filterValues) {
                         filtersNode.Append(new Filter { Val = v });
                     }
                     fcNew.Append(filtersNode);
                     af.Append(fcNew);
+                    existingColumns[columnId] = fcNew;
+                    changed = true;
                 }
-                ws.Save();
+                if (changed) {
+                    ws.Save();
+                }
             });
+        }
+
+        private static List<string> BuildDistinctFilterValues(IEnumerable<string> values) {
+            var result = new List<string>();
+            HashSet<string>? seen = null;
+            foreach (var value in values) {
+                if (value == null) continue;
+                seen ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (seen.Add(value)) {
+                    result.Add(value);
+                }
+            }
+
+            return result;
+        }
+
+        private static bool FilterColumnMatchesValues(FilterColumn filterColumn, IReadOnlyList<string> values) {
+            var filtersNode = filterColumn.GetFirstChild<Filters>();
+            if (filtersNode == null || filterColumn.GetFirstChild<CustomFilters>() != null) {
+                return false;
+            }
+
+            int index = 0;
+            foreach (var filter in filtersNode.Elements<Filter>()) {
+                if ((uint)index >= (uint)values.Count || !string.Equals(filter.Val?.Value, values[index], StringComparison.Ordinal)) {
+                    return false;
+                }
+
+                index++;
+            }
+
+            return index == values.Count;
         }
 
         /// <summary>
@@ -239,18 +289,51 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public string? FindFirst(string text) {
             if (string.IsNullOrEmpty(text)) return null;
+            MaterializeDeferredDataSetImportIfNeeded();
+            // Text-mutating paths must clear this cache before rendered cell text changes.
+            bool canUseCache = !_hasWorksheetMutations;
+            if (canUseCache && TryGetFindFirstCache(text, out string? cachedAddress)) {
+                return cachedAddress;
+            }
+
             var ws = WorksheetRoot;
             var sd = ws.GetFirstChild<SheetData>();
-            if (sd == null) return null;
+            if (sd == null) {
+                SetFindFirstCacheIfAllowed(null);
+                return null;
+            }
 
+            var sharedStringCache = BuildCellTextSharedStringSnapshot();
+            var sharedStringMatches = sharedStringCache.FindIndexesContaining(text, StringComparison.OrdinalIgnoreCase);
             foreach (var row in sd.Elements<Row>()) {
                 foreach (var cell in row.Elements<Cell>()) {
+                    if (TryGetSharedStringCellIndex(cell, out int sharedStringIndex)) {
+                        if (sharedStringMatches != null && sharedStringMatches.Contains(sharedStringIndex)) {
+                            string? address = cell.CellReference?.Value;
+                            SetFindFirstCacheIfAllowed(address);
+                            return address;
+                        }
+
+                        continue;
+                    }
+
                     var t = GetCellText(cell);
-                    if (!string.IsNullOrEmpty(t) && t.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0)
-                        return cell.CellReference?.Value;
+                    if (!string.IsNullOrEmpty(t) && t.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0) {
+                        string? address = cell.CellReference?.Value;
+                        SetFindFirstCacheIfAllowed(address);
+                        return address;
+                    }
                 }
             }
+
+            SetFindFirstCacheIfAllowed(null);
             return null;
+
+            void SetFindFirstCacheIfAllowed(string? address) {
+                if (canUseCache) {
+                    SetFindFirstCache(text, address);
+                }
+            }
         }
 
         /// <summary>
@@ -261,26 +344,158 @@ namespace OfficeIMO.Excel {
             if (string.IsNullOrEmpty(oldText)) return 0;
             int count = 0;
             WriteLock(() => {
+                MaterializeDeferredDataSetImportIfNeeded();
                 var ws = WorksheetRoot;
                 var sd = ws.GetFirstChild<SheetData>();
                 if (sd == null) return;
 
+                var sharedStringCache = BuildCellTextSharedStringSnapshot();
+                var sharedStringMatches = sharedStringCache.FindIndexesContaining(oldText, StringComparison.OrdinalIgnoreCase);
+                int replacementCapacity = sharedStringMatches?.Count ?? 0;
+                var replacements = replacementCapacity > 0
+                    ? new List<(Cell Cell, int TextIndex)>(replacementCapacity)
+                    : new List<(Cell Cell, int TextIndex)>();
+                var distinctReplacementTexts = replacementCapacity > 0
+                    ? new List<string>(replacementCapacity)
+                    : new List<string>();
+                var distinctReplacementLookup = replacementCapacity > 0
+                    ? new Dictionary<string, int>(replacementCapacity, StringComparer.Ordinal)
+                    : new Dictionary<string, int>(StringComparer.Ordinal);
+                Dictionary<int, int>? sharedStringReplacementIndexes = null;
+                if (sharedStringMatches != null) {
+                    sharedStringReplacementIndexes = new Dictionary<int, int>(sharedStringMatches.Count);
+                    foreach (int sharedStringIndex in sharedStringMatches) {
+                        string? current = sharedStringCache.Get(sharedStringIndex);
+                        if (string.IsNullOrEmpty(current)) {
+                            continue;
+                        }
+
+                        string replaced = ReplaceIgnoreCase(current!, oldText, newText);
+                        int replacementTextIndex = GetOrAddReplacementTextIndex(
+                            replaced,
+                            distinctReplacementTexts,
+                            distinctReplacementLookup,
+                            nameof(newText));
+                        sharedStringReplacementIndexes.Add(sharedStringIndex, replacementTextIndex);
+                    }
+                }
+
                 foreach (var row in sd.Elements<Row>()) {
                     foreach (var cell in row.Elements<Cell>()) {
-                        var current = GetCellText(cell);
+                        string? current;
+                        bool currentContainsOldText;
+                        if (TryGetSharedStringCellIndex(cell, out int sharedStringIndex)) {
+                            if (sharedStringReplacementIndexes == null
+                                || !sharedStringReplacementIndexes.TryGetValue(sharedStringIndex, out int replacementTextIndex)) {
+                                continue;
+                            }
+
+                            replacements.Add((cell, replacementTextIndex));
+                            continue;
+                        } else {
+                            if (!TryGetReplaceableCellText(cell, out current)) {
+                                continue;
+                            }
+
+                            currentContainsOldText = !string.IsNullOrEmpty(current)
+                                && current!.IndexOf(oldText, StringComparison.OrdinalIgnoreCase) >= 0;
+                        }
+
                         if (string.IsNullOrEmpty(current)) continue;
-                        if (current.IndexOf(oldText, StringComparison.OrdinalIgnoreCase) >= 0) {
-                            var replaced = ReplaceIgnoreCase(current, oldText, newText);
-                            // write back
-                            var (r, c) = A1.ParseCellRef(cell.CellReference?.Value ?? "");
-                            CellValue(r, c, replaced);
-                            count++;
+                        string currentText = current!;
+                        if (currentContainsOldText) {
+                            var replaced = ReplaceIgnoreCase(currentText, oldText, newText);
+                            int replacementTextIndex = GetOrAddReplacementTextIndex(
+                                replaced,
+                                distinctReplacementTexts,
+                                distinctReplacementLookup,
+                                nameof(newText));
+
+                            replacements.Add((cell, replacementTextIndex));
                         }
                     }
                 }
-                ws.Save();
+                if (replacements.Count > 0) {
+                    var replacementIndexes = _excelDocument.GetSharedStringIndexArray(distinctReplacementTexts, assumeDistinct: true);
+                    foreach (var replacement in replacements) {
+                        string replacementText = distinctReplacementTexts[replacement.TextIndex];
+                        SetExistingCellSharedStringValue(replacement.Cell, replacementText, replacementIndexes[replacement.TextIndex]);
+                    }
+
+                    count = replacements.Count;
+                    ClearHeaderCache();
+                    ws.Save();
+                }
             });
             return count;
+        }
+
+        private static int GetOrAddReplacementTextIndex(
+            string replaced,
+            List<string> distinctReplacementTexts,
+            Dictionary<string, int> distinctReplacementLookup,
+            string paramName) {
+            if (!distinctReplacementLookup.TryGetValue(replaced, out int replacementTextIndex)) {
+                CoerceValueHelper.ValidateSharedStringLength(replaced, paramName);
+                replacementTextIndex = distinctReplacementTexts.Count;
+                distinctReplacementTexts.Add(replaced);
+                distinctReplacementLookup.Add(replaced, replacementTextIndex);
+            }
+
+            return replacementTextIndex;
+        }
+
+        private static bool TryGetSharedStringCellIndex(Cell cell, out int index) {
+            index = 0;
+            return cell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString
+                && TryParseCellTextSharedStringIndex(cell.CellValue?.InnerText ?? cell.InnerText, out index);
+        }
+
+        private static bool TryGetReplaceableCellText(Cell cell, out string? text) {
+            var dataType = cell.DataType?.Value;
+            if (dataType == DocumentFormat.OpenXml.Spreadsheet.CellValues.InlineString
+                || dataType == DocumentFormat.OpenXml.Spreadsheet.CellValues.String) {
+                text = cell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.InlineString
+                    ? ExtractReplaceableInlineString(cell)
+                    : cell.CellValue?.InnerText ?? string.Empty;
+                return true;
+            }
+
+            if (cell.InlineString != null) {
+                text = ExtractReplaceableInlineString(cell);
+                return true;
+            }
+
+            text = null;
+            return false;
+        }
+
+        private static string ExtractReplaceableInlineString(Cell cell) {
+            var inline = cell.InlineString;
+            if (inline == null) {
+                return string.Empty;
+            }
+
+            if (inline.Text != null) {
+                return inline.Text.Text ?? string.Empty;
+            }
+
+            string? first = null;
+            StringBuilder? builder = null;
+            foreach (var run in inline.Elements<Run>()) {
+                string value = run.Text?.Text ?? string.Empty;
+                if (builder != null) {
+                    builder.Append(value);
+                } else if (first == null) {
+                    first = value;
+                } else {
+                    builder = new StringBuilder(first.Length + value.Length);
+                    builder.Append(first);
+                    builder.Append(value);
+                }
+            }
+
+            return builder?.ToString() ?? first ?? string.Empty;
         }
 
         private static string ReplaceIgnoreCase(string input, string oldValue, string newValue) {
@@ -384,6 +599,10 @@ namespace OfficeIMO.Excel {
             if (string.IsNullOrWhiteSpace(a1Range)) throw new ArgumentNullException(nameof(a1Range));
             if (items == null) throw new ArgumentNullException(nameof(items));
 
+            if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                _excelDocument.MaterializeDeferredDataSetImport();
+            }
+
             var joined = string.Join(",", items.Select(i => i?.Replace("\"", "\"\"") ?? string.Empty));
             var formula = "\"" + joined + "\""; // e.g., "New,Processed,Hold"
 
@@ -412,6 +631,10 @@ namespace OfficeIMO.Excel {
         public void ValidationListNamedRange(string a1Range, string namedRange, bool allowBlank = true) {
             if (string.IsNullOrWhiteSpace(a1Range)) throw new ArgumentNullException(nameof(a1Range));
             if (string.IsNullOrWhiteSpace(namedRange)) throw new ArgumentNullException(nameof(namedRange));
+
+            if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                _excelDocument.MaterializeDeferredDataSetImport();
+            }
 
             var normalizedNamedRange = namedRange.Trim();
             if (!normalizedNamedRange.StartsWith("=", StringComparison.Ordinal)) {
@@ -444,6 +667,10 @@ namespace OfficeIMO.Excel {
         public void ValidationListRange(string a1Range, string sourceA1Range, string? sourceSheetName = null, bool allowBlank = true) {
             if (string.IsNullOrWhiteSpace(a1Range)) throw new ArgumentNullException(nameof(a1Range));
             if (string.IsNullOrWhiteSpace(sourceA1Range)) throw new ArgumentNullException(nameof(sourceA1Range));
+
+            if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                _excelDocument.MaterializeDeferredDataSetImport();
+            }
 
             var normalizedSourceRange = sourceA1Range.Trim();
             if (normalizedSourceRange.StartsWith("=", StringComparison.Ordinal)) {
@@ -647,9 +874,10 @@ namespace OfficeIMO.Excel {
 
             // Resolve column indices and validate
             var cols = new List<(int Index, bool Asc)>();
+            var headerMap = GetHeaderMapCached(DefaultHeaderReadOptions);
             foreach (var k in keys) {
                 if (string.IsNullOrWhiteSpace(k.Header)) continue;
-                if (!TryGetColumnIndexByHeader(k.Header, out var col)) continue;
+                if (!headerMap.TryGetValue(k.Header, out var col)) continue;
                 if (col < c1 || col > c2) continue;
                 cols.Add((col - c1, k.Ascending));
             }

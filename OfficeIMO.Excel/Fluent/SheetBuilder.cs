@@ -1,4 +1,8 @@
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.Data;
+using System.Reflection;
+using System.Text;
 using OfficeColor = OfficeIMO.Drawing.OfficeColor;
 
 namespace OfficeIMO.Excel.Fluent {
@@ -6,6 +10,7 @@ namespace OfficeIMO.Excel.Fluent {
     /// Fluent builder for composing a worksheet: headers, rows, ranges, tables, styles and filters.
     /// </summary>
     public class SheetBuilder {
+        private static readonly ConcurrentDictionary<Type, RowsFromSimpleTypePlan> RowsFromSimpleTypePlans = new();
         private readonly ExcelFluentWorkbook _fluent;
         internal ExcelSheet? Sheet { get; private set; }
         private int _currentRow = 1;
@@ -50,47 +55,130 @@ namespace OfficeIMO.Excel.Fluent {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
             if (data == null) throw new ArgumentNullException(nameof(data));
 
-            var options = new ObjectFlattenerOptions();
-            configure?.Invoke(options);
-            var flattener = new ObjectFlattener();
+            ObjectFlattenerOptions? options = null;
+            if (configure != null) {
+                options = new ObjectFlattenerOptions();
+                configure(options);
+            }
 
-            var enumerable = data.ToList();
-            if (!enumerable.Any()) return this;
+            var rows = data as IReadOnlyList<T> ?? data.ToList();
+            if (rows.Count == 0) return this;
 
-            var paths = options.Columns?.ToList() ?? flattener.GetPaths(typeof(T), options);
-            var headers = paths.Select(p => TransformHeader(p, options)).ToList();
             int startRow = _currentRow;
-            HeaderRow(headers.Cast<object?>().ToArray());
+            if (configure == null && TryRowsFromSimpleFastPath(rows, startRow)) {
+                return this;
+            }
 
+            options ??= new ObjectFlattenerOptions();
+            var flattener = new ObjectFlattener();
+            var paths = options.Columns?.ToList() ?? flattener.GetPaths(typeof(T), options);
+            var headers = BuildTransformedHeaders(paths, options);
+
+            var rowValues = new List<object?[]>(rows.Count);
             int dataRows = 0;
-            foreach (var item in enumerable) {
+            foreach (var item in rows) {
                 var dict = flattener.Flatten(item, options);
                 if (options.CollectionMode == CollectionMode.ExpandRows) {
                     var collectionPath = paths.FirstOrDefault(p => dict.TryGetValue(p, out var val) && val is IEnumerable && val is not string);
                     if (collectionPath != null && dict[collectionPath] is IEnumerable coll) {
-                        var list = coll.Cast<object?>().ToList();
-                        if (list.Count == 0) {
-                            Row(r => r.Values(paths.Select(p => dict.TryGetValue(p, out var v) ? v : null).ToArray()));
-                            dataRows++;
-                        } else {
-                            foreach (var element in list) {
-                                var rowValues = paths.Select(p => p == collectionPath ? element : dict.TryGetValue(p, out var v) ? v : (options.DefaultValues.TryGetValue(p, out var d) ? d : null)).ToArray();
-                                Row(r => r.Values(rowValues));
-                                dataRows++;
-                            }
-                        }
+                        dataRows += AddExpandedRowsFromCollection(rowValues, paths, dict, options.DefaultValues, collectionPath, coll);
                         continue;
                     }
                 }
 
-                Row(r => r.Values(paths.Select(p => dict.TryGetValue(p, out var v) ? v : (options.DefaultValues.TryGetValue(p, out var d) ? d : null)).ToArray()));
+                rowValues.Add(ProjectRowsFromValues(paths, dict, options.DefaultValues));
                 dataRows++;
             }
 
-            int endRow = startRow + dataRows;
+            if (CanUseRowsFromDataTable(headers)) {
+                var table = CreateRowsFromDataTable(headers, rowValues);
+                int tableEndRow = startRow + dataRows;
+                string range = $"A{startRow}:{ColumnLetter(headers.Count)}{tableEndRow}";
+                if (!Sheet.TryInsertOwnedDataTableAsDeferredDirectSave(table, startRow, includeHeaders: true, range: range)) {
+                    Sheet.InsertOwnedDataTable(table, startRow, startColumn: 1, includeHeaders: true);
+                }
+            } else {
+                var cells = new List<(int Row, int Column, object Value)>((dataRows + 1) * Math.Max(1, headers.Count));
+                AddRowsFromCellValues(cells, startRow, headers, rowValues);
+                Sheet.CellValues(cells);
+            }
+
+            _currentRow = startRow + dataRows + 1;
+            int endRow = _currentRow - 1;
             _lastRange = $"A{startRow}:{ColumnLetter(headers.Count)}{endRow}";
 
             return this;
+        }
+
+        private static int AddExpandedRowsFromCollection(
+            List<object?[]> rowValues,
+            IReadOnlyList<string> paths,
+            Dictionary<string, object?> values,
+            IReadOnlyDictionary<string, object?> defaultValues,
+            string collectionPath,
+            IEnumerable collection) {
+            int added = 0;
+            foreach (object? element in collection) {
+                rowValues.Add(ProjectRowsFromValues(paths, values, defaultValues, collectionPath, element));
+                added++;
+            }
+
+            if (added == 0) {
+                rowValues.Add(ProjectRowsFromValues(paths, values, defaultValues: null));
+                return 1;
+            }
+
+            return added;
+        }
+
+        private static object?[] ProjectRowsFromValues(
+            IReadOnlyList<string> paths,
+            Dictionary<string, object?> values,
+            IReadOnlyDictionary<string, object?>? defaultValues,
+            string? collectionPath = null,
+            object? collectionValue = null) {
+            var projected = new object?[paths.Count];
+            for (int i = 0; i < paths.Count; i++) {
+                string path = paths[i];
+                if (collectionPath != null && string.Equals(path, collectionPath, StringComparison.Ordinal)) {
+                    projected[i] = collectionValue;
+                    continue;
+                }
+
+                if (values.TryGetValue(path, out object? value)) {
+                    projected[i] = value;
+                } else if (defaultValues != null && defaultValues.TryGetValue(path, out object? defaultValue)) {
+                    projected[i] = defaultValue;
+                }
+            }
+
+            return projected;
+        }
+
+        private bool TryRowsFromSimpleFastPath<T>(IReadOnlyList<T> rows, int startRow) {
+            if (Sheet == null) {
+                return false;
+            }
+
+            var typePlan = GetRowsFromSimpleTypePlan(typeof(T));
+            if (!typePlan.CanUseDirectSave) {
+                return false;
+            }
+
+            var directRows = MaterializeSimpleRowsFromProperties(typePlan, rows, out var columnTypes);
+            int tableEndRow = startRow + rows.Count;
+            string[] headers = typePlan.Headers;
+            string range = $"A{startRow}:{ColumnLetter(headers.Length)}{tableEndRow}";
+            if (startRow == 1 && Sheet.TryInsertRowsAsDeferredDirectSave("RowsFrom", headers, columnTypes, directRows, startRow, includeHeaders: true, range: range)) {
+                _currentRow = tableEndRow + 1;
+                _lastRange = range;
+                return true;
+            }
+
+            AddSimpleRowsFromCellValues(startRow, headers, directRows);
+            _currentRow = tableEndRow + 1;
+            _lastRange = range;
+            return true;
         }
 
         /// <summary>Adds a table over the last added block (from RowsFrom) using the specified name.</summary>
@@ -140,7 +228,7 @@ namespace OfficeIMO.Excel.Fluent {
                 throw new ArgumentException("Values array dimensions must match the specified range.", nameof(values));
             }
 
-            var cells = new List<(int Row, int Column, object Value)>();
+            var cells = new List<(int Row, int Column, object Value)>(Math.Max(1, rowCount * colCount));
             for (int r = 0; r < rowCount; r++) {
                 for (int c = 0; c < colCount; c++) {
                     object cellValue = values != null ? values[r, c] : string.Empty;
@@ -253,10 +341,382 @@ namespace OfficeIMO.Excel.Fluent {
                 }
             }
             return opts.HeaderCase switch {
-                HeaderCase.Pascal => string.Concat(path.Split('.').Select(s => char.ToUpperInvariant(s[0]) + s.Substring(1))),
+                HeaderCase.Pascal => TransformHeaderPascal(path),
                 HeaderCase.Title => string.Join(" ", path.Split('.').Select(s => CultureInfo.CurrentCulture.TextInfo.ToTitleCase(s.ToLowerInvariant()))),
                 _ => path
             };
+        }
+
+        private static List<string> BuildTransformedHeaders(IReadOnlyList<string> paths, ObjectFlattenerOptions options) {
+            var headers = new List<string>(paths.Count);
+            for (int i = 0; i < paths.Count; i++) {
+                headers.Add(TransformHeader(paths[i], options));
+            }
+
+            return headers;
+        }
+
+        private static string TransformHeaderPascal(string path) {
+            if (path.Length == 0) {
+                ThrowEmptyHeaderSegment();
+            }
+
+            var builder = new StringBuilder(path.Length);
+            int segmentStart = 0;
+            for (int i = 0; i <= path.Length; i++) {
+                if (i < path.Length && path[i] != '.') {
+                    continue;
+                }
+
+                AppendPascalSegment(builder, path, segmentStart, i - segmentStart);
+                segmentStart = i + 1;
+            }
+
+            return builder.ToString();
+        }
+
+        private static void AppendPascalSegment(StringBuilder builder, string path, int start, int length) {
+            if (length == 0) {
+                ThrowEmptyHeaderSegment();
+            }
+
+            builder.Append(char.ToUpperInvariant(path[start]));
+            if (length > 1) {
+                builder.Append(path, start + 1, length - 1);
+            }
+        }
+
+        private static void ThrowEmptyHeaderSegment() => throw new IndexOutOfRangeException();
+
+        private static bool CanUseRowsFromDataTable(IReadOnlyList<string> headers) {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string header in headers) {
+                if (string.IsNullOrWhiteSpace(header)) {
+                    return false;
+                }
+
+                if (!seen.Add(header)) {
+                    return false;
+                }
+            }
+
+            return headers.Count > 0;
+        }
+
+        private static DataTable CreateRowsFromDataTable(IReadOnlyList<string> headers, IReadOnlyList<object?[]> rowValues) {
+            var table = new DataTable("RowsFrom") {
+                Locale = CultureInfo.InvariantCulture
+            };
+
+            var columnTypes = InferRowsFromColumnTypes(rowValues, headers.Count);
+            for (int i = 0; i < headers.Count; i++) {
+                table.Columns.Add(headers[i], columnTypes[i]);
+            }
+
+            table.BeginLoadData();
+            try {
+                foreach (object?[] values in rowValues) {
+                    var row = new object[headers.Count];
+                    for (int i = 0; i < headers.Count; i++) {
+                        row[i] = CoerceRowsFromDataTableValue(i < values.Length ? values[i] : null, columnTypes[i]);
+                    }
+
+                    table.Rows.Add(row);
+                }
+            } finally {
+                table.EndLoadData();
+            }
+
+            return table;
+        }
+
+        private static RowsFromSimpleTypePlan GetRowsFromSimpleTypePlan(Type type)
+            => RowsFromSimpleTypePlans.GetOrAdd(type, CreateRowsFromSimpleTypePlan);
+
+        private static RowsFromSimpleTypePlan CreateRowsFromSimpleTypePlan(Type type) {
+            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(property => property.GetIndexParameters().Length == 0 && property.GetMethod != null)
+                .OrderBy(property => property.MetadataToken)
+                .ToArray();
+            if (properties.Length == 0 || properties.Any(property => !IsRowsFromDirectSaveScalarType(property.PropertyType))) {
+                return RowsFromSimpleTypePlan.NotSupported;
+            }
+
+            var headers = new string[properties.Length];
+            for (int i = 0; i < properties.Length; i++) {
+                headers[i] = properties[i].Name;
+            }
+
+            var staticColumnTypes = new Type[properties.Length];
+            var staticBlankAsEmptyString = new bool[properties.Length];
+            var staticRequiresBlankCoercion = new bool[properties.Length];
+            var inferenceFallbackTypes = new Type[properties.Length];
+            var inferColumns = new bool[properties.Length];
+            var getters = new RowsFromSimpleValueGetter[properties.Length];
+            var inferenceColumnIndexes = new List<int>();
+            bool hasInferenceColumns = false;
+            for (int i = 0; i < properties.Length; i++) {
+                getters[i] = CreateRowsFromSimpleValueGetter(properties[i]);
+                Type propertyType = properties[i].PropertyType;
+                Type? nullableUnderlyingType = Nullable.GetUnderlyingType(propertyType);
+                Type declaredType = nullableUnderlyingType ?? propertyType;
+                if (declaredType == typeof(string)) {
+                    staticColumnTypes[i] = typeof(string);
+                    staticBlankAsEmptyString[i] = true;
+                    staticRequiresBlankCoercion[i] = true;
+                    inferenceFallbackTypes[i] = typeof(string);
+                } else if (nullableUnderlyingType != null && CanUseStaticNullableRowsFromColumnType(nullableUnderlyingType)) {
+                    staticColumnTypes[i] = nullableUnderlyingType;
+                    staticBlankAsEmptyString[i] = false;
+                    staticRequiresBlankCoercion[i] = true;
+                    inferenceFallbackTypes[i] = nullableUnderlyingType;
+                } else if (!declaredType.IsValueType || nullableUnderlyingType != null) {
+                    inferColumns[i] = true;
+                    inferenceColumnIndexes.Add(i);
+                    hasInferenceColumns = true;
+                    inferenceFallbackTypes[i] = typeof(object);
+                } else {
+                    staticColumnTypes[i] = declaredType;
+                    staticBlankAsEmptyString[i] = false;
+                    staticRequiresBlankCoercion[i] = false;
+                    inferenceFallbackTypes[i] = declaredType;
+                }
+            }
+
+            return CanUseRowsFromDataTable(headers)
+                ? new RowsFromSimpleTypePlan(getters, headers, staticColumnTypes, staticBlankAsEmptyString, staticRequiresBlankCoercion, inferenceFallbackTypes, inferColumns, inferenceColumnIndexes.ToArray(), hasInferenceColumns, canUseDirectSave: true)
+                : RowsFromSimpleTypePlan.NotSupported;
+        }
+
+        private static RowsFromSimpleValueGetter CreateRowsFromSimpleValueGetter(PropertyInfo property) {
+            MethodInfo? getMethod = property.GetMethod;
+            if (getMethod == null || property.DeclaringType == null) {
+                return property.GetValue;
+            }
+
+            try {
+                return (RowsFromSimpleValueGetter)CreateRowsFromSimpleValueGetterMethod
+                    .MakeGenericMethod(property.DeclaringType, property.PropertyType)
+                    .Invoke(null, new object[] { getMethod })!;
+            } catch {
+                return property.GetValue;
+            }
+        }
+
+        private static readonly MethodInfo CreateRowsFromSimpleValueGetterMethod =
+            typeof(SheetBuilder).GetMethod(nameof(CreateRowsFromSimpleValueGetterCore), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        private static RowsFromSimpleValueGetter CreateRowsFromSimpleValueGetterCore<TTarget, TValue>(MethodInfo getMethod) {
+            var getter = (Func<TTarget, TValue>)Delegate.CreateDelegate(typeof(Func<TTarget, TValue>), getMethod);
+            return row => getter((TTarget)row!);
+        }
+
+        private static bool IsRowsFromDirectSaveScalarType(Type type) {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+            if (type == typeof(string)) {
+                return true;
+            }
+
+            if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type)) {
+                return false;
+            }
+
+            return type.IsPrimitive
+                || type.IsEnum
+                || type == typeof(decimal)
+                || type == typeof(DateTime)
+                || type == typeof(DateTimeOffset)
+                || type == typeof(TimeSpan)
+                || type == typeof(Guid);
+        }
+
+        private static bool CanUseStaticNullableRowsFromColumnType(Type type) {
+            if (type == typeof(DateTime)
+                || type == typeof(DateTimeOffset)
+                || type == typeof(TimeSpan)) {
+                return false;
+            }
+
+#if NET6_0_OR_GREATER
+            if (type == typeof(DateOnly) || type == typeof(TimeOnly)) {
+                return false;
+            }
+#endif
+
+            return type.IsPrimitive
+                || type.IsEnum
+                || type == typeof(decimal)
+                || type == typeof(Guid);
+        }
+
+        private static object?[][] MaterializeSimpleRowsFromProperties<T>(RowsFromSimpleTypePlan typePlan, IReadOnlyList<T> rows, out Type[] columnTypes) {
+            var directRows = new object?[rows.Count][];
+            if (!typePlan.HasInferenceColumns) {
+                MaterializeStaticSimpleRowsFromProperties(typePlan, rows, directRows);
+                columnTypes = typePlan.StaticColumnTypes;
+                return directRows;
+            }
+
+            columnTypes = InferRowsFromPropertyColumnTypes(typePlan, rows, directRows);
+            int[] inferenceColumnIndexes = typePlan.InferenceColumnIndexes;
+            for (int row = 0; row < directRows.Length; row++) {
+                object?[] values = directRows[row];
+                for (int i = 0; i < inferenceColumnIndexes.Length; i++) {
+                    int column = inferenceColumnIndexes[i];
+                    values[column] = CoerceRowsFromDataTableValue(values[column], columnTypes[column]);
+                }
+            }
+
+            return directRows;
+        }
+
+        private static void MaterializeStaticSimpleRowsFromProperties<T>(RowsFromSimpleTypePlan typePlan, IReadOnlyList<T> rows, object?[][] directRows) {
+            RowsFromSimpleValueGetter[] getters = typePlan.Getters;
+            bool[] blankAsEmptyString = typePlan.StaticBlankAsEmptyString;
+            bool[] requiresBlankCoercion = typePlan.StaticRequiresBlankCoercion;
+            int columnCount = getters.Length;
+            for (int row = 0; row < rows.Count; row++) {
+                T sourceRow = rows[row];
+                var values = new object?[columnCount];
+                for (int column = 0; column < columnCount; column++) {
+                    object? value = getters[column](sourceRow);
+                    values[column] = requiresBlankCoercion[column]
+                        ? CoerceRowsFromDirectSaveValue(value, blankAsEmptyString[column])
+                        : value;
+                }
+
+                directRows[row] = values;
+            }
+        }
+
+        private static Type[] InferRowsFromPropertyColumnTypes<T>(RowsFromSimpleTypePlan typePlan, IReadOnlyList<T> rows, object?[][] directRows) {
+            RowsFromSimpleValueGetter[] getters = typePlan.Getters;
+            bool[] inferColumns = typePlan.InferColumns;
+            bool[] staticBlankAsEmptyString = typePlan.StaticBlankAsEmptyString;
+            bool[] staticRequiresBlankCoercion = typePlan.StaticRequiresBlankCoercion;
+            int columnCount = getters.Length;
+            var columnTypes = new Type[columnCount];
+            Array.Copy(typePlan.StaticColumnTypes, columnTypes, columnTypes.Length);
+            Type?[]? inferredTypes = typePlan.HasInferenceColumns ? new Type?[columnCount] : null;
+
+            for (int row = 0; row < rows.Count; row++) {
+                T sourceRow = rows[row];
+                var values = new object?[columnCount];
+                for (int column = 0; column < columnCount; column++) {
+                    object? value = getters[column](sourceRow);
+                    if (!inferColumns[column]) {
+                        values[column] = staticRequiresBlankCoercion[column]
+                            ? CoerceRowsFromDirectSaveValue(value, staticBlankAsEmptyString[column])
+                            : value;
+                        continue;
+                    }
+
+                    values[column] = value;
+                    if (IsRowsFromBlankValue(value)) {
+                        continue;
+                    }
+
+                    Type valueType = value!.GetType();
+                    Type? inferred = inferredTypes![column];
+                    if (inferred == null) {
+                        inferredTypes[column] = valueType;
+                    } else if (inferred != valueType) {
+                        inferredTypes[column] = typeof(object);
+                    }
+                }
+
+                directRows[row] = values;
+            }
+
+            int[] inferenceColumnIndexes = typePlan.InferenceColumnIndexes;
+            for (int i = 0; i < inferenceColumnIndexes.Length; i++) {
+                int column = inferenceColumnIndexes[i];
+                columnTypes[column] = inferredTypes![column] ?? typePlan.InferenceFallbackTypes[column];
+            }
+
+            return columnTypes;
+        }
+
+        private static Type[] InferRowsFromColumnTypes(IReadOnlyList<object?[]> rowValues, int columnCount) {
+            var columnTypes = new Type[columnCount];
+            for (int column = 0; column < columnCount; column++) {
+                Type? inferred = null;
+                for (int row = 0; row < rowValues.Count; row++) {
+                    object? value = column < rowValues[row].Length ? rowValues[row][column] : null;
+                    if (IsRowsFromBlankValue(value)) {
+                        continue;
+                    }
+
+                    Type valueType = value!.GetType();
+                    if (inferred == null) {
+                        inferred = valueType;
+                        continue;
+                    }
+
+                    if (inferred != valueType) {
+                        inferred = typeof(object);
+                        break;
+                    }
+                }
+
+                columnTypes[column] = inferred ?? typeof(string);
+            }
+
+            return columnTypes;
+        }
+
+        private static bool IsRowsFromBlankValue(object? value) {
+            return value == null || value == DBNull.Value || value is string text && text.Length == 0;
+        }
+
+        private static object CoerceRowsFromDataTableValue(object? value, Type columnType) {
+            if (IsRowsFromBlankValue(value)) {
+                return columnType == typeof(string) || columnType == typeof(object)
+                    ? string.Empty
+                    : DBNull.Value;
+            }
+
+            return value!;
+        }
+
+        private static object CoerceRowsFromDirectSaveValue(object? value, bool blankAsEmptyString) {
+            if (IsRowsFromBlankValue(value)) {
+                return blankAsEmptyString ? string.Empty : DBNull.Value;
+            }
+
+            return value!;
+        }
+
+        private static void AddRowsFromCellValues(List<(int Row, int Column, object Value)> cells, int startRow, IReadOnlyList<string> headers, IReadOnlyList<object?[]> rowValues) {
+            for (int i = 0; i < headers.Count; i++) {
+                cells.Add((startRow, i + 1, headers[i]));
+            }
+
+            for (int r = 0; r < rowValues.Count; r++) {
+                object?[] values = rowValues[r];
+                for (int c = 0; c < headers.Count; c++) {
+                    object? value = c < values.Length ? values[c] : null;
+                    cells.Add((startRow + r + 1, c + 1, value ?? string.Empty));
+                }
+            }
+        }
+
+        private void AddSimpleRowsFromCellValues(int startRow, IReadOnlyList<string> headers, IReadOnlyList<object?[]> rowValues) {
+            int totalCellCount = checked((rowValues.Count + 1) * headers.Count);
+            var cells = new (int Row, int Column, object Value)[totalCellCount];
+            int cellIndex = 0;
+            for (int i = 0; i < headers.Count; i++) {
+                cells[cellIndex++] = (startRow, i + 1, headers[i]);
+            }
+
+            for (int r = 0; r < rowValues.Count; r++) {
+                object?[] values = rowValues[r];
+                for (int c = 0; c < headers.Count; c++) {
+                    cells[cellIndex++] = (startRow + r + 1, c + 1, values[c] ?? string.Empty);
+                }
+            }
+
+            Sheet!.CellValues(cells);
         }
 
         private static string ColumnLetter(int column) {
@@ -284,5 +744,64 @@ namespace OfficeIMO.Excel.Fluent {
             }
             return (row, col);
         }
+
+        private sealed class RowsFromSimpleTypePlan {
+            internal static readonly RowsFromSimpleTypePlan NotSupported = new(
+                Array.Empty<RowsFromSimpleValueGetter>(),
+                Array.Empty<string>(),
+                Array.Empty<Type>(),
+                Array.Empty<bool>(),
+                Array.Empty<bool>(),
+                Array.Empty<Type>(),
+                Array.Empty<bool>(),
+                Array.Empty<int>(),
+                hasInferenceColumns: false,
+                canUseDirectSave: false);
+
+            internal RowsFromSimpleTypePlan(
+                RowsFromSimpleValueGetter[] getters,
+                string[] headers,
+                Type[] staticColumnTypes,
+                bool[] staticBlankAsEmptyString,
+                bool[] staticRequiresBlankCoercion,
+                Type[] inferenceFallbackTypes,
+                bool[] inferColumns,
+                int[] inferenceColumnIndexes,
+                bool hasInferenceColumns,
+                bool canUseDirectSave) {
+                Getters = getters;
+                Headers = headers;
+                StaticColumnTypes = staticColumnTypes;
+                StaticBlankAsEmptyString = staticBlankAsEmptyString;
+                StaticRequiresBlankCoercion = staticRequiresBlankCoercion;
+                InferenceFallbackTypes = inferenceFallbackTypes;
+                InferColumns = inferColumns;
+                InferenceColumnIndexes = inferenceColumnIndexes;
+                HasInferenceColumns = hasInferenceColumns;
+                CanUseDirectSave = canUseDirectSave;
+            }
+
+            internal RowsFromSimpleValueGetter[] Getters { get; }
+
+            internal string[] Headers { get; }
+
+            internal Type[] StaticColumnTypes { get; }
+
+            internal bool[] StaticBlankAsEmptyString { get; }
+
+            internal bool[] StaticRequiresBlankCoercion { get; }
+
+            internal Type[] InferenceFallbackTypes { get; }
+
+            internal bool[] InferColumns { get; }
+
+            internal int[] InferenceColumnIndexes { get; }
+
+            internal bool HasInferenceColumns { get; }
+
+            internal bool CanUseDirectSave { get; }
+        }
+
+        private delegate object? RowsFromSimpleValueGetter(object? row);
     }
 }

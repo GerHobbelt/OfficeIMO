@@ -89,11 +89,13 @@ doc.Save();
 What to expect
 
 - Noticeable wins on:
+  - simple `DataSet` exports through normal `InsertDataSet(...)` + `Save(...)`,
   - `AutoFitColumns/Rows` (thousands of rows),
   - bulk cell writes (`CellValues(...)`),
   - object→table transforms (when mapping + formatting is non‑trivial).
 - Small ranges may remain sequential (overhead would dominate); thresholds are configurable.
 - Exceptions are avoided in hot loops (e.g., header styling uses `TryGetColumnIndexByHeader`), so perf is stable.
+- Saves automatically use fast package writers when the workbook shape is eligible. Inspect `doc.LastSaveDiagnostics` to see which writer was used or why the save fell back; use `ExcelSaveOptions.DisableFastPackageWriter` only when you explicitly want to force the standard save path.
 
 Design choices you’ll run into
 
@@ -118,9 +120,16 @@ sheet.InsertObjects(people,
 ### Proof And Compatibility
 
 - benchmark harness lives in `OfficeIMO.Excel.Benchmarks`
-- current competitive coverage matrix lives in `COMPATIBILITY.md`
+- current feature coverage matrix lives in `COMPATIBILITY.md`
 - release steps live in `../Docs/officeimo.excel.release-checklist.md`
 
+```csharp
+var report = doc.InspectFeatures();
+
+foreach (var feature in report.PreservedFeatures.Concat(report.UnsupportedFeatures)) {
+    Console.WriteLine($"{feature.Name}: {feature.Count} ({feature.Note})");
+}
+```
 
 ## Quick Read Patterns
 
@@ -185,6 +194,10 @@ var s = doc["Data"];
 // Add a validation list for a status column
 s.ValidationList("C2:C100", new[] { "New", "Processed", "Hold" });
 
+// Or use the range-level fluent API
+s.Range("C2:C100").Validate.List("New", "Processed", "Hold");
+s.Range("D2:D100").Validate.WholeNumberBetween(1, 10, errorMessage: "Use 1 through 10");
+
 // Typed read back into POCOs
 public sealed class RowModel { public string Name {get;set;} = ""; public string Status {get;set;} = ""; }
 var rows = doc.Read().Sheet("Data").Range("A1:C10").AsObjects<RowModel>().ToList();
@@ -216,6 +229,13 @@ var s = doc.AddWorkSheet("Summary");
 s.SetHeaderFooter(headerCenter: "Demo", headerRight: "Page &P of &N");
 var logo = File.ReadAllBytes("logo.png");
 s.SetHeaderImage(HeaderFooterPosition.Center, logo, widthPoints: 96, heightPoints: 32);
+
+// Worksheet image with accessibility metadata
+s.AddImage(2, 2, logo, "image/png", widthPixels: 160, heightPixels: 48,
+    name: "CompanyLogo",
+    altText: "Company logo")
+ .LockAspectRatio()
+ .SetSize(180, 54);
 ```
 
 ### Charts
@@ -280,10 +300,32 @@ chart.SetSeriesDataLabelTemplate(0, labelTemplate)
 // Use an existing range/table instead:
 // sheet.AddChartFromRange("A1:D5", row: 8, column: 6, type: ExcelChartType.Line);
 // sheet.AddChartFromTable("SalesTable", row: 8, column: 6, type: ExcelChartType.Line);
+sheet.Chart("A1:D5").Line().Title("Trend").Size(480, 320).At(8, 6);
+sheet.ChartFromTable("SalesTable").ColumnClustered().Title("Sales").At(8, 6);
+
+// Dashboard recipes for common business charts:
+sheet.AddRevenueTrendChart("A1:B13", row: 1, column: 6);
+sheet.AddStatusBreakdownChart("D1:E6", row: 18, column: 6);
+sheet.AddTopNBarChart("G1:H11", row: 35, column: 6, title: "Top Customers");
+sheet.AddKpiScorecardChart("J1:K5", row: 52, column: 6, title: "KPI Scorecard");
+sheet.AddContributionChart("M1:N6", row: 69, column: 6, title: "Contribution");
+sheet.ChartFromTable("SalesTable").RevenueTrend("Sales Trend").At(52, 6);
+sheet.ChartFromTable("VarianceBridge").VarianceWaterfall("Variance Bridge").At(86, 6);
 ```
 
 ```csharp
 // Pivot table and pivot-source chart metadata
+sheet.Pivot("A1:C100")
+     .Rows("Region")
+     .Columns("Product")
+     .Filters("Channel")
+     .Sum("Sales", "Total Sales", "$#,##0")
+     .PercentOfTotal("Sales", "% of Total", "0.0%")
+     .Style("PivotStyleMedium9")
+     .Layout(ExcelPivotLayout.Tabular)
+     .GrandTotals(rows: true, columns: true)
+     .At("F2", "SalesPivot");
+
 sheet.AddPivotTable(
     sourceRange: "A1:C100",
     destinationCell: "F2",
@@ -352,6 +394,18 @@ sheet.AddBubbleChartFromRanges(new[] {
 
 Note: Bubble charts require explicit X/Y/size ranges via `AddBubbleChartFromRanges`. Ranges without a sheet qualifier default to the current worksheet.
 
+### Sparklines
+
+```csharp
+sheet.Sparklines("B2:G2")
+     .Column()
+     .Markers()
+     .HighLow()
+     .Axis()
+     .Color("#4472C4")
+     .At("H2:H2");
+```
+
 ### Link a table column by header
 
 ```csharp
@@ -401,6 +455,206 @@ foreach (var row in doc.Read().Sheet("Data").UsedRange().AsEditableRows())
     // Set a number format or formula on a specific cell
     row["Value"].NumberFormat("0.00");
 }
+```
+
+## Formula Inspection And Recalculation
+
+```csharp
+var formulas = doc.InspectFormulas();
+var capabilities = formulas.Capabilities;
+
+// The lightweight evaluator supports same-sheet arithmetic plus common reporting
+// functions such as SUM, AVERAGE, COUNTIF, SUMIF, AVERAGEIF,
+// COUNTIFS, SUMIFS, AVERAGEIFS, PRODUCT, MEDIAN, LARGE, SMALL, SUMPRODUCT,
+// exact-match VLOOKUP, HLOOKUP, and XLOOKUP when the returned value is numeric or text,
+// text helpers such as CONCAT, TEXTJOIN, LEFT, RIGHT, MID, LEN, and TRIM,
+// ABS, SIGN, ROUND, ROUNDUP, ROUNDDOWN, TRUNC, INT, CEILING, FLOOR,
+// POWER, SQRT, LN, LOG10, EXP, PI, RADIANS, DEGREES, MOD,
+// DATE, TIME, TODAY, NOW, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND,
+// EDATE, EOMONTH, DAYS, WEEKDAY, NETWORKDAYS,
+// simple numeric IF/AND/OR/NOT comparisons, nested formulas,
+// and numeric IFERROR fallbacks.
+Console.WriteLine($"Formulas: {formulas.TotalFormulas}");
+Console.WriteLine($"OfficeIMO-supported: {formulas.SupportedFormulas}");
+Console.WriteLine($"Need Excel/cache: {formulas.UnsupportedFormulas}");
+Console.WriteLine(capabilities.Summary);
+
+foreach (var formula in formulas.Formulas.Where(f => !f.IsSupportedByOfficeIMO)) {
+    Console.WriteLine($"{formula.SheetName}!{formula.CellReference}: {formula.UnsupportedReason}");
+}
+
+Console.WriteLine(formulas.ToMarkdown());
+
+// Unsupported formulas are preserved. Inspection reports the likely reason, such as
+// unsupported functions, unsupported argument shapes, semicolon separators, text
+// concatenation operators, or array constants.
+
+// Calculate formulas supported by OfficeIMO's lightweight evaluator and cache results.
+// Supported same-sheet formulas can depend on other supported formula cells.
+// Numeric cross-sheet cell/range references such as Data!A1 and 'Data Sheet'!A1:A3
+// are supported in the lightweight evaluator, as are workbook-global and sheet-local
+// named ranges that point to A1 cell/range references, plus simple table structured
+// references such as SalesData[Amount] and SalesData[[#Data],[Amount]]. Text
+// helpers such as CONCAT, TEXTJOIN, LEFT, RIGHT, MID, LEN, and TRIM can also
+// cache text results, and exact-match lookups can return text values.
+int calculated = doc.Calculate();
+
+// Ask Excel-compatible apps to calculate everything else on open.
+doc.ConfigureFullCalculationOnOpen();
+
+// Use guards when a workflow requires full OfficeIMO support or reliable cached reads.
+doc.InspectFormulas().EnsureAllSupported();
+doc.InspectFormulas().EnsureAllHaveCachedResults();
+doc.Save();
+```
+
+For one-save calculation policy, use save options instead of setting persistent document defaults:
+
+```csharp
+doc.Save("report.xlsx", openExcel: false, options: new ExcelSaveOptions {
+    EvaluateFormulasBeforeSave = true,
+    ForceFullCalculationOnOpen = true
+});
+```
+
+## Feature Inspection
+
+```csharp
+var report = doc.InspectFeatures();
+
+Console.WriteLine($"Advanced features: {report.HasAdvancedFeatures}");
+
+foreach (var feature in report.Features) {
+    Console.WriteLine($"{feature.Category}: {feature.Name} = {feature.Count} [{feature.SupportLevel}]");
+    foreach (var detail in feature.Details) {
+        Console.WriteLine($"  - {detail}");
+    }
+}
+
+Console.WriteLine(report.ToMarkdown());
+report.EnsureNoUnsupportedFeatures();
+
+// Fail fast for workflow-specific risk. For example, a data refresh job may
+// reject macro-enabled templates or external workbook links before saving.
+report.EnsureNoFeatures("VBA macros", "External workbook links");
+report.EnsureNoFeatures(ExcelFeatureSupportLevel.Preserved);
+```
+
+## CSV And JSON Exchange
+
+```csharp
+var data = doc["Data"];
+
+// Range/table export
+DataTable table = data.ToDataTable("A1:C100");
+string csv = data.ToCsv("A1:C100");
+string json = data.ToJson("A1:C100");
+
+// Import directly into a worksheet
+data.FromCsv("Name,Amount\nAlpha,10\nBeta,20");
+data.FromJson("[{\"Name\":\"Alpha\",\"Amount\":10},{\"Name\":\"Beta\",\"Amount\":20}]",
+    startRow: 5,
+    startColumn: 1);
+```
+
+## Template Markers
+
+```csharp
+// Existing workbook cells can contain text such as "Invoice {{Invoice.Number}}"
+// or "Customer: {{Customer.Name}}".
+int replacements = doc.ApplyTemplate(new Dictionary<string, object?> {
+    ["Invoice.Number"] = "INV-001",
+    ["Customer.Name"] = "Adatum",
+    ["Total"] = 123.45
+});
+
+// Public properties can be used directly; nested objects become dotted markers.
+doc.ApplyTemplate(invoiceModel);
+
+// Format aliases and custom .NET formats are supported in markers:
+// {{Total:currency}}, {{Completion:percent}}, {{Issued:yyyy-MM-dd}},
+// {{Duration:duration}}
+var options = new ExcelTemplateOptions { ThrowOnMissing = true }
+    .AddFormatter("upper", (value, provider) =>
+        Convert.ToString(value, provider as CultureInfo ?? CultureInfo.CurrentCulture)?.ToUpperInvariant() ?? string.Empty)
+    .AddFormatter("fallback", (value, provider) =>
+        value == null ? "n/a" : Convert.ToString(value, provider as CultureInfo ?? CultureInfo.CurrentCulture) ?? string.Empty);
+
+// Custom formatters can be used as {{Customer.Name:upper}} or {{Notes:fallback}}.
+doc.ApplyTemplate(invoiceModel, options);
+
+// If a marker owns the whole cell, supported aliases write typed values and apply
+// Excel number formats instead of replacing with display text.
+// A cell containing only {{Total:currency}} becomes a numeric currency cell.
+
+// Inspect marker requirements before binding:
+var template = doc.InspectTemplate(invoiceModel);
+foreach (var missing in template.MissingMarkerNames) {
+    Console.WriteLine($"Missing template value: {missing}");
+}
+
+template.EnsureAllMarkersBound();
+Console.WriteLine(template.ToMarkdown());
+
+// Use throwOnMissing when templates must be fully bound.
+doc.ApplyTemplate(values, throwOnMissing: true);
+
+// Optional fields can be cleared instead of leaving the marker text in place.
+doc.ApplyTemplate(values, new ExcelTemplateOptions {
+    MissingValueBehavior = ExcelTemplateMissingValueBehavior.EmptyString
+});
+
+// A single worksheet row can be used as a repeating template row. Additional
+// rows are inserted below the template row and each item is bound to one row.
+sheet.ApplyTemplateRows(12, lineItems, new ExcelTemplateOptions {
+    FormatProvider = CultureInfo.GetCultureInfo("en-US"),
+    MissingValueBehavior = ExcelTemplateMissingValueBehavior.Throw
+});
+
+// Optional row sections can be kept and bound, or removed while following rows
+// shift up.
+sheet.ApplyTemplateOptionalRows(20, rowCount: 2, include: invoice.HasDiscount, invoice, options);
+if (!invoice.HasNotes) {
+    sheet.RemoveTemplateOptionalRows(24, rowCount: 3);
+}
+
+// Whole-cell markers can bind images into the drawing layer.
+sheet.CellAt(2, 6).SetValue("{{Logo}}");
+doc.ApplyTemplate(new Dictionary<string, object?> {
+    ["Logo"] = ExcelTemplateImage.FromBytes(
+        logoBytes,
+        contentType: "image/png",
+        widthPixels: 96,
+        heightPixels: 32,
+        name: "Logo",
+        altText: "Company logo")
+});
+
+// Streams and URLs are supported too:
+// ExcelTemplateImage.FromStream(stream, "image/png", widthPixels: 96, heightPixels: 32)
+// ExcelTemplateImage.FromUrl("https://example.com/logo.png", widthPixels: 96, heightPixels: 32)
+```
+
+## Comments And Notes
+
+```csharp
+sheet.SetComment("A1", "Review total", author: "Alice", initials: "AA");
+sheet.SetComment("B2", "Review status", author: "Alice", initials: "AA");
+
+var reviewNotes = sheet.FindComments(new ExcelCommentFilter {
+    Author = "Alice (AA)",
+    TextContains = "Review",
+    A1Range = "A1:B10"
+});
+
+sheet.UpdateComments(new ExcelCommentFilter {
+    TextContains = "status"
+}, "Status reviewed", author: "Carol", initials: "CC");
+
+sheet.ClearComments(new ExcelCommentFilter {
+    Author = "Alice (AA)",
+    A1Range = "A1:A1"
+});
 ```
 
 ## Data Operations
@@ -477,6 +731,12 @@ s.ColumnStyleByHeader("Status", includeHeader: true)
 // Cell backgrounds
 s.CellBackground(2, 3, OfficeColor.Parse("#FFFBE6"));
 s.CellBackground(3, 3, "#FFE7E7");
+
+// Cell/range presets for common report formatting
+s.CellAt(1, 1).SetValue("Amount").HeaderStyle();
+s.CellAt(2, 1).SetValue(123.45).Currency(culture: CultureInfo.GetCultureInfo("en-US")).Success();
+s.Range("B2:B20").Percent(decimals: 1).Warning();
+s.Range("C2:C20").Date().MutedText();
 ```
 
 Notes:
@@ -706,6 +966,11 @@ var data = doc["Data"];
 data.AddConditionalColorScale("C2:C100", "#FFF0F0", "#70AD47");
 // Data bar
 data.AddConditionalDataBar("D2:D100", "#5B9BD5");
+
+// Range-level fluent API
+data.Range("C2:C100").ConditionalFormat.ColorScale("#FFF0F0", "#70AD47");
+data.Range("D2:D100").ConditionalFormat.DataBar("#5B9BD5");
+data.Range("E2:E100").ConditionalFormat.Top(10);
 ```
 
 ## Feature Matrix
@@ -721,13 +986,13 @@ data.AddConditionalDataBar("D2:D100", "#5B9BD5");
   - ✅ TOC generator and back links
 - 🎨 Styles & Formatting
   - ✅ Number formats (integer/decimal/percent/currency/date/datetime/custom); alignment; background fills
-  - ✅ Column/Range builders; conditional formatting (color scale, data bar)
+  - ✅ Column/Range builders; conditional formatting (color scale, data bar, icon set, top/bottom, duplicate/formula rules); range-level fluent formatting builders
 - 🔗 Links
   - ✅ Internal/external links; smart host/title helpers; link‑by‑header (whole sheet or within range)
 - 🔍 Filters & Sort
   - ✅ AutoFilter add/filter by header; conflict migration to table; multi‑column sort helpers
 - 🧰 Data Quality
-  - ✅ Validation lists; find/replace; header utilities (header→index, set by header)
+  - ✅ Validation lists and numeric/date/time/text/custom validation; range-level fluent validation builders; find/replace; header utilities (header→index, set by header)
 - 🚀 Performance
   - ✅ AutoFit Columns/Rows and bulk writes leverage multi‑core compute phase
 

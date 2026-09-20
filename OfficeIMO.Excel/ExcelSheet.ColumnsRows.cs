@@ -15,6 +15,11 @@ namespace OfficeIMO.Excel {
         /// <param name="mode">Overrides how the auto-fit work is scheduled across columns.</param>
         /// <param name="ct">Cancels the auto-fit pass while widths are being measured or applied.</param>
         public void AutoFitColumns(ExecutionMode? mode = null, CancellationToken ct = default) {
+            if (_excelDocument.TryEnableDirectTabularSaveCandidateAutoFit(this)) {
+                return;
+            }
+
+            _excelDocument.MaterializeDeferredDataSetImport();
             if (CanSkipStableAutoFitColumns(null)) {
                 return;
             }
@@ -39,11 +44,43 @@ namespace OfficeIMO.Excel {
             if (columnIndexes == null) return;
             var list = columnIndexes.Where(i => i > 0).Distinct().OrderBy(i => i).ToList();
             if (list.Count == 0) return;
+            if (_excelDocument.TryEnableDirectTabularSaveCandidateAutoFit(this, list)) {
+                return;
+            }
+
+            _excelDocument.MaterializeDeferredDataSetImport();
             if (CanSkipStableAutoFitColumns(list)) {
                 return;
             }
 
             AutoFitColumnsInternal(list, mode, ct);
+        }
+
+        private void AutoFitContiguousColumns(int startColumn, int columnCount, ExecutionMode? mode = null, CancellationToken ct = default) {
+            if (startColumn <= 0 || columnCount <= 0) return;
+            if (startColumn == 1) {
+                int[] directCandidateColumns = new int[columnCount];
+                for (int i = 0; i < directCandidateColumns.Length; i++) {
+                    directCandidateColumns[i] = i + 1;
+                }
+
+                if (_excelDocument.TryEnableDirectTabularSaveCandidateAutoFit(this, directCandidateColumns)) {
+                    return;
+                }
+            }
+
+            _excelDocument.MaterializeDeferredDataSetImport();
+
+            var columns = new int[columnCount];
+            for (int i = 0; i < columns.Length; i++) {
+                columns[i] = startColumn + i;
+            }
+
+            if (CanSkipStableAutoFitColumns(columns)) {
+                return;
+            }
+
+            AutoFitColumnsInternal(columns, mode, ct);
         }
 
         /// <summary>
@@ -54,6 +91,14 @@ namespace OfficeIMO.Excel {
         /// <param name="ct">Cancels the auto-fit pass before it completes.</param>
         public void AutoFitColumnsExcept(IEnumerable<int> columnsToSkip, ExecutionMode? mode = null, CancellationToken ct = default) {
             var skip = new HashSet<int>(columnsToSkip ?? Array.Empty<int>());
+            if (_excelDocument.TryGetDirectTabularSaveCandidateColumnCount(this, out int directColumnCount)) {
+                var directRemaining = Enumerable.Range(1, directColumnCount).Where(i => !skip.Contains(i)).ToList();
+                if (directRemaining.Count == 0 || _excelDocument.TryEnableDirectTabularSaveCandidateAutoFit(this, directRemaining)) {
+                    return;
+                }
+            }
+
+            _excelDocument.MaterializeDeferredDataSetImport();
             var remaining = GetAllColumnIndices().Where(i => i > 0 && !skip.Contains(i)).OrderBy(i => i).ToList();
             if (remaining.Count == 0) return;
             if (CanSkipStableAutoFitColumns(remaining)) {
@@ -74,33 +119,42 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
-            IEnumerable<int> targetColumns;
+            IReadOnlyList<int> targetColumns;
             if (requestedColumns != null) {
                 targetColumns = requestedColumns;
             } else if (TryGetDimensionColumnBounds(worksheet, out int firstColumn, out int lastColumn)) {
-                targetColumns = Enumerable.Range(firstColumn, lastColumn - firstColumn + 1);
+                targetColumns = Enumerable.Range(firstColumn, lastColumn - firstColumn + 1).ToArray();
             } else if (TryGetSheetDataColumnBounds(worksheet, out firstColumn, out lastColumn)) {
-                targetColumns = Enumerable.Range(firstColumn, lastColumn - firstColumn + 1);
+                targetColumns = Enumerable.Range(firstColumn, lastColumn - firstColumn + 1).ToArray();
             } else {
                 return false;
             }
 
-            foreach (int columnIndex in targetColumns) {
-                bool hasStableWidth = false;
-                foreach (var column in columns.Elements<Column>()) {
-                    uint min = column.Min?.Value ?? 0U;
-                    uint max = column.Max?.Value ?? 0U;
-                    if (min <= (uint)columnIndex
-                        && max >= (uint)columnIndex
-                        && column.Width != null
-                        && column.CustomWidth?.Value == true
-                        && column.BestFit?.Value == true) {
-                        hasStableWidth = true;
-                        break;
-                    }
+            bool[] stableColumns = new bool[A1.MaxColumns + 1];
+            foreach (var column in columns.Elements<Column>()) {
+                if (column.Width == null
+                    || column.CustomWidth?.Value != true
+                    || column.BestFit?.Value != true) {
+                    continue;
                 }
 
-                if (!hasStableWidth) {
+                uint min = column.Min?.Value ?? 0U;
+                uint max = column.Max?.Value ?? 0U;
+                if (min == 0U || max < min || min > A1.MaxColumns) {
+                    continue;
+                }
+
+                int start = (int)Math.Max(1U, min);
+                int end = (int)Math.Min((uint)A1.MaxColumns, max);
+                for (int i = start; i <= end; i++) {
+                    stableColumns[i] = true;
+                }
+            }
+
+            foreach (int columnIndex in targetColumns) {
+                if (columnIndex <= 0
+                    || columnIndex > A1.MaxColumns
+                    || !stableColumns[columnIndex]) {
                     return false;
                 }
             }
@@ -202,9 +256,7 @@ namespace OfficeIMO.Excel {
                     }
 
                     var applyWatch = EffectiveExecution.OnTiming == null ? null : System.Diagnostics.Stopwatch.StartNew();
-                    for (int i = 0; i < columnsList.Count; i++) {
-                        SetColumnWidthCore(columnsList[i], computed[i]);
-                    }
+                    SetColumnWidthsCore(columnsList, computed);
 
                     if (EffectiveExecution.SaveWorksheetAfterAutoFit) {
                         worksheet.Save();
@@ -227,9 +279,7 @@ namespace OfficeIMO.Excel {
                 applySequential: () => {
                     var worksheet = WorksheetRoot;
                     var applyWatch = EffectiveExecution.OnTiming == null ? null : System.Diagnostics.Stopwatch.StartNew();
-                    for (int i = 0; i < columnsList.Count; i++) {
-                        SetColumnWidthCore(columnsList[i], computed[i]);
-                    }
+                    SetColumnWidthsCore(columnsList, computed);
                     if (EffectiveExecution.SaveWorksheetAfterAutoFit) {
                         worksheet.Save();
                     }
@@ -419,15 +469,15 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
-            string raw = cell.CellValue?.InnerText ?? string.Empty;
-            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out _)) {
-                return false;
-            }
-
             uint numberFormatId = GetCellNumberFormatId(cell, textContext);
             string? formatCode = GetNumberFormatCode(numberFormatId, textContext);
             if (!IsDateNumberFormat(numberFormatId, formatCode)
                 || !TryGetAutoFitDateSample(numberFormatId, formatCode, out string sample)) {
+                return false;
+            }
+
+            string raw = cell.CellValue?.InnerText ?? string.Empty;
+            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out _)) {
                 return false;
             }
 
@@ -455,11 +505,12 @@ namespace OfficeIMO.Excel {
             }
 
             uint numberFormatId = GetCellNumberFormatId(cell, textContext);
-            string? formatCode = GetNumberFormatCode(numberFormatId, textContext);
-            if (numberFormatId != 0U
-                && !string.IsNullOrWhiteSpace(formatCode)
-                && !string.Equals(formatCode, "General", StringComparison.OrdinalIgnoreCase)) {
-                return false;
+            if (numberFormatId != 0U) {
+                string? formatCode = GetNumberFormatCode(numberFormatId, textContext);
+                if (!string.IsNullOrWhiteSpace(formatCode)
+                    && !string.Equals(formatCode, "General", StringComparison.OrdinalIgnoreCase)) {
+                    return false;
+                }
             }
 
             for (int i = 0; i < raw.Length; i++) {
@@ -680,6 +731,59 @@ namespace OfficeIMO.Excel {
                 columns = worksheet.InsertAt(new Columns(), 0);
             }
 
+            SetColumnWidthCore(columns, columnIndex, width);
+
+            if (columns.Elements<Column>().Any()) {
+                ReorderColumns(columns);
+            } else {
+                columns.Remove();
+            }
+        }
+
+        private void SetColumnWidthsCore(IReadOnlyList<int> columnIndexes, double[] widths) {
+            var worksheet = WorksheetRoot;
+            var columns = worksheet.GetFirstChild<Columns>();
+            if (columns == null) {
+                columns = worksheet.InsertAt(new Columns(), 0);
+            }
+
+            if (!columns.Elements<Column>().Any()) {
+                for (int i = 0; i < columnIndexes.Count; i++) {
+                    double width = NormalizeColumnWidth(widths[i]);
+                    if (width <= 0) {
+                        continue;
+                    }
+
+                    columns.Append(new Column {
+                        Min = (uint)columnIndexes[i],
+                        Max = (uint)columnIndexes[i],
+                        Width = width,
+                        CustomWidth = true,
+                        BestFit = true
+                    });
+                }
+
+                if (columns.Elements<Column>().Any()) {
+                    ReorderColumns(columns);
+                } else {
+                    columns.Remove();
+                }
+
+                return;
+            }
+
+            for (int i = 0; i < columnIndexes.Count; i++) {
+                SetColumnWidthCore(columns, columnIndexes[i], widths[i]);
+            }
+
+            if (columns.Elements<Column>().Any()) {
+                ReorderColumns(columns);
+            } else {
+                columns.Remove();
+            }
+        }
+
+        private static void SetColumnWidthCore(Columns columns, int columnIndex, double width) {
             Column? column = columns.Elements<Column>()
                 .FirstOrDefault(c => c.Min != null && c.Max != null && c.Min.Value <= (uint)columnIndex && c.Max.Value >= (uint)columnIndex);
 
@@ -699,12 +803,6 @@ namespace OfficeIMO.Excel {
                 column.BestFit = true;
             } else if (column != null) {
                 column.Remove();
-            }
-
-            if (columns.Elements<Column>().Any()) {
-                ReorderColumns(columns);
-            } else {
-                columns.Remove();
             }
         }
 
@@ -992,6 +1090,7 @@ namespace OfficeIMO.Excel {
         /// <param name="mode">Overrides how the auto-fit work is scheduled across rows.</param>
         /// <param name="ct">Cancels the row auto-fit pass while heights are being calculated or applied.</param>
         public void AutoFitRows(ExecutionMode? mode = null, CancellationToken ct = default) {
+            _excelDocument.MaterializeDeferredDataSetImport();
             var worksheet = WorksheetRoot;
             SheetData? sheetData = worksheet.GetFirstChild<SheetData>();
             if (sheetData == null) return;
@@ -1063,6 +1162,19 @@ namespace OfficeIMO.Excel {
         /// </summary>
         /// <param name="columnIndex">1-based column index.</param>
         public void AutoFitColumn(int columnIndex) {
+            if (columnIndex <= 0) {
+                return;
+            }
+
+            if (_excelDocument.TryEnableDirectTabularSaveCandidateAutoFit(this, [columnIndex])) {
+                return;
+            }
+
+            _excelDocument.MaterializeDeferredDataSetImport();
+            if (CanSkipStableAutoFitColumns([columnIndex])) {
+                return;
+            }
+
             WriteLockConditional(() => {
                 var width = CalculateColumnWidths([columnIndex], CancellationToken.None)[0];
                 SetColumnWidthCore(columnIndex, width);
@@ -1261,6 +1373,7 @@ namespace OfficeIMO.Excel {
         /// <param name="width">The column width.</param>
         public void SetColumnWidth(int columnIndex, double width) {
             width = NormalizeColumnWidth(width);
+            _excelDocument.MaterializeDeferredDataSetImport();
             WriteLock(() => {
                 var worksheet = WorksheetRoot;
                 var columns = worksheet.GetFirstChild<Columns>();
@@ -1291,6 +1404,7 @@ namespace OfficeIMO.Excel {
         /// <param name="columnIndex">1-based column index.</param>
         /// <param name="hidden">True to hide the column; false to show it.</param>
         public void SetColumnHidden(int columnIndex, bool hidden) {
+            _excelDocument.MaterializeDeferredDataSetImport();
             WriteLock(() => {
                 var worksheet = WorksheetRoot;
                 var columns = worksheet.GetFirstChild<Columns>();
@@ -1329,6 +1443,10 @@ namespace OfficeIMO.Excel {
         /// <param name="topRows">Number of rows at the top to freeze.</param>
         /// <param name="leftCols">Number of columns on the left to freeze.</param>
         public void Freeze(int topRows = 0, int leftCols = 0) {
+            if (!_excelDocument.IsMaterializingDeferredDataSetImport) {
+                _excelDocument.MaterializeDeferredDataSetImport();
+            }
+
             WriteLock(() => {
                 Worksheet worksheet = WorksheetRoot;
                 SheetViews? sheetViews = worksheet.GetFirstChild<SheetViews>();

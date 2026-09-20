@@ -26,9 +26,13 @@ namespace OfficeIMO.Excel {
         internal ReaderWriterLockSlim? _lock;
         internal List<UInt32Value> id = new List<UInt32Value>() { 0 };
         private readonly Dictionary<string, int> _sharedStringCache = new Dictionary<string, int>();
+        private Dictionary<string, bool>? _sharedStringLineBreakCache;
         private readonly object _sharedStringLock = new object();
+        private int _sharedStringTableCount = -1;
         // Workbook-level cache of table names for fast uniqueness checks
         private HashSet<string>? _tableNameCache;
+        private readonly object _tableMetadataLock = new object();
+        private uint? _nextTableId;
         private System.Collections.Generic.IEqualityComparer<string> _tableNameComparer = System.StringComparer.OrdinalIgnoreCase;
         private List<ExcelSheet>? _cachedSheets;
         private bool _sheetCacheDirty = true;
@@ -254,6 +258,7 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public List<ExcelSheet> Sheets {
             get {
+                MaterializeDeferredDataSetImport();
                 var lck = EnsureLock();
                 if (Locking.IsNoLock || lck is null) {
                     if (SheetCachingEnabled) {
@@ -312,7 +317,18 @@ namespace OfficeIMO.Excel {
         private bool _requiresSavePreflight;
         private bool _packageDirty = true;
         private bool _packagePropertiesDirty;
+        private bool _preserveDirectDataSetSaveCandidateForNextDirtyMark;
+        private int _directDataSetSaveCandidatePreservationDepth;
         private byte[]? _unchangedPackageBytes;
+        private bool _simplePackageContentKnown;
+        private DirectDataSetSaveCandidate? _directDataSetSaveCandidate;
+        private ExcelSheet? _pendingDirectCellValueSheet;
+        private bool _materializingDeferredDataSetImport;
+
+        /// <summary>
+        /// Diagnostics for the most recent save operation.
+        /// </summary>
+        public ExcelSaveDiagnostics LastSaveDiagnostics { get; private set; } = ExcelSaveDiagnostics.Standard("Workbook has not been saved yet.");
 
         private const int StreamCopyBufferSize = 81920;
 
@@ -322,8 +338,25 @@ namespace OfficeIMO.Excel {
         }
 
         internal void MarkPackageDirty() {
+            if (IsPackageDirtyWithoutPendingSaveCandidate) {
+                return;
+            }
+
             _packageDirty = true;
             _unchangedPackageBytes = null;
+            bool preserveDirectCandidate = _preserveDirectDataSetSaveCandidateForNextDirtyMark
+                || _directDataSetSaveCandidatePreservationDepth > 0;
+            try {
+                if (_directDataSetSaveCandidate?.IsDeferred == true
+                    && !_materializingDeferredDataSetImport
+                    && !preserveDirectCandidate) {
+                    MaterializeDeferredDataSetImport();
+                } else if (!preserveDirectCandidate) {
+                    ClearDirectDataSetSaveCandidate();
+                }
+            } finally {
+                _preserveDirectDataSetSaveCandidateForNextDirtyMark = false;
+            }
         }
 
         internal void MarkPackagePropertiesDirty() {
@@ -332,6 +365,46 @@ namespace OfficeIMO.Excel {
         }
 
         internal bool IsPackageDirty => _packageDirty;
+
+        internal bool IsPackageDirtyWithoutPendingSaveCandidate
+            => _packageDirty
+                && _unchangedPackageBytes == null
+                && _directDataSetSaveCandidate == null
+                && !_preserveDirectDataSetSaveCandidateForNextDirtyMark
+                && _directDataSetSaveCandidatePreservationDepth == 0;
+
+        internal bool HasPackagePropertiesDirty => _packagePropertiesDirty;
+
+        internal bool IsMaterializingDeferredDataSetImport => _materializingDeferredDataSetImport;
+
+        internal void PreserveDirectDataSetSaveCandidateForNextDirtyMark() {
+            _preserveDirectDataSetSaveCandidateForNextDirtyMark = true;
+        }
+
+        internal IDisposable PreserveDirectDataSetSaveCandidateDuringDirtyMarks() {
+            _directDataSetSaveCandidatePreservationDepth++;
+            return new DirectDataSetSaveCandidatePreservationScope(this);
+        }
+
+        private sealed class DirectDataSetSaveCandidatePreservationScope : IDisposable {
+            private ExcelDocument? _document;
+
+            internal DirectDataSetSaveCandidatePreservationScope(ExcelDocument document) {
+                _document = document;
+            }
+
+            public void Dispose() {
+                var document = _document;
+                if (document == null) {
+                    return;
+                }
+
+                _document = null;
+                if (document._directDataSetSaveCandidatePreservationDepth > 0) {
+                    document._directDataSetSaveCandidatePreservationDepth--;
+                }
+            }
+        }
 
         private static async Task<byte[]> ReadAllBytesCompatAsync(string path, CancellationToken ct) {
 #if NETSTANDARD2_0 || NET472 || NET48
@@ -464,6 +537,29 @@ namespace OfficeIMO.Excel {
             _tableNameCache.Remove(name);
         }
 
+        internal uint AllocateTableId() {
+            lock (_tableMetadataLock) {
+                if (_nextTableId == null) {
+                    uint maxExistingId = 0;
+                    var workbookPart = WorkbookPartRoot;
+                    foreach (var worksheetPart in workbookPart.WorksheetParts) {
+                        foreach (var part in worksheetPart.TableDefinitionParts) {
+                            var idValue = part.Table?.Id?.Value;
+                            if (idValue != null && idValue.Value > maxExistingId) {
+                                maxExistingId = idValue.Value;
+                            }
+                        }
+                    }
+
+                    _nextTableId = maxExistingId + 1;
+                }
+
+                uint tableId = _nextTableId.Value;
+                _nextTableId = tableId + 1;
+                return tableId;
+            }
+        }
+
         /// <summary>
         /// Validates the document using the specified file format version.
         /// </summary>
@@ -487,11 +583,13 @@ namespace OfficeIMO.Excel {
 
                 // Check if we're in a NoLock scope or already have a lock - if so, initialize without locking
                 if (Locking.IsNoLock || (_lock != null && _lock.IsWriteLockHeld)) {
-                    if (_workBookPart.GetPartsOfType<SharedStringTablePart>().Any()) {
-                        _sharedStringTablePart = _workBookPart.GetPartsOfType<SharedStringTablePart>().First();
+                    var existingPart = _workBookPart.GetPartsOfType<SharedStringTablePart>().FirstOrDefault();
+                    if (existingPart != null) {
+                        _sharedStringTablePart = existingPart;
                     } else {
                         _sharedStringTablePart = _workBookPart.AddNewPart<SharedStringTablePart>();
                         _sharedStringTablePart.SharedStringTable = new SharedStringTable();
+                        _sharedStringTableCount = 0;
                     }
                     return _sharedStringTablePart!;
                 }
@@ -500,11 +598,13 @@ namespace OfficeIMO.Excel {
                 return Locking.ExecuteWrite(EnsureLock(), () => {
                     // Double-check inside the lock
                     if (_sharedStringTablePart == null) {
-                        if (_workBookPart.GetPartsOfType<SharedStringTablePart>().Any()) {
-                            _sharedStringTablePart = _workBookPart.GetPartsOfType<SharedStringTablePart>().First();
+                        var existingPart = _workBookPart.GetPartsOfType<SharedStringTablePart>().FirstOrDefault();
+                        if (existingPart != null) {
+                            _sharedStringTablePart = existingPart;
                         } else {
                             _sharedStringTablePart = _workBookPart.AddNewPart<SharedStringTablePart>();
                             _sharedStringTablePart.SharedStringTable = new SharedStringTable();
+                            _sharedStringTableCount = 0;
                         }
                     }
                     return _sharedStringTablePart;
@@ -513,63 +613,216 @@ namespace OfficeIMO.Excel {
         }
 
         internal int GetSharedStringIndex(string text) {
+            return GetSharedStringIndex(text, validateNewString: false);
+        }
+
+        internal int GetSharedStringIndex(string text, bool validateNewString) {
+            if (Locking.IsNoLock || (_lock != null && _lock.IsWriteLockHeld)) {
+                return GetSharedStringIndexCore(text, validateNewString);
+            }
+
             lock (_sharedStringLock) {
-                // Check cache first
-                if (_sharedStringCache.TryGetValue(text, out int cachedIndex)) {
-                    return cachedIndex;
-                }
-
-                var sharedStringTable = SharedStringTablePart.SharedStringTable ??= new SharedStringTable();
-
-                // If cache is empty, rebuild it
-                if (_sharedStringCache.Count == 0) {
-                    int idx = 0;
-                    foreach (SharedStringItem item in sharedStringTable.Elements<SharedStringItem>()) {
-                        _sharedStringCache[item.InnerText] = idx;
-                        idx++;
-                    }
-
-                    // Check again after rebuilding cache
-                    if (_sharedStringCache.TryGetValue(text, out int foundIndex)) {
-                        return foundIndex;
-                    }
-                }
-
-                // Add new string
-                int newIndex = sharedStringTable.Elements<SharedStringItem>().Count();
-                sharedStringTable.AppendChild(new SharedStringItem(new Text(text)));
-                _sharedStringTableDirty = true;
-                MarkPackageDirty();
-                _sharedStringCache[text] = newIndex;
-
-                return newIndex;
+                return GetSharedStringIndexCore(text, validateNewString);
             }
         }
 
-        internal Dictionary<string, int> GetSharedStringIndices(IEnumerable<string> texts) {
+        internal int GetSharedStringIndex(string text, bool validateNewString, out bool containsLineBreak) {
+            if (Locking.IsNoLock || (_lock != null && _lock.IsWriteLockHeld)) {
+                return GetSharedStringIndexCore(text, validateNewString, out containsLineBreak);
+            }
+
+            lock (_sharedStringLock) {
+                return GetSharedStringIndexCore(text, validateNewString, out containsLineBreak);
+            }
+        }
+
+        internal bool TryGetExistingSharedStringIndex(string text, out int index, out bool containsLineBreak, out int sharedStringCount) {
+            if (Locking.IsNoLock || (_lock != null && _lock.IsWriteLockHeld)) {
+                return TryGetExistingSharedStringIndexCore(text, out index, out containsLineBreak, out sharedStringCount);
+            }
+
+            lock (_sharedStringLock) {
+                return TryGetExistingSharedStringIndexCore(text, out index, out containsLineBreak, out sharedStringCount);
+            }
+        }
+
+        internal bool TryGetOrAddSharedStringIndexBelowLimit(string text, int addLimit, bool validateNewString, out int index, out bool containsLineBreak) {
+            if (Locking.IsNoLock || (_lock != null && _lock.IsWriteLockHeld)) {
+                return TryGetOrAddSharedStringIndexBelowLimitCore(text, addLimit, validateNewString, out index, out containsLineBreak);
+            }
+
+            lock (_sharedStringLock) {
+                return TryGetOrAddSharedStringIndexBelowLimitCore(text, addLimit, validateNewString, out index, out containsLineBreak);
+            }
+        }
+
+        private int GetSharedStringIndexCore(string text, bool validateNewString) {
+            // Check cache first
+            if (_sharedStringCache.TryGetValue(text, out int cachedIndex)) {
+                return cachedIndex;
+            }
+
+            var sharedStringTable = SharedStringTablePart.SharedStringTable ??= new SharedStringTable();
+            int tableCount = EnsureSharedStringCacheAndCount(sharedStringTable);
+
+            // Check again after rebuilding cache
+            if (_sharedStringCache.TryGetValue(text, out int foundIndex)) {
+                return foundIndex;
+            }
+
+            if (validateNewString) {
+                CoerceValueHelper.ValidateSharedStringLength(text, nameof(text));
+            }
+
+            // Add new string
+            int newIndex = tableCount;
+            sharedStringTable.AppendChild(new SharedStringItem(new Text(text)));
+            _sharedStringTableCount = newIndex + 1;
+            _sharedStringTableDirty = true;
+            MarkPackageDirty();
+            _sharedStringCache[text] = newIndex;
+
+            return newIndex;
+        }
+
+        private int GetSharedStringIndexCore(string text, bool validateNewString, out bool containsLineBreak) {
+            if (_sharedStringCache.TryGetValue(text, out int cachedIndex)) {
+                containsLineBreak = GetCachedOrComputeSharedStringLineBreak(text);
+                return cachedIndex;
+            }
+
+            var sharedStringTable = SharedStringTablePart.SharedStringTable ??= new SharedStringTable();
+            int tableCount = EnsureSharedStringCacheAndCount(sharedStringTable);
+
+            if (_sharedStringCache.TryGetValue(text, out int foundIndex)) {
+                containsLineBreak = GetCachedOrComputeSharedStringLineBreak(text);
+                return foundIndex;
+            }
+
+            if (validateNewString) {
+                CoerceValueHelper.ValidateSharedStringLength(text, nameof(text));
+            }
+
+            containsLineBreak = ContainsLineBreak(text);
+
+            int newIndex = tableCount;
+            sharedStringTable.AppendChild(new SharedStringItem(new Text(text)));
+            _sharedStringTableCount = newIndex + 1;
+            _sharedStringTableDirty = true;
+            MarkPackageDirty();
+            _sharedStringCache[text] = newIndex;
+
+            return newIndex;
+        }
+
+        private bool TryGetExistingSharedStringIndexCore(string text, out int index, out bool containsLineBreak, out int sharedStringCount) {
+            if (_sharedStringCache.TryGetValue(text, out index)) {
+                containsLineBreak = GetCachedOrComputeSharedStringLineBreak(text);
+                sharedStringCount = _sharedStringTableCount >= 0 ? _sharedStringTableCount : _sharedStringCache.Count;
+                return true;
+            }
+
+            if (_sharedStringTablePart != null && _sharedStringTableCount >= 0 && _sharedStringCache.Count > 0) {
+                index = -1;
+                containsLineBreak = false;
+                sharedStringCount = _sharedStringTableCount;
+                return false;
+            }
+
+            SharedStringTablePart? sharedStringTablePart = _sharedStringTablePart
+                ?? _workBookPart.GetPartsOfType<SharedStringTablePart>().FirstOrDefault();
+            var sharedStringTable = sharedStringTablePart?.SharedStringTable;
+            if (sharedStringTable == null) {
+                index = -1;
+                containsLineBreak = false;
+                sharedStringCount = 0;
+                return false;
+            }
+
+            _sharedStringTablePart = sharedStringTablePart;
+            sharedStringCount = EnsureSharedStringCacheAndCount(sharedStringTable);
+            if (_sharedStringCache.TryGetValue(text, out index)) {
+                containsLineBreak = GetCachedOrComputeSharedStringLineBreak(text);
+                return true;
+            }
+
+            index = -1;
+            containsLineBreak = false;
+            return false;
+        }
+
+        private bool TryGetOrAddSharedStringIndexBelowLimitCore(string text, int addLimit, bool validateNewString, out int index, out bool containsLineBreak) {
+            if (_sharedStringCache.TryGetValue(text, out index)) {
+                containsLineBreak = GetCachedOrComputeSharedStringLineBreak(text);
+                return true;
+            }
+
+            var sharedStringTable = SharedStringTablePart.SharedStringTable ??= new SharedStringTable();
+            int tableCount = EnsureSharedStringCacheAndCount(sharedStringTable);
+            if (_sharedStringCache.TryGetValue(text, out index)) {
+                containsLineBreak = GetCachedOrComputeSharedStringLineBreak(text);
+                return true;
+            }
+
+            if (tableCount >= addLimit) {
+                index = -1;
+                containsLineBreak = ContainsLineBreak(text);
+                return false;
+            }
+
+            if (validateNewString) {
+                CoerceValueHelper.ValidateSharedStringLength(text, nameof(text));
+            }
+
+            containsLineBreak = ContainsLineBreak(text);
+            index = tableCount;
+            sharedStringTable.AppendChild(new SharedStringItem(new Text(text)));
+            _sharedStringTableCount = index + 1;
+            _sharedStringTableDirty = true;
+            MarkPackageDirty();
+            _sharedStringCache[text] = index;
+            return true;
+        }
+
+        private bool GetCachedOrComputeSharedStringLineBreak(string text) {
+            if (_sharedStringLineBreakCache != null
+                && _sharedStringLineBreakCache.TryGetValue(text, out bool containsLineBreak)) {
+                return containsLineBreak;
+            }
+
+            containsLineBreak = ContainsLineBreak(text);
+            if (text.Length >= 16) {
+                (_sharedStringLineBreakCache ??= new Dictionary<string, bool>(StringComparer.Ordinal))[text] = containsLineBreak;
+            }
+
+            return containsLineBreak;
+        }
+
+        private static bool ContainsLineBreak(string text) {
+            return text.IndexOf('\n') >= 0 || text.IndexOf('\r') >= 0;
+        }
+
+        internal Dictionary<string, int> GetSharedStringIndices(IEnumerable<string> texts, bool assumeDistinct = false) {
             if (texts == null) {
                 throw new ArgumentNullException(nameof(texts));
             }
 
+            int capacity = texts is ICollection<string> collection ? collection.Count : 0;
+            if (capacity == 0 && texts is ICollection<string>) {
+                return new Dictionary<string, int>(0, StringComparer.Ordinal);
+            }
+
             lock (_sharedStringLock) {
                 var sharedStringTable = SharedStringTablePart.SharedStringTable ??= new SharedStringTable();
-                int tableCount;
+                int tableCount = EnsureSharedStringCacheAndCount(sharedStringTable);
 
-                if (_sharedStringCache.Count == 0) {
-                    tableCount = 0;
-                    foreach (SharedStringItem item in sharedStringTable.Elements<SharedStringItem>()) {
-                        _sharedStringCache[item.InnerText] = tableCount;
-                        tableCount++;
-                    }
-                } else {
-                    tableCount = sharedStringTable.Elements<SharedStringItem>().Count();
-                }
-
-                var result = new Dictionary<string, int>(StringComparer.Ordinal);
+                var result = capacity > 0
+                    ? new Dictionary<string, int>(capacity, StringComparer.Ordinal)
+                    : new Dictionary<string, int>(StringComparer.Ordinal);
                 bool changed = false;
 
                 foreach (string text in texts) {
-                    if (result.ContainsKey(text)) {
+                    if (!assumeDistinct && result.ContainsKey(text)) {
                         continue;
                     }
 
@@ -585,6 +838,8 @@ namespace OfficeIMO.Excel {
                     changed = true;
                 }
 
+                _sharedStringTableCount = tableCount;
+
                 if (changed) {
                     _sharedStringTableDirty = true;
                     MarkPackageDirty();
@@ -592,6 +847,69 @@ namespace OfficeIMO.Excel {
 
                 return result;
             }
+        }
+
+        internal int[] GetSharedStringIndexArray(IReadOnlyList<string> texts, bool assumeDistinct = false) {
+            if (texts == null) {
+                throw new ArgumentNullException(nameof(texts));
+            }
+
+            if (texts.Count == 0) {
+                return Array.Empty<int>();
+            }
+
+            lock (_sharedStringLock) {
+                var sharedStringTable = SharedStringTablePart.SharedStringTable ??= new SharedStringTable();
+                int tableCount = EnsureSharedStringCacheAndCount(sharedStringTable);
+                var result = new int[texts.Count];
+                Dictionary<string, int>? localIndexes = assumeDistinct
+                    ? null
+                    : new Dictionary<string, int>(texts.Count, StringComparer.Ordinal);
+                bool changed = false;
+
+                for (int i = 0; i < texts.Count; i++) {
+                    string text = texts[i];
+                    if (localIndexes != null && localIndexes.TryGetValue(text, out int duplicateIndex)) {
+                        result[i] = duplicateIndex;
+                        continue;
+                    }
+
+                    if (!_sharedStringCache.TryGetValue(text, out int sharedStringIndex)) {
+                        sharedStringIndex = tableCount++;
+                        sharedStringTable.AppendChild(new SharedStringItem(new Text(text)));
+                        _sharedStringCache[text] = sharedStringIndex;
+                        changed = true;
+                    }
+
+                    result[i] = sharedStringIndex;
+                    localIndexes?.Add(text, sharedStringIndex);
+                }
+
+                _sharedStringTableCount = tableCount;
+
+                if (changed) {
+                    _sharedStringTableDirty = true;
+                    MarkPackageDirty();
+                }
+
+                return result;
+            }
+        }
+
+        private int EnsureSharedStringCacheAndCount(SharedStringTable sharedStringTable) {
+            if (_sharedStringCache.Count == 0) {
+                int idx = 0;
+                foreach (SharedStringItem item in sharedStringTable.Elements<SharedStringItem>()) {
+                    _sharedStringCache[item.InnerText] = idx;
+                    idx++;
+                }
+
+                _sharedStringTableCount = idx;
+            } else if (_sharedStringTableCount < 0) {
+                _sharedStringTableCount = sharedStringTable.Elements<SharedStringItem>().Count();
+            }
+
+            return _sharedStringTableCount;
         }
 
         /// <summary>
@@ -665,6 +983,7 @@ namespace OfficeIMO.Excel {
             document._copyPackageToFilePathOnDispose = copyPackageToFilePathOnDispose && packageStream != null && !string.IsNullOrEmpty(filePath);
             document._leaveSourceStreamOpen = leaveSourceStreamOpen;
             document._packageContentTypesKnownNormalized = false;
+            document._simplePackageContentKnown = false;
             document._requiresSavePreflight = true;
             document._packageDirty = true;
             document._packagePropertiesDirty = false;
@@ -699,6 +1018,7 @@ namespace OfficeIMO.Excel {
                 _copyPackageToFilePathOnDispose = copyPackageToFilePathOnDispose && packageStream != null && !string.IsNullOrEmpty(filePath),
                 _leaveSourceStreamOpen = leaveSourceStreamOpen,
                 _packageContentTypesKnownNormalized = packageContentTypesKnownNormalized,
+                _simplePackageContentKnown = false,
                 _requiresSavePreflight = false,
                 _packageDirty = false,
                 _packagePropertiesDirty = false,
@@ -1123,6 +1443,10 @@ namespace OfficeIMO.Excel {
         /// <param name="validationMode">How to validate the sheet name: None (no checks), Sanitize (coerce), or Strict (throw on invalid).</param>
         /// <returns>Created <see cref="ExcelSheet"/> instance.</returns>
         public ExcelSheet AddWorkSheet(string workSheetName, SheetNameValidationMode validationMode) {
+            if (!_materializingDeferredDataSetImport) {
+                MaterializeDeferredDataSetImport();
+            }
+
             return Locking.ExecuteWrite(EnsureLock(), () => {
                 EnsureSheetCacheInitialized(_lock);
                 string name = ValidateOrSanitizeSheetName(workSheetName, validationMode, currentSheetName: null);
@@ -1325,6 +1649,22 @@ namespace OfficeIMO.Excel {
             }
             EnsureDirectoryWritable(path);
 
+            if (TrySaveDirectDataSetPackageToFile(path, options, CancellationToken.None, out _)) {
+                if (openExcel) {
+                    Helpers.Open(path, true);
+                }
+
+                return;
+            }
+
+            if (TrySaveWithSimplePackageToFile(path, options, out string? fastPackageSkipReason)) {
+                if (openExcel) {
+                    Helpers.Open(path, true);
+                }
+
+                return;
+            }
+
             var payload = PreparePackageForSave(options);
             try {
                 var finalizedBytes = FinalizePackageBytes(payload);
@@ -1332,6 +1672,7 @@ namespace OfficeIMO.Excel {
                 CommitPreparedPackageToFile(path, finalizedBytes);
                 ReloadFromBytes(finalizedBytes);
                 FilePath = path;
+                LastSaveDiagnostics = ExcelSaveDiagnostics.Standard(fastPackageSkipReason);
 
                 if (openExcel) {
                     Helpers.Open(path, true);
@@ -1371,6 +1712,7 @@ namespace OfficeIMO.Excel {
                 CommitPreparedPackageToFile(path, encryptedBytes);
                 ReloadFromBytes(finalizedBytes);
                 FilePath = path;
+                LastSaveDiagnostics = ExcelSaveDiagnostics.Standard("Encrypted saves use the standard package finalization path.");
 
                 if (openExcel) {
                     Helpers.Open(path, true);
@@ -1465,6 +1807,23 @@ namespace OfficeIMO.Excel {
             }
             EnsureDirectoryWritable(target);
 
+            if (TrySaveDirectDataSetPackageToFile(target, options, cancellationToken, out _)) {
+                if (openExcel) {
+                    Open(target, true);
+                }
+
+                return;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TrySaveWithSimplePackageToFile(target, options, out string? fastPackageSkipReason, cancellationToken)) {
+                if (openExcel) {
+                    Open(target, true);
+                }
+
+                return;
+            }
+
             var payload = PreparePackageForSave(options);
             try {
                 var finalizedBytes = FinalizePackageBytes(payload);
@@ -1472,6 +1831,7 @@ namespace OfficeIMO.Excel {
                 await CommitPreparedPackageToFileAsync(target, finalizedBytes, cancellationToken).ConfigureAwait(false);
                 ReloadFromBytes(finalizedBytes);
                 FilePath = target;
+                LastSaveDiagnostics = ExcelSaveDiagnostics.Standard(fastPackageSkipReason);
 
                 if (openExcel) {
                     Open(target, true);
@@ -1501,6 +1861,18 @@ namespace OfficeIMO.Excel {
             if (!destination.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(destination));
 
             if (TryWriteUnchangedPackageToStream(destination, options)) {
+                LastSaveDiagnostics = ExcelSaveDiagnostics.UnchangedPackage();
+                return;
+            }
+
+            if (TryWriteDirectDataSetPackage(destination, options, updateDocumentState: true, CancellationToken.None, out _)) {
+                LastSaveDiagnostics = ExcelSaveDiagnostics.DirectDataSetPackage();
+                return;
+            }
+
+            PrepareWorkbookForSave(options);
+            if (TryWriteSimpleWorkbookPackage(destination, options, updateDocumentState: true, out string? fastPackageSkipReason)) {
+                LastSaveDiagnostics = ExcelSaveDiagnostics.SimplePackage();
                 return;
             }
 
@@ -1512,6 +1884,7 @@ namespace OfficeIMO.Excel {
                 destination.Write(finalizedBytes, 0, finalizedBytes.Length);
                 try { destination.Flush(); } catch (NotSupportedException) { }
                 MarkPackageClean(finalizedBytes);
+                LastSaveDiagnostics = ExcelSaveDiagnostics.Standard(fastPackageSkipReason);
             } catch {
                 TryRestoreDocumentState(payload);
                 throw;
@@ -1531,6 +1904,7 @@ namespace OfficeIMO.Excel {
 
             if (CanUseUnchangedPackageFastPath(saveOptions) && _unchangedPackageBytes != null) {
                 OfficeEncryption.EncryptPackageToStream(_unchangedPackageBytes, password, destination);
+                LastSaveDiagnostics = ExcelSaveDiagnostics.UnchangedPackage();
                 return;
             }
 
@@ -1539,6 +1913,7 @@ namespace OfficeIMO.Excel {
                 var finalizedBytes = FinalizePackageBytes(payload);
                 ThrowIfOpenXmlValidationFails(finalizedBytes, saveOptions);
                 OfficeEncryption.EncryptPackageToStream(finalizedBytes, password, destination);
+                LastSaveDiagnostics = ExcelSaveDiagnostics.Standard("Encrypted saves use the standard package finalization path.");
             } catch {
                 TryRestoreDocumentState(payload);
                 throw;
@@ -1565,6 +1940,19 @@ namespace OfficeIMO.Excel {
             if (!destination.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(destination));
 
             if (await TryWriteUnchangedPackageToStreamAsync(destination, options, cancellationToken).ConfigureAwait(false)) {
+                LastSaveDiagnostics = ExcelSaveDiagnostics.UnchangedPackage();
+                return;
+            }
+
+            if (TryWriteDirectDataSetPackage(destination, options, updateDocumentState: true, cancellationToken, out _)) {
+                LastSaveDiagnostics = ExcelSaveDiagnostics.DirectDataSetPackage();
+                return;
+            }
+
+            PrepareWorkbookForSave(options);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TryWriteSimpleWorkbookPackage(destination, options, updateDocumentState: true, out string? fastPackageSkipReason, cancellationToken)) {
+                LastSaveDiagnostics = ExcelSaveDiagnostics.SimplePackage();
                 return;
             }
 
@@ -1576,6 +1964,7 @@ namespace OfficeIMO.Excel {
                 await destination.WriteAsync(finalizedBytes, 0, finalizedBytes.Length, cancellationToken).ConfigureAwait(false);
                 try { await destination.FlushAsync(cancellationToken).ConfigureAwait(false); } catch (NotSupportedException) { }
                 MarkPackageClean(finalizedBytes);
+                LastSaveDiagnostics = ExcelSaveDiagnostics.Standard(fastPackageSkipReason);
             } catch {
                 TryRestoreDocumentState(payload);
                 throw;
@@ -1600,9 +1989,11 @@ namespace OfficeIMO.Excel {
             return SaveAsync("", openExcel, cancellationToken);
         }
 
-        private SavePayload PreparePackageForSave(ExcelSaveOptions? options, bool closeDocument = true) {
+        private void PrepareWorkbookForSave(ExcelSaveOptions? options) {
+            MaterializeDeferredDataSetImport();
+
             // Ensure all worksheets have up-to-date dimensions and proper element ordering before saving
-            ApplyCalculationPolicyBeforeSave();
+            ApplyCalculationPolicyBeforeSave(options);
 
             var sheets = Sheets;
             foreach (var sheet in sheets) {
@@ -1635,6 +2026,10 @@ namespace OfficeIMO.Excel {
 
             WorkbookRoot.Save();
             try { _spreadSheetDocument.PackageProperties.Modified = DateTime.UtcNow; } catch { }
+        }
+
+        private SavePayload PreparePackageForSave(ExcelSaveOptions? options, bool closeDocument = true) {
+            PrepareWorkbookForSave(options);
 
             PackagePropertiesSnapshot propertiesSnapshot = PackagePropertiesSnapshot.Capture(_spreadSheetDocument);
 
@@ -1686,24 +2081,18 @@ namespace OfficeIMO.Excel {
             return !_packageDirty
                 && _packageContentTypesKnownNormalized
                 && _unchangedPackageBytes != null
-                && !HasCalculationSaveWork()
+                && !HasCalculationSaveWork(options)
                 && options?.SafePreflight != true
                 && options?.SafeRepairDefinedNames != true
                 && options?.ValidateOpenXml != true;
         }
 
-        private bool HasCalculationSaveWork() {
-            return Calculation.EvaluateFormulasBeforeSave
-                || Calculation.ClearCachedFormulaResultsBeforeSave
-                || Calculation.MarkFormulasDirtyBeforeSave
-                || Calculation.ForceFullCalculationOnOpen;
-        }
-
-        private void MarkPackageClean(byte[] packageBytes) {
+        private void MarkPackageClean(byte[]? packageBytes, bool simplePackageContentKnown = false) {
             _packageDirty = false;
             _packagePropertiesDirty = false;
             _unchangedPackageBytes = packageBytes;
             _packageContentTypesKnownNormalized = true;
+            _simplePackageContentKnown = simplePackageContentKnown;
             _requiresSavePreflight = false;
         }
 
@@ -1790,6 +2179,44 @@ namespace OfficeIMO.Excel {
             }
         }
 
+        private bool TrySaveWithSimplePackageToFile(string targetPath, ExcelSaveOptions? options, out string? skipReason, CancellationToken ct = default) {
+            skipReason = null;
+            var temporaryPath = CreateTemporarySavePath(targetPath);
+            byte[]? packageBytes = null;
+
+            try {
+                PrepareWorkbookForSave(options);
+                using (var fs = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None)) {
+                    if (!TryWriteSimpleWorkbookPackage(fs, options, updateDocumentState: false, out skipReason, ct)) {
+                        return false;
+                    }
+                }
+
+                ct.ThrowIfCancellationRequested();
+                packageBytes = File.ReadAllBytes(temporaryPath);
+
+                try { _spreadSheetDocument.Dispose(); } catch { }
+                ReplaceTargetFile(temporaryPath, targetPath);
+                temporaryPath = string.Empty;
+                ReloadFromBytes(packageBytes, simplePackageContentKnown: true);
+
+                FilePath = targetPath;
+                LastSaveDiagnostics = ExcelSaveDiagnostics.SimplePackage();
+                return true;
+            } catch (OperationCanceledException) {
+                throw;
+            } catch (Exception ex) {
+                skipReason = "Simple package writer failed: " + ex.Message;
+                if (packageBytes != null) {
+                    try { ReloadFromBytes(packageBytes, simplePackageContentKnown: true); } catch { }
+                }
+
+                return false;
+            } finally {
+                DeleteFileIfExists(temporaryPath);
+            }
+        }
+
         private static void CommitPreparedPackageToFile(string targetPath, byte[] finalizedBytes) {
             var temporaryPath = CreateTemporarySavePath(targetPath);
             try {
@@ -1830,7 +2257,7 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        private void ReloadFromBytes(byte[] packageBytes) {
+        private void ReloadFromBytes(byte[] packageBytes, bool simplePackageContentKnown = false) {
             var previousDocument = _spreadSheetDocument;
             var previousPackageStream = _packageStream;
             bool keepPackageStream = _copyPackageToSourceOnDispose || _copyPackageToFilePathOnDispose;
@@ -1844,8 +2271,13 @@ namespace OfficeIMO.Excel {
             _spreadSheetDocument = SpreadsheetDocument.Open(mem, true, reopenSettings);
             _workBookPart = WorkbookPartRoot ?? throw new InvalidOperationException("WorkbookPart is null");
             _sharedStringTablePart = null;
+            _sharedStringCache.Clear();
+            _sharedStringTableCount = -1;
+            _sharedStringTableDirty = false;
+            _cachedSheets = null;
+            _sheetCacheDirty = true;
             _packageStream = keepPackageStream ? mem : null;
-            MarkPackageClean(packageBytes);
+            MarkPackageClean(packageBytes, simplePackageContentKnown);
 
             if (previousPackageStream != null && !ReferenceEquals(previousPackageStream, mem)) {
                 DisposeStream(previousPackageStream);
@@ -2050,7 +2482,8 @@ namespace OfficeIMO.Excel {
                 if (this._spreadSheetDocument != null) {
                     try {
                         if (_copyPackageToSourceOnDispose && _sourceStream != null && !this._spreadSheetDocument.AutoSave) {
-                            if (!TryWriteSimpleWorkbookPackage(_sourceStream)) {
+                            if (!TryWriteDirectDataSetPackage(_sourceStream, options: null, updateDocumentState: true, CancellationToken.None, out _)
+                                && !TryWriteSimpleWorkbookPackage(_sourceStream, options: null, updateDocumentState: true, out _)) {
                                 Save(_sourceStream);
                             }
 
@@ -2115,7 +2548,8 @@ namespace OfficeIMO.Excel {
                 if (this._spreadSheetDocument != null) {
                     try {
                         if (_copyPackageToSourceOnDispose && _sourceStream != null && !this._spreadSheetDocument.AutoSave) {
-                            if (!TryWriteSimpleWorkbookPackage(_sourceStream)) {
+                            if (!TryWriteDirectDataSetPackage(_sourceStream, options: null, updateDocumentState: true, CancellationToken.None, out _)
+                                && !TryWriteSimpleWorkbookPackage(_sourceStream, options: null, updateDocumentState: true, out _)) {
                                 Save(_sourceStream);
                             }
 

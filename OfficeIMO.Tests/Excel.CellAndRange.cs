@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using DocumentFormat.OpenXml.Packaging;
@@ -112,6 +113,7 @@ namespace OfficeIMO.Tests {
             Assert.Equal(0, A1.ParseColumnIndexFromCellReference("A2147483648"));
             Assert.Equal(0, A1.ParseColumnIndexFromCellReference("TOTAL"));
             Assert.Equal(28, A1.ParseColumnIndexFromCellReferenceFast("ab12"));
+            Assert.Equal(8, A1.ParseColumnIndexFromCellReferenceFast("H2501"));
             Assert.Equal(28, A1.ParseColumnIndexFromCellReferenceFast(" AB12 "));
             Assert.Equal(1, A1.ParseColumnIndexFromCellReferenceFast("A0000000001"));
             Assert.Equal(0, A1.ParseColumnIndexFromCellReferenceFast("A"));
@@ -119,6 +121,19 @@ namespace OfficeIMO.Tests {
             Assert.Equal(0, A1.ParseColumnIndexFromCellReferenceFast("A2147483648"));
             Assert.Equal(0, A1.ParseColumnIndexFromCellReferenceFast("AB12X"));
             Assert.Equal(0, A1.ParseColumnIndexFromCellReferenceFast("TOTAL"));
+            Assert.Equal(1, A1.ParseColumnIndexFromCellReferenceWithKnownRowFast("A1"));
+            Assert.Equal(8, A1.ParseColumnIndexFromCellReferenceWithKnownRowFast("H2501"));
+            Assert.Equal(28, A1.ParseColumnIndexFromCellReferenceWithKnownRowFast("ab12"));
+            Assert.Equal(0, A1.ParseColumnIndexFromCellReferenceWithKnownRowFast("A0"));
+            Assert.Equal(0, A1.ParseColumnIndexFromCellReferenceWithKnownRowFast("AB12X"));
+            Assert.Equal(0, A1.ParseColumnIndexFromCellReferenceWithKnownRowFast("TOTAL"));
+            Assert.True(A1.TryParseCellReferenceFast("ab12", out int fastRow, out int fastCol));
+            Assert.Equal((12, 28), (fastRow, fastCol));
+            Assert.True(A1.TryParseCellReferenceFast(" AB12 ", out fastRow, out fastCol));
+            Assert.Equal((12, 28), (fastRow, fastCol));
+            Assert.False(A1.TryParseCellReferenceFast("A0", out _, out _));
+            Assert.False(A1.TryParseCellReferenceFast("AB12X", out _, out _));
+            Assert.False(A1.TryParseCellReferenceFast("A2147483648", out _, out _));
             Assert.Equal("A", A1.ColumnIndexToLetters(0));
             Assert.Equal("A", A1.ColumnIndexToLetters(1));
             Assert.Equal("Z", A1.ColumnIndexToLetters(26));
@@ -128,6 +143,33 @@ namespace OfficeIMO.Tests {
             Assert.Equal("AB12", A1.CellReference(12, 28));
             Assert.Throws<ArgumentOutOfRangeException>(() => A1.CellReference(0, 1));
             Assert.Throws<ArgumentOutOfRangeException>(() => A1.CellReference(1, 0));
+        }
+
+        [Fact]
+        public void CellAndRangeStylePresetsApplyFormatsAndStatusColors() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                var sheet = document.AddWorkSheet("Styles");
+                sheet.CellAt(1, 1).SetValue("Amount").HeaderStyle();
+                sheet.CellAt(2, 1).SetValue(123.45).Currency(culture: CultureInfo.GetCultureInfo("en-US")).Success();
+                sheet.Range("B2:B3").Percent(1).Warning();
+                sheet.CellAt(2, 2).SetValue(0.42);
+                sheet.CellAt(3, 2).SetValue(0.67);
+                document.Save();
+            }
+
+            using (var spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
+                string stylesXml = spreadsheet.WorkbookPart!.WorkbookStylesPart!.Stylesheet.OuterXml;
+
+                Assert.Contains("$", stylesXml, StringComparison.Ordinal);
+                Assert.Contains("0.0%", stylesXml, StringComparison.Ordinal);
+                Assert.Contains("E7F6E7", stylesXml, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("FFF4CC", stylesXml, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("D9EAF7", stylesXml, StringComparison.OrdinalIgnoreCase);
+            }
+
+            File.Delete(filePath);
         }
     }
 }
