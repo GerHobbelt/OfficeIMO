@@ -3,7 +3,7 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Standalone inline image: ![alt](src "title").
 /// </summary>
-public sealed class ImageInline : IMarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
+public sealed class ImageInline : MarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
     /// <summary>Alternate text for the image.</summary>
     public string Alt { get; }
     /// <summary>Image source URL or data URI.</summary>
@@ -13,6 +13,10 @@ public sealed class ImageInline : IMarkdownInline, IRenderableMarkdownInline, IP
     /// <summary>Creates a new inline image.</summary>
     public ImageInline(string alt, string src, string? title = null) { Alt = alt; Src = src; Title = title; }
     internal string RenderMarkdown() {
+        if ((MarkdownRenderContext.Options?.ImageRenderingMode ?? MarkdownImageRenderingMode.RichMarkdown) == MarkdownImageRenderingMode.Html) {
+            return RenderHtml();
+        }
+
         var title = MarkdownEscaper.FormatOptionalTitle(Title);
         return $"![{MarkdownEscaper.EscapeImageAlt(Alt)}]({MarkdownEscaper.EscapeImageSrc(Src)}{title})";
     }

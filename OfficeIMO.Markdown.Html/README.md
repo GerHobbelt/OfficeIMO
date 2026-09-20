@@ -41,7 +41,8 @@ Supported inline mappings include:
 - links
 - images
 - hard line breaks
-- a conservative set of inline passthrough elements that collapse to their children
+- typed inline HTML wrappers for `q`, `u`, `ins`, `sub`, and `sup`
+- a conservative raw/passthrough fallback for unsupported inline HTML when preservation is enabled
 
 ## Usage
 
@@ -131,6 +132,20 @@ var document = converter.ConvertToDocument("<article><h1>Hello</h1><p>Body</p></
 - `MarkdownWriteOptions`
   Controls how the intermediate `MarkdownDoc` is serialized back to markdown text.
   Use `HtmlToMarkdownOptions.CreatePortableProfile()` when portability matters more than preserving OfficeIMO-style output.
+- `VisualElementRoundTripHints`
+  Ordered hint list for hosts/plugins that want to reinterpret shared `data-omd-*` visual elements into richer `SemanticFencedBlock` nodes during HTML ingestion.
+  When the host also references `OfficeIMO.MarkdownRenderer`, prefer `htmlOptions.ApplyPlugin(...)` or `htmlOptions.ApplyFeaturePack(...)` so plugin-carried hint registration stays idempotent and aligned with the renderer contract.
+- `DocumentTransforms`
+  Ordered post-conversion AST transforms for hosts/plugins that want HTML ingestion to normalize or upgrade the recovered `MarkdownDoc` before markdown writing.
+  When the host also references `OfficeIMO.MarkdownRenderer`, `htmlOptions.ApplyPlugin(...)` and `htmlOptions.ApplyFeaturePack(...)` now carry plugin-owned document transforms too.
+- `ElementBlockConverters`
+  Ordered custom HTML element decoders that run before the base converter falls back to generic block handling.
+  Use these when a host/plugin package needs to recover semantic markdown blocks from vendor-specific HTML that never used the shared `data-omd-*` visual contract.
+  When the host also references `OfficeIMO.MarkdownRenderer`, `htmlOptions.ApplyPlugin(...)` and `htmlOptions.ApplyFeaturePack(...)` now carry plugin-owned element converters too.
+- `InlineElementConverters`
+  Ordered custom HTML inline decoders that run before the base converter falls back to generic inline handling.
+  Use these when a host/plugin package needs to recover richer inline AST, such as vendor badges or semantic spans, instead of preserving raw HTML or flattening to plain text.
+  When the host also references `OfficeIMO.MarkdownRenderer`, `htmlOptions.ApplyPlugin(...)` and `htmlOptions.ApplyFeaturePack(...)` now carry plugin-owned inline converters too.
 
 ## Profile guidance
 
@@ -155,8 +170,16 @@ That means `OfficeIMO.Markdown.Html` is no longer just a text flattener. It is a
 - Multiple `dt` terms sharing the same `dd` group are preserved.
 - Block-rich `dd` values are preserved as typed block content instead of being forced through inline-only conversion.
 - Table cells preserve typed block content in the intermediate `MarkdownDoc` AST instead of collapsing immediately to strings.
+- Supported inline HTML such as `q`, `u`, `ins`, `sub`, and `sup` is preserved as typed AST wrappers instead of being flattened to plain text.
 - Unsupported custom/container elements are treated as block-level content when they are structurally block-like or when raw block preservation is enabled.
 - Shared renderer visual hosts that carry the `data-omd-*` contract are decoded back into `SemanticFencedBlock` nodes, which lets `OfficeIMO.MarkdownRenderer` HTML round-trip into semantic markdown fences.
+- Shared renderer visual hosts now preserve explicit fence metadata such as `#id`, extra `.class` values, `title="..."`, and plugin-defined flags through `data-omd-fence-*` attributes, so HTML round-trips can rebuild richer semantic fence info strings instead of dropping back to language-only fences.
+- Shared visual hosts wrapped as richer HTML, such as `<figure>` with a `<figcaption>`, now preserve that caption on the recovered semantic fenced block instead of dropping it.
+- Host/plugin packages can register custom `ElementBlockConverters` when richer vendor HTML should decode into semantic markdown blocks before generic fallback or raw-HTML preservation.
+- Host/plugin packages can register custom `InlineElementConverters` when richer vendor inline HTML should decode into semantic inline AST before generic fallback or raw-HTML preservation.
+- Host/plugin packages can register `VisualElementRoundTripHints` when they need to recover extra semantic details from shared visual host HTML without hard-coding vendor logic into the base converter.
+- Host/plugin packages can also register `DocumentTransforms` when recovered HTML should be normalized or upgraded into richer AST shapes after parsing.
+- When those hosts already use `OfficeIMO.MarkdownRenderer` plugins or feature packs, they can apply the same contract directly on `HtmlToMarkdownOptions` instead of copying converter, transform, and hint lists by hand.
 - Conversion happens through the `OfficeIMO.Markdown` AST, so the effective fidelity is bounded by that model.
 
 For the current stack, this means HTML ingestion can preserve more structure than plain markdown text can always express directly. The AST is the source of truth; markdown emission is the profile-driven projection of that model.
@@ -164,6 +187,7 @@ For the current stack, this means HTML ingestion can preserve more structure tha
 ## Current limitations
 
 - Markdown text emission is still constrained by markdown syntax itself, so rich table-cell and definition-list AST content may be flattened when serialized for engines that only accept plain markdown text.
+- Downstream converters may still choose deliberate degradations for AST-preserved HTML wrappers when the target format has no native equivalent. For example, the Word converter keeps `u/sub/sup` structurally but intentionally degrades `ins` and `q`.
 - Portable output intentionally degrades OfficeIMO-specific constructs instead of preserving host-specific syntax.
 - Unsupported HTML is preserved best when `PreserveUnsupportedBlocks` / `PreserveUnsupportedInlineHtml` are enabled.
 

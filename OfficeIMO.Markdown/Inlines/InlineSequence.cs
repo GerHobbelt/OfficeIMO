@@ -3,7 +3,7 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Sequence of inline nodes used in paragraphs and list items.
 /// </summary>
-public sealed class InlineSequence : IMarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
+public sealed class InlineSequence : MarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
     private readonly List<IMarkdownInline> _inlines = new List<IMarkdownInline>();
     private readonly IReadOnlyList<object> _itemsView;
 
@@ -22,7 +22,7 @@ public sealed class InlineSequence : IMarkdownInline, IRenderableMarkdownInline,
     /// <summary>Adds plain text.</summary>
     public InlineSequence Text(string text) { _inlines.Add(new TextRun(text)); return this; }
     /// <summary>Adds a hyperlink.</summary>
-    public InlineSequence Link(string text, string url, string? title = null) { _inlines.Add(new LinkInline(text, url, title)); return this; }
+    public InlineSequence Link(string text, string url, string? title = null, string? linkTarget = null, string? linkRel = null) { _inlines.Add(new LinkInline(text, url, title, linkTarget, linkRel)); return this; }
     /// <summary>Adds bold text.</summary>
     public InlineSequence Bold(string text) { _inlines.Add(new BoldInline(text)); return this; }
     /// <summary>Adds bold+italic text.</summary>
@@ -39,8 +39,16 @@ public sealed class InlineSequence : IMarkdownInline, IRenderableMarkdownInline,
     public InlineSequence Highlight(string text) { _inlines.Add(new HighlightInline(text)); return this; }
     /// <summary>Adds underlined text (HTML-only in Markdown).</summary>
     public InlineSequence Underline(string text) { _inlines.Add(new UnderlineInline(text)); return this; }
+    /// <summary>Adds superscript text rendered via inline HTML.</summary>
+    public InlineSequence Superscript(string text) { _inlines.Add(new HtmlTagSequenceInline("sup", new InlineSequence().Text(text))); return this; }
+    /// <summary>Adds subscript text rendered via inline HTML.</summary>
+    public InlineSequence Subscript(string text) { _inlines.Add(new HtmlTagSequenceInline("sub", new InlineSequence().Text(text))); return this; }
+    /// <summary>Adds inserted text rendered via inline HTML.</summary>
+    public InlineSequence Inserted(string text) { _inlines.Add(new HtmlTagSequenceInline("ins", new InlineSequence().Text(text))); return this; }
+    /// <summary>Adds quoted text rendered via inline HTML.</summary>
+    public InlineSequence Quote(string text) { _inlines.Add(new HtmlTagSequenceInline("q", new InlineSequence().Text(text))); return this; }
     /// <summary>Adds a linked image (useful for badges).</summary>
-    public InlineSequence ImageLink(string alt, string imageUrl, string linkUrl, string? title = null) { _inlines.Add(new ImageLinkInline(alt, imageUrl, linkUrl, title)); return this; }
+    public InlineSequence ImageLink(string alt, string imageUrl, string linkUrl, string? title = null, string? linkTitle = null) { _inlines.Add(new ImageLinkInline(alt, imageUrl, linkUrl, title, linkTitle)); return this; }
     /// <summary>Adds a standalone inline image.</summary>
     public InlineSequence Image(string alt, string src, string? title = null) { _inlines.Add(new ImageInline(alt, src, title)); return this; }
     /// <summary>Adds a hard line break.</summary>

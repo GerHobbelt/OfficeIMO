@@ -156,6 +156,21 @@ namespace OfficeIMO.Tests.MarkdownSuite {
         }
 
         [Fact]
+        public void Parses_Linked_Image_With_Caption_As_ImageBlock() {
+            var doc = MarkdownReader.Parse("""
+[![alt](https://example.com/a.png)](https://example.com/docs "Documentation")
+_Caption_
+""");
+
+            var image = Assert.IsType<ImageBlock>(doc.Blocks[0]);
+            Assert.Equal("alt", image.Alt);
+            Assert.Equal("https://example.com/a.png", image.Path);
+            Assert.Equal("https://example.com/docs", image.LinkUrl);
+            Assert.Equal("Documentation", image.LinkTitle);
+            Assert.Equal("Caption", image.Caption);
+        }
+
+        [Fact]
         public void Parses_Inline_Image_With_Angle_Destination_Containing_Spaces() {
             var html = MarkdownReader.Parse("Look ![alt](<https://example.com/a (b).png>) now").ToHtmlFragment();
 
@@ -372,6 +387,125 @@ namespace OfficeIMO.Tests.MarkdownSuite {
         }
 
         [Fact]
+        public void Parses_Fenced_Code_Block_InfoString_Into_Primary_Language_And_Metadata() {
+            const string md = """
+```json title="summary chart"
+{"value":1}
+```
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var code = Assert.IsType<CodeBlock>(doc.Blocks[0]);
+
+            Assert.Equal("json", code.Language);
+            Assert.Equal("json title=\"summary chart\"", code.InfoString);
+            Assert.Equal("title=\"summary chart\"", code.FenceInfo.AdditionalInfo);
+            Assert.True(code.FenceInfo.TryGetAttribute("title", out var title));
+            Assert.Equal("summary chart", title);
+            Assert.Equal("summary chart", code.FenceInfo.Title);
+            Assert.Equal(
+                md.TrimEnd().Replace("\r\n", "\n"),
+                ((IMarkdownBlock)code).RenderMarkdown().Replace("\r\n", "\n"));
+        }
+
+        [Fact]
+        public void Parses_Fenced_Code_Block_Brace_Metadata_Into_Id_Classes_And_Attributes() {
+            const string md = """
+```chart {#quarterly-overview .wide .accent title="Quarterly Revenue" pinned}
+{"series":[1,2,3]}
+```
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var code = Assert.IsType<CodeBlock>(doc.Blocks[0]);
+
+            Assert.Equal("chart", code.Language);
+            Assert.Equal("{#quarterly-overview .wide .accent title=\"Quarterly Revenue\" pinned}", code.FenceInfo.AdditionalInfo);
+            Assert.Equal("quarterly-overview", code.FenceInfo.ElementId);
+            Assert.Equal(2, code.FenceInfo.Classes.Count);
+            Assert.Equal("wide", code.FenceInfo.Classes[0]);
+            Assert.Equal("accent", code.FenceInfo.Classes[1]);
+            Assert.True(code.FenceInfo.HasClass("wide"));
+            Assert.True(code.FenceInfo.HasClass("accent"));
+            Assert.True(code.FenceInfo.TryGetAttribute("pinned", out var pinned));
+            Assert.Equal("true", pinned);
+            Assert.Equal("Quarterly Revenue", code.FenceInfo.Title);
+            Assert.Equal(
+                md.TrimEnd().Replace("\r\n", "\n"),
+                ((IMarkdownBlock)code).RenderMarkdown().Replace("\r\n", "\n"));
+        }
+
+        [Fact]
+        public void Fenced_Code_Block_Metadata_Can_Read_Typed_Boolean_And_Integer_Attributes() {
+            const string md = """
+```chart title="Quarterly Revenue" pinned compact=false maxItems=12 limit=7
+{"series":[1,2,3]}
+```
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var code = Assert.IsType<CodeBlock>(doc.Blocks[0]);
+
+            Assert.True(code.FenceInfo.TryGetBooleanAttribute("pinned", out var pinned));
+            Assert.True(pinned);
+            Assert.True(code.FenceInfo.TryGetBooleanAttribute("compact", out var compact));
+            Assert.False(compact);
+            Assert.True(code.FenceInfo.TryGetInt32Attribute("maxItems", out var maxItems));
+            Assert.Equal(12, maxItems);
+            Assert.True(code.FenceInfo.TryGetInt32Attribute(out var aliasedLimit, "missing", "limit"));
+            Assert.Equal(7, aliasedLimit);
+            Assert.Equal("Quarterly Revenue", code.FenceInfo.GetAttribute("caption", "title"));
+        }
+
+        [Fact]
+        public void Malformed_Fenced_Code_Block_Brace_Metadata_Does_Not_Partially_Apply_Structured_Attributes() {
+            const string md = """
+```chart {#quarterly-overview .wide title="Quarterly Revenue"
+{"series":[1,2,3]}
+```
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var code = Assert.IsType<CodeBlock>(doc.Blocks[0]);
+
+            Assert.Equal("chart", code.Language);
+            Assert.Equal("{#quarterly-overview .wide title=\"Quarterly Revenue\"", code.FenceInfo.AdditionalInfo);
+            Assert.Null(code.FenceInfo.ElementId);
+            Assert.Empty(code.FenceInfo.Classes);
+            Assert.Null(code.FenceInfo.Title);
+            Assert.False(code.FenceInfo.TryGetAttribute("title", out _));
+            Assert.Equal(
+                md.TrimEnd().Replace("\r\n", "\n"),
+                ((IMarkdownBlock)code).RenderMarkdown().Replace("\r\n", "\n"));
+        }
+
+        [Fact]
+        public void Fenced_Block_Extension_Matches_Primary_Language_When_InfoString_Has_Metadata() {
+            var options = new MarkdownReaderOptions();
+            options.FencedBlockExtensions.Add(new MarkdownFencedBlockExtension(
+                "Chart semantic",
+                new[] { "chart" },
+                context => new SemanticFencedBlock(MarkdownSemanticKinds.Chart, context.InfoString, context.Content, context.Caption)));
+
+            const string md = """
+```chart title="Quarterly Revenue"
+{"series":[1,2,3]}
+```
+""";
+
+            var doc = MarkdownReader.Parse(md, options);
+            var block = Assert.IsType<SemanticFencedBlock>(doc.Blocks[0]);
+
+            Assert.Equal("chart", block.Language);
+            Assert.Equal("chart title=\"Quarterly Revenue\"", block.InfoString);
+            Assert.Equal("title=\"Quarterly Revenue\"", block.FenceInfo.AdditionalInfo);
+            Assert.Equal("Quarterly Revenue", block.FenceInfo.Title);
+            Assert.Equal(
+                md.TrimEnd().Replace("\r\n", "\n"),
+                ((IMarkdownBlock)block).RenderMarkdown().Replace("\r\n", "\n"));
+        }
+
+        [Fact]
         public void Underscore_Emphasis_Does_Not_Trigger_Inside_Words() {
             var doc = MarkdownReader.Parse("foo_bar_baz");
             var html = doc.ToHtmlFragment();
@@ -446,6 +580,75 @@ namespace OfficeIMO.Tests.MarkdownSuite {
             var html = doc.ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
             Assert.DoesNotContain("<dl>", html, StringComparison.Ordinal);
             Assert.Contains("<p>Visit https://example.com/path_(x): now</p>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Definition_List_Can_Parse_Multi_Paragraph_Definition_Bodies() {
+            string md = """
+Term: First paragraph
+  continued
+
+  Second paragraph
+
+Other: Value
+""";
+
+            var doc = MarkdownReader.Parse(md);
+
+            var defList = Assert.IsType<DefinitionListBlock>(doc.Blocks[0]);
+            Assert.Equal(2, defList.Entries.Count);
+            Assert.Equal("Term", defList.Entries[0].Term.RenderMarkdown());
+            Assert.Collection(defList.Entries[0].DefinitionBlocks,
+                block => Assert.Equal("First paragraph continued", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => Assert.Equal("Second paragraph", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()));
+            Assert.Equal("Other", defList.Entries[1].Term.RenderMarkdown());
+            Assert.Equal("Value", Assert.IsType<ParagraphBlock>(Assert.Single(defList.Entries[1].DefinitionBlocks)).Inlines.RenderMarkdown());
+        }
+
+        [Fact]
+        public void Definition_List_RenderMarkdown_Preserves_Multi_Block_Definition_Bodies_For_Reparse() {
+            string md = """
+Term: Intro
+
+  - first
+  - second
+
+Other: Value
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var roundTrip = MarkdownReader.Parse(doc.ToMarkdown());
+
+            var defList = Assert.IsType<DefinitionListBlock>(Assert.Single(roundTrip.Blocks));
+            Assert.Equal(2, defList.Entries.Count);
+            Assert.Collection(defList.Entries[0].DefinitionBlocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => Assert.IsType<UnorderedListBlock>(block));
+            Assert.Equal("Value", Assert.IsType<ParagraphBlock>(Assert.Single(defList.Entries[1].DefinitionBlocks)).Inlines.RenderMarkdown());
+        }
+
+        [Fact]
+        public void Definition_List_Can_Parse_Nested_Blockquote_And_List_In_Definition_Body() {
+            string md = """
+Term: Intro
+
+  > quoted line
+  >
+  > more quote
+
+  - first
+  - second
+""";
+
+            var doc = MarkdownReader.Parse(md);
+
+            var definitions = Assert.IsType<DefinitionListBlock>(Assert.Single(doc.Blocks));
+            var entry = Assert.Single(definitions.Entries);
+
+            Assert.Collection(entry.DefinitionBlocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => Assert.IsType<QuoteBlock>(block),
+                block => Assert.IsType<UnorderedListBlock>(block));
         }
 
         [Fact]
@@ -622,6 +825,31 @@ Text[^a]
             var html = MarkdownReader.Parse(md).ToHtmlFragment(new HtmlOptions { Style = HtmlStyle.Plain, CssDelivery = CssDelivery.None, BodyClass = null });
             Assert.Contains("<li id=\"fn:a\"><p>First", html, StringComparison.Ordinal);
             Assert.Contains("</p><p>Second", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Footnotes_Can_Parse_Nested_List_Blocks_And_RoundTrip() {
+            string md = """
+Lead[^a]
+
+[^a]: Intro
+
+  - first
+  - second
+""";
+
+            var doc = MarkdownReader.Parse(md);
+            var footnote = Assert.IsType<FootnoteDefinitionBlock>(Assert.Single(doc.Blocks, block => block is FootnoteDefinitionBlock));
+
+            Assert.Collection(footnote.Blocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => Assert.IsType<UnorderedListBlock>(block));
+
+            var roundTrip = MarkdownReader.Parse(doc.ToMarkdown());
+            var reparsedFootnote = Assert.IsType<FootnoteDefinitionBlock>(Assert.Single(roundTrip.Blocks, block => block is FootnoteDefinitionBlock));
+            Assert.Collection(reparsedFootnote.Blocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => Assert.IsType<UnorderedListBlock>(block));
         }
     }
 }

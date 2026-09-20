@@ -4,7 +4,7 @@ namespace OfficeIMO.Markdown;
 /// First-class AST node for fenced blocks whose language maps to host-defined semantics
 /// such as diagrams, charts, data views, or other non-code contracts.
 /// </summary>
-public sealed class SemanticFencedBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlock {
+public sealed class SemanticFencedBlock : MarkdownBlock, IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlock {
     /// <summary>Create a semantic fenced block.</summary>
     public SemanticFencedBlock(string semanticKind, string language, string content, string? caption = null)
         : this(semanticKind, language, content, caption, isFenced: true) {
@@ -12,8 +12,10 @@ public sealed class SemanticFencedBlock : IMarkdownBlock, ICaptionable, ISyntaxM
 
     internal SemanticFencedBlock(string semanticKind, string language, string content, string? caption, bool isFenced) {
         SemanticKind = string.IsNullOrWhiteSpace(semanticKind) ? MarkdownSemanticKinds.Custom : semanticKind.Trim();
-        Language = language ?? string.Empty;
-        Content = content ?? string.Empty;
+        FenceInfo = MarkdownCodeFenceInfo.Parse(language);
+        InfoString = FenceInfo.InfoString;
+        Language = FenceInfo.Language;
+        Content = NormalizeLineEndings(content);
         Caption = caption;
         IsFenced = isFenced;
     }
@@ -23,6 +25,12 @@ public sealed class SemanticFencedBlock : IMarkdownBlock, ICaptionable, ISyntaxM
 
     /// <summary>Original fence language / info string.</summary>
     public string Language { get; }
+
+    /// <summary>Full original fence info string.</summary>
+    public string InfoString { get; }
+
+    /// <summary>Structured fenced-code info metadata.</summary>
+    public MarkdownCodeFenceInfo FenceInfo { get; }
 
     /// <summary>Raw fenced payload.</summary>
     public string Content { get; }
@@ -36,7 +44,7 @@ public sealed class SemanticFencedBlock : IMarkdownBlock, ICaptionable, ISyntaxM
         string fence = MarkdownFence.BuildSafeFence(Content);
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine($"{fence}{Language}");
+        sb.AppendLine($"{fence}{InfoString}");
         sb.AppendLine(Content);
         sb.AppendLine(fence);
         if (!string.IsNullOrWhiteSpace(Caption)) {
@@ -53,7 +61,7 @@ public sealed class SemanticFencedBlock : IMarkdownBlock, ICaptionable, ISyntaxM
             return overridden;
         }
 
-        var codeFallback = options?.CodeBlockHtmlRenderer?.Invoke(new CodeBlock(Language, Content) {
+        var codeFallback = options?.CodeBlockHtmlRenderer?.Invoke(new CodeBlock(InfoString, Content) {
             Caption = Caption
         }, options);
         if (codeFallback != null) {
@@ -70,16 +78,26 @@ public sealed class SemanticFencedBlock : IMarkdownBlock, ICaptionable, ISyntaxM
         return $"<pre><code{lang}>{code}</code></pre>{caption}";
     }
 
+    private static string NormalizeLineEndings(string? content) {
+        if (string.IsNullOrEmpty(content)) {
+            return string.Empty;
+        }
+
+        return content!
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n');
+    }
+
     MarkdownSyntaxNode ISyntaxMarkdownBlock.BuildSyntaxNode(MarkdownSourceSpan? span) {
         var nodes = new List<MarkdownSyntaxNode> {
             new MarkdownSyntaxNode(MarkdownSyntaxKind.FenceSemanticKind, literal: SemanticKind)
         };
 
-        if (span.HasValue && IsFenced && !string.IsNullOrEmpty(Language)) {
+        if (span.HasValue && IsFenced && !string.IsNullOrEmpty(InfoString)) {
             nodes.Add(new MarkdownSyntaxNode(
                 MarkdownSyntaxKind.CodeFenceInfo,
                 new MarkdownSourceSpan(span.Value.StartLine, span.Value.StartLine),
-                Language));
+                InfoString));
         }
 
         MarkdownSourceSpan? contentSpan;

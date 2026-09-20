@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using OfficeIMO.Markdown;
 using OfficeIMO.MarkdownRenderer;
+using OfficeIMO.MarkdownRenderer.IntelligenceX;
 using Xunit;
 
 namespace OfficeIMO.Tests {
@@ -321,6 +322,276 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void MarkdownRendererPlugins_IntelligenceXVisuals_Can_Be_Applied_Directly() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            opts.ApplyPlugin(MarkdownRendererPlugins.IntelligenceXVisuals);
+
+            Assert.True(opts.HasPlugin(MarkdownRendererPlugins.IntelligenceXVisuals));
+            Assert.False(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(opts));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("ix-chart", StringComparer.OrdinalIgnoreCase));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("ix-network", StringComparer.OrdinalIgnoreCase));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("ix-dataview", StringComparer.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public void MarkdownRendererPlugins_IntelligenceXTranscriptVisuals_Can_Be_Applied_Directly() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            opts.ApplyPlugin(MarkdownRendererPlugins.IntelligenceXTranscriptVisuals);
+
+            Assert.True(opts.HasPlugin(MarkdownRendererPlugins.IntelligenceXTranscriptVisuals));
+            Assert.True(opts.ReaderOptions.PreferNarrativeSingleLineDefinitions);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform => transform is MarkdownSimpleDefinitionListParagraphTransform);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform =>
+                transform is MarkdownJsonVisualCodeBlockTransform visual
+                && visual.LanguageMode == MarkdownVisualFenceLanguageMode.IntelligenceXAliasFence);
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("ix-chart", StringComparer.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_VisualsPlugin_Carries_VisualFenceSchema() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            opts.ApplyPlugin(IntelligenceXMarkdownRenderer.VisualsPlugin);
+
+            Assert.True(opts.HasPlugin(IntelligenceXMarkdownRenderer.VisualsPlugin));
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(opts));
+            Assert.True(opts.TryGetFenceOptionSchema("ix-chart", out var schema));
+            Assert.Equal(IntelligenceXMarkdownRenderer.VisualFenceSchema.Id, schema.Id);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_TranscriptPlugin_Carries_Reader_Contract_And_VisualFenceSchema() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            opts.ApplyPlugin(IntelligenceXMarkdownRenderer.TranscriptPlugin);
+
+            Assert.True(opts.HasPlugin(IntelligenceXMarkdownRenderer.TranscriptPlugin));
+            Assert.True(IntelligenceXMarkdownRenderer.HasTranscriptContract(opts));
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(opts));
+            Assert.True(opts.ReaderOptions.PreferNarrativeSingleLineDefinitions);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform => transform is MarkdownSimpleDefinitionListParagraphTransform);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform =>
+                transform is MarkdownJsonVisualCodeBlockTransform visual
+                && visual.LanguageMode == MarkdownVisualFenceLanguageMode.IntelligenceXAliasFence);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_ApplyVisuals_Adds_IxVisualPlugin() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            IntelligenceXMarkdownRenderer.ApplyVisuals(opts);
+
+            Assert.True(opts.HasPlugin(IntelligenceXMarkdownRenderer.VisualsPlugin));
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(opts));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("ix-chart", StringComparer.OrdinalIgnoreCase));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("ix-network", StringComparer.OrdinalIgnoreCase));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("ix-dataview", StringComparer.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_ApplyTranscriptContract_Adds_TranscriptPlugin() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            IntelligenceXMarkdownRenderer.ApplyTranscriptContract(opts);
+
+            Assert.True(IntelligenceXMarkdownRenderer.HasTranscriptContract(opts));
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(opts));
+            Assert.True(opts.ReaderOptions.PreferNarrativeSingleLineDefinitions);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform => transform is MarkdownSimpleDefinitionListParagraphTransform);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform =>
+                transform is MarkdownJsonVisualCodeBlockTransform visual
+                && visual.LanguageMode == MarkdownVisualFenceLanguageMode.IntelligenceXAliasFence);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_ApplyTranscriptContract_Is_Idempotent() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            IntelligenceXMarkdownRenderer.ApplyTranscriptContract(opts);
+            IntelligenceXMarkdownRenderer.ApplyTranscriptContract(opts);
+
+            Assert.True(IntelligenceXMarkdownRenderer.HasTranscriptContract(opts));
+            Assert.Equal(1, opts.FencedCodeBlockRenderers.Count(renderer => renderer.Languages.Contains("ix-chart", StringComparer.OrdinalIgnoreCase)));
+            Assert.Equal(1, opts.FencedCodeBlockRenderers.Count(renderer => renderer.Languages.Contains("ix-network", StringComparer.OrdinalIgnoreCase)));
+            Assert.Equal(1, opts.FencedCodeBlockRenderers.Count(renderer => renderer.Languages.Contains("ix-dataview", StringComparer.OrdinalIgnoreCase)));
+            Assert.Equal(1, opts.ReaderOptions.DocumentTransforms.Count(transform => transform is MarkdownSimpleDefinitionListParagraphTransform));
+            Assert.Equal(1, opts.ReaderOptions.DocumentTransforms.Count(transform =>
+                transform is MarkdownJsonVisualCodeBlockTransform visual
+                && visual.LanguageMode == MarkdownVisualFenceLanguageMode.IntelligenceXAliasFence));
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_ApplyTranscriptCompatibility_Matches_Core_Composition() {
+            var viaPackage = MarkdownRendererPresets.CreateStrict();
+            var viaCore = MarkdownRendererPresets.CreateStrict();
+
+            IntelligenceXMarkdownRenderer.ApplyTranscriptCompatibility(viaPackage);
+            viaCore.ApplyFeaturePack(MarkdownRendererFeaturePacks.IntelligenceXTranscriptCompatibility);
+
+            Assert.Equal(viaCore.MarkdownPreProcessors.Count, viaPackage.MarkdownPreProcessors.Count);
+            Assert.True(viaPackage.HasFeaturePack(MarkdownRendererFeaturePacks.IntelligenceXTranscriptCompatibility));
+            Assert.True(IntelligenceXMarkdownRenderer.HasTranscriptCompatibility(viaPackage));
+            Assert.True(IntelligenceXMarkdownRenderer.HasTranscriptContract(viaPackage));
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(viaPackage));
+            Assert.Equal(viaCore.ReaderOptions.PreferNarrativeSingleLineDefinitions, viaPackage.ReaderOptions.PreferNarrativeSingleLineDefinitions);
+            Assert.Equal(viaCore.ReaderOptions.DocumentTransforms.Count, viaPackage.ReaderOptions.DocumentTransforms.Count);
+            Assert.Equal(
+                viaCore.FencedCodeBlockRenderers.SelectMany(renderer => renderer.Languages).OrderBy(value => value, StringComparer.OrdinalIgnoreCase),
+                viaPackage.FencedCodeBlockRenderers.SelectMany(renderer => renderer.Languages).OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_TranscriptCompatibilityPack_Carries_VisualFenceSchema() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            opts.ApplyFeaturePack(IntelligenceXMarkdownRenderer.TranscriptCompatibilityPack);
+
+            Assert.True(opts.HasFeaturePack(IntelligenceXMarkdownRenderer.TranscriptCompatibilityPack));
+            Assert.True(IntelligenceXMarkdownRenderer.HasTranscriptCompatibility(opts));
+            Assert.True(IntelligenceXMarkdownRenderer.HasTranscriptContract(opts));
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(opts));
+            Assert.True(opts.ReaderOptions.PreferNarrativeSingleLineDefinitions);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform => transform is MarkdownSimpleDefinitionListParagraphTransform);
+            Assert.Contains(opts.ReaderOptions.DocumentTransforms, transform =>
+                transform is MarkdownJsonVisualCodeBlockTransform visual
+                && visual.LanguageMode == MarkdownVisualFenceLanguageMode.IntelligenceXAliasFence);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_VisualFenceSchema_Is_Resolvable_By_Renderer_Options() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            IntelligenceXMarkdownRenderer.ApplyVisualFenceSchema(opts);
+
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(opts));
+            Assert.True(opts.TryGetFenceOptionSchema("ix-chart", out var chartSchema));
+            Assert.Equal(IntelligenceXMarkdownRenderer.VisualFenceSchema.Id, chartSchema.Id);
+            Assert.True(opts.TryGetFenceOptionSchema("ix-network", out var networkSchema));
+            Assert.Equal(IntelligenceXMarkdownRenderer.VisualFenceSchema.Id, networkSchema.Id);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_Can_Parse_Typed_Visual_Fence_Options() {
+            var parsed = IntelligenceXMarkdownRenderer.ParseVisualFenceOptions(
+                "ix-chart {#quarterly-summary .wide .accent title=\"Quarterly Revenue\" pinned theme=\"amber\" variant=compact view=timeline maxItems=12}");
+
+            Assert.Equal("ix-chart", parsed.Language);
+            Assert.Equal("ix-chart {#quarterly-summary .wide .accent title=\"Quarterly Revenue\" pinned theme=\"amber\" variant=compact view=timeline maxItems=12}", parsed.InfoString);
+            Assert.Equal("quarterly-summary", parsed.ElementId);
+            Assert.Equal(new[] { "wide", "accent" }, parsed.Classes);
+            Assert.True(parsed.HasClass("wide"));
+            Assert.Equal("Quarterly Revenue", parsed.Title);
+            Assert.True(parsed.Pinned);
+            Assert.Equal("amber", parsed.Theme);
+            Assert.Equal("compact", parsed.Variant);
+            Assert.Equal("timeline", parsed.View);
+            Assert.Equal(12, parsed.MaxItems);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_Can_Parse_Typed_Visual_Fence_Options_From_Shared_Fence_Info() {
+            var fenceInfo = MarkdownCodeFenceInfo.Parse("ix-network title=\"Relationship Map\" pin mode=graph limit=8");
+            var parsed = IntelligenceXMarkdownRenderer.ParseVisualFenceOptions(fenceInfo);
+
+            Assert.Equal("ix-network", parsed.Language);
+            Assert.Equal("Relationship Map", parsed.Title);
+            Assert.True(parsed.Pinned);
+            Assert.Equal("graph", parsed.View);
+            Assert.Equal(8, parsed.MaxItems);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_VisualFenceSchema_Parses_And_Validates_Registered_Options() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+            IntelligenceXMarkdownRenderer.ApplyVisualFenceSchema(opts);
+            var fenceInfo = MarkdownCodeFenceInfo.Parse("ix-chart title=\"Quarterly Revenue\" pin palette=amber style=compact mode=timeline limit=0 custom=true");
+
+            Assert.True(opts.TryParseFenceOptions("ix-chart", fenceInfo, out var parsed));
+            Assert.False(parsed.IsValid);
+            Assert.True(parsed.TryGetBoolean("pinned", out var pinned));
+            Assert.True(pinned);
+            Assert.True(parsed.TryGetString("theme", out var theme));
+            Assert.Equal("amber", theme);
+            Assert.True(parsed.TryGetString("variant", out var variant));
+            Assert.Equal("compact", variant);
+            Assert.True(parsed.TryGetString("view", out var view));
+            Assert.Equal("timeline", view);
+            Assert.Contains("maxItems", parsed.Errors.Keys, StringComparer.OrdinalIgnoreCase);
+            Assert.Contains("custom", parsed.UnknownOptions);
+            Assert.DoesNotContain("title", parsed.UnknownOptions);
+        }
+
+        [Fact]
+        public void MarkdownRendererFeaturePacks_IntelligenceXTranscriptCompatibility_Is_Idempotent_And_Tracked() {
+            var opts = MarkdownRendererPresets.CreateStrict();
+
+            opts.ApplyFeaturePack(MarkdownRendererFeaturePacks.IntelligenceXTranscriptCompatibility);
+            opts.ApplyFeaturePack(MarkdownRendererFeaturePacks.IntelligenceXTranscriptCompatibility);
+
+            Assert.True(opts.HasFeaturePack(MarkdownRendererFeaturePacks.IntelligenceXTranscriptCompatibility));
+            Assert.Contains(opts.AppliedFeaturePackIds, id => string.Equals(id, "officeimo.intelligencex.transcript-compatibility", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(1, opts.AppliedFeaturePackIds.Count(id => string.Equals(id, "officeimo.intelligencex.transcript-compatibility", StringComparison.OrdinalIgnoreCase)));
+            Assert.Equal(1, opts.FencedCodeBlockRenderers.Count(renderer => renderer.Languages.Contains("ix-chart", StringComparer.OrdinalIgnoreCase)));
+            Assert.Equal(1, opts.FencedCodeBlockRenderers.Count(renderer => renderer.Languages.Contains("ix-network", StringComparer.OrdinalIgnoreCase)));
+            Assert.Equal(1, opts.FencedCodeBlockRenderers.Count(renderer => renderer.Languages.Contains("ix-dataview", StringComparer.OrdinalIgnoreCase)));
+            Assert.Empty(opts.MarkdownPreProcessors);
+            Assert.Equal(1, opts.ReaderOptions.DocumentTransforms.Count(transform => transform is MarkdownSimpleDefinitionListParagraphTransform));
+            Assert.Equal(1, opts.ReaderOptions.DocumentTransforms.Count(transform =>
+                transform is MarkdownJsonVisualCodeBlockTransform visual
+                && visual.LanguageMode == MarkdownVisualFenceLanguageMode.IntelligenceXAliasFence));
+            Assert.Equal(1, opts.ReaderOptions.DocumentTransforms.Count(transform => transform is MarkdownIntelligenceXCachedToolEvidenceMarkerTransform));
+            Assert.Equal(1, opts.ReaderOptions.DocumentTransforms.Count(transform => transform is MarkdownIntelligenceXLegacyToolHeadingTransform));
+        }
+
+        [Fact]
+        public void IntelligenceXTranscriptCompatibilityPack_Can_Upgrade_Legacy_Json_Visuals_On_Generic_Strict_Renderer() {
+            const string markdown = """
+```json
+{"type":"bar","data":{"labels":["A"],"datasets":[{"label":"Count","data":[1]}]}}
+```
+""";
+            var opts = MarkdownRendererPresets.CreateStrict();
+            opts.Chart.Enabled = true;
+
+            opts.ApplyFeaturePack(IntelligenceXMarkdownRenderer.TranscriptCompatibilityPack);
+            var html = OfficeIMO.MarkdownRenderer.MarkdownRenderer.RenderBodyHtml(markdown, opts);
+
+            Assert.Contains("class=\"omd-visual omd-chart\"", html, StringComparison.Ordinal);
+            Assert.Contains("data-omd-fence-language=\"ix-chart\"", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void IntelligenceXMarkdownRenderer_CreateTranscriptDesktopShell_Matches_CorePreset() {
+            var viaPackage = IntelligenceXMarkdownRenderer.CreateTranscriptDesktopShell();
+            var viaCore = MarkdownRendererPresets.CreateIntelligenceXTranscriptDesktopShell();
+
+            Assert.Equal(viaCore.HtmlOptions.Style, viaPackage.HtmlOptions.Style);
+            Assert.Equal(viaCore.HtmlOptions.CssScopeSelector, viaPackage.HtmlOptions.CssScopeSelector);
+            Assert.Equal(viaCore.EnableCodeCopyButtons, viaPackage.EnableCodeCopyButtons);
+            Assert.Equal(viaCore.EnableTableCopyButtons, viaPackage.EnableTableCopyButtons);
+            Assert.Equal(viaCore.Mermaid.Enabled, viaPackage.Mermaid.Enabled);
+            Assert.Equal(viaCore.Chart.Enabled, viaPackage.Chart.Enabled);
+            Assert.Equal(viaCore.Network.Enabled, viaPackage.Network.Enabled);
+            Assert.Equal(viaCore.Math.Enabled, viaPackage.Math.Enabled);
+            Assert.True(IntelligenceXMarkdownRenderer.HasVisualFenceSchema(viaPackage));
+            Assert.Equal(
+                viaCore.FencedCodeBlockRenderers.SelectMany(renderer => renderer.Languages).OrderBy(value => value, StringComparer.OrdinalIgnoreCase),
+                viaPackage.FencedCodeBlockRenderers.SelectMany(renderer => renderer.Languages).OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public void MarkdownRendererOptions_Defaults_Install_GenericVisualPlugin() {
+            var opts = new MarkdownRendererOptions();
+
+            Assert.True(opts.HasPlugin(MarkdownRendererPlugins.GenericVisuals));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("chart", StringComparer.OrdinalIgnoreCase));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("network", StringComparer.OrdinalIgnoreCase));
+            Assert.Contains(opts.FencedCodeBlockRenderers, renderer => renderer.Languages.Contains("dataview", StringComparer.OrdinalIgnoreCase));
+        }
+
+        [Fact]
         public void MarkdownRendererIntelligenceXAdapter_Is_Idempotent() {
             var opts = MarkdownRendererPresets.CreateStrict();
 
@@ -333,14 +604,16 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void MarkdownRendererIntelligenceXLegacyMigration_AddsLegacyHeadingCleanupPreProcessor_OnlyOnce() {
+        public void MarkdownRendererIntelligenceXLegacyMigration_AddsLegacyHeadingCleanup_Contracts_OnlyOnce() {
             var opts = MarkdownRendererPresets.CreateStrict();
 
             MarkdownRendererIntelligenceXLegacyMigration.Apply(opts);
-            int once = opts.MarkdownPreProcessors.Count;
+            int preProcessorCount = opts.MarkdownPreProcessors.Count;
+            int transformCount = opts.ReaderOptions.DocumentTransforms.Count(transform => transform is MarkdownIntelligenceXLegacyToolHeadingTransform);
             MarkdownRendererIntelligenceXLegacyMigration.Apply(opts);
 
-            Assert.Equal(once, opts.MarkdownPreProcessors.Count);
+            Assert.Equal(preProcessorCount, opts.MarkdownPreProcessors.Count);
+            Assert.Equal(transformCount, opts.ReaderOptions.DocumentTransforms.Count(transform => transform is MarkdownIntelligenceXLegacyToolHeadingTransform));
         }
 
         [Fact]
@@ -363,6 +636,89 @@ Recent evidence:
             Assert.DoesNotContain("eventlog_top_events:", chat, StringComparison.Ordinal);
             Assert.DoesNotContain("ad_environment_discover", chat, StringComparison.Ordinal);
             Assert.Contains("Active Directory: Environment Discovery", chat, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void MarkdownRendererPresets_CreateIntelligenceXTranscriptMinimal_PromotesLegacyToolHeadingArtifacts_InFinalAst() {
+            var markdown = """
+Recent evidence:
+- eventlog_top_events: ### Top 30 recent events (preview)
+
+#### ad_environment_discover
+### Active Directory: Environment Discovery
+""";
+
+            var document = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocument(
+                markdown,
+                MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal());
+
+            Assert.Collection(
+                document.Blocks,
+                block => Assert.Equal("Recent evidence:", ((IMarkdownBlock)Assert.IsType<ParagraphBlock>(block)).RenderMarkdown()),
+                block => {
+                    var heading = Assert.IsType<HeadingBlock>(block);
+                    Assert.Equal("Top 30 recent events (preview)", heading.Text);
+                },
+                block => {
+                    var heading = Assert.IsType<HeadingBlock>(block);
+                    Assert.Equal("Active Directory: Environment Discovery", heading.Text);
+                });
+        }
+
+        [Fact]
+        public void MarkdownRendererPresets_CreateIntelligenceXTranscriptMinimal_PreservesLegacyToolHeadingMarkdown_UntilAstTransforms() {
+            var markdown = """
+Recent evidence:
+- eventlog_top_events: ### Top 30 recent events (preview)
+
+#### ad_environment_discover
+### Active Directory: Environment Discovery
+""";
+
+            var result = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocumentResult(
+                markdown,
+                MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal());
+
+            Assert.Contains("eventlog_top_events:", result.PreprocessedMarkdown, StringComparison.Ordinal);
+            Assert.Contains("Top 30 recent events (preview)", result.PreprocessedMarkdown, StringComparison.Ordinal);
+            Assert.Contains("ad_environment_discover", result.PreprocessedMarkdown, StringComparison.Ordinal);
+            Assert.DoesNotContain(result.Document.Blocks, block =>
+                block is UnorderedListBlock unordered
+                && unordered.Items.Any(item => item.ParagraphBlocks.Any(paragraph =>
+                    ((IMarkdownBlock)paragraph).RenderMarkdown().Contains("eventlog_top_events", StringComparison.Ordinal))));
+            Assert.DoesNotContain(result.Document.Blocks, block =>
+                block is HeadingBlock heading
+                && string.Equals(heading.Text, "ad_environment_discover", StringComparison.Ordinal));
+            Assert.Contains(result.TransformDiagnostics, diagnostic =>
+                diagnostic.Source == MarkdownDocumentTransformSource.MarkdownReader
+                && diagnostic.TransformName.Contains(nameof(MarkdownIntelligenceXLegacyToolHeadingTransform), StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void MarkdownRendererPresets_CreateIntelligenceXTranscriptMinimal_PreservesLegacyToolHeadingChildBlocks_WhenUsingFollowingHeadingFallback() {
+            var markdown = """
+Recent evidence:
+- ad_environment_discover:
+
+  Body stays with the promoted heading.
+
+### Active Directory: Environment Discovery
+""";
+
+            var document = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocument(
+                markdown,
+                MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal());
+
+            Assert.Collection(
+                document.Blocks,
+                block => Assert.Equal("Recent evidence:", ((IMarkdownBlock)Assert.IsType<ParagraphBlock>(block)).RenderMarkdown()),
+                block => {
+                    var heading = Assert.IsType<HeadingBlock>(block);
+                    Assert.Equal("Active Directory: Environment Discovery", heading.Text);
+                },
+                block => Assert.Equal(
+                    "Body stays with the promoted heading.",
+                    ((IMarkdownBlock)Assert.IsType<ParagraphBlock>(block)).RenderMarkdown()));
         }
 
         [Fact]
@@ -442,6 +798,41 @@ Indented fallback:
             Assert.DoesNotContain("cached-tool-evidence", chat, StringComparison.Ordinal);
             Assert.Contains("data-omd-fence-language=\"ix-network\"", chat, StringComparison.Ordinal);
             Assert.Equal(2, CountOccurrences(chat, "data-omd-fence-language=\"ix-network\""));
+        }
+
+        [Fact]
+        public void MarkdownRendererPresets_CreateIntelligenceXTranscript_RemovesCachedEvidenceMarker_InAst_Not_Preprocessing() {
+            var markdown = """
+ix:cached-tool-evidence:v1
+
+```json
+{
+  "type": "bar",
+  "data": {
+    "labels": [ "A" ],
+    "datasets": [
+      { "label": "Count", "data": [ 1 ] }
+    ]
+  }
+}
+```
+""";
+
+            var result = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocumentResult(
+                markdown,
+                MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal());
+
+            Assert.Contains("ix:cached-tool-evidence:v1", result.PreprocessedMarkdown, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(result.Document.Blocks, block =>
+                block is ParagraphBlock paragraph
+                && ((IMarkdownBlock)paragraph).RenderMarkdown().Contains("cached-tool-evidence", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(result.Document.Blocks, block =>
+                block is SemanticFencedBlock semantic
+                && semantic.Language == "ix-chart"
+                && semantic.SemanticKind == MarkdownSemanticKinds.Chart);
+            Assert.Contains(result.TransformDiagnostics, diagnostic =>
+                diagnostic.Source == MarkdownDocumentTransformSource.MarkdownReader
+                && diagnostic.TransformName.Contains(nameof(MarkdownIntelligenceXCachedToolEvidenceMarkerTransform), StringComparison.Ordinal));
         }
 
         [Fact]

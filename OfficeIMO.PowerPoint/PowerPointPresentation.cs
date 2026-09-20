@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -987,21 +988,28 @@ namespace OfficeIMO.PowerPoint {
                 return;
             }
 
+            Exception? pendingException = null;
             try {
                 if (_document != null) {
                     if (_copyPackageToSourceOnDispose) {
-                        try {
-                            Save();
-                        } catch {
-                            // ignored
-                        }
+                        Save();
                     }
                     _document.Dispose();
                 }
+            } catch (Exception ex) {
+                pendingException = ex;
             } finally {
                 _document = null;
-                PersistPackageToSourceIfNeeded();
+                try {
+                    PersistPackageToSourceIfNeeded(persistChanges: pendingException == null);
+                } catch (Exception ex) when (pendingException == null) {
+                    pendingException = ex;
+                }
                 _disposed = true;
+            }
+
+            if (pendingException != null) {
+                ExceptionDispatchInfo.Capture(pendingException).Throw();
             }
         }
 
@@ -1393,10 +1401,7 @@ namespace OfficeIMO.PowerPoint {
             imported.Hidden = sourceSlide.Hidden;
 
             if (sourceSlide.SlidePart.NotesSlidePart != null) {
-                string notesText = sourceSlide.Notes.Text;
-                if (!string.IsNullOrWhiteSpace(notesText)) {
-                    imported.Notes.Text = notesText;
-                }
+                CloneImportedNotesSlidePart(sourceSlide.SlidePart, slidePart, mediaPartMap);
             }
 
             _slides.Insert(targetIndex, imported);
@@ -1470,6 +1475,7 @@ namespace OfficeIMO.PowerPoint {
                 slide.Save();
             }
 
+            PowerPointUtils.UpdateDocumentProperties(_presentationPart);
             _presentationPart.Presentation.Save();
             _document!.Save();
         }
@@ -1485,6 +1491,7 @@ namespace OfficeIMO.PowerPoint {
             foreach (PowerPointSlide slide in _slides) {
                 slide.Save();
             }
+            PowerPointUtils.UpdateDocumentProperties(_presentationPart);
             _presentationPart.Presentation.Save();
             _document!.Save();
 
@@ -1507,17 +1514,15 @@ namespace OfficeIMO.PowerPoint {
             }
         }
 
-        private void PersistPackageToSourceIfNeeded() {
+        private void PersistPackageToSourceIfNeeded(bool persistChanges) {
             if (_packageStream == null) {
                 return;
             }
 
             try {
-                if (_copyPackageToSourceOnDispose && _sourceStream != null) {
+                if (persistChanges && _copyPackageToSourceOnDispose && _sourceStream != null) {
                     PersistPackageToSource();
                 }
-            } catch {
-                // ignored
             } finally {
                 DisposeStream(_packageStream);
 
@@ -1921,7 +1926,7 @@ namespace OfficeIMO.PowerPoint {
 
         private static P14.Section CreateSection(string name, IReadOnlyList<uint> slideIds) {
             P14.Section section = new() {
-                Id = Guid.NewGuid().ToString("D"),
+                Id = CreateSectionId(),
                 Name = name
             };
             P14.SectionSlideIdList list = new();
@@ -1930,6 +1935,10 @@ namespace OfficeIMO.PowerPoint {
             }
             section.Append(list);
             return section;
+        }
+
+        private static string CreateSectionId() {
+            return Guid.NewGuid().ToString("B").ToUpperInvariant();
         }
 
         private static P14.SectionSlideIdList EnsureSectionSlideIdList(P14.Section section) {
@@ -2384,6 +2393,33 @@ namespace OfficeIMO.PowerPoint {
 
         private static bool ShouldSharePart(OpenXmlPart part) {
             return part is SlideLayoutPart || part is NotesMasterPart;
+        }
+
+        private void CloneImportedNotesSlidePart(
+            SlidePart sourceSlidePart,
+            SlidePart targetSlidePart,
+            Dictionary<DataPart, MediaDataPart> mediaPartMap) {
+            NotesSlidePart? sourceNotesPart = sourceSlidePart.NotesSlidePart;
+            if (sourceNotesPart == null) {
+                return;
+            }
+
+            NotesSlidePart targetNotesPart = targetSlidePart.AddNewPart<NotesSlidePart>(GetNextRelationshipId(targetSlidePart));
+            if (sourceNotesPart.NotesSlide != null) {
+                targetNotesPart.NotesSlide = (NotesSlide)sourceNotesPart.NotesSlide.CloneNode(true);
+            }
+
+            CloneChildParts(
+                sourceNotesPart,
+                targetNotesPart,
+                shouldSkip: part => part is NotesMasterPart,
+                includeDataParts: true,
+                dataPartMap: mediaPartMap);
+
+            NotesMasterPart targetNotesMasterPart = PowerPointUtils.EnsureNotesMasterPart(_presentationPart);
+            if (!targetNotesPart.Parts.Any(pair => ReferenceEquals(pair.OpenXmlPart, targetNotesMasterPart))) {
+                targetNotesPart.AddPart(targetNotesMasterPart);
+            }
         }
 
         private static Guide CreateGuide(PowerPointGuideInfo guide) {

@@ -12,6 +12,36 @@ public enum MarkdownSyntaxKind {
     HeadingLevel,
     /// <summary>Heading text payload.</summary>
     HeadingText,
+    /// <summary>Plain text inline node.</summary>
+    InlineText,
+    /// <summary>Inline code span node.</summary>
+    InlineCodeSpan,
+    /// <summary>Hyperlink inline node.</summary>
+    InlineLink,
+    /// <summary>Standalone inline image node.</summary>
+    InlineImage,
+    /// <summary>Linked inline image node.</summary>
+    InlineImageLink,
+    /// <summary>Strong/bold inline node.</summary>
+    InlineStrong,
+    /// <summary>Emphasis/italic inline node.</summary>
+    InlineEmphasis,
+    /// <summary>Combined strong+emphasis inline node.</summary>
+    InlineStrongEmphasis,
+    /// <summary>Strikethrough inline node.</summary>
+    InlineStrikethrough,
+    /// <summary>Highlight/mark inline node.</summary>
+    InlineHighlight,
+    /// <summary>Underline inline node.</summary>
+    InlineUnderline,
+    /// <summary>Hard line break inline node.</summary>
+    InlineHardBreak,
+    /// <summary>Inline HTML tag wrapper node.</summary>
+    InlineHtmlTag,
+    /// <summary>Raw inline HTML node.</summary>
+    InlineHtmlRaw,
+    /// <summary>Footnote reference inline node.</summary>
+    InlineFootnoteRef,
     /// <summary>Paragraph block.</summary>
     Paragraph,
     /// <summary>Blockquote block.</summary>
@@ -38,6 +68,8 @@ public enum MarkdownSyntaxKind {
     TableHeader,
     /// <summary>Body row inside a markdown table.</summary>
     TableRow,
+    /// <summary>Single cell inside a markdown table row/header.</summary>
+    TableCell,
     /// <summary>Horizontal rule block.</summary>
     HorizontalRule,
     /// <summary>Image block.</summary>
@@ -46,12 +78,22 @@ public enum MarkdownSyntaxKind {
     ImageAlt,
     /// <summary>Image source path or URL.</summary>
     ImageSource,
+    /// <summary>Optional hyperlink target wrapping an image block.</summary>
+    ImageLinkTarget,
+    /// <summary>Optional hyperlink title wrapping an image block.</summary>
+    ImageLinkTitle,
+    /// <summary>Optional hyperlink target wrapping an image block.</summary>
+    ImageLinkHtmlTarget,
+    /// <summary>Optional hyperlink rel wrapping an image block.</summary>
+    ImageLinkHtmlRel,
     /// <summary>Image title attribute.</summary>
     ImageTitle,
     /// <summary>Callout or admonition block.</summary>
     Callout,
     /// <summary>Definition list block.</summary>
     DefinitionList,
+    /// <summary>Semantic definition-list group with shared terms and definitions.</summary>
+    DefinitionGroup,
     /// <summary>Single definition list item.</summary>
     DefinitionItem,
     /// <summary>Definition list term node.</summary>

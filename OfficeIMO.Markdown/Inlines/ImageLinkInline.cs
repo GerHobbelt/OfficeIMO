@@ -4,25 +4,33 @@ namespace OfficeIMO.Markdown;
 /// Inline that renders a linked image, e.g. [![alt](img)](href).
 /// Useful for badges (Shields.io).
 /// </summary>
-public sealed class ImageLinkInline : IMarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
+public sealed class ImageLinkInline : MarkdownInline, IRenderableMarkdownInline, IPlainTextMarkdownInline {
     /// <summary>Alternative text for the image.</summary>
     public string Alt { get; }
     /// <summary>Image source URL (e.g., a Shields.io badge).</summary>
     public string ImageUrl { get; }
     /// <summary>Link target URL.</summary>
     public string LinkUrl { get; }
-    /// <summary>Optional title.</summary>
+    /// <summary>Optional image title.</summary>
     public string? Title { get; }
+    /// <summary>Optional hyperlink title.</summary>
+    public string? LinkTitle { get; }
     /// <summary>Creates a linked image inline.</summary>
-    public ImageLinkInline(string alt, string imageUrl, string linkUrl, string? title = null) {
-        Alt = alt ?? string.Empty; ImageUrl = imageUrl ?? string.Empty; LinkUrl = linkUrl ?? string.Empty; Title = title;
+    public ImageLinkInline(string alt, string imageUrl, string linkUrl, string? title = null, string? linkTitle = null) {
+        Alt = alt ?? string.Empty; ImageUrl = imageUrl ?? string.Empty; LinkUrl = linkUrl ?? string.Empty; Title = title; LinkTitle = linkTitle;
     }
     internal string RenderMarkdown() {
+        if ((MarkdownRenderContext.Options?.ImageRenderingMode ?? MarkdownImageRenderingMode.RichMarkdown) == MarkdownImageRenderingMode.Html) {
+            return RenderHtml();
+        }
+
         var title = MarkdownEscaper.FormatOptionalTitle(Title);
-        return $"[![{MarkdownEscaper.EscapeImageAlt(Alt)}]({MarkdownEscaper.EscapeImageSrc(ImageUrl)}{title})]({MarkdownEscaper.EscapeLinkUrl(LinkUrl)})";
+        var linkTitle = MarkdownEscaper.FormatOptionalTitle(LinkTitle);
+        return $"[![{MarkdownEscaper.EscapeImageAlt(Alt)}]({MarkdownEscaper.EscapeImageSrc(ImageUrl)}{title})]({MarkdownEscaper.EscapeLinkUrl(LinkUrl)}{linkTitle})";
     }
     internal string RenderHtml() {
         var title = string.IsNullOrEmpty(Title) ? string.Empty : $" title=\"{System.Net.WebUtility.HtmlEncode(Title!)}\"";
+        var linkTitle = string.IsNullOrEmpty(LinkTitle) ? string.Empty : $" title=\"{System.Net.WebUtility.HtmlEncode(LinkTitle!)}\"";
         var o = HtmlRenderContext.Options;
         bool linkAllowed = UrlOriginPolicy.IsAllowedHttpLink(o, LinkUrl);
         bool imageAllowed = UrlOriginPolicy.IsAllowedHttpImage(o, ImageUrl);
@@ -32,13 +40,13 @@ public sealed class ImageLinkInline : IMarkdownInline, IRenderableMarkdownInline
 
         if (!linkAllowed && !imageAllowed) return ImageHtmlAttributes.BuildBlockedPlaceholder(Alt);
         if (!imageAllowed && linkAllowed) {
-            return $"<a href=\"{HtmlAttributeUrlEncoder.Encode(LinkUrl)}\"{extra}>{System.Net.WebUtility.HtmlEncode(Alt)}</a>";
+            return $"<a href=\"{HtmlAttributeUrlEncoder.Encode(LinkUrl)}\"{linkTitle}{extra}>{System.Net.WebUtility.HtmlEncode(Alt)}</a>";
         }
         if (imageAllowed && !linkAllowed) {
             return $"<img src=\"{HtmlAttributeUrlEncoder.Encode(ImageUrl)}\" alt=\"{System.Net.WebUtility.HtmlEncode(Alt)}\"{title}{imgExtra} />";
         }
 
-        return $"<a href=\"{HtmlAttributeUrlEncoder.Encode(LinkUrl)}\"{extra}><img src=\"{HtmlAttributeUrlEncoder.Encode(ImageUrl)}\" alt=\"{System.Net.WebUtility.HtmlEncode(Alt)}\"{title}{imgExtra} /></a>";
+        return $"<a href=\"{HtmlAttributeUrlEncoder.Encode(LinkUrl)}\"{linkTitle}{extra}><img src=\"{HtmlAttributeUrlEncoder.Encode(ImageUrl)}\" alt=\"{System.Net.WebUtility.HtmlEncode(Alt)}\"{title}{imgExtra} /></a>";
     }
     string IRenderableMarkdownInline.RenderMarkdown() => RenderMarkdown();
     string IRenderableMarkdownInline.RenderHtml() => RenderHtml();

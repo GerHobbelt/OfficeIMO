@@ -44,6 +44,7 @@ namespace OfficeIMO.Tests.MarkdownSuite {
             Assert.Equal("Logo", img.Alt);
             Assert.Equal("Example", img.Title);
             Assert.Equal("Our logo", img.Caption);
+            Assert.Null(img.LinkUrl);
 
             // Validate table header/alignments
             var table = parsed.Blocks.OfType<TableBlock>().FirstOrDefault();
@@ -55,6 +56,24 @@ namespace OfficeIMO.Tests.MarkdownSuite {
             var ul = parsed.Blocks.OfType<UnorderedListBlock>().FirstOrDefault();
             Assert.NotNull(ul);
             Assert.True(ul!.Items.Count >= 3);
+        }
+
+        [Fact]
+        public void Reader_Roundtrips_Linked_Image_Block() {
+            var md = MarkdownDoc.Create()
+                .Add(new ImageBlock("https://example.com/logo.png", "Logo", "Example", linkUrl: "https://example.com/docs", linkTitle: "Documentation"))
+                .Caption("Our linked logo");
+
+            var text = md.ToMarkdown();
+            var parsed = MarkdownReader.Parse(text);
+
+            var img = Assert.IsType<ImageBlock>(Assert.Single(parsed.Blocks));
+            Assert.Equal("https://example.com/logo.png", img.Path);
+            Assert.Equal("Logo", img.Alt);
+            Assert.Equal("Example", img.Title);
+            Assert.Equal("https://example.com/docs", img.LinkUrl);
+            Assert.Equal("Documentation", img.LinkTitle);
+            Assert.Equal("Our linked logo", img.Caption);
         }
 
         [Fact]
@@ -272,6 +291,94 @@ Paragraph
                 parsed.DescendantsOfType<ParagraphBlock>()
                     .Select(block => block.Inlines.RenderMarkdown())
                     .ToArray());
+        }
+
+        [Fact]
+        public void Reader_Roundtrips_Structured_Table_Cell_Block_Content() {
+            const string markdown = """
+| Section | Notes |
+| --- | --- |
+| Alpha | Intro<br><br>> Quoted<br><br>- first<br>- second |
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+            var table = Assert.IsType<TableBlock>(Assert.Single(parsed.Blocks));
+            Assert.Collection(table.RowCells[0][1].Blocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => Assert.IsType<QuoteBlock>(block),
+                block => {
+                    var list = Assert.IsType<UnorderedListBlock>(block);
+                    Assert.Equal(new[] { "first", "second" }, list.Items.Select(item => item.Content.RenderMarkdown()).ToArray());
+                });
+
+            var roundtrip = parsed.ToMarkdown().Replace("\r\n", "\n");
+            Assert.Contains("Intro<br><br>> Quoted<br><br>- first<br>- second", roundtrip, StringComparison.Ordinal);
+
+            var reparsed = MarkdownReader.Parse(roundtrip);
+            var reparsedTable = Assert.IsType<TableBlock>(Assert.Single(reparsed.Blocks));
+            Assert.Collection(reparsedTable.RowCells[0][1].Blocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => Assert.IsType<QuoteBlock>(block),
+                block => {
+                    var list = Assert.IsType<UnorderedListBlock>(block);
+                    Assert.Equal(new[] { "first", "second" }, list.Items.Select(item => item.Content.RenderMarkdown()).ToArray());
+                });
+        }
+
+        [Fact]
+        public void Reader_Roundtrips_Structured_Table_Cell_Code_Block_Content() {
+            const string markdown = """
+| Section | Notes |
+| --- | --- |
+| Alpha | Intro<br><br>```text<br>code line 1<br>code line 2<br>``` |
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+            var table = Assert.IsType<TableBlock>(Assert.Single(parsed.Blocks));
+            Assert.Collection(table.RowCells[0][1].Blocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => {
+                    var code = Assert.IsType<CodeBlock>(block);
+                    Assert.Equal("text", code.Language);
+                    Assert.Contains("code line 1", code.Content, StringComparison.Ordinal);
+                    Assert.Contains("code line 2", code.Content, StringComparison.Ordinal);
+                });
+
+            var roundtrip = parsed.ToMarkdown().Replace("\r\n", "\n");
+            Assert.Contains("```text<br>code line 1<br>code line 2<br>```", roundtrip, StringComparison.Ordinal);
+
+            var reparsed = MarkdownReader.Parse(roundtrip);
+            var reparsedTable = Assert.IsType<TableBlock>(Assert.Single(reparsed.Blocks));
+            Assert.Collection(reparsedTable.RowCells[0][1].Blocks,
+                block => Assert.Equal("Intro", Assert.IsType<ParagraphBlock>(block).Inlines.RenderMarkdown()),
+                block => {
+                    var code = Assert.IsType<CodeBlock>(block);
+                    Assert.Equal("text", code.Language);
+                    Assert.Contains("code line 1", code.Content, StringComparison.Ordinal);
+                    Assert.Contains("code line 2", code.Content, StringComparison.Ordinal);
+                });
+        }
+
+        [Fact]
+        public void Reader_Roundtrips_SingleLine_Structured_Table_Cell_Content() {
+            const string markdown = """
+| Notes | Extra |
+| --- | --- |
+| ## Important | - first |
+""";
+
+            var parsed = MarkdownReader.Parse(markdown);
+            var table = Assert.IsType<TableBlock>(Assert.Single(parsed.Blocks));
+            Assert.IsType<HeadingBlock>(Assert.Single(table.RowCells[0][0].Blocks));
+            Assert.IsType<UnorderedListBlock>(Assert.Single(table.RowCells[0][1].Blocks));
+
+            var roundtrip = parsed.ToMarkdown().Replace("\r\n", "\n");
+            Assert.Contains("| ## Important | - first |", roundtrip, StringComparison.Ordinal);
+
+            var reparsed = MarkdownReader.Parse(roundtrip);
+            var reparsedTable = Assert.IsType<TableBlock>(Assert.Single(reparsed.Blocks));
+            Assert.IsType<HeadingBlock>(Assert.Single(reparsedTable.RowCells[0][0].Blocks));
+            Assert.IsType<UnorderedListBlock>(Assert.Single(reparsedTable.RowCells[0][1].Blocks));
         }
 
         [Fact]

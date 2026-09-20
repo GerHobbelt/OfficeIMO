@@ -3,7 +3,7 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Markdown heading (ATX) block, levels 1–6.
 /// </summary>
-public sealed class HeadingBlock : IMarkdownBlock, ISyntaxMarkdownBlock, IContextualHtmlMarkdownBlock, IHeadingMarkdownBlock {
+public sealed class HeadingBlock : MarkdownBlock, IMarkdownBlock, ISyntaxMarkdownBlock, IContextualHtmlMarkdownBlock, IHeadingMarkdownBlock {
     /// <summary>Heading level constrained to [1,6].</summary>
     public int Level { get; }
     /// <summary>Inline content owned by this heading.</summary>
@@ -70,10 +70,13 @@ public sealed class HeadingBlock : IMarkdownBlock, ISyntaxMarkdownBlock, IContex
             new MarkdownSyntaxNode(MarkdownSyntaxKind.HeadingLevel, literal: Level.ToString(System.Globalization.CultureInfo.InvariantCulture))
         };
 
-        MarkdownSourceSpan? textSpan = span.HasValue ? new MarkdownSourceSpan(span.Value.StartLine, span.Value.StartLine) : null;
-        nodes.Add(new MarkdownSyntaxNode(MarkdownSyntaxKind.HeadingText, textSpan, Inlines.RenderMarkdown()));
+        nodes.Add(MarkdownBlockSyntaxBuilder.BuildInlineContainerNode(
+            MarkdownSyntaxKind.HeadingText,
+            Inlines,
+            null,
+            Inlines.RenderMarkdown()));
 
-        return new MarkdownSyntaxNode(MarkdownSyntaxKind.Heading, span, Inlines.RenderMarkdown(), nodes);
+        return new MarkdownSyntaxNode(MarkdownSyntaxKind.Heading, span, Inlines.RenderMarkdown(), nodes, this);
     }
 
     private static InlineSequence CreateTextInlines(string? text) {

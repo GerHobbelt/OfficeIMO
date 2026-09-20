@@ -13,6 +13,9 @@ public sealed class Markdown_Golden_Fixture_Tests {
     private static readonly Regex MermaidHashAttributeRegex = new(
         "\\sdata-mermaid-hash=\"[^\"]*\"",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex CompilerGeneratedLambdaRegex = new(
+        ">b__\\d+_(\\d+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     [Fact]
     public void MarkdownGolden_ProfileBoundary() {
@@ -201,6 +204,17 @@ public sealed class Markdown_Golden_Fixture_Tests {
     }
 
     [Fact]
+    public void MarkdownGolden_HtmlPublisherFigureFixtures() {
+        var sb = new StringBuilder();
+        AppendHtmlFixtureSnapshot(sb, "linked", "publisher-linked-picture-article.html");
+        AppendHtmlFixtureSnapshot(sb, "noscript", "publisher-noscript-linked-picture-article.html");
+        AppendHtmlFixtureSnapshot(sb, "art-direction", "publisher-art-direction-picture-article.html");
+        AppendHtmlFixtureSnapshot(sb, "width-descriptor", "publisher-width-descriptor-picture-article.html");
+
+        AssertGolden("html-publisher-figure-fixtures", sb.ToString().TrimEnd());
+    }
+
+    [Fact]
     public void MarkdownGolden_IxExportedTranscriptVisualPackRoundTrip() {
         string markdown = LoadCompatibilityFixture("ix-exported-transcript-visual-pack.md");
         var ix = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
@@ -235,6 +249,61 @@ public sealed class Markdown_Golden_Fixture_Tests {
         AppendSection(sb, "roundtrip.markdown", NormalizeText(document.ToMarkdown()));
 
         AssertGolden("ix-exported-transcript-chart-suite", sb.ToString().TrimEnd());
+    }
+
+    [Fact]
+    public void MarkdownGolden_IxCompatibilityPipeline() {
+        string legacyToolHeadingMarkdown = LoadCompatibilityFixture("ix-source-derived-legacy-tool-heading.md");
+        string cachedEvidenceVisualMarkdown = LoadCompatibilityFixture("ix-source-derived-cached-evidence-visuals.md");
+
+        var legacyOptions = MarkdownRendererPresets.CreateIntelligenceXTranscriptMinimal();
+        var cachedEvidenceOptions = MarkdownRendererPresets.CreateIntelligenceXTranscript();
+        cachedEvidenceOptions.Chart.Enabled = true;
+
+        var legacyResult = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocumentResult(legacyToolHeadingMarkdown, legacyOptions);
+        var cachedEvidenceResult = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocumentResult(cachedEvidenceVisualMarkdown, cachedEvidenceOptions);
+
+        var sb = new StringBuilder();
+        AppendRendererParseResultSummary(sb, "legacy-tool-heading", legacyResult);
+        AppendRendererParseResultSummary(sb, "cached-evidence-visuals", cachedEvidenceResult);
+
+        AssertGolden("ix-compatibility-pipeline", sb.ToString().TrimEnd());
+    }
+
+    [Fact]
+    public void MarkdownGolden_RendererCombinedPipeline() {
+        var options = new MarkdownRendererOptions {
+            NormalizeCompactFenceBodyBoundaries = true
+        };
+        options.MarkdownPreProcessors.Add((markdown, _) =>
+            markdown.Replace("```mermaid\nflowchart LR", "```mermaid\ngraph TD"));
+        options.ReaderOptions.DocumentTransforms.Add(new GoldenReaderAppendParagraphTransform("reader tail"));
+        options.DocumentTransforms.Add(new GoldenRendererAppendParagraphTransform("renderer tail"));
+
+        var result = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocumentResult(
+            "```mermaidflowchart LR A-->B\n```",
+            options);
+
+        var sb = new StringBuilder();
+        AppendRendererParseResultSummary(sb, "renderer-combined", result);
+
+        AssertGolden("renderer-combined-pipeline", sb.ToString().TrimEnd());
+    }
+
+    [Fact]
+    public void MarkdownGolden_RendererSourceAwarePipeline() {
+        var options = new MarkdownRendererOptions();
+        options.ReaderOptions.DocumentTransforms.Add(new MarkdownCompactHeadingBoundaryTransform());
+        options.DocumentTransforms.Add(new GoldenRendererAppendParagraphTransform("renderer tail"));
+
+        var result = OfficeIMO.MarkdownRenderer.MarkdownRenderer.ParseDocumentResult(
+            "previous shutdown was unexpected### Reason",
+            options);
+
+        var sb = new StringBuilder();
+        AppendRendererParseResultSummary(sb, "renderer-source-aware", result);
+
+        AssertGolden("renderer-source-aware-pipeline", sb.ToString().TrimEnd());
     }
 
     private static HtmlOptions CreatePlainHtmlOptions() {
@@ -370,6 +439,7 @@ public sealed class Markdown_Golden_Fixture_Tests {
             DefinitionListBlock definitionList => $"DefinitionList(entries={definitionList.Entries.Count.ToString(CultureInfo.InvariantCulture)})",
             FootnoteDefinitionBlock footnote => $"Footnote(label={footnote.Label})",
             DetailsBlock details => $"Details(open={details.Open.ToString().ToLowerInvariant()})",
+            SemanticFencedBlock semantic => $"Semantic(kind={semantic.SemanticKind}, language={semantic.Language}, text=\"{EscapeSingleLine(AbbreviateSemanticContent(semantic.Content))}\")",
             _ => block.GetType().Name
         };
     }
@@ -378,6 +448,108 @@ public sealed class Markdown_Golden_Fixture_Tests {
         sb.Append('[').Append(name).AppendLine("]");
         sb.AppendLine(content);
         sb.AppendLine();
+    }
+
+    private static void AppendRendererParseResultSummary(
+        StringBuilder sb,
+        string name,
+        MarkdownRendererParseResult result) {
+        AppendSection(sb, name + ".preprocessed", NormalizeText(result.PreprocessedMarkdown));
+        AppendSection(sb, name + ".preprocessors", BuildPreProcessorDiagnosticSummary(result.PreProcessorDiagnostics));
+        AppendSection(sb, name + ".transforms", BuildTransformDiagnosticSummary(result.TransformDiagnostics));
+        AppendSection(sb, name + ".ast", BuildDocumentSummary(result.Document));
+    }
+
+    private static void AppendHtmlFixtureSnapshot(StringBuilder sb, string name, string fixtureName) {
+        string html = LoadHtmlFixture(fixtureName);
+        MarkdownDoc document = html.LoadFromHtml(new HtmlToMarkdownOptions {
+            BaseUri = new Uri("https://example.com/world/live/storm-update.html")
+        });
+
+        AppendSection(sb, name + ".ast", BuildDocumentSummary(document));
+        AppendSection(sb, name + ".markdown", NormalizeText(document.ToMarkdown()));
+        AppendSection(sb, name + ".html", NormalizeInlineAwareHtml(document.ToHtmlFragment(CreatePlainHtmlOptions())));
+    }
+
+    private static string BuildPreProcessorDiagnosticSummary(
+        IReadOnlyList<MarkdownRendererPreProcessorDiagnostic> diagnostics) {
+        if (diagnostics == null || diagnostics.Count == 0) {
+            return "(none)";
+        }
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < diagnostics.Count; i++) {
+            var diagnostic = diagnostics[i];
+            sb.Append(diagnostic.Stage)
+                .Append(" changed=")
+                .Append(diagnostic.Changed ? "true" : "false")
+                .Append(" before=")
+                .Append(diagnostic.LengthBefore.ToString(CultureInfo.InvariantCulture))
+                .Append(" after=")
+                .Append(diagnostic.LengthAfter.ToString(CultureInfo.InvariantCulture));
+
+            if (!string.IsNullOrWhiteSpace(diagnostic.ProcessorName)) {
+                sb.Append(" processor=")
+                    .Append(GetSimpleTypeName(diagnostic.ProcessorName));
+            }
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildTransformDiagnosticSummary(
+        IReadOnlyList<MarkdownDocumentTransformDiagnostic> diagnostics) {
+        if (diagnostics == null || diagnostics.Count == 0) {
+            return "(none)";
+        }
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < diagnostics.Count; i++) {
+            var diagnostic = diagnostics[i];
+            sb.Append(diagnostic.Source)
+                .Append(" ")
+                .Append(GetSimpleTypeName(diagnostic.TransformName))
+                .Append(" before=")
+                .Append(diagnostic.BlockCountBefore.ToString(CultureInfo.InvariantCulture))
+                .Append(" after=")
+                .Append(diagnostic.BlockCountAfter.ToString(CultureInfo.InvariantCulture))
+                .Append(" changed-before=")
+                .Append(diagnostic.ChangedBlockStartBefore.ToString(CultureInfo.InvariantCulture))
+                .Append("+")
+                .Append(diagnostic.ChangedBlockCountBefore.ToString(CultureInfo.InvariantCulture))
+                .Append(" changed-after=")
+                .Append(diagnostic.ChangedBlockStartAfter.ToString(CultureInfo.InvariantCulture))
+                .Append("+")
+                .Append(diagnostic.ChangedBlockCountAfter.ToString(CultureInfo.InvariantCulture))
+                .Append(" span=")
+                .Append(FormatSourceSpan(diagnostic.AffectedSourceSpan))
+                .Append(" replaced=")
+                .Append(diagnostic.ReplacedDocument ? "true" : "false")
+                .AppendLine();
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string GetSimpleTypeName(string value) {
+        if (string.IsNullOrWhiteSpace(value)) {
+            return string.Empty;
+        }
+
+        var lastDot = value.LastIndexOf('.');
+        return lastDot >= 0 && lastDot + 1 < value.Length
+            ? value.Substring(lastDot + 1)
+            : value;
+    }
+
+    private static string FormatSourceSpan(MarkdownSourceSpan? span) {
+        if (!span.HasValue) {
+            return "-";
+        }
+
+        return span.Value.ToString();
     }
 
     private static string NormalizeHtml(string html) {
@@ -435,11 +607,74 @@ public sealed class Markdown_Golden_Fixture_Tests {
             .Trim();
     }
 
-    private static string NormalizeText(string value) {
-        return MermaidHashAttributeRegex.Replace(value, " data-mermaid-hash=\"{normalized}\"")
+    private static string NormalizeInlineAwareHtml(string html) {
+        if (string.IsNullOrWhiteSpace(html)) {
+            return string.Empty;
+        }
+
+        html = MermaidHashAttributeRegex.Replace(html, " data-mermaid-hash=\"{normalized}\"");
+
+        var sb = new StringBuilder(html.Length);
+        bool inTag = false;
+        bool lastWasWhitespace = false;
+
+        for (int i = 0; i < html.Length; i++) {
+            char ch = html[i];
+            if (ch == '<') {
+                if (!inTag && lastWasWhitespace && sb.Length > 0 && sb[sb.Length - 1] != '>') {
+                    sb.Append(' ');
+                }
+
+                inTag = true;
+                lastWasWhitespace = false;
+                sb.Append(ch);
+                continue;
+            }
+
+            if (ch == '>') {
+                inTag = false;
+                lastWasWhitespace = false;
+                sb.Append(ch);
+                continue;
+            }
+
+            if (inTag) {
+                sb.Append(ch);
+                continue;
+            }
+
+            if (char.IsWhiteSpace(ch)) {
+                lastWasWhitespace = true;
+                continue;
+            }
+
+            if (lastWasWhitespace && sb.Length > 0) {
+                sb.Append(' ');
+            }
+
+            lastWasWhitespace = false;
+            sb.Append(ch);
+        }
+
+        return sb.ToString()
             .Replace("\r\n", "\n")
             .Replace('\r', '\n')
             .Trim();
+    }
+
+    private static string NormalizeText(string value) {
+        return CompilerGeneratedLambdaRegex.Replace(
+                MermaidHashAttributeRegex.Replace(value, " data-mermaid-hash=\"{normalized}\""),
+                ">b__{normalized}_$1")
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n')
+            .Trim();
+    }
+
+    private static string NormalizeFixtureText(string value) {
+        return (value ?? string.Empty)
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n');
     }
 
     private static string EscapeSingleLine(string? value) {
@@ -451,6 +686,15 @@ public sealed class Markdown_Golden_Fixture_Tests {
             .Replace("\r\n", "\\n")
             .Replace('\r', '\n')
             .Replace("\n", "\\n");
+    }
+
+    private static string AbbreviateSemanticContent(string? value) {
+        const int maxLength = 80;
+        if (string.IsNullOrEmpty(value) || value!.Length <= maxLength) {
+            return value ?? string.Empty;
+        }
+
+        return value.Substring(0, maxLength - 3) + "...";
     }
 
     private static void AssertGolden(string name, string actualSnapshot) {
@@ -472,7 +716,11 @@ public sealed class Markdown_Golden_Fixture_Tests {
     }
 
     private static string LoadCompatibilityFixture(string name) {
-        return File.ReadAllText(Path.Combine(GetTestsProjectRoot(), "Markdown", "Fixtures", "Compatibility", name));
+        return NormalizeFixtureText(File.ReadAllText(Path.Combine(GetTestsProjectRoot(), "Markdown", "Fixtures", "Compatibility", name)));
+    }
+
+    private static string LoadHtmlFixture(string name) {
+        return NormalizeFixtureText(File.ReadAllText(Path.Combine(GetTestsProjectRoot(), "Markdown", "Fixtures", name)));
     }
 
     private static string GetExpectedPath(string name) {
@@ -491,6 +739,20 @@ public sealed class Markdown_Golden_Fixture_Tests {
         }
 
         throw new DirectoryNotFoundException("Could not locate OfficeIMO.Tests project root from test runtime base directory.");
+    }
+
+    private sealed class GoldenRendererAppendParagraphTransform(string text) : IMarkdownDocumentTransform {
+        public MarkdownDoc Transform(MarkdownDoc document, MarkdownDocumentTransformContext context) {
+            document.Add(new ParagraphBlock(new InlineSequence().Text(text)));
+            return document;
+        }
+    }
+
+    private sealed class GoldenReaderAppendParagraphTransform(string text) : IMarkdownDocumentTransform {
+        public MarkdownDoc Transform(MarkdownDoc document, MarkdownDocumentTransformContext context) {
+            document.Add(new ParagraphBlock(new InlineSequence().Text(text)));
+            return document;
+        }
     }
 }
 

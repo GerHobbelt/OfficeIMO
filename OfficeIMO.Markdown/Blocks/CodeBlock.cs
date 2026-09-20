@@ -3,23 +3,39 @@ namespace OfficeIMO.Markdown;
 /// <summary>
 /// Fenced code block with optional caption. Fence length adapts to backticks inside the content.
 /// </summary>
-public sealed class CodeBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlock {
-    /// <summary>Optional language hint (e.g., csharp, bash).</summary>
+public sealed class CodeBlock : MarkdownBlock, IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlock {
+    /// <summary>Parsed primary fence language token (for example <c>csharp</c> or <c>bash</c>).</summary>
     public string Language { get; }
+    /// <summary>Full fenced-code info string as it appeared after the opening fence marker.</summary>
+    public string InfoString { get; }
+    /// <summary>Structured fenced-code info metadata.</summary>
+    public MarkdownCodeFenceInfo FenceInfo { get; }
     /// <summary>Code contents.</summary>
     public string Content { get; }
     /// <summary>Optional caption shown under the block.</summary>
     public string? Caption { get; set; }
     internal bool IsFenced { get; }
 
-    /// <summary>Create a code block with a language hint.</summary>
+    /// <summary>Create a code block with an optional fenced-code info string.</summary>
     public CodeBlock(string language, string content) : this(language, content, isFenced: true) {
     }
 
     internal CodeBlock(string language, string content, bool isFenced) {
-        Language = language ?? string.Empty;
-        Content = content ?? string.Empty;
+        FenceInfo = MarkdownCodeFenceInfo.Parse(language);
+        InfoString = FenceInfo.InfoString;
+        Language = FenceInfo.Language;
+        Content = NormalizeLineEndings(content);
         IsFenced = isFenced;
+    }
+
+    private static string NormalizeLineEndings(string? content) {
+        if (string.IsNullOrEmpty(content)) {
+            return string.Empty;
+        }
+
+        return content!
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n');
     }
 
     /// <inheritdoc />
@@ -27,7 +43,7 @@ public sealed class CodeBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlo
         string fence = MarkdownFence.BuildSafeFence(Content);
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine($"{fence}{Language}");
+        sb.AppendLine($"{fence}{InfoString}");
         sb.AppendLine(Content);
         sb.AppendLine(fence);
         if (!string.IsNullOrWhiteSpace(Caption)) sb.AppendLine("_" + Caption + "_");
@@ -55,11 +71,11 @@ public sealed class CodeBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlo
 
     MarkdownSyntaxNode ISyntaxMarkdownBlock.BuildSyntaxNode(MarkdownSourceSpan? span) {
         var nodes = new List<MarkdownSyntaxNode>();
-        if (span.HasValue && IsFenced && !string.IsNullOrEmpty(Language)) {
+        if (span.HasValue && IsFenced && !string.IsNullOrEmpty(InfoString)) {
             nodes.Add(new MarkdownSyntaxNode(
                 MarkdownSyntaxKind.CodeFenceInfo,
                 new MarkdownSourceSpan(span.Value.StartLine, span.Value.StartLine),
-                Language));
+                InfoString));
         }
 
         MarkdownSourceSpan? contentSpan;
@@ -84,6 +100,7 @@ public sealed class CodeBlock : IMarkdownBlock, ICaptionable, ISyntaxMarkdownBlo
             MarkdownSyntaxKind.CodeBlock,
             span,
             MarkdownBlockSyntaxBuilder.NormalizeSyntaxLiteralLineEndings(Content),
-            nodes);
+            nodes,
+            this);
     }
 }
