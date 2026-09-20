@@ -24,6 +24,16 @@ dotnet run --project OfficeIMO.Examples/OfficeIMO.Examples.csproj -f net10.0 -- 
 The sample writes `Modern PowerPoint Deck.pptx` to the examples `Documents` output folder and validates the generated Open
 XML package before reporting success.
 
+To generate the designer examples used by the website screenshots:
+
+```powershell
+dotnet run --project OfficeIMO.Examples/OfficeIMO.Examples.csproj -f net10.0 -- --powerpoint-design-brief
+dotnet run --project OfficeIMO.Examples/OfficeIMO.Examples.csproj -f net10.0 -- --powerpoint-deck-plan
+```
+
+The first sample demonstrates explainable design recommendations. The second demonstrates semantic deck-plan scoring
+before rendering editable slides.
+
 To run the full PowerPoint examples set without opening PowerPoint and validate every generated deck:
 
 ```powershell
@@ -47,8 +57,283 @@ slide.AddTitle("Hello PowerPoint");
 var box = slide.AddTextBox("Generated with OfficeIMO.PowerPoint");
 box.SetPositionCm(2, 2);
 box.SetSizeCm(6, 2);
+slide.Transition = SlideTransition.Fade;
+slide.TransitionSpeed = SlideTransitionSpeed.Fast;
+slide.TransitionDurationSeconds = 0.6;
+slide.TransitionAdvanceOnClick = false;
+slide.TransitionAdvanceAfterSeconds = 4;
 ppt.Save();
 ```
+
+## Designer composition sample
+
+For business decks where you want polished placement without manually positioning every text box, use the designer
+composition helpers. They create editable PowerPoint shapes, text, optional pictures, and theme-driven layouts.
+Use `PowerPointDesignIntent` and layout variants when the same content should not produce the same slide every time.
+
+```csharp
+using OfficeIMO.PowerPoint;
+
+using var ppt = PowerPointPresentation.Create("designer-demo.pptx");
+ppt.SlideSize.SetPreset(PowerPointSlideSizePreset.Screen16x9);
+var alternatives = PowerPointDeckDesign.CreateAlternativesFromBrand("#008C95", "client-demo",
+    name: "Client Theme", eyebrow: "Client Group",
+    footerLeft: "CLIENT", footerRight: "Service deck");
+var design = alternatives[1]; // pick the stable Editorial creative direction for this deck
+var deck = ppt.UseDesigner(design);
+
+// Or use a recipe when you want a scenario-specific family of distinct directions.
+var portfolioAlternatives = PowerPointDesignRecipe.ConsultingPortfolio.CreateAlternativesFromBrand("#008C95", "client-demo",
+    name: "Client Theme", footerLeft: "CLIENT", footerRight: "Service deck");
+var portfolioDesign = portfolioAlternatives[0]; // Board Story, Field Proof, Quiet Appendix, ...
+
+// Recipes can also be selected from plain-language purpose text.
+var recipeChoices = PowerPointDesignRecipe.DescribeBuiltIns(); // names, keywords, directions, fonts, and moods
+var purposeMatches = PowerPointDesignRecipe.DescribeMatches("technical rollout proposal");
+var recipe = PowerPointDesignRecipe.FindBuiltIn("technical rollout proposal")
+    ?? PowerPointDesignRecipe.ConsultingPortfolio;
+
+// For the shortest path, start the deck composer directly from brand and purpose text.
+var quickDeck = ppt.UseDesigner("#008C95", "client-demo", "technical rollout proposal",
+    name: "Client Theme", footerLeft: "CLIENT", footerRight: "Service deck");
+
+// Use a design brief when brand, purpose, identity, and custom directions should travel together.
+var brief = PowerPointDesignBrief
+    .FromBrand("#008C95", "client-demo", "technical rollout proposal")
+    .WithIdentity("Client Theme", footerLeft: "CLIENT", footerRight: "Service deck")
+    .WithCreativeDirectionPack(PowerPointCreativeDirectionPack.FieldProof)
+    .WithPalette(surfaceColor: "#F6FAFC", panelBorderColor: "#D5E3EA");
+var choices = brief.DescribeAlternatives(3); // direction, mood, fonts, and palette preview
+var recommendations = brief.RecommendAlternatives(3); // preference score and reasons before choosing
+var briefDeck = ppt.UseDesigner(brief, alternativeIndex: 1);
+
+var packs = PowerPointDesignBrief.DescribeCreativeDirectionPacks(); // pack names, recipes, palette, and layout strategy
+
+// A deck plan lets callers describe the story while the designer chooses the slide compositions.
+var plan = new PowerPointDeckPlan()
+    .AddSection("Case Study", "Project portfolio", "cover")
+    .AddCaseStudy("Example client",
+        new[] {
+            new PowerPointCaseStudySection("Client", "A concise customer story."),
+            new PowerPointCaseStudySection("Challenge", "Many details needed structure."),
+            new PowerPointCaseStudySection("Solution", "Separate story, evidence, and outcome."),
+            new PowerPointCaseStudySection("Result", "Keep the output editable and readable.")
+        },
+        seed: "case-study")
+    .AddProcess("How we work", "Transparent phases reduce risk",
+        new[] {
+            new PowerPointProcessStep("Analysis", "Understand the environment and constraints."),
+            new PowerPointProcessStep("Discovery", "Review configuration and dependencies."),
+            new PowerPointProcessStep("Delivery", "Implement changes in controlled stages.")
+        },
+        seed: "process",
+        configure: options => {
+            options.Variant = PowerPointProcessLayoutVariant.Rail;
+            options.ConnectorStyle = PowerPointProcessConnectorStyle.SegmentArrows;
+        })
+    .AddCustom("Custom detail", composer => {
+        composer.AddTitle("Custom detail", "Use raw composition when a planned slide needs something special.");
+        var layout = composer.UsePreset(PowerPointCompositionPreset.Auto);
+        composer.AddVisualFrame(layout.Visual);
+        composer.AddMetricStrip(new[] { new PowerPointMetric("2", "modes") },
+            layout.Metrics);
+    }, seed: "custom-detail");
+var plannedSlides = plan.DescribeSlides(); // kind, title, seed, and content count
+var planDiagnostics = plan.ValidateSlides(); // density, clipping, and bounds issues before rendering
+var renderPreview = brief.DescribeDeckPlan(plan, alternativeIndex: 1); // variants, layout reasons, fonts, and seeds
+var planChoices = brief.DescribeDeckPlanAlternatives(plan, 3); // includes content-fit score and reasons
+var recommendedPlan = brief.RecommendDeckPlanAlternative(plan, 3); // strongest content-fit choice first
+var recommendedDeck = ppt.UseDesigner(brief, plan, alternativeCount: 3); // choose the recommended design
+var livePreview = recommendedDeck.DescribeSlides(plan); // seed preview accounts for slides already composed in this deck
+recommendedDeck.AddSlides(plan); // validates errors before rendering and keeps warnings inspectable
+
+// Process slides can keep the same semantic steps while changing only the connector treatment.
+recommendedDeck.AddProcessSlide("Delivery path", null,
+    new[] {
+        new PowerPointProcessStep("Assess", "Map the current state."),
+        new PowerPointProcessStep("Pilot", "Validate with a small group."),
+        new PowerPointProcessStep("Rollout", "Move in controlled waves.")
+    },
+    configure: options => {
+        options.Variant = PowerPointProcessLayoutVariant.Rail;
+        options.ConnectorStyle = PowerPointProcessConnectorStyle.StepDots;
+    });
+
+// Raw composition can use named presets and surface variants instead of hand-picked coordinates.
+recommendedDeck.ComposeSlide(composer => {
+    composer.AddTitle("Advisor summary", "The preset gives structure; the content remains yours.");
+    var layout = composer.UsePreset(PowerPointCompositionPreset.MetricStory,
+        PowerPointCompositionVariant.VisualLead);
+    composer.AddCardGrid(recommendedPlan.ContentFitReasons.Take(3)
+        .Select((reason, index) => new PowerPointCardContent("Signal " + (index + 1), new[] { reason })),
+        layout.Primary,
+        new PowerPointCardGridSlideOptions { SurfaceStyle = PowerPointCardSurfaceStyle.Hairline });
+    composer.AddVisualFrame(layout.Visual, PowerPointVisualFrameVariant.ProofBoard);
+    composer.AddMetricStrip(new[] {
+        new PowerPointMetric(recommendedPlan.ContentFitScore.ToString(), "fit score"),
+        new PowerPointMetric(recommendedPlan.Slides.Count.ToString(), "slides")
+    }, layout.Metrics, PowerPointMetricStripVariant.SeparatedTiles);
+}, seed: "advisor-summary");
+
+// Visual frames can switch between dashboard, collage, diagram, device, and proof-board treatments.
+recommendedDeck.AddCapabilitySlide("Evidence", "Choose visual support without hand-drawing a frame.",
+    new[] {
+        new PowerPointCapabilitySection("Proof", "Editable evidence area.", new[] { "Screenshot", "Certificate" })
+    },
+    configure: options => options.VisualFrameVariant = PowerPointVisualFrameVariant.DeviceMockup);
+
+// Direction motifs can be explicit too: triangles, chevrons, dots, bars, or none.
+recommendedDeck.AddSectionSlide("Approach", "A calmer opening rhythm", "approach",
+    configure: options => {
+        options.DirectionMotifStyle = PowerPointDirectionMotifStyle.Dots;
+        options.TitleAccentStyle = PowerPointTitleAccentStyle.KickerRule;
+    });
+
+// Or supply your own creative directions so decks do not all share the same house style.
+var clientDirections = new[] {
+    new PowerPointDesignDirection("Board Brief", PowerPointDesignMood.Corporate,
+        PowerPointSlideDensity.Relaxed, PowerPointVisualStyle.Soft, "Georgia", "Aptos",
+        showDirectionMotif: false),
+    new PowerPointDesignDirection("Field Ops", PowerPointDesignMood.Energetic,
+        PowerPointSlideDensity.Compact, PowerPointVisualStyle.Geometric, "Poppins", "Segoe UI")
+};
+var clientAlternatives = PowerPointDeckDesign.CreateAlternativesFromBrand("#008C95", "client-demo",
+    clientDirections, name: "Client Theme", footerLeft: "CLIENT");
+var uniqueBrief = PowerPointDesignBrief.FromBrand("#008C95", "client-demo")
+    .WithIdentity("Client Theme", footerLeft: "CLIENT")
+    .WithDirections(clientDirections)
+    .WithPaletteStyle(PowerPointPaletteStyle.CoolNeutral)
+    .WithTypographyStyle(PowerPointTypographyStyle.EditorialSerif)
+    .WithLayoutStrategy(PowerPointAutoLayoutStrategy.Compact)
+    .WithPreferredDensities(PowerPointSlideDensity.Compact);
+
+deck.AddSectionSlide("Case Study", "Project portfolio", "cover",
+    options => options.SectionVariant = PowerPointSectionLayoutVariant.EditorialRail);
+
+deck.AddCaseStudySlide("Example client",
+    new[] {
+        new PowerPointCaseStudySection("Client", "A concise customer story."),
+        new PowerPointCaseStudySection("Challenge", "Many details needed structure."),
+        new PowerPointCaseStudySection("Solution", "Separate story, evidence, and outcome."),
+        new PowerPointCaseStudySection("Result", "Keep the output editable and readable.")
+    },
+    seed: "case-study",
+    configure: options => options.Variant = PowerPointCaseStudyLayoutVariant.EditorialSplit);
+
+deck.AddProcessSlide("How we work", "Transparent phases reduce risk",
+    new[] {
+        new PowerPointProcessStep("Analysis", "Understand the environment and constraints."),
+        new PowerPointProcessStep("Discovery", "Review configuration and dependencies."),
+        new PowerPointProcessStep("Delivery", "Implement changes in controlled stages.")
+    },
+    seed: "process",
+    configure: options => options.Variant = PowerPointProcessLayoutVariant.NumberedColumns);
+
+deck.AddCardGridSlide("Scope of services", "Cards choose their own grid.",
+    new[] {
+        new PowerPointCardContent("Deployments", new[] { "Intune", "Autopilot" }),
+        new PowerPointCardContent("Maintenance", new[] { "Incidents", "Monitoring" }),
+        new PowerPointCardContent("Audits", new[] { "Configuration", "Security" })
+    },
+    seed: "services",
+    configure: options => options.Variant = PowerPointCardGridLayoutVariant.SoftTiles);
+
+deck.AddLogoWallSlide("Proof points", "Reusable logo and certification wall.",
+    new[] {
+        new PowerPointLogoItem("Lenovo", "Partner"),
+        new PowerPointLogoItem("Samsung", "Devices"),
+        new PowerPointLogoItem("Epson", "Service")
+    },
+    seed: "proof",
+    configure: options => options.FeatureTitle = "Featured certification");
+
+deck.AddCoverageSlide("Service coverage", "Pins are normalized inside the editable map panel.",
+    new[] {
+        new PowerPointCoverageLocation("Warszawa", 0.60, 0.48),
+        new PowerPointCoverageLocation("Gdansk", 0.55, 0.18),
+        new PowerPointCoverageLocation("Krakow", 0.58, 0.78)
+    },
+    seed: "coverage",
+    configure: options => {
+        options.MapLabel = "Editable locations";
+    });
+
+deck.AddCapabilitySlide("Service capability", "Structured text with visual support.",
+    new[] {
+        new PowerPointCapabilitySection("Warranty service",
+            "Nationwide support for distributed environments.",
+            new[] { "Computers and notebooks", "Printers and scanners" }),
+        new PowerPointCapabilitySection("Extended care",
+            "Support beyond standard vendor warranty.",
+            new[] { "SLA options", "Continuity monitoring" })
+    },
+    seed: "capability",
+    configure: options => {
+        options.VisualKind = PowerPointCapabilityVisualKind.CoverageMap;
+        options.VisualLabel = "Service locations";
+        options.Locations.Add(new PowerPointCoverageLocation("Warszawa", 0.60, 0.48));
+        options.Locations.Add(new PowerPointCoverageLocation("Gdansk", 0.55, 0.18));
+        options.Metrics.Add(new PowerPointMetric("8", "locations"));
+    });
+
+deck.ComposeSlide(composer => {
+    composer.AddTitle("Custom slide", "Use primitives when a recipe is too fixed.");
+    var columns = composer.ContentColumns(2);
+    composer.AddCardGrid(new[] {
+        new PowerPointCardContent("Story", new[] { "Context", "Need" }),
+        new PowerPointCardContent("Evidence", new[] { "Metrics", "Visual" })
+    }, columns[0]);
+    composer.AddCoverageMap(new[] {
+        new PowerPointCoverageLocation("North", 0.45, 0.20),
+        new PowerPointCoverageLocation("Central", 0.60, 0.48)
+    }, columns[1].TakeTopCm(3.0));
+    composer.AddCalloutBand("Use composer regions when the slide needs its own structure.",
+        columns[1].TakeBottomCm(1.5));
+}, "custom");
+
+ppt.Save();
+```
+
+Runnable sample:
+
+```powershell
+dotnet run --project OfficeIMO.Examples/OfficeIMO.Examples.csproj -f net10.0 -- --designer-powerpoint
+dotnet run --project OfficeIMO.Examples/OfficeIMO.Examples.csproj -f net10.0 -- --powerpoint-layout-strategy
+```
+
+The helpers are intentionally not fixed templates. Start with `PowerPointDeckDesign.FromBrand(...)` to define the
+deck personality once, including brand color, stable seed, mood, fonts, and chrome. Use a named
+`PowerPointDesignDirection` such as `Structured`, `Editorial`, `Quiet`, `Signal`, or `Executive` when you want a
+recognizable creative direction without hand-tuning every slide. Use `PowerPointDesignRecipe` values such as
+`ConsultingPortfolio`, `ExecutiveBrief`, `TechnicalProposal`, or `TransformationRoadmap` when you want a
+scenario-specific family of alternatives instead of one house style repeated across every client deck. The deck design
+configures per-slide
+`PowerPointDesignIntent` values so repeated content can receive stable but different accents, motifs, and automatic
+layout choices. Auto variants use both the design intent and the content shape: dense card grids stay compact, softer
+moods get softer cards, long processes stay readable, proof slides emphasize supplied certificate details, many
+locations become list-plus-map slides, section-heavy capability slides stack into readable panels, and content-rich
+case studies choose stronger structure. Use `PowerPointDeckDesign.CreateAlternativesFromBrand(...)` with either a count,
+custom directions, or a recipe when you want stable choices from the same brand before choosing the deck personality.
+
+Use `PowerPointDesignBrief.WithLayoutStrategy(...)` when `Auto` variants should lean toward content fit, seeded design
+variety, compact business layouts, or more visual hero/proof compositions without hardcoding every slide variant.
+Use `WithTypographyStyle(...)` when the same brand and slide plan should feel more editorial, executive, technical, or
+friendly without rewriting every creative direction.
+Use `SurfaceStyle` on card-grid options when cards should be elevated, flat, hairline, or accent-washed without
+changing the card content or layout.
+Use `DirectionMotifStyle` on slide options when the small movement markers should be triangles, chevrons, dots, bars,
+or hidden entirely for quieter slides.
+Use `TitleAccentStyle` on section-slide options when titles should use an underline, side rule, editorial kicker rule,
+or no extra accent without changing the section layout.
+Use `RecommendDeckPlanAlternative(...)` when callers want the library to pick the strongest content-fit alternative
+from the same plan while still returning the selected design index and reasons.
+Use `presentation.UseDesigner(brief, plan, alternativeCount: ...)` when the caller wants to skip manual ranking and
+compose with the recommended alternative directly.
+Run the layout strategy sample when you want to compare the same semantic `PowerPointDeckPlan` rendered through
+different brief-level palette and layout choices.
+Use explicit layout variants when a deck needs a controlled art direction, or use `ComposeDesignerSlide` and
+`PowerPointLayoutBox` regions when the slide needs a custom composition while still reusing cards, metrics, process
+steps, logo walls, coverage maps, and callout bands.
 
 ## Common Tasks by Example
 
@@ -117,6 +402,12 @@ using (var ppt = PowerPointPresentation.Open(stream, readOnly: false, autoSave: 
 ### Background image
 ```csharp
 slide.SetBackgroundImage("hero.png");
+```
+
+### Background gradient
+```csharp
+slide.SetBackgroundGradient("0F172A", "2563EB");
+slide.SetBackgroundGradient("0F172A", "2563EB", 45d);
 ```
 
 ### Simple shapes

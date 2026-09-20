@@ -212,7 +212,7 @@ namespace OfficeIMO.Word {
                 var updateFieldsOnOpen = settings.GetFirstChild<UpdateFieldsOnOpen>();
                 if (updateFieldsOnOpen == null) {
                     updateFieldsOnOpen = new UpdateFieldsOnOpen();
-                    settings.PrependChild(updateFieldsOnOpen);
+                    settings.AddChild(updateFieldsOnOpen, true);
                 }
                 updateFieldsOnOpen.Val = value;
             }
@@ -223,7 +223,9 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="document">Document whose settings are managed.</param>
         public WordSettings(WordDocument document) {
-            _ = document ?? throw new ArgumentNullException(nameof(document));
+            if (document == null) {
+                throw new ArgumentNullException(nameof(document));
+            }
             if (document.FileOpenAccess != FileAccess.Read) {
                 var mainPart = document._wordprocessingDocument.MainDocumentPart;
                 if (mainPart == null) {

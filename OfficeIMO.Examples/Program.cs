@@ -21,6 +21,10 @@ namespace OfficeIMO.Examples {
             PowerPoint.BasicPowerPointDocument.Example_BasicPowerPoint(folderPath, false);
             PowerPoint.AdvancedPowerPoint.Example_AdvancedPowerPoint(folderPath, false);
             PowerPoint.ModernPowerPointDeck.Example_ModernPowerPointDeck(folderPath, false);
+            PowerPoint.DesignerPowerPointDeck.Example_DesignerPowerPointDeck(folderPath, false);
+            PowerPoint.DesignBriefRecommendationsPowerPoint.Example_DesignBriefRecommendationsPowerPoint(folderPath, false);
+            PowerPoint.DeckPlanAdvisorPowerPoint.Example_DeckPlanAdvisorPowerPoint(folderPath, false);
+            PowerPoint.LayoutStrategyComparisonPowerPoint.Example_LayoutStrategyComparisonPowerPoint(folderPath, false);
             PowerPoint.FluentPowerPoint.Example_FluentPowerPoint(folderPath, false);
             PowerPoint.ShapesPowerPoint.Example_PowerPointShapes(folderPath, false);
             PowerPoint.SlidesManagementPowerPoint.Example_SlidesManagement(folderPath, false);
@@ -75,6 +79,26 @@ namespace OfficeIMO.Examples {
             Setup(folderPath);
             if (HasArgument(args, "--modern-powerpoint")) {
                 PowerPoint.ModernPowerPointDeck.Example_ModernPowerPointDeck(folderPath, false);
+                return;
+            }
+
+            if (HasArgument(args, "--designer-powerpoint")) {
+                PowerPoint.DesignerPowerPointDeck.Example_DesignerPowerPointDeck(folderPath, false);
+                return;
+            }
+
+            if (HasArgument(args, "--powerpoint-design-brief")) {
+                PowerPoint.DesignBriefRecommendationsPowerPoint.Example_DesignBriefRecommendationsPowerPoint(folderPath, false);
+                return;
+            }
+
+            if (HasArgument(args, "--powerpoint-deck-plan")) {
+                PowerPoint.DeckPlanAdvisorPowerPoint.Example_DeckPlanAdvisorPowerPoint(folderPath, false);
+                return;
+            }
+
+            if (HasArgument(args, "--powerpoint-layout-strategy")) {
+                PowerPoint.LayoutStrategyComparisonPowerPoint.Example_LayoutStrategyComparisonPowerPoint(folderPath, false);
                 return;
             }
 
@@ -183,6 +207,10 @@ namespace OfficeIMO.Examples {
             PowerPoint.BasicPowerPointDocument.Example_BasicPowerPoint(folderPath, false);
             PowerPoint.AdvancedPowerPoint.Example_AdvancedPowerPoint(folderPath, false);
             PowerPoint.ModernPowerPointDeck.Example_ModernPowerPointDeck(folderPath, false);
+            PowerPoint.DesignerPowerPointDeck.Example_DesignerPowerPointDeck(folderPath, false);
+            PowerPoint.DesignBriefRecommendationsPowerPoint.Example_DesignBriefRecommendationsPowerPoint(folderPath, false);
+            PowerPoint.DeckPlanAdvisorPowerPoint.Example_DeckPlanAdvisorPowerPoint(folderPath, false);
+            PowerPoint.LayoutStrategyComparisonPowerPoint.Example_LayoutStrategyComparisonPowerPoint(folderPath, false);
             PowerPoint.FluentPowerPoint.Example_FluentPowerPoint(folderPath, false);
             PowerPoint.ShapesPowerPoint.Example_PowerPointShapes(folderPath, false);
             PowerPoint.SlidesManagementPowerPoint.Example_SlidesManagement(folderPath, false);

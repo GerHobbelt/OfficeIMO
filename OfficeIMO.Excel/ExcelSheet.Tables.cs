@@ -18,7 +18,8 @@ namespace OfficeIMO.Excel {
             WriteLock(() => {
                 foreach (var tdp in _worksheetPart.TableDefinitionParts) {
                     var table = tdp.Table;
-                    if (table?.Reference?.Value != range) continue;
+                    if (table is null) continue;
+                    if (table.Reference?.Value != range) continue;
                     table.TotalsRowShown = true;
                     var tableColumns = table.TableColumns ?? throw new InvalidOperationException("Table columns are missing.");
                     var headerNames = tableColumns.Elements<TableColumn>().Select(tc => tc.Name?.Value ?? string.Empty).ToList();
@@ -58,7 +59,7 @@ namespace OfficeIMO.Excel {
                 // If there is, we'll add the AutoFilter to the table instead of the worksheet
                 foreach (var tableDefinitionPart in _worksheetPart.TableDefinitionParts) {
                     var table = tableDefinitionPart.Table;
-                    if (table?.Reference?.Value == range) {
+                    if (table is not null && table.Reference?.Value == range) {
                         // Found a table on the same range - add/update its AutoFilter
 
                         // First, remove any worksheet-level AutoFilter to avoid conflicts
@@ -164,6 +165,22 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
+        /// Gets the A1 range covered by a table on this worksheet.
+        /// </summary>
+        /// <param name="tableName">Table name or display name.</param>
+        /// <returns>The table reference, or <c>null</c> when no matching table exists.</returns>
+        public string? GetTableRange(string tableName) {
+            if (string.IsNullOrWhiteSpace(tableName)) {
+                return null;
+            }
+
+            return _worksheetPart.TableDefinitionParts
+                .Select(part => part.Table)
+                .FirstOrDefault(table => string.Equals(table?.Name?.Value ?? table?.DisplayName?.Value, tableName, StringComparison.OrdinalIgnoreCase))
+                ?.Reference?.Value;
+        }
+
+        /// <summary>
         /// Adds an Excel table to the worksheet over the specified range with optional AutoFilter and name validation behavior.
         /// </summary>
         /// <param name="range">Cell range (e.g. "A1:B3") defining the table area.</param>
@@ -238,13 +255,11 @@ namespace OfficeIMO.Excel {
                     // Get max existing table ID across all sheets to ensure uniqueness when opening existing files
                     uint maxExistingId = 0;
                     var wbPart = WorkbookPartRoot;
-                    if (wbPart != null) {
-                        foreach (var ws in wbPart.WorksheetParts) {
-                            foreach (var part in ws.TableDefinitionParts) {
-                                var idv = part.Table?.Id?.Value;
-                                if (idv != null && idv.Value > maxExistingId)
-                                    maxExistingId = idv.Value;
-                            }
+                    foreach (var ws in wbPart.WorksheetParts) {
+                        foreach (var part in ws.TableDefinitionParts) {
+                            var idv = part.Table?.Id?.Value;
+                            if (idv != null && idv.Value > maxExistingId)
+                                maxExistingId = idv.Value;
                         }
                     }
                     // Ensure _nextTableId always advances beyond any seen IDs
@@ -308,14 +323,19 @@ namespace OfficeIMO.Excel {
                         candidate = $"{baseName} ({suffix++})";
                     }
                     tableColumns.Append(new TableColumn { Id = i + 1, Name = candidate });
+
+                    if (hasHeader) {
+                        CellValueCore(startRowIndex, startColumnIndex + (int)i, candidate);
+                    }
                 }
 
                 // SMART AUTOFILTER HANDLING
                 // Check if there's already a worksheet-level AutoFilter on this range
                 AutoFilter? existingWorksheetAutoFilter = WorksheetRoot.Elements<AutoFilter>().FirstOrDefault();
                 bool hasExistingFilter = existingWorksheetAutoFilter?.Reference?.Value == range;
+                bool shouldIncludeAutoFilter = includeAutoFilter && hasHeader;
 
-                if (includeAutoFilter) {
+                if (shouldIncludeAutoFilter) {
                     // User wants AutoFilter on the table
                     if (hasExistingFilter && existingWorksheetAutoFilter != null) {
                         // MIGRATE: Move the existing worksheet AutoFilter to the table (preserving filter criteria)
@@ -400,7 +420,7 @@ namespace OfficeIMO.Excel {
                     sanitized.Append(ch);
                 } else if (char.IsWhiteSpace(ch)) {
                     sanitized.Append('_');
-                    if (ch != '_') changed = true;
+                    changed = true;
                 } else {
                     sanitized.Append('_');
                     changed = true;

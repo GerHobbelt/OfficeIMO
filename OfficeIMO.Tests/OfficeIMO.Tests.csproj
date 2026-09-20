@@ -17,7 +17,7 @@
         <PackageReference Include="SemanticComparison" Version="4.1.0" />
         <PackageReference Include="PdfPig" Version="0.1.13" />
         <PackageReference Include="xunit" Version="2.9.3" />
-        <PackageReference Include="coverlet.collector" Version="8.0.1">
+        <PackageReference Include="coverlet.collector" Version="10.0.0">
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
             <PrivateAssets>all</PrivateAssets>
         </PackageReference>
@@ -55,6 +55,10 @@
         <ProjectReference Include="..\\OfficeIMO.Reader.Csv\\OfficeIMO.Reader.Csv.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Reader.Json\\OfficeIMO.Reader.Json.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Reader.Xml\\OfficeIMO.Reader.Xml.csproj" />
+        <ProjectReference Include="..\\OfficeIMO.Markup\\OfficeIMO.Markup.csproj" />
+        <ProjectReference Include="..\\OfficeIMO.Markup.Excel\\OfficeIMO.Markup.Excel.csproj" />
+        <ProjectReference Include="..\\OfficeIMO.Markup.PowerPoint\\OfficeIMO.Markup.PowerPoint.csproj" />
+        <ProjectReference Include="..\\OfficeIMO.Markup.Word\\OfficeIMO.Markup.Word.csproj" />
     </ItemGroup>
     <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
         <Reference Include="System.IO.Compression" />
