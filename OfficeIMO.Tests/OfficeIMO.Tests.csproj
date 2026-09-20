@@ -31,6 +31,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\\OfficeIMO.Word\\OfficeIMO.Word.csproj" />
+        <ProjectReference Include="..\\OfficeIMO.Html\\OfficeIMO.Html.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markdown\\OfficeIMO.Markdown.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markdown.Html\\OfficeIMO.Markdown.Html.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markdown.Pdf\\OfficeIMO.Markdown.Pdf.csproj" />
@@ -61,6 +62,7 @@
         <ProjectReference Include="..\\OfficeIMO.Reader.Csv\\OfficeIMO.Reader.Csv.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Reader.Json\\OfficeIMO.Reader.Json.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Reader.Xml\\OfficeIMO.Reader.Xml.csproj" />
+        <ProjectReference Include="..\\OfficeIMO.Reader.Yaml\\OfficeIMO.Reader.Yaml.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markup\\OfficeIMO.Markup.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markup.Excel\\OfficeIMO.Markup.Excel.csproj" />
         <ProjectReference Include="..\\OfficeIMO.Markup.PowerPoint\\OfficeIMO.Markup.PowerPoint.csproj" />

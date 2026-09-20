@@ -51,6 +51,9 @@ public class ConversionOptionsTests {
         Assert.Equal(ImageProcessingMode.Embed, defaultProfile.ImageProcessing);
         Assert.Contains("https", defaultProfile.AllowedImageUriSchemes);
         Assert.Contains("https", defaultProfile.AllowedStylesheetUriSchemes);
+        Assert.True(defaultProfile.HyperlinkUrlPolicy.DisallowScriptUrls);
+        Assert.True(defaultProfile.HyperlinkUrlPolicy.DisallowFileUrls);
+        Assert.False(defaultProfile.HyperlinkUrlPolicy.AllowDataUrls);
         Assert.Null(defaultProfile.MaxHtmlNodes);
 
         var untrustedProfile = HtmlToWordOptions.CreateUntrustedHtmlProfile();
@@ -89,6 +92,10 @@ public class ConversionOptionsTests {
         options.BasePath = "C:\\Temp";
         options.NoteReferenceType = NoteReferenceType.Endnote;
         options.LinkNoteUrls = false;
+        options.HyperlinkUrlPolicy.DisallowFileUrls = false;
+        options.HyperlinkUrlPolicy.RestrictUrlSchemes = true;
+        options.HyperlinkUrlPolicy.AllowedUrlSchemes.Clear();
+        options.HyperlinkUrlPolicy.AllowedUrlSchemes.Add("https");
         options.ImageProcessing = ImageProcessingMode.LinkExternal;
         options.HttpClient = httpClient;
         options.ResourceTimeout = TimeSpan.FromSeconds(7);
@@ -138,6 +145,9 @@ public class ConversionOptionsTests {
         Assert.Equal(options.BasePath, clone.BasePath);
         Assert.Equal(options.NoteReferenceType, clone.NoteReferenceType);
         Assert.Equal(options.LinkNoteUrls, clone.LinkNoteUrls);
+        Assert.Equal(options.HyperlinkUrlPolicy.DisallowFileUrls, clone.HyperlinkUrlPolicy.DisallowFileUrls);
+        Assert.Equal(options.HyperlinkUrlPolicy.RestrictUrlSchemes, clone.HyperlinkUrlPolicy.RestrictUrlSchemes);
+        Assert.Equal(options.HyperlinkUrlPolicy.AllowedUrlSchemes, clone.HyperlinkUrlPolicy.AllowedUrlSchemes);
         Assert.Equal(options.ImageProcessing, clone.ImageProcessing);
         Assert.Same(httpClient, clone.HttpClient);
         Assert.Equal(options.ResourceTimeout, clone.ResourceTimeout);
@@ -173,17 +183,39 @@ public class ConversionOptionsTests {
 
         clone.ClassStyles["lead"] = WordParagraphStyles.Heading3;
         clone.StylesheetPaths.Add("other.css");
+        clone.HyperlinkUrlPolicy.AllowedUrlSchemes.Add("mailto");
         clone.AllowedImageUriSchemes.Add("https");
 
         Assert.Equal(WordParagraphStyles.Heading2, options.ClassStyles["lead"]);
         Assert.DoesNotContain("other.css", options.StylesheetPaths);
+        Assert.DoesNotContain("mailto", options.HyperlinkUrlPolicy.AllowedUrlSchemes);
         Assert.DoesNotContain("https", options.AllowedImageUriSchemes);
     }
 
     [Fact]
     public void WordToMarkdownOptions_ExposeFontFamily() {
-        var options = new WordToMarkdownOptions { FontFamily = "Arial" };
+        var options = new WordToMarkdownOptions {
+            FontFamily = "Arial",
+            PageBreakMode = MarkdownPageBreakMode.HorizontalRule,
+            UnsupportedContentMode = MarkdownUnsupportedContentMode.Placeholder,
+            VisualFallbackMode = MarkdownVisualFallbackMode.SvgFile,
+            VisualFallbackDirectory = "assets",
+            VisualFallbackPathPrefix = "assets"
+        };
         Assert.Equal("Arial", options.FontFamily);
+        Assert.Equal(MarkdownPageBreakMode.HorizontalRule, options.PageBreakMode);
+        Assert.Equal(MarkdownUnsupportedContentMode.Placeholder, options.UnsupportedContentMode);
+        Assert.Equal(MarkdownVisualFallbackMode.SvgFile, options.VisualFallbackMode);
+        Assert.Equal("assets", options.VisualFallbackDirectory);
+        Assert.Equal("assets", options.VisualFallbackPathPrefix);
+    }
+
+    [Fact]
+    public void MarkdownToWordOptions_EnableBoundedDataUriImagesByDefault() {
+        var options = new MarkdownToWordOptions();
+
+        Assert.True(options.AllowDataUriImages);
+        Assert.Equal(32L * 1024L * 1024L, options.MaxDataUriImageBytes);
     }
 
     [Fact]
