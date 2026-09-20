@@ -36,11 +36,11 @@
 .PARAMETER PowerForgeRoot
     Root folder of PSPublishModule (overrides $env:POWERFORGE_ROOT).
 
-.PARAMETER PSWriteOfficeRoot
-    Root folder of PSWriteOffice (overrides $env:PSWRITEOFFICE_ROOT). When found, refreshes the PowerShell API snapshot before the site build.
-
 .PARAMETER CI
     Force pipeline CI mode locally (equivalent to setting CI=true).
+
+.PARAMETER PSWriteOfficeRoot
+    Optional PSWriteOffice repo root used to refresh the checked-in PowerShell API snapshot before building.
 
 .EXAMPLE
     ./build.ps1
@@ -62,7 +62,7 @@ param(
     [switch]$CI,
     [switch]$SkipBuildTool,
     [string]$PowerForgeRoot = $env:POWERFORGE_ROOT,
-    [string]$PSWriteOfficeRoot = $env:PSWRITEOFFICE_ROOT
+    [string]$PSWriteOfficeRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -164,11 +164,6 @@ if (-not $PowerForge) {
 
 Write-Host "Using: $PowerForge $($PowerForgeArgs -join ' ')" -ForegroundColor DarkGray
 
-$psWriteOfficeSyncScript = Join-Path $PSScriptRoot 'scripts\Sync-PSWriteOfficeApiDocs.ps1'
-if (Test-Path -LiteralPath $psWriteOfficeSyncScript -PathType Leaf) {
-    & $psWriteOfficeSyncScript -PSWriteOfficeRoot $PSWriteOfficeRoot
-}
-
 function Assert-SiteOutput {
     param(
         [Parameter(Mandatory)]
@@ -182,6 +177,17 @@ function Assert-SiteOutput {
 }
 
 try {
+    if (-not [string]::IsNullOrWhiteSpace($PSWriteOfficeRoot)) {
+        $syncScript = Join-Path $PSScriptRoot 'scripts\Sync-PSWriteOfficeApiDocs.ps1'
+        if (-not (Test-Path -LiteralPath $syncScript -PathType Leaf)) {
+            throw "PSWriteOffice API sync script not found: $syncScript"
+        }
+
+        Write-Host 'Refreshing PSWriteOffice API snapshot...' -ForegroundColor Cyan
+        & $syncScript -SiteRoot $PSScriptRoot -PSWriteOfficeRoot $PSWriteOfficeRoot
+        if (-not $?) { throw 'PSWriteOffice API sync failed.' }
+    }
+
     $UseDev = ($Dev -or ($Serve -and -not $NoDev))
     $UseFast = ($Fast -or ($Serve -and -not $NoFast))
     $IsCI = $CI -or
