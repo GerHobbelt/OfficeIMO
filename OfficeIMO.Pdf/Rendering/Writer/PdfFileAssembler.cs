@@ -1,60 +1,105 @@
 using System.Globalization;
+using System.Security.Cryptography;
 
 namespace OfficeIMO.Pdf;
 
 internal static class PdfFileAssembler {
-    internal static byte[] Assemble(IReadOnlyList<byte[]> objects, int catalogId, int infoId, PdfFileVersion fileVersion = PdfFileVersion.Pdf14, PdfStandardEncryptionOptions? encryption = null) {
-        Guard.FileVersion(fileVersion, nameof(fileVersion));
-        Guard.NotNull(objects, nameof(objects));
+    internal static byte[] Assemble(
+        IReadOnlyList<byte[]> objects,
+        int catalogId,
+        int infoId,
+        PdfFileVersion fileVersion = PdfFileVersion.Pdf14,
+        PdfStandardEncryptionOptions? encryption = null,
+        long objectMemoryLimitBytes = PdfObjectStore.DefaultMemoryLimitBytes,
+        string? trailerIdEntry = null) {
+        using var stream = new MemoryStream();
+        Assemble(stream, objects, catalogId, infoId, fileVersion, encryption, objectMemoryLimitBytes, trailerIdEntry);
+        return stream.ToArray();
+    }
 
-        PdfEncryptionAssembly? encryptionAssembly = null;
-        if (encryption != null) {
-            fileVersion = RequireAtLeast(fileVersion, GetMinimumEncryptionVersion(encryption.Algorithm));
-            encryptionAssembly = PdfStandardSecurityWriter.Encrypt(objects, encryption);
+    internal static long Assemble(
+        Stream destination,
+        IReadOnlyList<byte[]> objects,
+        int catalogId,
+        int infoId,
+        PdfFileVersion fileVersion = PdfFileVersion.Pdf14,
+        PdfStandardEncryptionOptions? encryption = null,
+        long objectMemoryLimitBytes = PdfObjectStore.DefaultMemoryLimitBytes,
+        string? trailerIdEntry = null) {
+        Guard.FileVersion(fileVersion, nameof(fileVersion));
+        Guard.NotNull(destination, nameof(destination));
+        Guard.NotNull(objects, nameof(objects));
+        if (!destination.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(destination));
+        if (objectMemoryLimitBytes < 0L) throw new ArgumentOutOfRangeException(nameof(objectMemoryLimitBytes), objectMemoryLimitBytes, "PDF object-buffer memory limit cannot be negative.");
+
+        using PdfEncryptionAssembly? encryptionAssembly = encryption == null
+            ? null
+            : PdfStandardSecurityWriter.Encrypt(objects, encryption, objectMemoryLimitBytes);
+        if (encryptionAssembly != null) {
+            fileVersion = RequireAtLeast(fileVersion, GetMinimumEncryptionVersion(encryption!.Algorithm));
             objects = encryptionAssembly.Objects;
         }
 
-        using var ms = new MemoryStream();
         byte[] header = PdfEncoding.Latin1GetBytes("%PDF-" + GetHeaderVersion(fileVersion) + "\n%\u00e2\u00e3\u00cf\u00d3\n");
-        ms.Write(header, 0, header.Length);
+        using HashAlgorithm? fileIdHash = encryptionAssembly == null ? SHA256.Create() : null;
+        fileIdHash?.TransformBlock(header, 0, header.Length, header, 0);
+        destination.Write(header, 0, header.Length);
+        long written = header.LongLength;
 
         var offsets = new List<long> { 0L };
         for (int i = 0; i < objects.Count; i++) {
-            offsets.Add(ms.Position);
-            byte[] obj = objects[i];
-            ms.Write(obj, 0, obj.Length);
+            offsets.Add(written);
+            if (objects is PdfObjectStore objectStore) {
+                objectStore.CopyTo(i, destination, fileIdHash);
+                written += objectStore.GetLength(i);
+            } else {
+                byte[] obj = objects[i];
+                fileIdHash?.TransformBlock(obj, 0, obj.Length, obj, 0);
+                destination.Write(obj, 0, obj.Length);
+                written += obj.LongLength;
+            }
         }
 
-        long xrefPos = ms.Position;
-        using var writer = new StreamWriter(ms, Encoding.ASCII, 1024, leaveOpen: true) { NewLine = "\n" };
-        writer.WriteLine("xref");
-        writer.WriteLine("0 " + (objects.Count + 1).ToString(CultureInfo.InvariantCulture));
-        writer.WriteLine("0000000000 65535 f ");
+        byte[] fileId = encryptionAssembly?.FileId ?? FinalizeFileId(fileIdHash!);
+
+        long xrefPos = written;
+        var trailer = new StringBuilder();
+        trailer.Append("xref\n");
+        trailer.Append("0 ").Append((objects.Count + 1).ToString(CultureInfo.InvariantCulture)).Append('\n');
+        trailer.Append("0000000000 65535 f \n");
         for (int i = 1; i <= objects.Count; i++) {
-            writer.WriteLine(offsets[i].ToString("0000000000", CultureInfo.InvariantCulture) + " 00000 n ");
+            trailer.Append(offsets[i].ToString("0000000000", CultureInfo.InvariantCulture)).Append(" 00000 n \n");
         }
 
-        writer.WriteLine("trailer");
-        writer.WriteLine("<< /Size " + (objects.Count + 1).ToString(CultureInfo.InvariantCulture) +
-            " /Root " + PdfSyntaxEscaper.IndirectReference(catalogId) +
-            (infoId > 0 ? " /Info " + PdfSyntaxEscaper.IndirectReference(infoId) : string.Empty) +
-            BuildTrailerSecurityEntries(encryptionAssembly) + " >>");
-        writer.WriteLine("startxref");
-        writer.WriteLine(xrefPos.ToString(CultureInfo.InvariantCulture));
-        writer.WriteLine("%%EOF");
-        writer.Flush();
-
-        return ms.ToArray();
+        trailer.Append("trailer\n");
+        trailer.Append("<< /Size ").Append((objects.Count + 1).ToString(CultureInfo.InvariantCulture))
+            .Append(" /Root ").Append(PdfSyntaxEscaper.IndirectReference(catalogId))
+            .Append(infoId > 0 ? " /Info " + PdfSyntaxEscaper.IndirectReference(infoId) : string.Empty)
+            .Append(BuildTrailerEntries(encryptionAssembly, fileId, trailerIdEntry)).Append(" >>\n");
+        trailer.Append("startxref\n").Append(xrefPos.ToString(CultureInfo.InvariantCulture)).Append("\n%%EOF\n");
+        byte[] trailerBytes = Encoding.ASCII.GetBytes(trailer.ToString());
+        destination.Write(trailerBytes, 0, trailerBytes.Length);
+        return written + trailerBytes.LongLength;
     }
 
-    private static string BuildTrailerSecurityEntries(PdfEncryptionAssembly? encryptionAssembly) {
-        if (encryptionAssembly == null) {
-            return string.Empty;
+    private static string BuildTrailerEntries(PdfEncryptionAssembly? encryptionAssembly, byte[] fileId, string? trailerIdEntry) {
+        if (encryptionAssembly == null && !string.IsNullOrWhiteSpace(trailerIdEntry)) {
+            return trailerIdEntry!;
         }
 
-        string id = PdfSyntaxEscaper.HexString(encryptionAssembly.FileId);
-        return " /Encrypt " + PdfSyntaxEscaper.IndirectReference(encryptionAssembly.EncryptionObjectNumber) +
-            " /ID [" + id + " " + id + "]";
+        string id = PdfSyntaxEscaper.HexString(fileId);
+        string encryptionEntry = encryptionAssembly == null
+            ? string.Empty
+            : " /Encrypt " + PdfSyntaxEscaper.IndirectReference(encryptionAssembly.EncryptionObjectNumber);
+        return encryptionEntry + " /ID [" + id + " " + id + "]";
+    }
+
+    private static byte[] FinalizeFileId(HashAlgorithm hash) {
+        hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        byte[] fullHash = hash.Hash ?? throw new InvalidOperationException("Unable to calculate the PDF trailer file identifier.");
+        var fileId = new byte[16];
+        Buffer.BlockCopy(fullHash, 0, fileId, 0, fileId.Length);
+        return fileId;
     }
 
     private static PdfFileVersion GetMinimumEncryptionVersion(PdfStandardEncryptionAlgorithm algorithm) {

@@ -13,7 +13,7 @@ public sealed partial class PdfDocument {
     /// <param name="profile">Compliance profile to assess without enabling formal profile generation.</param>
     public PdfComplianceReadinessReport AssessCompliance(PdfComplianceProfile profile) {
         EnsureGeneratedDocument();
-        PdfGeneratedDocumentComplianceEvidence evidence = PdfWriter.CollectGeneratedComplianceEvidence(_blocks, _options);
+        PdfGeneratedDocumentComplianceEvidence evidence = PdfWriter.CollectGeneratedComplianceEvidence(this, _blocks, _options);
         return PdfComplianceAnalyzer.AssessDocument(profile, _options, evidence.StandardFonts, evidence.FontUsages, _title, evidence.Images, evidence.Drawings, evidence.Forms);
     }
 
@@ -24,6 +24,12 @@ public sealed partial class PdfDocument {
         AssessComplianceProof(_options.ComplianceProfile, externalValidations);
 
     /// <summary>
+    /// Combines generated-document readiness with external validator evidence bound to the exact supplied PDF bytes.
+    /// </summary>
+    public PdfComplianceProofReport AssessComplianceProof(byte[] artifact, IEnumerable<PdfExternalValidationResult>? externalValidations = null) =>
+        AssessComplianceProof(_options.ComplianceProfile, artifact, externalValidations);
+
+    /// <summary>
     /// Combines generated-document compliance readiness for a formal profile with external validator evidence.
     /// </summary>
     /// <param name="profile">Compliance profile to assess without enabling formal profile generation.</param>
@@ -31,6 +37,17 @@ public sealed partial class PdfDocument {
     public PdfComplianceProofReport AssessComplianceProof(PdfComplianceProfile profile, IEnumerable<PdfExternalValidationResult>? externalValidations = null) {
         PdfComplianceReadinessReport readiness = AssessCompliance(profile);
         return PdfComplianceAnalyzer.AssessProof(readiness, externalValidations);
+    }
+
+    /// <summary>
+    /// Combines generated-document readiness with external validator evidence bound to the exact supplied PDF bytes.
+    /// </summary>
+    /// <param name="profile">Compliance profile to assess without enabling formal profile generation.</param>
+    /// <param name="artifact">The exact PDF bytes supplied to each external validator.</param>
+    /// <param name="externalValidations">External validator results for the same exact artifact.</param>
+    public PdfComplianceProofReport AssessComplianceProof(PdfComplianceProfile profile, byte[] artifact, IEnumerable<PdfExternalValidationResult>? externalValidations = null) {
+        PdfComplianceReadinessReport readiness = AssessCompliance(profile);
+        return PdfComplianceAnalyzer.AssessProof(readiness, artifact, externalValidations);
     }
 
     /// <summary>
@@ -68,8 +85,8 @@ public sealed partial class PdfDocument {
     /// </summary>
     /// <param name="stream">Writable destination stream.</param>
     public void Save(Stream stream) {
-        var bytes = ToBytes();
-        OfficeStreamWriter.WriteAllBytes(stream, bytes);
+        ThrowIfTextEncodingPreflightFails();
+        RenderToStreamCore(stream);
     }
 
     /// <summary>
@@ -81,9 +98,8 @@ public sealed partial class PdfDocument {
                 return PdfSaveResult.Failed(outputPath: null, preflightException!);
             }
 
-            var bytes = RenderBytesCore();
-            OfficeStreamWriter.WriteAllBytes(stream, bytes);
-            return PdfSaveResult.Success(outputPath: null, bytes.LongLength);
+            long bytesWritten = RenderToStreamCore(stream);
+            return PdfSaveResult.Success(outputPath: null, bytesWritten);
         } catch (Exception ex) {
             return PdfSaveResult.Failed(outputPath: null, ex);
         }
@@ -97,8 +113,8 @@ public sealed partial class PdfDocument {
         string fullPath = ValidateOutputPath(path);
         EnsureOutputDirectory(fullPath);
 
-        var bytes = ToBytes();
-        OfficeFileCommit.WriteAllBytes(fullPath, bytes);
+        ThrowIfTextEncodingPreflightFails();
+        OfficeFileCommit.Write(fullPath, stream => WritePdfCore(stream));
     }
 
     /// <summary>
@@ -114,9 +130,9 @@ public sealed partial class PdfDocument {
                 return PdfSaveResult.Failed(fullPath, preflightException!);
             }
 
-            var bytes = RenderBytesCore();
-            OfficeFileCommit.WriteAllBytes(fullPath, bytes);
-            return PdfSaveResult.Success(fullPath, bytes.LongLength);
+            long bytesWritten = 0L;
+            OfficeFileCommit.Write(fullPath, stream => bytesWritten = WritePdfCore(stream));
+            return PdfSaveResult.Success(fullPath, bytesWritten);
         } catch (Exception ex) {
             return PdfSaveResult.Failed(fullPath ?? path, ex);
         }
@@ -127,9 +143,8 @@ public sealed partial class PdfDocument {
     /// </summary>
     public async System.Threading.Tasks.Task SaveAsync(Stream stream, System.Threading.CancellationToken cancellationToken = default) {
         cancellationToken.ThrowIfCancellationRequested();
-
-        var bytes = ToBytes();
-        await OfficeStreamWriter.WriteAllBytesAsync(stream, bytes, cancellationToken).ConfigureAwait(false);
+        ThrowIfTextEncodingPreflightFails();
+        await RenderToStreamCoreAsync(stream, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -143,9 +158,8 @@ public sealed partial class PdfDocument {
                 return PdfSaveResult.Failed(outputPath: null, preflightException!);
             }
 
-            var bytes = RenderBytesCore();
-            await OfficeStreamWriter.WriteAllBytesAsync(stream, bytes, cancellationToken).ConfigureAwait(false);
-            return PdfSaveResult.Success(outputPath: null, bytes.LongLength);
+            long bytesWritten = await RenderToStreamCoreAsync(stream, cancellationToken).ConfigureAwait(false);
+            return PdfSaveResult.Success(outputPath: null, bytesWritten);
         } catch (System.OperationCanceledException) {
             throw;
         } catch (Exception ex) {
@@ -161,8 +175,8 @@ public sealed partial class PdfDocument {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureOutputDirectory(fullPath);
 
-        var bytes = ToBytes();
-        await OfficeFileCommit.WriteAllBytesAsync(fullPath, bytes, cancellationToken: cancellationToken).ConfigureAwait(false);
+        ThrowIfTextEncodingPreflightFails();
+        await OfficeFileCommit.WriteAsync(fullPath, stream => WritePdfCore(stream), cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -179,9 +193,9 @@ public sealed partial class PdfDocument {
                 return PdfSaveResult.Failed(fullPath ?? path, preflightException!);
             }
 
-            var bytes = RenderBytesCore();
-            await OfficeFileCommit.WriteAllBytesAsync(fullPath, bytes, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return PdfSaveResult.Success(fullPath, bytes.LongLength);
+            long bytesWritten = 0L;
+            await OfficeFileCommit.WriteAsync(fullPath, stream => bytesWritten = WritePdfCore(stream), cancellationToken: cancellationToken).ConfigureAwait(false);
+            return PdfSaveResult.Success(fullPath, bytesWritten);
         } catch (System.OperationCanceledException) {
             throw;
         } catch (Exception ex) {
@@ -195,6 +209,30 @@ public sealed partial class PdfDocument {
         }
 
         return PdfWriter.Write(this, _blocks, _options, _title, _author, _subject, _keywords);
+    }
+
+    private long RenderToStreamCore(Stream stream) {
+        long bytesWritten = 0L;
+        OfficeStreamWriter.Write(stream, destination => bytesWritten = WritePdfCore(destination));
+        return bytesWritten;
+    }
+
+    private async System.Threading.Tasks.Task<long> RenderToStreamCoreAsync(Stream stream, System.Threading.CancellationToken cancellationToken) {
+        long bytesWritten = 0L;
+        await OfficeStreamWriter.WriteAsync(
+            stream,
+            destination => bytesWritten = WritePdfCore(destination),
+            cancellationToken).ConfigureAwait(false);
+        return bytesWritten;
+    }
+
+    private long WritePdfCore(Stream stream) {
+        if (_loadedPdf is not null) {
+            stream.Write(_loadedPdf, 0, _loadedPdf.Length);
+            return _loadedPdf.LongLength;
+        }
+
+        return PdfWriter.Write(stream, this, _blocks, _options, _title, _author, _subject, _keywords);
     }
 
     private void ThrowIfTextEncodingPreflightFails() {

@@ -5,7 +5,20 @@ namespace OfficeIMO.Pdf;
 
 internal static partial class PdfWriter {
     private sealed partial class LayoutContext {
-        private void RenderRowFlowBlock(RowBlock rb, IPdfBlock? nextBlock, System.Collections.Generic.IList<IPdfBlock> blockList, int blockIndex) {
+        private delegate void RowFragmentDecorator(
+            StringBuilder content,
+            int insertionIndex,
+            double top,
+            double bottom,
+            bool isFirstFragment,
+            bool isLastFragment);
+
+        private void RenderRowFlowBlock(
+            RowBlock rb,
+            IPdfBlock? nextBlock,
+            System.Collections.Generic.IList<IPdfBlock> blockList,
+            int blockIndex,
+            RowFragmentDecorator? fragmentDecorator = null) {
             double contentWidth = currentOpts.PageWidth - currentOpts.MarginLeft - currentOpts.MarginRight;
             int ncols = rb.Columns.Count;
             PdfRowStyle? rowStyle = rb.StyleSnapshot ?? currentOpts.DefaultRowStyleSnapshot;
@@ -109,6 +122,7 @@ internal static partial class PdfWriter {
             }
 
             int rowColumnFlowGuard = 0;
+            bool isFirstFragment = true;
             while (AnyRemaining()) {
                 rowColumnFlowGuard++;
                 if (rowColumnFlowGuard > 10000) {
@@ -118,6 +132,7 @@ internal static partial class PdfWriter {
                 double avail = y - currentOpts.MarginBottom;
                 if (avail <= 0.5) { NewPage(); avail = y - currentOpts.MarginBottom; }
 
+                int fragmentInsertionIndex = sb.Length;
                 double maxConsumed = 0;
                 bool anyColumnAdvanced = false;
                 for (int ci = 0; ci < ncols; ci++) {
@@ -656,19 +671,21 @@ internal static partial class PdfWriter {
                                 table.RowLineCounts[rowIndex] > 1 &&
                                 MeasureColumnTableRowSegmentHeight(rowIndex, 0, Math.Min(2, table.RowLineCounts[rowIndex]), suppressCellObjects: false) <= remain + 0.001;
 
-                            bool ShouldBreakBeforePenultimateColumnTableBodyRow(int rowIndex) {
-                                if (rowIndex + 1 >= table.RowHeights.Length) {
+                            bool ShouldBreakBeforeFinalColumnTableBodyRows(int rowIndex) {
+                                int minimumBodyRows = Math.Min(tableStyle.MinimumBodyRowsOnLastPage, Math.Max(0, table.FooterStartRowIndex - table.HeaderRowCount));
+                                if (minimumBodyRows <= 0 || table.FooterStartRowIndex - rowIndex != minimumBodyRows) {
                                     return false;
                                 }
 
                                 double currentRowHeight = table.RowHeights[rowIndex] + GetTableRowGapAfter(rowIndex, tbColumn.Rows.Count, columnTableRowGap);
-                                double nextRowHeight = table.RowHeights[rowIndex + 1] + GetTableRowGapAfter(rowIndex + 1, tbColumn.Rows.Count, columnTableRowGap);
-                                return ShouldBreakBeforePenultimateTableBodyRow(
+                                double finalGroupHeight = GetTableRowsHeight(table.RowHeights, rowIndex, table.RowHeights.Length, columnTableRowGap);
+                                return ShouldBreakBeforeFinalTableBodyRows(
                                     rowIndex,
                                     table.HeaderRowCount,
                                     table.FooterStartRowIndex,
+                                    minimumBodyRows,
                                     currentRowHeight,
-                                    nextRowHeight,
+                                    finalGroupHeight,
                                     remain,
                                     HasRepeatableHeader() ? repeatHeaderHeight : 0D,
                                     maxContentHeight,
@@ -978,7 +995,7 @@ internal static partial class PdfWriter {
                                     break;
                                 }
 
-                                if (ShouldBreakBeforePenultimateColumnTableBodyRow(rowIndex)) break;
+                                if (ShouldBreakBeforeFinalColumnTableBodyRows(rowIndex)) break;
                                 if (neededForNextRow > remain && consumed > 0) break;
                                 if (neededForNextRow > remain && consumed == 0) { remain = 0; break; }
 
@@ -1171,7 +1188,15 @@ internal static partial class PdfWriter {
                     continue;
                 }
                 DrawRowColumnSeparators(y, y - maxConsumed);
+                fragmentDecorator?.Invoke(
+                    sb,
+                    fragmentInsertionIndex,
+                    y,
+                    y - maxConsumed,
+                    isFirstFragment,
+                    !AnyRemaining());
                 y -= maxConsumed;
+                isFirstFragment = false;
             }
 
             if (rowSpacingAfter > 0) {

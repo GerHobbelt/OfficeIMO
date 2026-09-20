@@ -2,14 +2,22 @@ namespace OfficeIMO.Pdf;
 
 internal static partial class PdfWriter {
     internal static System.Collections.Generic.IReadOnlyList<PdfStandardFont> CollectGeneratedStandardFonts(IEnumerable<IPdfBlock> blocks, PdfOptions options) {
-        return CollectGeneratedComplianceEvidence(blocks, options).StandardFonts;
+        return CollectGeneratedComplianceEvidence(document: null, blocks, options).StandardFonts;
     }
 
-    internal static PdfGeneratedDocumentComplianceEvidence CollectGeneratedComplianceEvidence(IEnumerable<IPdfBlock> blocks, PdfOptions options) {
+    internal static PdfGeneratedDocumentComplianceEvidence CollectGeneratedComplianceEvidence(PdfDocument? document, IEnumerable<IPdfBlock> blocks, PdfOptions options) {
         Guard.NotNull(blocks, nameof(blocks));
         Guard.NotNull(options, nameof(options));
 
-        LayoutResult layout = LayoutBlocks(blocks, options);
+        using System.IDisposable? generatedSectionLayout = document?.BeginGeneratedSectionLayout();
+        using LayoutResult layout = LayoutBlocks(blocks, options);
+        return CollectGeneratedComplianceEvidence(layout, options);
+    }
+
+    private static PdfGeneratedDocumentComplianceEvidence CollectGeneratedComplianceEvidence(LayoutResult layout, PdfOptions options) {
+        Guard.NotNull(layout, nameof(layout));
+        Guard.NotNull(options, nameof(options));
+
         var fonts = new System.Collections.Generic.HashSet<PdfStandardFont>();
         var fontUsages = new System.Collections.Generic.List<PdfGeneratedFontComplianceEvidence>();
         var images = new System.Collections.Generic.List<PdfGeneratedImageAccessibilityEvidence>();
@@ -78,7 +86,7 @@ internal static partial class PdfWriter {
             }
 
             foreach (PageImage image in page.Images) {
-                images.Add(new PdfGeneratedImageAccessibilityEvidence(!string.IsNullOrWhiteSpace(image.AlternativeText), image.IsBackgroundDecoration));
+                images.Add(new PdfGeneratedImageAccessibilityEvidence(!string.IsNullOrWhiteSpace(image.AlternativeText), image.IsDecorativeArtifact));
             }
 
             drawings.AddRange(page.Drawings);

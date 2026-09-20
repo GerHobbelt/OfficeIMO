@@ -367,8 +367,8 @@ public sealed class PackageDependencyGuardrailTests {
     }
 
     [Fact]
-    public void RetiredRtfHtmlPackages_AreNotReferencedBySolutionOrProjects() {
-        string[] retiredPackageIds = ["OfficeIMO.Rtf.Html", "OfficeIMO.Html.Rtf"];
+    public void RetiredPackages_AreNotReferencedBySolutionOrProjects() {
+        string[] retiredPackageIds = ["OfficeIMO.Rtf.Html", "OfficeIMO.Html.Rtf", "OfficeIMO.Reader.Text"];
 
         var solutionPath = GetRepositoryPath("OfficeIMO.sln");
         Assert.True(File.Exists(solutionPath), "Solution file is missing: " + solutionPath);
@@ -470,12 +470,13 @@ public sealed class PackageDependencyGuardrailTests {
         Assert.True(File.Exists(projectBuildPath), "Project build file is missing: " + projectBuildPath);
 
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(projectBuildPath));
+        string? expectedVersion = document.RootElement.GetProperty("ExpectedVersion").GetString();
         JsonElement expectedVersionMap = document.RootElement.GetProperty("ExpectedVersionMap");
 
-        Assert.Equal("0.1.X", expectedVersionMap.GetProperty("OfficeIMO.Rtf").GetString());
-        Assert.Equal("0.1.X", expectedVersionMap.GetProperty("OfficeIMO.Word.Rtf").GetString());
-        Assert.Equal("0.1.X", expectedVersionMap.GetProperty("OfficeIMO.Rtf.Pdf").GetString());
-        Assert.Equal("0.0.X", expectedVersionMap.GetProperty("OfficeIMO.Reader.Rtf").GetString());
+        Assert.Equal(expectedVersion, expectedVersionMap.GetProperty("OfficeIMO.Rtf").GetString());
+        Assert.Equal(expectedVersion, expectedVersionMap.GetProperty("OfficeIMO.Word.Rtf").GetString());
+        Assert.Equal(expectedVersion, expectedVersionMap.GetProperty("OfficeIMO.Rtf.Pdf").GetString());
+        Assert.Equal(expectedVersion, expectedVersionMap.GetProperty("OfficeIMO.Reader.Rtf").GetString());
     }
 
     [Theory]
@@ -486,9 +487,10 @@ public sealed class PackageDependencyGuardrailTests {
         Assert.True(File.Exists(projectBuildPath), "Project build file is missing: " + projectBuildPath);
 
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(projectBuildPath));
+        string? expectedVersion = document.RootElement.GetProperty("ExpectedVersion").GetString();
         JsonElement expectedVersionMap = document.RootElement.GetProperty("ExpectedVersionMap");
 
-        Assert.Equal("0.0.X", expectedVersionMap.GetProperty(packageId).GetString());
+        Assert.Equal(expectedVersion, expectedVersionMap.GetProperty(packageId).GetString());
     }
 
     [Fact]
@@ -496,9 +498,9 @@ public sealed class PackageDependencyGuardrailTests {
         string projectPath = GetRepositoryPath("OfficeIMO.Drawing/OfficeIMO.Drawing.csproj");
         var document = XDocument.Load(projectPath);
         XNamespace ns = document.Root?.Name.Namespace ?? XNamespace.None;
-        string? version = document.Descendants(ns + "VersionPrefix").Select(static element => element.Value).SingleOrDefault();
+        string? packageId = document.Descendants(ns + "PackageId").Select(static element => element.Value).SingleOrDefault();
 
-        Assert.Equal("1.0.30", version);
+        Assert.Equal("OfficeIMO.Drawing", packageId);
     }
 
     [Fact]

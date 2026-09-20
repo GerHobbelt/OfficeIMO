@@ -1,15 +1,8 @@
 # OfficeIMO.Markup.Word - Markup to Word export
 
-[![nuget version](https://img.shields.io/nuget/v/OfficeIMO.Markup.Word)](https://www.nuget.org/packages/OfficeIMO.Markup.Word)
-[![nuget downloads](https://img.shields.io/nuget/dt/OfficeIMO.Markup.Word?label=nuget%20downloads)](https://www.nuget.org/packages/OfficeIMO.Markup.Word)
-
 `OfficeIMO.Markup.Word` exports the semantic `OfficeIMO.Markup` document model to editable Word `.docx` files through `OfficeIMO.Word`.
 
-## Install
-
-```powershell
-dotnet add package OfficeIMO.Markup.Word
-```
+This project is built from the OfficeIMO source tree and is not published as a standalone NuGet package.
 
 ## Quick start
 
@@ -55,3 +48,10 @@ result.Document.SaveAsWord("status-brief.docx", new MarkupToWordOptions {
 - Targets: `netstandard2.0`, `net8.0`, `net10.0`.
 - License: MIT.
 - Repository: [EvotecIT/OfficeIMO](https://github.com/EvotecIT/OfficeIMO)
+
+## Dependency footprint
+
+- **External:** None beyond the dependencies of its OfficeIMO format packages.
+- **OfficeIMO:** `OfficeIMO.Markup`, `OfficeIMO.Word`, and `OfficeIMO.Drawing`; the exporter maps semantic nodes to editable Word content.
+
+See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

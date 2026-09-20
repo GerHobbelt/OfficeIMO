@@ -49,6 +49,35 @@ new CsvDocument()
 - Supports streaming mode for large files and explicit materialization when transforms are needed.
 - Includes benchmark lanes against Dataplat/dbatools CSV, Sep, Sylvan, CsvHelper, and OfficeIMO fast paths.
 
+## Performance without giving up the document model
+
+OfficeIMO.CSV has dedicated field-span, reusable-row, streaming `DbDataReader`,
+projected-row, and trusted-text fast paths. The same package also keeps the
+features expected from a document and ingestion model: schema inference and
+validation, typed values, transforms, compressed files, malformed-input policy,
+formula-injection protection, progress, cancellation, and diagnostics.
+
+The focused table compares equivalent 25,000-row wide field-span reads,
+projected-array writes, `IDataReader` writes, and prepared-text writes. Benchmark
+preflight parses every typed field or compares every prepared text field, so a
+library cannot win by merely producing the right row shape. Lower is faster;
+differences below 5% should be treated as ties rather than ranking claims.
+
+<!-- officeimo-csv-benchmark-table:start -->
+| Scenario | Variables | Host | Operation | Metric | OfficeIMO.CSV | CsvHelper | Dataplat.Dbatools.Csv | Sep | Sylvan.Data.Csv | Result |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Wide DataReader CSV write | Contract=IDataReader, Format=CSV, Rows=25,000, Runner=BenchmarkDotNet local, Shape=wide, Snapshot=2026-07-14 | .NET 8 | Format and write rows | MeanMs | 1.00x (27ms) | n/a | 1.74x (47ms) | n/a | 0.99x (26ms) | OfficeIMO.CSV tied with Sylvan.Data.Csv |
+| Wide field-span CSV read | Contract=field spans, Format=CSV, Rows=25,000, Runner=BenchmarkDotNet local, Shape=wide, Snapshot=2026-07-14 | .NET 8 | Read every field | MeanMs | 1.00x (2ms) | n/a | n/a | 1.06x (2ms) | 4.47x (9ms) | OfficeIMO.CSV fastest |
+| Wide projected-array CSV write | Contract=projected object arrays, Format=CSV, Rows=25,000, Runner=BenchmarkDotNet local, Shape=wide, Snapshot=2026-07-14 | .NET 8 | Format and write rows | MeanMs | 1.00x (31ms) | 2.65x (82ms) | 1.43x (45ms) | n/a | n/a | OfficeIMO.CSV fastest |
+| Wide validated text-row CSV write | Contract=preformatted text with escaping, Format=CSV, Rows=25,000, Runner=BenchmarkDotNet local, Shape=wide, Snapshot=2026-07-14 | .NET 8 | Validate and write rows | MeanMs | 1.00x (17ms) | 1.33x (23ms) | 1.25x (21ms) | 1.20x (20ms) | 0.99x (17ms) | OfficeIMO.CSV tied with Sylvan.Data.Csv |
+<!-- officeimo-csv-benchmark-table:end -->
+
+These are local snapshots, not universal rankings. Runtime, CPU, input
+shape, quoting, encoding, storage, warm-up, and consumer behavior all matter;
+results will vary. See the [full benchmark harness](../OfficeIMO.CSV.Benchmarks/README.md)
+for CsvHelper, Dataplat/dbatools, LumenWorks, Sep, Sylvan, `DataTable`, and
+`DbDataReader` lanes and the exact commands used to reproduce them.
+
 ## Schema example
 
 ```csharp
@@ -329,6 +358,23 @@ CsvDocument.SaveObjects("summary.csv.gz", rows, new CsvSaveOptions {
 });
 ```
 
+When the caller already has projected arrays, pass the shared schema once. The
+writer validates every row width without repeating column-name validation:
+
+```csharp
+object?[][] projectedRows = {
+    new object?[] { "Alpha", 10, true },
+    new object?[] { "Beta", 20, false }
+};
+
+using var output = File.CreateText("summary.csv");
+using var csv = new CsvObjectWriter(output);
+csv.WriteRows(new[] { "Name", "Count", "Active" }, projectedRows);
+```
+
+Use `WriteTextRows` for arrays that are already culture-formatted; CSV escaping
+and row-width validation still apply.
+
 Parse text when a service receives CSV payloads without a temporary file:
 
 ```csharp
@@ -356,3 +402,10 @@ string normalized = document.ToString(new CsvSaveOptions {
 - Targets: `netstandard2.0`, `net8.0`, `net10.0`, `net472`.
 - License: MIT.
 - Repository: [EvotecIT/OfficeIMO](https://github.com/EvotecIT/OfficeIMO)
+
+## Dependency footprint
+
+- **External:** No third-party CSV engine. `System.Buffers` and .NET Framework reference assemblies support compatibility targets.
+- **OfficeIMO:** `OfficeIMO.Drawing`. Parsing, streaming, schemas, transforms, compression, and object mapping are first-party.
+
+See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

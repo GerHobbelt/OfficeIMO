@@ -39,6 +39,39 @@ document.Save();
 - Handles practical workbook hygiene such as table/filter conflicts, safe table names, deterministic save order, and feature inspection.
 - Includes parallel execution controls for heavy export and autofit workloads while serializing the Open XML mutation phase safely.
 
+## Competitive performance with workbook features
+
+OfficeIMO.Excel is optimized for fast tabular reads and writes, but it is not
+only a streaming data pipe. The same first-party model authors and edits styles,
+tables, formulas, charts, pivots, conditional formatting, validation, images,
+templates, protection, print settings, headers and footers, and both `.xlsx`
+and the supported legacy `.xls` subset.
+
+The compact table deliberately mixes raw data paths with feature-bearing work:
+typed-object reads, plain and styled `DataReader` exports, and a report containing
+normal workbook features. Each row only includes libraries with a directly
+comparable public API. Lower is faster.
+Differences below 5% are treated as ties rather than ranking claims.
+
+<!-- officeimo-excel-benchmark-table:start -->
+| Scenario | Variables | Host | Operation | OfficeIMO.Excel | ClosedXML | EPPlus | LargeXlsx | SpreadCheetah | Sylvan.Data.Excel | Result |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Compact DataReader to XLSX | Format=.xlsx, MeasuredIterations=9, Rows=25,000, Runner=rotated local, Snapshot=2026-07-14, Warmups=20 | .NET 8 | Write | 1.00x (23ms) | n/a | n/a | 1.11x (26ms) | 1.00x (23ms) | 1.11x (26ms) | OfficeIMO.Excel tied with SpreadCheetah |
+| Feature-rich report to XLSX | Format=.xlsx, MeasuredIterations=9, Rows=25,000, Runner=rotated local, Snapshot=2026-07-14, Warmups=20 | .NET 8 | Create | 1.00x (37ms) | n/a | 11.12x (409ms) | n/a | n/a | n/a | OfficeIMO.Excel fastest |
+| Styled DataReader table to XLSX | Format=.xlsx, MeasuredIterations=9, Rows=25,000, Runner=rotated local, Snapshot=2026-07-14, Warmups=20 | .NET 8 | Write | 1.00x (34ms) | 9.50x (320ms) | 9.76x (329ms) | n/a | n/a | n/a | OfficeIMO.Excel fastest |
+| Typed objects streamed from XLSX | Format=.xlsx, MeasuredIterations=9, Rows=25,000, Runner=rotated local, Snapshot=2026-07-14, Warmups=20 | .NET 8 | Read | 1.00x (25ms) | 11.13x (278ms) | 10.08x (252ms) | n/a | n/a | 1.56x (39ms) | OfficeIMO.Excel fastest |
+<!-- officeimo-excel-benchmark-table:end -->
+
+These are local direction-finding results, not guarantees. Hardware, runtime,
+workload shape, package versions, warm-up, and library options change outcomes;
+results will vary. OfficeIMO wins some lanes and not others. The
+[benchmark harness](../OfficeIMO.Excel.Benchmarks/README.md) publishes the full
+comparison suite against ClosedXML, EPPlus, MiniExcel, LargeXlsx,
+SpreadCheetah, ExcelDataReader, and Sylvan.Data.Excel. The opt-in
+[NPOI comparison](../OfficeIMO.Excel.Benchmarks.NPOI/README.md) separately covers
+`.xlsx` row/cell work and legacy `.xls` values, formulas, metadata, formatting,
+filters, styles, and pictures.
+
 ## Examples
 
 The quick start covers the smallest workbook. These examples show common read, write, reporting, and automation workflows that belong in `OfficeIMO.Excel`.
@@ -384,3 +417,10 @@ document.Save();
 - Targets: `netstandard2.0`, `net8.0`, `net10.0`; `net472` is included when building on Windows.
 - License: MIT.
 - Repository: [EvotecIT/OfficeIMO](https://github.com/EvotecIT/OfficeIMO)
+
+## Dependency footprint
+
+- **External:** Open XML SDK for `.xlsx` package mechanics. Microsoft BCL/JSON compatibility packages are used on older targets.
+- **OfficeIMO:** `OfficeIMO.Drawing`. The workbook API, BIFF8 `.xls` reader/writer, large-data paths, validation, and PNG/SVG export are first-party.
+
+See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

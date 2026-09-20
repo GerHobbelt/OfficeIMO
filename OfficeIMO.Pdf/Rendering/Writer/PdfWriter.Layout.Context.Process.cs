@@ -8,6 +8,10 @@ internal static partial class PdfWriter {
         private void ProcessBlocks(System.Collections.Generic.IEnumerable<IPdfBlock> sequence) {
             var blockList = sequence as System.Collections.Generic.IList<IPdfBlock> ?? sequence.ToList();
             for (int blockIndex = 0; blockIndex < blockList.Count; blockIndex++) {
+                if (stopDocumentFlow) {
+                    break;
+                }
+
                 var block = blockList[blockIndex];
                 IPdfBlock? nextBlock = blockIndex + 1 < blockList.Count ? blockList[blockIndex + 1] : null;
                 if (block is PageBlock pageBlock) {
@@ -29,6 +33,13 @@ internal static partial class PdfWriter {
 
                 EnsurePage();
 
+                if (block is SectionBlock section) { RenderSectionBlock(section); continue; }
+                if (block is TableOfContentsBlock tableOfContents) { RenderTableOfContentsBlock(tableOfContents); continue; }
+                if (block is FlowBlock flow) { RenderFlowBlock(flow); continue; }
+                if (block is LayerBlock layer) { RenderLayerBlock(layer); continue; }
+                if (block is MultiColumnBlock columns) { RenderMultiColumnBlock(columns); continue; }
+                if (block is ContainerBlock container) { RenderContainerBlock(container); continue; }
+                if (block is ColumnBreakBlock) { throw new InvalidOperationException("ColumnBreak can only be used inside a Columns block."); }
                 if (block is PageBreakBlock) { NewPage(); continue; }
                 if (block is BookmarkBlock bookmark) { AddNamedDestination(bookmark, y); continue; }
                 if (block is SpacerBlock spacer) { ConsumeSpacer(spacer.Height); continue; }
@@ -37,6 +48,7 @@ internal static partial class PdfWriter {
                 if (block is BulletListBlock bulletList) { RenderBulletListFlowBlock(bulletList, nextBlock, blockList, blockIndex); continue; }
                 if (block is NumberedListBlock numberedList) { RenderNumberedListFlowBlock(numberedList, nextBlock, blockList, blockIndex); continue; }
                 if (block is TableBlock table) { RenderTableFlowBlock(table, nextBlock, blockList, blockIndex); continue; }
+                if (block is DeferredTableBlock deferredTable) { RenderDeferredTableFlowBlock(deferredTable, nextBlock, blockList, blockIndex); continue; }
                 if (block is HorizontalRuleBlock horizontalRule) { RenderHorizontalRuleFlowBlock(horizontalRule, nextBlock, blockList, blockIndex); continue; }
                 if (block is TextFieldBlock textField) { RenderTextFieldBlock(textField, currentOpts.MarginLeft, width); continue; }
                 if (block is CheckBoxBlock checkBox) { RenderCheckBoxBlock(checkBox, currentOpts.MarginLeft, width); continue; }
