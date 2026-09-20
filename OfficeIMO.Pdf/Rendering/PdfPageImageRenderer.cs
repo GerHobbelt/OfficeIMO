@@ -5,7 +5,10 @@ namespace OfficeIMO.Pdf;
 /// <summary>
 /// Managed PDF page image renderer for the OfficeIMO-generated visual subset.
 /// </summary>
-public static class PdfPageImageRenderer {
+public static partial class PdfPageImageRenderer {
+    /// <summary>Returns the generated manifest shared with per-page skipped and simplified feature diagnostics.</summary>
+    public static PdfRenderCapabilityManifest GetCapabilityManifest() => PdfRenderCapabilities.Current;
+
     /// <summary>
     /// Projects a one-based PDF page into the shared OfficeIMO drawing scene.
     /// </summary>
