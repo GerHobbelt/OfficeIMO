@@ -139,7 +139,7 @@ namespace OfficeIMO.Word.Pdf {
                     page.Margin(sectionMargins);
                     ConfigureNativePageNumbering(page, section);
                     ConfigureNativeHeaderFooter(page, section, options, headerFooterMarginExpansion.Header, headerFooterMarginExpansion.Footer);
-                    var flow = new NativePdfDocumentFlow(pdf);
+                    INativePdfFlow flow = new NativeSpacingCollapseFlow(new NativePdfDocumentFlow(pdf));
 
                     if (TryRenderNativeSectionColumns(
                         page,
@@ -187,7 +187,8 @@ namespace OfficeIMO.Word.Pdf {
                             sectionContentWidth,
                             nativeDefaults,
                             nativeFontMap,
-                            renderSpacingOnlyEmptyParagraphLineBox: IsPreviousNativeElementTable(elements, i));
+                            renderSpacingOnlyEmptyParagraphLineBox: IsPreviousNativeElementTable(elements, i),
+                            nextElement: GetNextNativeRenderableElement(elements, i));
                     }
 
                     RenderNativeFootnotes(flow, footnotes);
@@ -244,6 +245,19 @@ namespace OfficeIMO.Word.Pdf {
             }
 
             return false;
+        }
+
+        private static WordElement? GetNextNativeRenderableElement(IReadOnlyList<WordElement> elements, int index) {
+            for (int nextIndex = index + 1; nextIndex < elements.Count; nextIndex++) {
+                WordElement next = elements[nextIndex];
+                if (next is WordFootNote) {
+                    continue;
+                }
+
+                return next;
+            }
+
+            return null;
         }
 
     }

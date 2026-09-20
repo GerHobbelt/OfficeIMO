@@ -97,7 +97,7 @@ internal static partial class PdfWriter {
             }
         }
 
-        private void RenderListItem(System.Collections.Generic.IReadOnlyList<TextRun> runs, System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>> lines, System.Collections.Generic.List<double> lineHeights, string marker, PdfStandardFont markerFont, double markerX, double markerWidth, PdfAlign markerAlign, double textX, double textWidth, PdfAlign textAlign, PdfColor? color, double size, double leading, double spacingBefore, double spacingAfter, string? bookmarkName, ref int? listStructureElementIndex, ref LayoutResult.Page? listStructurePage) {
+        private void RenderListItem(System.Collections.Generic.IReadOnlyList<TextRun> runs, System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>> lines, System.Collections.Generic.List<double> lineHeights, string marker, PdfStandardFont markerFont, PdfColor? markerColor, double markerX, double markerWidth, PdfAlign markerAlign, double textX, double textWidth, PdfAlign textAlign, PdfColor? color, double size, double leading, double spacingBefore, double spacingAfter, string? bookmarkName, ref int? listStructureElementIndex, ref LayoutResult.Page? listStructurePage) {
             int lineIndex = 0;
             bool firstSegment = true;
             var listFont = ChooseNormal(currentOpts.DefaultFont);
@@ -162,7 +162,7 @@ internal static partial class PdfWriter {
                     var markerLines = new System.Collections.Generic.List<string>(1) { marker };
                     int? labelMarkedContentId = RegisterTextStructureElement("Lbl", listItemElementIndex);
                     MarkSimpleFont(markerFont);
-                    WriteLinesInternal(GetStandardFontResourceName(markerFont, ChooseNormal(currentOpts.DefaultFont)), size, leading, markerX, markerWidth, baselineY, markerLines, markerAlign, color, applyBaselineTweak: true, structureType: "Lbl", markedContentId: labelMarkedContentId);
+                    WriteLinesInternal(GetStandardFontResourceName(markerFont, ChooseNormal(currentOpts.DefaultFont)), size, leading, markerX, markerWidth, baselineY, markerLines, markerAlign, markerColor ?? color, applyBaselineTweak: true, structureType: "Lbl", markedContentId: labelMarkedContentId);
                 }
 
                 pageDirty = true;
@@ -387,7 +387,10 @@ internal static partial class PdfWriter {
                     maxLines = Math.Max(maxLines, lines.Count);
                 }
 
-                    double firstRowHeight = Math.Max(maxLines * rowLeading + GetTableRowMaxPaddingTop(table, style, 0, columns) + GetTableRowMaxPaddingBottom(table, style, 0, columns), GetTableRowMinHeight(style, 0));
+                double firstRowRequiredHeight = maxLines * rowLeading +
+                    GetTableRowMaxPaddingTop(table, style, 0, columns) +
+                    GetTableRowMaxPaddingBottom(table, style, 0, columns);
+                double firstRowHeight = ResolveTableRowHeight(style, 0, firstRowRequiredHeight);
                 double captionHeight = 0D;
                 if (!string.IsNullOrWhiteSpace(style.Caption)) {
                     double captionSize = style.CaptionFontSize ?? fontSize;

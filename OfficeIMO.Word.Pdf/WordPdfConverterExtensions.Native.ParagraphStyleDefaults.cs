@@ -15,6 +15,7 @@ namespace OfficeIMO.Word.Pdf {
             W.HighlightColorValues? Highlight,
             double? LineHeight,
             double? LineSpacingPoints,
+            W.LineSpacingRuleValues? LineSpacingRule,
             double? SpacingBefore,
             double? SpacingAfter,
             double? LeftIndent,
@@ -24,8 +25,23 @@ namespace OfficeIMO.Word.Pdf {
             bool? PageBreakBefore,
             bool? KeepTogether,
             bool? KeepWithNext,
-            bool? WidowControl) {
-            public static NativeParagraphStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            bool? WidowControl,
+            bool? ContextualSpacing,
+            string? ShadingFillColorHex,
+            NativeParagraphBorders Borders) {
+            public static NativeParagraphStyleDefaults Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, NativeParagraphBorders.Empty);
+        }
+
+        private readonly record struct NativeParagraphBorderSide(W.BorderValues? Style, string? ColorHex, uint? Size, uint? Space) {
+            public bool IsEmpty => Style == null && string.IsNullOrWhiteSpace(ColorHex) && Size == null && Space == null;
+        }
+
+        private readonly record struct NativeParagraphBorders(
+            NativeParagraphBorderSide Top,
+            NativeParagraphBorderSide Right,
+            NativeParagraphBorderSide Bottom,
+            NativeParagraphBorderSide Left) {
+            public static NativeParagraphBorders Empty { get; } = new(default, default, default, default);
         }
 
         private static NativeParagraphStyleDefaults GetNativeParagraphStyleDefaults(WordParagraph paragraph) {
@@ -44,6 +60,7 @@ namespace OfficeIMO.Word.Pdf {
             W.HighlightColorValues? highlight = null;
             double? lineHeight = null;
             double? lineSpacingPoints = null;
+            W.LineSpacingRuleValues? lineSpacingRule = null;
             double? spacingBefore = null;
             double? spacingAfter = null;
             double? leftIndent = null;
@@ -54,6 +71,9 @@ namespace OfficeIMO.Word.Pdf {
             bool? keepTogether = null;
             bool? keepWithNext = null;
             bool? widowControl = null;
+            bool? contextualSpacing = null;
+            string? shadingFillColorHex = null;
+            NativeParagraphBorders borders = NativeParagraphBorders.Empty;
 
             foreach (W.Style style in styleChain) {
                 W.StyleRunProperties? runProperties = style.GetFirstChild<W.StyleRunProperties>();
@@ -75,6 +95,7 @@ namespace OfficeIMO.Word.Pdf {
                         if (styleLineHeight.HasValue || styleLineSpacingPoints.HasValue) {
                             lineHeight = styleLineHeight;
                             lineSpacingPoints = styleLineSpacingPoints;
+                            lineSpacingRule = spacing.LineRule?.Value;
                         }
 
                         double effectiveFontSize = fontSize ?? NativeDocumentDefaults.WordDefault.FontSize;
@@ -104,6 +125,9 @@ namespace OfficeIMO.Word.Pdf {
                     keepTogether = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.KeepLines>()) ?? keepTogether;
                     keepWithNext = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.KeepNext>()) ?? keepWithNext;
                     widowControl = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.WidowControl>()) ?? widowControl;
+                    contextualSpacing = ReadNativeOnOff(paragraphProperties.GetFirstChild<W.ContextualSpacing>()) ?? contextualSpacing;
+                    shadingFillColorHex = NormalizeNativeShadingFill(paragraphProperties.GetFirstChild<W.Shading>()?.Fill?.Value) ?? shadingFillColorHex;
+                    borders = MergeNativeParagraphBorders(borders, paragraphProperties.GetFirstChild<W.ParagraphBorders>());
                 }
             }
 
@@ -118,6 +142,7 @@ namespace OfficeIMO.Word.Pdf {
                 highlight,
                 lineHeight,
                 lineSpacingPoints,
+                lineSpacingRule,
                 spacingBefore,
                 spacingAfter,
                 leftIndent,
@@ -127,7 +152,10 @@ namespace OfficeIMO.Word.Pdf {
                 pageBreakBefore,
                 keepTogether,
                 keepWithNext,
-                widowControl);
+                widowControl,
+                contextualSpacing,
+                shadingFillColorHex,
+                borders);
         }
 
         private static IReadOnlyList<W.Style> GetNativeParagraphStyleChain(WordDocument? document, string? styleId) {
@@ -161,6 +189,39 @@ namespace OfficeIMO.Word.Pdf {
             return chain;
         }
 
+        private static IReadOnlyList<WordTabStop> GetNativeParagraphEffectiveTabStops(WordParagraph paragraph) {
+            IReadOnlyList<WordTabStop> directTabStops = paragraph.TabStops;
+            if (directTabStops.Count > 0) {
+                return directTabStops;
+            }
+
+            List<WordTabStop>? styleTabStops = null;
+            foreach (W.Style style in GetNativeParagraphStyleChain(paragraph._document, paragraph.StyleId)) {
+                W.Tabs? tabs = style.GetFirstChild<W.StyleParagraphProperties>()?.GetFirstChild<W.Tabs>();
+                if (tabs == null) {
+                    continue;
+                }
+
+                foreach (W.TabStop tabStop in tabs.Elements<W.TabStop>()) {
+                    WordTabStop wordTabStop = new WordTabStop(paragraph, (W.TabStop)tabStop.CloneNode(true));
+                    if (wordTabStop.Position <= 0 || !IsNativeRenderableTextTabStop(wordTabStop.Alignment)) {
+                        continue;
+                    }
+
+                    styleTabStops ??= new List<WordTabStop>();
+                    styleTabStops.RemoveAll(existing => existing.Position == wordTabStop.Position);
+                    styleTabStops.Add(wordTabStop);
+                }
+            }
+
+            if (styleTabStops == null || styleTabStops.Count == 0) {
+                return Array.Empty<WordTabStop>();
+            }
+
+            styleTabStops.Sort((left, right) => left.Position.CompareTo(right.Position));
+            return styleTabStops;
+        }
+
         private static bool IsNativeParagraphStyle(W.Style style) {
             if (style.Type == null) {
                 return false;
@@ -170,6 +231,31 @@ namespace OfficeIMO.Word.Pdf {
                 ? style.Type.Value.ToString()
                 : style.Type.InnerText;
             return string.Equals(type, "paragraph", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static NativeParagraphBorders MergeNativeParagraphBorders(NativeParagraphBorders current, W.ParagraphBorders? borders) {
+            if (borders == null) {
+                return current;
+            }
+
+            return current with {
+                Top = ReadNativeParagraphBorderSide(borders.TopBorder) ?? current.Top,
+                Right = ReadNativeParagraphBorderSide(borders.RightBorder) ?? current.Right,
+                Bottom = ReadNativeParagraphBorderSide(borders.BottomBorder) ?? current.Bottom,
+                Left = ReadNativeParagraphBorderSide(borders.LeftBorder) ?? current.Left
+            };
+        }
+
+        private static NativeParagraphBorderSide? ReadNativeParagraphBorderSide(W.BorderType? border) {
+            if (border == null) {
+                return null;
+            }
+
+            return new NativeParagraphBorderSide(
+                border.Val?.Value,
+                NormalizeNativeBorderColor(border.Color?.Value),
+                border.Size?.Value,
+                border.Space?.Value);
         }
 
         private static double? GetNativeStyleParagraphLineHeight(W.SpacingBetweenLines spacing) {

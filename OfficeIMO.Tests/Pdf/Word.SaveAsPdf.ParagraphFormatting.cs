@@ -293,6 +293,54 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Renders_Paragraph_Style_Shading_And_Uniform_Borders() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphStylePanel.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphStylePanel.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeStylePanel";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native Style Panel" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleParagraphProperties(
+                        new Shading { Val = ShadingPatternValues.Clear, Fill = "E2F0D9" },
+                        new ParagraphBorders(
+                            new TopBorder { Val = BorderValues.Single, Color = "385723", Size = 8U },
+                            new LeftBorder { Val = BorderValues.Single, Color = "385723", Size = 8U },
+                            new BottomBorder { Val = BorderValues.Single, Color = "385723", Size = 8U },
+                            new RightBorder { Val = BorderValues.Single, Color = "385723", Size = 8U })))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph paragraph = document.AddParagraph("Native styled panel paragraph");
+                paragraph.SetStyleId(styleId);
+                document.AddParagraph("After styled panel");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false
+                });
+            }
+
+            Assert.True(File.Exists(pdfPath));
+            byte[] bytes = File.ReadAllBytes(pdfPath);
+            using (PdfPigDocument pdf = PdfPigDocument.Open(bytes)) {
+                string text = string.Concat(pdf.GetPages().Select(p => p.Text));
+                Assert.Contains("Native styled panel paragraph", text);
+                Assert.Contains("After styled panel", text);
+            }
+
+            string raw = Encoding.ASCII.GetString(bytes);
+            Assert.Contains("0.886 0.941 0.851 rg", raw);
+            Assert.Contains("0.22 0.341 0.137 RG", raw);
+            Assert.Contains("1 w", raw);
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Joins_Adjacent_Borderless_Paragraph_Shading() {
             string docPath = Path.Combine(_directoryWithFiles, "PdfNativeAdjacentParagraphShading.docx");
             string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeAdjacentParagraphShading.pdf");
@@ -496,6 +544,49 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Maps_Document_Default_Tab_Stop() {
+            using WordDocument document = WordDocument.Create(Path.Combine(_directoryWithFiles, "PdfNativeDocumentDefaultTabStop.docx"));
+            document.Settings.DefaultTabStop = 1440;
+            WordParagraph paragraph = document.AddParagraph("Native document default tab stop");
+
+            MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("CreateNativeParagraphStyle", BindingFlags.NonPublic | BindingFlags.Static, binder: null, new[] { typeof(WordParagraph) }, modifiers: null)!;
+            PdfParagraphStyle style = Assert.IsType<PdfParagraphStyle>(method.Invoke(null, new object[] { paragraph }));
+
+            Assert.Equal(72D, style.DefaultTabStopWidth);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Renders_Document_Default_Tab_Stop() {
+            (double narrowLeftX, double narrowRightX) = RenderDocumentDefaultTabStop(720, "PdfNativeDocumentDefaultTabStopNarrow");
+            (double wideLeftX, double wideRightX) = RenderDocumentDefaultTabStop(2160, "PdfNativeDocumentDefaultTabStopWide");
+
+            Assert.InRange(Math.Abs(wideLeftX - narrowLeftX), 0D, 0.75D);
+            Assert.True(wideRightX > narrowRightX + 50D,
+                $"Expected wider Word document default tab stop to move implicit tab text right. Narrow x: {narrowRightX:0.##}, wide x: {wideRightX:0.##}.");
+        }
+
+        private (double LeftX, double RightX) RenderDocumentDefaultTabStop(int defaultTabStopTwips, string fileName) {
+            string docPath = Path.Combine(_directoryWithFiles, fileName + ".docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, fileName + ".pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                document.Settings.DefaultTabStop = defaultTabStopTwips;
+                document.AddParagraph("WWWWWWWWWWWW\tTabRight");
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(420, 180),
+                    Margins = PageMargins.Uniform(36)
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var page = pdf.GetPage(1);
+            Assert.Contains("TabRight", page.Text);
+            return (FindWordStartX(page, "WWWWWWWWWWWW"), FindWordStartX(page, "TabRight"));
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Maps_Paragraph_Pagination_And_Tab_Style() {
             using WordDocument document = WordDocument.Create(Path.Combine(_directoryWithFiles, "PdfNativeParagraphStyle.docx"));
             WordParagraph paragraph = document.AddParagraph("Native style flags");
@@ -517,6 +608,84 @@ namespace OfficeIMO.Tests {
             Assert.True(style.KeepTogether);
             Assert.True(style.KeepWithNext);
             Assert.True(style.WidowControl);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Maps_Paragraph_Style_TabStops() {
+            using WordDocument document = WordDocument.Create(Path.Combine(_directoryWithFiles, "PdfNativeParagraphStyleTabStops.docx"));
+            const string styleId = "NativeStyleTabStops";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "Native Style Tab Stops" },
+                new BasedOn { Val = "Normal" },
+                new StyleParagraphProperties(
+                    new Tabs(
+                        new TabStop {
+                            Val = TabStopValues.Right,
+                            Leader = TabStopLeaderCharValues.Dot,
+                            Position = 1440
+                        })))
+            {
+                Type = StyleValues.Paragraph,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordParagraph paragraph = document.AddParagraph("Native style tab stops");
+            paragraph.SetStyleId(styleId);
+
+            MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("CreateNativeParagraphStyle", BindingFlags.NonPublic | BindingFlags.Static, binder: null, new[] { typeof(WordParagraph) }, modifiers: null)!;
+            PdfParagraphStyle style = Assert.IsType<PdfParagraphStyle>(method.Invoke(null, new object[] { paragraph }));
+
+            Assert.Null(style.DefaultTabStopWidth);
+            PdfTabStop tabStop = Assert.Single(style.TabStops);
+            Assert.Equal(72D, tabStop.Position);
+            Assert.Equal(PdfTabAlignment.Right, tabStop.Alignment);
+            Assert.Equal(PdfTabLeaderStyle.Dots, tabStop.Leader);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Renders_Paragraph_Style_Tab_Leaders() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphStyleTabLeaders.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeParagraphStyleTabLeaders.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string styleId = "NativeRenderedStyleTabStops";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(new Style(
+                    new StyleName { Val = "Native Rendered Style Tab Stops" },
+                    new BasedOn { Val = "Normal" },
+                    new StyleParagraphProperties(
+                        new Tabs(
+                            new TabStop {
+                                Val = TabStopValues.Right,
+                                Leader = TabStopLeaderCharValues.Dot,
+                                Position = 4320
+                            })))
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId,
+                    CustomStyle = true
+                });
+
+                WordParagraph paragraph = document.AddParagraph("StyleRevenue\t42");
+                paragraph.SetStyleId(styleId);
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(360, 180),
+                    Margins = PageMargins.Uniform(36)
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var page = pdf.GetPage(1);
+            Assert.Contains("StyleRevenue", page.Text);
+            Assert.Contains("42", page.Text);
+
+            int dotCount = page.Letters.Count(letter => letter.Value == ".");
+            Assert.True(dotCount >= 15, $"Expected paragraph style tab leaders to render across the native paragraph tab gap. Dot count: {dotCount}.");
         }
 
         [Fact]
@@ -753,6 +922,35 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Uses_Document_Default_Run_Font_Family() {
+            using WordDocument document = WordDocument.Create(Path.Combine(_directoryWithFiles, "PdfNativeDocumentDefaultRunFont.docx"));
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.DocDefaults ??= new DocDefaults();
+            RunPropertiesDefault runDefaults = styles.DocDefaults.GetFirstChild<RunPropertiesDefault>() ?? styles.DocDefaults.AppendChild(new RunPropertiesDefault());
+            RunPropertiesBaseStyle runProperties = runDefaults.GetFirstChild<RunPropertiesBaseStyle>() ?? runDefaults.AppendChild(new RunPropertiesBaseStyle());
+            runProperties.RunFonts = new RunFonts {
+                Ascii = "Times New Roman",
+                HighAnsi = "Times New Roman"
+            };
+
+            const string styleId = "NativeNoRunFontStyle";
+            styles.Append(new Style(new StyleName { Val = "Native No Run Font Style" }) {
+                Type = StyleValues.Paragraph,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordParagraph paragraph = document.AddParagraph("Native document default font");
+            paragraph.SetStyleId(styleId);
+
+            MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("CreateNativeCellParagraphRuns", BindingFlags.NonPublic | BindingFlags.Static, binder: null, new[] { typeof(WordParagraph), typeof(Dictionary<long, int>) }, modifiers: null)!;
+            var runs = Assert.IsAssignableFrom<IReadOnlyList<TextRun>>(method.Invoke(null, new object?[] { paragraph, null }));
+            TextRun run = Assert.Single(runs);
+
+            Assert.Equal(PdfStandardFont.TimesRoman, run.Font);
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Ignores_Bar_And_Clear_TabStops_For_Text_Tabs() {
             using WordDocument document = WordDocument.Create(Path.Combine(_directoryWithFiles, "PdfNativeIgnoredTabStops.docx"));
             WordParagraph paragraph = document.AddParagraph("Native ignored tab stops");
@@ -800,6 +998,83 @@ namespace OfficeIMO.Tests {
 
             Assert.Equal(2D, exactStyle.LineHeight);
             Assert.Equal(1.15D * (276D / 240D), autoStyle.LineHeight);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Maps_AtLeast_Paragraph_Line_Spacing() {
+            using WordDocument document = WordDocument.Create(Path.Combine(_directoryWithFiles, "PdfNativeAtLeastParagraphStyle.docx"));
+            WordParagraph directParagraph = document.AddParagraph("Native at least line spacing");
+            directParagraph.FontSize = 24;
+            directParagraph.LineSpacingPoints = 6;
+            directParagraph.LineSpacingRule = LineSpacingRuleValues.AtLeast;
+
+            const string styleId = "AtLeastLineSpacingStyle";
+            Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+            styles.Append(new Style(
+                new StyleName { Val = "AtLeast Line Spacing Style" },
+                new StyleRunProperties(new FontSize { Val = "48" }),
+                new StyleParagraphProperties(new SpacingBetweenLines {
+                    Line = "120",
+                    LineRule = LineSpacingRuleValues.AtLeast
+                }))
+            {
+                Type = StyleValues.Paragraph,
+                StyleId = styleId,
+                CustomStyle = true
+            });
+
+            WordParagraph styledParagraph = document.AddParagraph("Native style at least line spacing");
+            styledParagraph.SetStyleId(styleId);
+
+            MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("CreateNativeParagraphStyle", BindingFlags.NonPublic | BindingFlags.Static, binder: null, new[] { typeof(WordParagraph) }, modifiers: null)!;
+            PdfParagraphStyle directStyle = Assert.IsType<PdfParagraphStyle>(method.Invoke(null, new object[] { directParagraph }));
+            PdfParagraphStyle inheritedStyle = Assert.IsType<PdfParagraphStyle>(method.Invoke(null, new object[] { styledParagraph }));
+
+            Assert.NotNull(directStyle.LineHeight);
+            Assert.NotNull(inheritedStyle.LineHeight);
+            Assert.InRange(directStyle.LineHeight.Value, 1.2D, 1.3D);
+            Assert.InRange(inheritedStyle.LineHeight.Value, 1.2D, 1.3D);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Renders_AtLeast_Paragraph_Line_Spacing() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeRenderedAtLeastLineSpacing.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeRenderedAtLeastLineSpacing.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordParagraph exact = document.AddParagraph("ExactSmallFirst");
+                exact.FontSize = 24;
+                exact.LineSpacingPoints = 6;
+                exact.LineSpacingRule = LineSpacingRuleValues.Exact;
+                exact.AddBreak();
+                exact.AddText("ExactSmallSecond");
+
+                WordParagraph atLeast = document.AddParagraph("AtLeastFirst");
+                atLeast.FontSize = 24;
+                atLeast.LineSpacingPoints = 6;
+                atLeast.LineSpacingRule = LineSpacingRuleValues.AtLeast;
+                atLeast.AddBreak();
+                atLeast.AddText("AtLeastSecond");
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(360, 260),
+                    Margins = PageMargins.Uniform(36),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            double exactFirstY = Assert.Single(words, word => word.Text == "ExactSmallFirst").BoundingBox.Bottom;
+            double exactSecondY = Assert.Single(words, word => word.Text == "ExactSmallSecond").BoundingBox.Bottom;
+            double atLeastFirstY = Assert.Single(words, word => word.Text == "AtLeastFirst").BoundingBox.Bottom;
+            double atLeastSecondY = Assert.Single(words, word => word.Text == "AtLeastSecond").BoundingBox.Bottom;
+            double exactGap = exactFirstY - exactSecondY;
+            double atLeastGap = atLeastFirstY - atLeastSecondY;
+
+            Assert.True(atLeastGap > exactGap + 14D, $"Expected Word atLeast line spacing to preserve natural line advance instead of exact compressed leading. Exact gap: {exactGap:0.##}; atLeast gap: {atLeastGap:0.##}.");
         }
 
         [Fact]
@@ -905,6 +1180,22 @@ namespace OfficeIMO.Tests {
 
             Assert.True(beforeY > styledY + 22D, $"Expected beforeLines spacing to push the styled paragraph down. Before y: {beforeY:0.##}; styled y: {styledY:0.##}.");
             Assert.True(styledY > afterY + 30D, $"Expected afterLines spacing to push the following paragraph down. Styled y: {styledY:0.##}; after y: {afterY:0.##}.");
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Collapses_Adjacent_Paragraph_Spacing() {
+            double afterOnlyGap = RenderNativeAdjacentParagraphSpacingGap("PdfNativeCollapsedParagraphSpacingAfterOnly", secondSpacingBefore: 0D);
+            double collapsedGap = RenderNativeAdjacentParagraphSpacingGap("PdfNativeCollapsedParagraphSpacingBeforeSmallerThanAfter", secondSpacingBefore: 20D);
+
+            Assert.InRange(Math.Abs(collapsedGap - afterOnlyGap), 0D, 2D);
+        }
+
+        [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Honors_Paragraph_Style_Contextual_Spacing() {
+            double sameStyleGap = RenderNativeContextualSpacingGap("PdfNativeContextualSpacingSameStyle", sameStyle: true);
+            double differentStyleGap = RenderNativeContextualSpacingGap("PdfNativeContextualSpacingDifferentStyle", sameStyle: false);
+
+            Assert.True(differentStyleGap > sameStyleGap + 16D, $"Expected Word contextual spacing to suppress spacing between paragraphs with the same style. Same-style gap: {sameStyleGap:0.##}; different-style gap: {differentStyleGap:0.##}.");
         }
 
         [Fact]
@@ -1046,6 +1337,87 @@ namespace OfficeIMO.Tests {
             double beforeY = Assert.Single(words, word => word.Text == beforeMarker).BoundingBox.Bottom;
             double afterY = Assert.Single(words, word => word.Text == afterMarker).BoundingBox.Bottom;
             return beforeY - afterY;
+        }
+
+        private double RenderNativeAdjacentParagraphSpacingGap(string fileNamePrefix, double secondSpacingBefore) {
+            const string firstMarker = "CollapseFirst";
+            const string secondMarker = "CollapseSecond";
+            string docPath = Path.Combine(_directoryWithFiles, fileNamePrefix + ".docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, fileNamePrefix + ".pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordParagraph first = document.AddParagraph(firstMarker);
+                first.LineSpacingAfterPoints = 30;
+                WordParagraph second = document.AddParagraph(secondMarker);
+                second.LineSpacingBeforePoints = secondSpacingBefore;
+                second.LineSpacingAfterPoints = 0;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(320, 240),
+                    Margins = PageMargins.Uniform(36),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            double firstY = Assert.Single(words, word => word.Text == firstMarker).BoundingBox.Bottom;
+            double secondY = Assert.Single(words, word => word.Text == secondMarker).BoundingBox.Bottom;
+            return firstY - secondY;
+        }
+
+        private double RenderNativeContextualSpacingGap(string fileNamePrefix, bool sameStyle) {
+            const string firstMarker = "ContextFirst";
+            const string secondMarker = "ContextSecond";
+            string docPath = Path.Combine(_directoryWithFiles, fileNamePrefix + ".docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, fileNamePrefix + ".pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                const string contextualStyleId = "NativeContextualSpacing";
+                const string otherStyleId = "NativeContextualSpacingOther";
+                Styles styles = document._wordprocessingDocument.MainDocumentPart!.StyleDefinitionsPart!.Styles!;
+                styles.Append(
+                    new Style(
+                        new StyleName { Val = "Native Contextual Spacing" },
+                        new StyleParagraphProperties(
+                            new SpacingBetweenLines { After = "480" },
+                            new ContextualSpacing()))
+                    {
+                        Type = StyleValues.Paragraph,
+                        StyleId = contextualStyleId,
+                        CustomStyle = true
+                    },
+                    new Style(
+                        new StyleName { Val = "Native Contextual Spacing Other" },
+                        new StyleParagraphProperties(new SpacingBetweenLines { After = "0" }))
+                    {
+                        Type = StyleValues.Paragraph,
+                        StyleId = otherStyleId,
+                        CustomStyle = true
+                    });
+
+                WordParagraph first = document.AddParagraph(firstMarker);
+                first.SetStyleId(contextualStyleId);
+                WordParagraph second = document.AddParagraph(secondMarker);
+                second.SetStyleId(sameStyle ? contextualStyleId : otherStyleId);
+                second.LineSpacingAfterPoints = 0;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(320, 240),
+                    Margins = PageMargins.Uniform(36),
+                    FontFamily = "Helvetica"
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var words = pdf.GetPage(1).GetWords().ToList();
+            double firstY = Assert.Single(words, word => word.Text == firstMarker).BoundingBox.Bottom;
+            double secondY = Assert.Single(words, word => word.Text == secondMarker).BoundingBox.Bottom;
+            return firstY - secondY;
         }
 
     }

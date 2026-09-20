@@ -130,6 +130,21 @@ internal static partial class PdfWriter {
         return style.MinRowHeight;
     }
 
+    private static double? GetTableRowFixedHeight(PdfTableStyle style, int rowIndex) {
+        if (style.FixedRowHeights != null &&
+            rowIndex < style.FixedRowHeights.Count &&
+            style.FixedRowHeights[rowIndex].HasValue) {
+            return style.FixedRowHeights[rowIndex]!.Value;
+        }
+
+        return null;
+    }
+
+    private static double ResolveTableRowHeight(PdfTableStyle style, int rowIndex, double requiredHeight) {
+        double? fixedHeight = GetTableRowFixedHeight(style, rowIndex);
+        return fixedHeight ?? System.Math.Max(requiredHeight, GetTableRowMinHeight(style, rowIndex));
+    }
+
     private static bool GetTableRowAllowBreakAcrossPages(PdfTableStyle style, int rowIndex) {
         if (style.RowAllowBreakAcrossPages != null &&
             rowIndex < style.RowAllowBreakAcrossPages.Count &&
@@ -431,7 +446,7 @@ internal static partial class PdfWriter {
                 int columnSpan = System.Math.Min(cell.ColumnSpan, columnCount - column);
                 int rowSpan = System.Math.Min(cell.RowSpan, table.Cells.Count - currentRow);
                 if (currentRow == rowIndex) {
-                    targetCells.Add(new TableCellLayout(column, columnSpan, rowSpan, cell.Text, cell.Runs, cell.Paragraphs, cell.LinkUri, cell.LinkDestinationName, cell.LinkContents, cell.NamedDestinationName, cell.CheckBoxes, cell.FormFields, cell.Images));
+                    targetCells.Add(new TableCellLayout(column, columnSpan, rowSpan, cell.Text, cell.Runs, cell.Paragraphs, cell.LinkUri, cell.LinkDestinationName, cell.LinkContents, cell.NamedDestinationName, cell.CheckBoxes, cell.FormFields, cell.Images, cell.NoWrap));
                 }
 
                 for (int c = column; c < column + columnSpan; c++) {
@@ -491,11 +506,12 @@ internal static partial class PdfWriter {
     }
 
     private static TableCellTextLayout CreateTableCellTextLayout(TableCellLayout cell, double innerWidth, PdfStandardFont baseFont, double fontSize, double leading, PdfOptions? options) {
+        double wrapWidth = GetTableCellWrapWidth(innerWidth, cell.NoWrap);
         if (cell.Paragraphs.Count > 0) {
-            return CreateTableCellParagraphTextLayout(cell.Paragraphs, innerWidth, baseFont, fontSize, leading, options);
+            return CreateTableCellParagraphTextLayout(cell.Paragraphs, wrapWidth, baseFont, fontSize, leading, options);
         }
 
-        var wrap = WrapRichRunsCore(cell.Runs, innerWidth, fontSize, baseFont, leading, null, DefaultParagraphTabStopWidth, options);
+        var wrap = WrapRichRunsCore(cell.Runs, wrapWidth, fontSize, baseFont, leading, null, DefaultParagraphTabStopWidth, options);
         if (wrap.Lines.Count == 0) {
             wrap.Lines.Add(new System.Collections.Generic.List<RichSeg>());
         }
@@ -506,6 +522,9 @@ internal static partial class PdfWriter {
 
         return new TableCellTextLayout(wrap.Lines, wrap.LineHeights);
     }
+
+    private static double GetTableCellWrapWidth(double innerWidth, bool noWrap) =>
+        noWrap ? TableCellNoWrapWidth : innerWidth;
 
     private static TableCellTextLayout CreateTableCellParagraphTextLayout(System.Collections.Generic.IReadOnlyList<PdfTableCellParagraph> paragraphs, double innerWidth, PdfStandardFont baseFont, double fontSize, double leading, PdfOptions? options) {
         var lines = new System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>>();
@@ -523,6 +542,10 @@ internal static partial class PdfWriter {
             }
 
             int firstNewLineIndex = lines.Count;
+            if (paragraph.SpacingBefore > 0D && lineHeights.Count > 0) {
+                lineHeights[lineHeights.Count - 1] += paragraph.SpacingBefore;
+            }
+
             lines.AddRange(wrap.Lines);
             lineHeights.AddRange(wrap.LineHeights);
             for (int lineIndex = firstNewLineIndex; lineIndex < lines.Count; lineIndex++) {
@@ -706,6 +729,14 @@ internal static partial class PdfWriter {
             }
         }
 
+        if (style.FixedRowHeights != null) {
+            for (int row = rowCount; row < style.FixedRowHeights.Count; row++) {
+                if (style.FixedRowHeights[row].HasValue) {
+                    throw new ArgumentException("Table fixed row heights must fit inside the table grid.");
+                }
+            }
+        }
+
         if (style.RowAllowBreakAcrossPages != null) {
             for (int row = rowCount; row < style.RowAllowBreakAcrossPages.Count; row++) {
                 if (style.RowAllowBreakAcrossPages[row].HasValue) {
@@ -740,8 +771,20 @@ internal static partial class PdfWriter {
                     continue;
                 }
 
-                double extraPerRow = (requiredHeight - currentHeight) / rowSpan;
+                var flexibleRows = new System.Collections.Generic.List<int>(rowSpan);
                 for (int spanRow = rowIndex; spanRow < rowIndex + rowSpan; spanRow++) {
+                    if (!GetTableRowFixedHeight(style, spanRow).HasValue) {
+                        flexibleRows.Add(spanRow);
+                    }
+                }
+
+                if (flexibleRows.Count == 0) {
+                    continue;
+                }
+
+                double extraPerRow = (requiredHeight - currentHeight) / flexibleRows.Count;
+                for (int index = 0; index < flexibleRows.Count; index++) {
+                    int spanRow = flexibleRows[index];
                     rowHeights[spanRow] += extraPerRow;
                 }
             }

@@ -47,9 +47,10 @@ internal static partial class PdfWriter {
                     var baseFont = ChooseNormal(currentOpts.DefaultFont);
                     PdfStandardFont markerFont = GetListMarkerFont(listStyle, currentOpts.DefaultFont);
                     const string bulletGlyph = "•";
-                    double bulletWidth = bl2.RichItems.Count == 0
+                    double estimatedBulletWidth = bl2.RichItems.Count == 0
                         ? EstimateSimpleTextWidthForOptions(bulletGlyph, markerFont, size, currentOpts)
                         : bl2.RichItems.Max(item => EstimateSimpleTextWidthForOptions(item.Marker ?? bulletGlyph, markerFont, size, currentOpts));
+                    double bulletWidth = GetListMarkerWidth(listStyle, estimatedBulletWidth);
                     double spaceAdvance = EstimateSimpleTextWidthForOptions(" ", baseFont, size, currentOpts);
                     double markerGap = GetListMarkerGap(listStyle, spaceAdvance);
                     double indent = bulletWidth + markerGap;
@@ -70,7 +71,8 @@ internal static partial class PdfWriter {
                         else if (bl2.Align == PdfAlign.Right) firstLineDx = Math.Max(0, alignmentWidth - firstLineWidth);
                         double spacingBefore = itemIndex == 0 ? listStyle?.SpacingBefore ?? 0D : 0D;
                         double spacingAfter = itemIndex == bl2.RichItems.Count - 1 ? listStyle?.GetSpacingAfter(itemSpacing) ?? itemSpacing : itemSpacing;
-                        listItems.Add(new ColListItem { Runs = item.Runs, Lines = layout.Lines, Heights = layout.LineHeights, Marker = marker, MarkerFont = markerFont, MarkerXOffset = listLeftIndent + firstLineDx, MarkerWidth = bulletWidth, MarkerAlign = PdfAlign.Left, TextXOffset = listLeftIndent + indent, TextWidth = alignmentWidth, TextAlign = bl2.Align, Color = bl2.Color ?? listStyle?.Color, Leading = leading, Size = size, SpacingBefore = spacingBefore, SpacingAfter = spacingAfter, BookmarkName = item.BookmarkName, ListGroupId = listGroupId });
+                        PdfColor? listColor = bl2.Color ?? listStyle?.Color;
+                        listItems.Add(new ColListItem { Runs = item.Runs, Lines = layout.Lines, Heights = layout.LineHeights, Marker = marker, MarkerFont = markerFont, MarkerColor = listStyle?.MarkerColor ?? listColor, MarkerXOffset = listLeftIndent + firstLineDx, MarkerWidth = bulletWidth, MarkerAlign = GetBulletMarkerAlign(listStyle), TextXOffset = listLeftIndent + indent, TextWidth = alignmentWidth, TextAlign = bl2.Align, Color = listColor, Leading = leading, Size = size, SpacingBefore = spacingBefore, SpacingAfter = spacingAfter, BookmarkName = item.BookmarkName, ListGroupId = listGroupId });
                     }
 
                     if ((listStyle?.KeepTogether == true || listStyle?.KeepWithNext == true) && listItems.Count > 0) {
@@ -106,11 +108,12 @@ internal static partial class PdfWriter {
                     PdfStandardFont markerFont = GetListMarkerFont(listStyle, currentOpts.DefaultFont);
                     int lastNumber = nl2.StartNumber + Math.Max(0, nl2.RichItems.Count - 1);
                     string widestMarker = lastNumber.ToString(CultureInfo.InvariantCulture) + ".";
-                    double markerWidth = nl2.RichItems.Count == 0
+                    double estimatedMarkerWidth = nl2.RichItems.Count == 0
                         ? EstimateSimpleTextWidthForOptions(widestMarker, markerFont, size, currentOpts)
                         : nl2.RichItems
                             .Select((item, itemIndex) => item.Marker ?? ((nl2.StartNumber + itemIndex).ToString(CultureInfo.InvariantCulture) + "."))
                             .Max(marker => EstimateSimpleTextWidthForOptions(marker, markerFont, size, currentOpts));
+                    double markerWidth = GetListMarkerWidth(listStyle, estimatedMarkerWidth);
                     double spaceAdvance = EstimateSimpleTextWidthForOptions(" ", baseFont, size, currentOpts);
                     double markerGap = GetListMarkerGap(listStyle, spaceAdvance);
                     double indent = markerWidth + markerGap;
@@ -131,7 +134,8 @@ internal static partial class PdfWriter {
                         else if (nl2.Align == PdfAlign.Right) firstLineDx = Math.Max(0, alignmentWidth - firstLineWidth);
                         double spacingBefore = itemIndex == 0 ? listStyle?.SpacingBefore ?? 0D : 0D;
                         double spacingAfter = itemIndex == nl2.RichItems.Count - 1 ? listStyle?.GetSpacingAfter(itemSpacing) ?? itemSpacing : itemSpacing;
-                        listItems.Add(new ColListItem { Runs = item.Runs, Lines = layout.Lines, Heights = layout.LineHeights, Marker = marker, MarkerFont = markerFont, MarkerXOffset = listLeftIndent + firstLineDx, MarkerWidth = markerWidth, MarkerAlign = PdfAlign.Right, TextXOffset = listLeftIndent + indent, TextWidth = alignmentWidth, TextAlign = nl2.Align, Color = nl2.Color ?? listStyle?.Color, Leading = leading, Size = size, SpacingBefore = spacingBefore, SpacingAfter = spacingAfter, BookmarkName = item.BookmarkName, ListGroupId = listGroupId });
+                        PdfColor? listColor = nl2.Color ?? listStyle?.Color;
+                        listItems.Add(new ColListItem { Runs = item.Runs, Lines = layout.Lines, Heights = layout.LineHeights, Marker = marker, MarkerFont = markerFont, MarkerColor = listStyle?.MarkerColor ?? listColor, MarkerXOffset = listLeftIndent + firstLineDx, MarkerWidth = markerWidth, MarkerAlign = GetNumberedMarkerAlign(listStyle), TextXOffset = listLeftIndent + indent, TextWidth = alignmentWidth, TextAlign = nl2.Align, Color = listColor, Leading = leading, Size = size, SpacingBefore = spacingBefore, SpacingAfter = spacingAfter, BookmarkName = item.BookmarkName, ListGroupId = listGroupId });
                     }
 
                     if ((listStyle?.KeepTogether == true || listStyle?.KeepWithNext == true) && listItems.Count > 0) {
@@ -237,7 +241,7 @@ internal static partial class PdfWriter {
                         }
 
                         rowLineCounts[ri] = maxLines;
-                        rowHeights[ri] = Math.Max(maxRequiredHeight, GetTableRowMinHeight(style, ri));
+                        rowHeights[ri] = ResolveTableRowHeight(style, ri, maxRequiredHeight);
                     }
                     ApplyTableRowSpanHeights(tb2, style, cols, colPixel, rowLines, rowHeights, rowLeadings, columnGap, tableRowGap);
 
