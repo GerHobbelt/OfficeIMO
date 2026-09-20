@@ -3,8 +3,19 @@
 using System.Globalization;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
+using nietras.SeparatedValues;
 using CsvHelperReader = CsvHelper.CsvReader;
 using CsvHelperWriter = CsvHelper.CsvWriter;
+using DataplatCsvDataReader = Dataplat.Dbatools.Csv.Reader.CsvDataReader;
+using DataplatCsvReaderOptions = Dataplat.Dbatools.Csv.Reader.CsvReaderOptions;
+using DataplatCsvWriter = Dataplat.Dbatools.Csv.Writer.CsvWriter;
+using DataplatCsvWriterOptions = Dataplat.Dbatools.Csv.Writer.CsvWriterOptions;
+using SepLib = nietras.SeparatedValues.Sep;
+using SepReaderOptions = nietras.SeparatedValues.SepReaderOptions;
+using SepWriterOptions = nietras.SeparatedValues.SepWriterOptions;
+using SylvanCsvDataReader = Sylvan.Data.Csv.CsvDataReader;
+using SylvanCsvDataWriter = Sylvan.Data.Csv.CsvDataWriter;
+using SylvanCsvDataWriterOptions = Sylvan.Data.Csv.CsvDataWriterOptions;
 
 namespace OfficeIMO.CSV.Benchmarks;
 
@@ -28,16 +39,26 @@ public class CsvBenchmarks
 
     private CsvBenchmarkRow[] _rows = [];
     private object?[][] _projectedRows = [];
+    private string?[][] _projectedTextRows = [];
     private string _csvText = string.Empty;
+    private static readonly DataplatCsvReaderOptions DataplatReaderOptions = new() { HasHeaderRow = true };
+    private static readonly DataplatCsvWriterOptions DataplatWriterOptions = new() { NewLine = "\n" };
+    private static readonly SepReaderOptions SepReadOptions = SepLib.New(',').Reader(options => options with { Unescape = true });
+    private static readonly SepWriterOptions SepWriteOptions = SepLib.New(',').Writer(options => options with { WriteHeader = true, Escape = true });
+    private static readonly SylvanCsvDataWriterOptions SylvanWriterOptions = new() { NewLine = "\n" };
 
     [Params(1000, 10000, 25000)]
     public int RowCount { get; set; }
 
+    [Params(CsvBenchmarkShape.Mixed, CsvBenchmarkShape.Quoted, CsvBenchmarkShape.Multiline)]
+    public CsvBenchmarkShape Shape { get; set; }
+
     [GlobalSetup]
     public void Setup()
     {
-        _rows = CsvBenchmarkData.Create(RowCount);
+        _rows = CsvBenchmarkData.Create(RowCount, Shape);
         _projectedRows = _rows.Select(ProjectRow).ToArray();
+        _projectedTextRows = _projectedRows.Select(ProjectTextRow).ToArray();
 
         using var writer = new StringWriter(CultureInfo.InvariantCulture);
         CsvDocument.WriteObjects(writer, _rows, new CsvSaveOptions { NewLine = "\n" });
@@ -62,6 +83,34 @@ public class CsvBenchmarks
             csv.WriteRow(Headers, row);
         }
 
+        return writer.GetStringBuilder().Length;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_WriteTrustedTextRows()
+    {
+        using var writer = new StringWriter(CultureInfo.InvariantCulture);
+        using var csv = new CsvObjectWriter(writer, new CsvSaveOptions { NewLine = "\n" }, leaveOpen: true);
+        if (_projectedTextRows.Length == 0)
+        {
+            return 0;
+        }
+
+        csv.WriteRow(Headers, _projectedTextRows[0]);
+        for (var i = 1; i < _projectedTextRows.Length; i++)
+        {
+            csv.WriteTrustedTextRow(_projectedTextRows[i]);
+        }
+
+        return writer.GetStringBuilder().Length;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_WriteDataReader()
+    {
+        using var writer = new StringWriter(CultureInfo.InvariantCulture);
+        using var reader = new BenchmarkArrayDataReader(Headers, _projectedRows);
+        CsvDocument.WriteDataReader(writer, reader, new CsvSaveOptions { NewLine = "\n" });
         return writer.GetStringBuilder().Length;
     }
 
@@ -113,55 +162,229 @@ public class CsvBenchmarks
     }
 
     [Benchmark]
+    public int Sylvan_WriteProjectedRows()
+    {
+        using var writer = new StringWriter(CultureInfo.InvariantCulture);
+        using var reader = new BenchmarkArrayDataReader(Headers, _projectedRows);
+        using var csv = SylvanCsvDataWriter.Create(writer, SylvanWriterOptions);
+        csv.Write(reader);
+        return writer.GetStringBuilder().Length;
+    }
+
+    [Benchmark]
+    public int Dataplat_WriteProjectedRows()
+    {
+        using var writer = new StringWriter(CultureInfo.InvariantCulture);
+        using var csv = new DataplatCsvWriter(writer, DataplatWriterOptions);
+        csv.WriteHeader(Headers);
+        foreach (object?[] row in _projectedRows)
+        {
+            csv.WriteRow(row);
+        }
+
+        return writer.GetStringBuilder().Length;
+    }
+
+    [Benchmark]
+    public int Dataplat_WriteFromReader()
+    {
+        using var writer = new StringWriter(CultureInfo.InvariantCulture);
+        using var reader = new BenchmarkArrayDataReader(Headers, _projectedRows);
+        using var csv = new DataplatCsvWriter(writer, DataplatWriterOptions);
+        csv.WriteFromReader(reader);
+        return writer.GetStringBuilder().Length;
+    }
+
+    [Benchmark]
+    public int Sep_WriteProjectedRows()
+    {
+        var options = SepWriteOptions;
+        using var csv = options.ToText();
+        foreach (string?[] row in _projectedTextRows)
+        {
+            using var csvRow = csv.NewRow();
+            for (var i = 0; i < Headers.Length; i++)
+            {
+                csvRow[Headers[i]].Set(row[i].AsSpan());
+            }
+        }
+
+        return csv.ToString().Length;
+    }
+
+    [Benchmark]
     public int OfficeIMO_ReadRowsCallback()
     {
         using var reader = new StringReader(_csvText);
-        var fieldCount = 0;
+        var checksum = 0;
         CsvDocument.ReadRows(reader, (_, values) =>
         {
-            fieldCount += values.Count;
+            checksum += MeasureValues(values);
         });
 
-        return fieldCount;
+        return checksum;
     }
 
     [Benchmark]
     public int OfficeIMO_ReadRowsReusableCallback()
     {
         using var reader = new StringReader(_csvText);
-        var fieldCount = 0;
+        var checksum = 0;
         CsvDocument.ReadRowsReusable(reader, (_, values) =>
         {
-            fieldCount += values.Count;
+            checksum += MeasureValues(values);
         });
 
-        return fieldCount;
+        return checksum;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadRowFieldSpansMaterialized()
+    {
+        using var reader = new StringReader(_csvText);
+        var visitor = new CsvMaterializingRowFieldSpanVisitor();
+        CsvDocument.ReadRowFieldSpans(reader, ref visitor);
+        return visitor.FieldCount + visitor.TextLength;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadTextRowFieldSpansMaterialized()
+    {
+        var visitor = new CsvMaterializingRowFieldSpanVisitor();
+        CsvDocument.ReadRowFieldSpansFromText(_csvText, ref visitor);
+        return visitor.FieldCount + visitor.TextLength;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadFieldSpansMaterialized()
+    {
+        using var reader = new StringReader(_csvText);
+        var visitor = new CsvMaterializingFieldSpanVisitor();
+        CsvDocument.ReadFieldSpans(
+            reader,
+            ref visitor,
+            new CsvLoadOptions { SkipInitialRecords = 1 });
+        visitor.Complete();
+        return visitor.FieldCount + visitor.TextLength;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadFieldSpanVisitorSkipHeader()
+    {
+        using var reader = new StringReader(_csvText);
+        var visitor = new CountingFieldSpanVisitor();
+        CsvDocument.ReadFieldSpans(
+            reader,
+            ref visitor,
+            new CsvLoadOptions { SkipInitialRecords = 1 });
+
+        return visitor.FieldCount + visitor.TextLength;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadTextFieldSpanVisitorSkipHeader()
+    {
+        var visitor = new CountingFieldSpanVisitor();
+        CsvDocument.ReadFieldSpansFromText(
+            _csvText,
+            ref visitor,
+            new CsvLoadOptions { SkipInitialRecords = 1 });
+
+        return visitor.FieldCount + visitor.TextLength;
     }
 
     [Benchmark]
     public int OfficeIMO_ReadStreamingRows()
     {
         var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
-        var fieldCount = 0;
+        var checksum = 0;
         foreach (CsvRow row in document.AsEnumerable())
         {
-            fieldCount += row.FieldCount;
+            checksum += MeasureRow(row);
         }
 
-        return fieldCount;
+        return checksum;
     }
 
     [Benchmark]
     public int OfficeIMO_ReadInMemoryRows()
     {
         var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.InMemory });
-        var fieldCount = 0;
+        var checksum = 0;
         foreach (CsvRow row in document.AsEnumerable())
         {
-            fieldCount += row.FieldCount;
+            checksum += MeasureRow(row);
         }
 
-        return fieldCount;
+        return checksum;
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadDataTableStrings()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.InMemory });
+        var table = document.ToDataTable();
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadStreamingDataTableStrings()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
+        var table = document.ToDataTable();
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadDataTableInferredSchema()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
+        var table = document.ToDataTable(new CsvDataTableOptions { InferSchema = true, SchemaSampleSize = RowCount });
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadStreamingDataTableInferredSchemaDefaultSample()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
+        var table = document.ToDataTable(new CsvDataTableOptions { InferSchema = true });
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadDataTableLoadDataReaderStrings()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
+        using var csv = document.CreateDataReader();
+        var table = new System.Data.DataTable();
+        table.Load(csv);
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadDataTableLoadDataReaderInferredSchema()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
+        using var csv = document.CreateDataReader(new CsvDataReaderOptions { InferSchema = true, SchemaSampleSize = RowCount });
+        var table = new System.Data.DataTable();
+        table.Load(csv);
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadDataReaderStrings()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
+        using var csv = document.CreateDataReader();
+        return DataTableBenchmarkUtilities.Measure(csv);
+    }
+
+    [Benchmark]
+    public int OfficeIMO_ReadDataReaderInferredSchema()
+    {
+        var document = CsvDocument.Parse(_csvText, new CsvLoadOptions { Mode = CsvLoadMode.Stream });
+        using var csv = document.CreateDataReader(new CsvDataReaderOptions { InferSchema = true, SchemaSampleSize = RowCount });
+        return DataTableBenchmarkUtilities.Measure(csv);
     }
 
     [Benchmark]
@@ -180,8 +403,113 @@ public class CsvBenchmarks
         {
             for (var i = 0; i < Headers.Length; i++)
             {
-                _ = csv.GetField(i);
-                fieldCount++;
+                string? value = csv.GetField(i);
+                fieldCount += 1 + (value?.Length ?? 0);
+            }
+        }
+
+        return fieldCount;
+    }
+
+    [Benchmark]
+    public int Sylvan_ReadFields()
+    {
+        using var reader = new StringReader(_csvText);
+        using var csv = SylvanCsvDataReader.Create(reader);
+        var fieldCount = 0;
+        while (csv.Read())
+        {
+            for (var i = 0; i < csv.FieldCount; i++)
+            {
+                fieldCount += 1 + csv.GetString(i).Length;
+            }
+        }
+
+        return fieldCount;
+    }
+
+    [Benchmark]
+    public int Sylvan_ReadDataTableLoad()
+    {
+        using var reader = new StringReader(_csvText);
+        using var csv = SylvanCsvDataReader.Create(reader);
+        var table = new System.Data.DataTable();
+        table.Load(csv);
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int Sylvan_ReadFieldSpans()
+    {
+        using var reader = new StringReader(_csvText);
+        using var csv = SylvanCsvDataReader.Create(reader);
+        var fieldCount = 0;
+        while (csv.Read())
+        {
+            for (var i = 0; i < csv.FieldCount; i++)
+            {
+                fieldCount += 1 + csv.GetFieldSpan(i).Length;
+            }
+        }
+
+        return fieldCount;
+    }
+
+    [Benchmark]
+    public int Dataplat_ReadFields()
+    {
+        using var reader = new StringReader(_csvText);
+        using var csv = new DataplatCsvDataReader(reader, DataplatReaderOptions);
+        var fieldCount = 0;
+        while (csv.Read())
+        {
+            for (var i = 0; i < csv.FieldCount; i++)
+            {
+                fieldCount += 1 + csv.GetString(i).Length;
+            }
+        }
+
+        return fieldCount;
+    }
+
+    [Benchmark]
+    public int Dataplat_ReadDataTableLoad()
+    {
+        using var reader = new StringReader(_csvText);
+        using var csv = new DataplatCsvDataReader(reader, DataplatReaderOptions);
+        var table = new System.Data.DataTable();
+        table.Load(csv);
+        return DataTableBenchmarkUtilities.Measure(table);
+    }
+
+    [Benchmark]
+    public int Sep_ReadFields()
+    {
+        var options = SepReadOptions;
+        using var csv = options.FromText(_csvText);
+        var fieldCount = 0;
+        foreach (var row in csv)
+        {
+            for (var i = 0; i < row.ColCount; i++)
+            {
+                fieldCount += 1 + row[i].ToString().Length;
+            }
+        }
+
+        return fieldCount;
+    }
+
+    [Benchmark]
+    public int Sep_ReadFieldSpans()
+    {
+        var options = SepReadOptions;
+        using var csv = options.FromText(_csvText);
+        var fieldCount = 0;
+        foreach (var row in csv)
+        {
+            for (var i = 0; i < row.ColCount; i++)
+            {
+                fieldCount += 1 + row[i].Span.Length;
             }
         }
 
@@ -218,6 +546,66 @@ public class CsvBenchmarks
             row.Notes
         ];
     }
+
+    private static string?[] ProjectTextRow(object?[] row)
+    {
+        var values = new string?[row.Length];
+        for (var i = 0; i < row.Length; i++)
+        {
+            values[i] = Convert.ToString(row[i], CultureInfo.InvariantCulture);
+        }
+
+        return values;
+    }
+
+    private static int MeasureValues(IReadOnlyList<string> values)
+    {
+        var checksum = 0;
+        for (var i = 0; i < values.Count; i++)
+        {
+            checksum += 1 + values[i].Length;
+        }
+
+        return checksum;
+    }
+
+    private static int MeasureRow(CsvRow row)
+    {
+        var checksum = 0;
+        for (var i = 0; i < row.FieldCount; i++)
+        {
+            checksum += 1 + (Convert.ToString(row[i], CultureInfo.InvariantCulture)?.Length ?? 0);
+        }
+
+        return checksum;
+    }
+
+    private struct CountingFieldSpanVisitor : ICsvFieldSpanVisitor
+    {
+        public int FieldCount { get; private set; }
+
+        public int TextLength { get; private set; }
+
+        public void VisitField(int recordIndex, int fieldIndex, ReadOnlySpan<char> value)
+        {
+            FieldCount++;
+            TextLength += value.Length;
+        }
+
+        public bool TryVisitEscapedField(int recordIndex, int fieldIndex, ReadOnlySpan<char> escapedValue, int unescapedLength)
+        {
+            FieldCount++;
+            TextLength += unescapedLength;
+            return true;
+        }
+    }
+}
+
+public enum CsvBenchmarkShape
+{
+    Mixed,
+    Quoted,
+    Multiline
 }
 
 public sealed class CsvBenchmarkRow
@@ -238,23 +626,40 @@ internal static class CsvBenchmarkData
 {
     private static readonly string[] Regions = ["NA", "EU", "APAC", "LATAM"];
 
-    public static CsvBenchmarkRow[] Create(int count)
+    public static CsvBenchmarkRow[] Create(int count, CsvBenchmarkShape shape)
     {
         var rows = new CsvBenchmarkRow[count];
         for (var i = 1; i <= count; i++)
         {
+            var region = Regions[i % Regions.Length];
+            var name = string.Create(CultureInfo.InvariantCulture, $"Server-{i:000000}");
+            var department = string.Create(CultureInfo.InvariantCulture, $"Department-{i % 25}");
+            var notes = string.Create(CultureInfo.InvariantCulture, $"Benchmark row {i}");
+
+            switch (shape)
+            {
+                case CsvBenchmarkShape.Quoted:
+                    name = string.Create(CultureInfo.InvariantCulture, $"Server,{i:000000}");
+                    department = string.Create(CultureInfo.InvariantCulture, $"Department \"{i % 25}\"");
+                    notes = string.Create(CultureInfo.InvariantCulture, $"Benchmark row {i}, \"quoted\", region {region}");
+                    break;
+                case CsvBenchmarkShape.Multiline:
+                    notes = string.Create(CultureInfo.InvariantCulture, $"Benchmark row {i}\ncontinued value {i % 10}");
+                    break;
+            }
+
             rows[i - 1] = new CsvBenchmarkRow
             {
                 Id = i,
-                Name = string.Create(CultureInfo.InvariantCulture, $"Server-{i:000000}"),
-                Department = string.Create(CultureInfo.InvariantCulture, $"Department-{i % 25}"),
-                Region = Regions[i % Regions.Length],
+                Name = name,
+                Department = department,
+                Region = region,
                 IsEnabled = i % 3 != 0,
                 Created = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i),
                 Score = Math.Round((decimal)((i * 1.137) % 1000), 3),
                 Owner = string.Create(CultureInfo.InvariantCulture, $"owner{i % 250}@example.test"),
                 TicketCount = i % 17,
-                Notes = string.Create(CultureInfo.InvariantCulture, $"Benchmark row {i}")
+                Notes = notes
             };
         }
 

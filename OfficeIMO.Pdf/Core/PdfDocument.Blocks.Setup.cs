@@ -365,6 +365,12 @@ public sealed partial class PdfDocument {
         return this;
     }
 
+    /// <summary>Sets or clears the generated text line-break callback used for long unspaced tokens.</summary>
+    public PdfDocument TextLineBreaks(PdfTextLineBreakCallback? callback) {
+        _options.SetTextLineBreaks(callback);
+        return this;
+    }
+
     /// <summary>Sets or clears the generated catalog page mode.</summary>
     public PdfDocument CatalogPageMode(PdfCatalogPageMode? pageMode) {
         _options.SetCatalogPageMode(pageMode);
@@ -587,6 +593,18 @@ public sealed partial class PdfDocument {
     /// <summary>Registers a planned embedded-font fallback set for generated rich text runs.</summary>
     public PdfDocument RegisterEmbeddedFontFallbacks(PdfEmbeddedFontFallbackSet fallbackSet) {
         _options.RegisterEmbeddedFontFallbacks(fallbackSet);
+        return this;
+    }
+
+    /// <summary>Applies OfficeIMO's built-in generated-text fallback groups.</summary>
+    public PdfDocument UseTextFallbacks(PdfTextFallbackFeatures features = PdfTextFallbackFeatures.Default) {
+        _options.UseTextFallbacks(features);
+        return this;
+    }
+
+    /// <summary>Registers generated-text fallback fonts from installed system font families without requiring callers to choose PDF font slots.</summary>
+    public PdfDocument UseEmbeddedFontFallbacksFromSystem(string? familyNames, int maxFallbackFonts = 2) {
+        _options.UseEmbeddedFontFallbacksFromSystem(familyNames, maxFallbackFonts);
         return this;
     }
 

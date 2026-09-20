@@ -54,15 +54,20 @@ namespace OfficeIMO.Excel {
                 FillGradientUnsupported = fill?.GradientFill != null && !hasSimpleGradient,
                 FillGradientStartColorArgb = hasSimpleGradient ? gradient.StartColorArgb : null,
                 FillGradientEndColorArgb = hasSimpleGradient ? gradient.EndColorArgb : null,
+                FillGradientStops = hasSimpleGradient ? CreateGradientStopSnapshots(gradient) : Array.Empty<ExcelGradientFillStopSnapshot>(),
                 FillGradientDegree = hasSimpleGradient ? gradient.Degree : null,
                 Border = BuildBorderSnapshot(border, workbookPart),
                 HorizontalAlignment = format.Alignment?.Horizontal?.InnerText,
                 VerticalAlignment = format.Alignment?.Vertical?.InnerText,
                 TextRotation = ToTextRotation(format.Alignment?.TextRotation?.Value),
+                TextIndent = format.Alignment?.Indent?.Value,
                 WrapText = format.Alignment?.WrapText?.Value == true,
                 ShrinkToFit = format.Alignment?.ShrinkToFit?.Value == true
             };
         }
+
+        private static IReadOnlyList<ExcelGradientFillStopSnapshot> CreateGradientStopSnapshots(ExcelGradientFillInfo gradient) =>
+            gradient.Stops.Select(stop => new ExcelGradientFillStopSnapshot(stop.Offset, stop.ColorArgb)).ToArray();
 
         private static int? ToTextRotation(uint? value) {
             if (!value.HasValue) {

@@ -92,11 +92,15 @@ public sealed partial class PdfOptions {
     private System.Collections.Generic.Dictionary<PdfStandardFont, PdfEmbeddedFont>? _embeddedFonts;
     private System.Collections.Generic.Dictionary<PdfStandardFont, PdfTrueTypeFontProgram>? _embeddedFontPrograms;
     private System.Collections.Generic.Dictionary<PdfStandardFont, PdfOpenTypeCffFontProgram>? _embeddedOpenTypeCffFontPrograms;
+    private System.Collections.Generic.HashSet<PdfStandardFont>? _usedEmbeddedFallbackFontSlots;
     private System.Collections.Generic.HashSet<PdfStandardFont>? _embeddedFontProgramFailures;
     private System.Collections.Generic.HashSet<string>? _reportedEmbeddedFontProgramFailures;
     private System.Collections.Generic.HashSet<string>? _reportedTextShapingDiagnostics;
+    private System.Collections.Generic.HashSet<string>? _providerShapedTextRuns;
+    private PdfTextLineBreakCallback? _textLineBreakCallback;
     private PdfTextHyphenationCallback? _textHyphenationCallback;
     private PdfTextShapingMode _textShapingMode;
+    private IPdfTextShapingProvider? _textShapingProvider;
     private PdfConversionReport? _diagnosticsReport;
     private string _diagnosticsConverter = "OfficeIMO.Pdf";
     private System.Collections.Generic.List<PdfEmbeddedFile>? _embeddedFiles;

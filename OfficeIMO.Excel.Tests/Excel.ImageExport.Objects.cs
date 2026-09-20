@@ -49,7 +49,11 @@ namespace OfficeIMO.Tests {
             ExcelSheet sheet = document.AddWorkSheet("CommentBody");
             sheet.CellValue(1, 1, "Name");
             sheet.CellValue(2, 2, "Reviewed");
-            sheet.SetComment("B2", "Needs design review before this range is sent to leadership.", "Reviewer");
+            sheet.SetCommentRichText("B2", new[] {
+                new ExcelRichTextRun("Needs ") { FontColor = "C00000", Bold = true },
+                new ExcelRichTextRun("design review") { Italic = true, Underline = true, FontColor = "2563EB" },
+                new ExcelRichTextRun(" before this range is sent to leadership.")
+            }, "Reviewer");
 
             ExcelImageExportOptions options = new ExcelImageExportOptions {
                 ShowGridlines = false,
@@ -72,13 +76,22 @@ namespace OfficeIMO.Tests {
             Assert.True(body.AnchorX < body.X, "Comment body should be placed to the right of the annotated cell in this fixture.");
             Assert.Equal("Reviewer", body.Title);
             Assert.Contains("Needs design review", body.Text, StringComparison.Ordinal);
+            Assert.Equal(3, body.RichTextRuns.Count);
+            Assert.True(body.RichTextRuns[0].Bold);
+            Assert.True(body.RichTextRuns[1].Italic);
+            Assert.True(body.RichTextRuns[1].Underline);
             Assert.Single(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentBodyApproximation);
             Assert.Single(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentBodyApproximation);
             Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentUnsupported);
             Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.CellCommentUnsupported);
             Assert.Contains("Reviewer", svg, StringComparison.Ordinal);
-            Assert.Contains("Needs design review", svg, StringComparison.Ordinal);
+            Assert.Contains("Needs ", svg, StringComparison.Ordinal);
+            Assert.Contains("design review", svg, StringComparison.Ordinal);
             Assert.Contains("font-weight=\"700\"", svg, StringComparison.Ordinal);
+            Assert.Contains("font-style=\"italic\"", svg, StringComparison.Ordinal);
+            Assert.Contains("text-decoration=\"underline\"", svg, StringComparison.Ordinal);
+            Assert.Contains("#C00000", svg, StringComparison.Ordinal);
+            Assert.Contains("#2563EB", svg, StringComparison.Ordinal);
             Assert.Contains("text-anchor=\"start\"", svg, StringComparison.Ordinal);
             Assert.Contains("#FFFBE6", svg, StringComparison.Ordinal);
             Assert.Contains("#FFF2CC", svg, StringComparison.Ordinal);
@@ -88,6 +101,7 @@ namespace OfficeIMO.Tests {
             Assert.NotNull(rendered);
             Assert.True(CountPixelsNear(rendered!, OfficeColor.FromRgb(255, 251, 230)) > 100);
             Assert.True(CountPixelsNear(rendered!, OfficeColor.FromRgb(255, 242, 204)) > 50);
+            Assert.True(CountBlueTextPixels(rendered!) > 0, "Expected the rich blue comment run to render into PNG output.");
             OfficeColor pointerPixel = rendered!.GetPixel((int)Math.Round((body.AnchorX + body.X) / 2D), (int)Math.Round(body.Y + 14D));
             Assert.True(
                 pointerPixel.A >= 248 &&
@@ -95,6 +109,56 @@ namespace OfficeIMO.Tests {
                 pointerPixel.G >= 150 &&
                 pointerPixel.B <= 240,
                 $"Expected an anchored comment-body pointer pixel, but got {pointerPixel.A},{pointerPixel.R},{pointerPixel.G},{pointerPixel.B}.");
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportPreservesRichCommentBreaksAndNonRgbColors() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorkSheet("CommentBreaks");
+                sheet.CellValue(2, 2, "Reviewed");
+                sheet.SetCommentRichText("B2", new[] {
+                    new ExcelRichTextRun("Line one"),
+                    new ExcelRichTextRun("line two") { Bold = true }
+                }, "Reviewer");
+                document.Save(false);
+            }
+
+            using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                WorksheetPart worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.Single();
+                X.Comment comment = worksheetPart.WorksheetCommentsPart!.Comments!.CommentList!.Elements<X.Comment>().Single();
+                List<X.Run> runs = comment.CommentText!.Elements<X.Run>().ToList();
+                comment.CommentText.InsertAfter(new X.Break(), runs[0]);
+                X.Color color = runs[1].RunProperties!.GetFirstChild<X.Color>() ?? runs[1].RunProperties!.AppendChild(new X.Color());
+                color.Rgb = null;
+                color.Indexed = 5U;
+                color.Tint = -0.25D;
+                worksheetPart.WorksheetCommentsPart.Comments!.Save();
+            }
+
+            using ExcelDocument loadedDocument = ExcelDocument.Load(filePath);
+            ExcelSheet loadedSheet = loadedDocument.Sheets.Single();
+            ExcelRange range = loadedSheet.Range("A1:F8");
+            var options = new ExcelImageExportOptions {
+                ShowGridlines = false,
+                ShowCommentBodies = true,
+                DefaultColumnWidthPixels = 92D,
+                DefaultRowHeightPixels = 28D
+            };
+
+            ExcelVisualCommentBody body = Assert.Single(range.CreateVisualSnapshot(options).CommentBodies);
+            string svg = range.ToSvg(options);
+
+            Assert.Equal("Line one\nline two", body.Text);
+            Assert.Equal("Line one\n", string.Concat(body.RichTextRuns.Take(2).Select(run => run.Text)));
+            Assert.Equal("line two", body.RichTextRuns[2].Text);
+            Assert.True(body.RichTextRuns[2].Bold);
+            Assert.StartsWith("FF", body.RichTextRuns[2].FontColorArgb, StringComparison.Ordinal);
+            string themedRunColor = "#" + body.RichTextRuns[2].FontColorArgb!.Substring(2);
+            Assert.NotEqual("#1F2937", themedRunColor);
+            Assert.Contains("Line one", svg, StringComparison.Ordinal);
+            Assert.Contains("line two", svg, StringComparison.Ordinal);
+            Assert.Contains(themedRunColor, svg, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
@@ -428,6 +492,98 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportHonorsDrawingShapeOutlineStyleThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorkSheet("OutlineStyle");
+                sheet.CellValue(1, 1, "Name");
+                sheet.CellValue(2, 2, "Styled outline");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Styled outline",
+                string.Empty,
+                preset: A.ShapeTypeValues.Rectangle,
+                strokeDash: A.PresetLineDashValues.DashDot,
+                strokeLineCap: A.LineCapValues.Round,
+                strokeLineJoin: OfficeStrokeLineJoin.Bevel);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                string svg = range.ToSvg(options);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal(OfficeStrokeDashStyle.DashDot, drawingObject.StrokeDashStyle);
+                Assert.Equal(OfficeStrokeLineCap.Round, drawingObject.StrokeLineCap);
+                Assert.Equal(OfficeStrokeLineJoin.Bevel, drawingObject.StrokeLineJoin);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.Contains("stroke-dasharray", svg, StringComparison.Ordinal);
+                Assert.Contains("stroke-linecap=\"round\"", svg, StringComparison.Ordinal);
+                Assert.Contains("stroke-linejoin=\"bevel\"", svg, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRendersDrawingShapeEffectsThroughSharedDrawing() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorkSheet("ShapeEffects");
+                sheet.CellValue(1, 1, "Name");
+                sheet.CellValue(2, 2, "Styled effects");
+                document.Save(false);
+            }
+
+            AppendSupportedDrawingShape(
+                filePath,
+                "Effect shape",
+                string.Empty,
+                preset: A.ShapeTypeValues.Rectangle,
+                fillHex: "FDE68A",
+                strokeHex: "B45309",
+                glowHex: "2563EB",
+                glowAlpha: 55000,
+                glowRadiusPixels: 8,
+                shadowHex: "111827",
+                shadowAlpha: 45000,
+                shadowDistancePixels: 7,
+                shadowBlurPixels: 5,
+                shadowDirectionDegrees: 45);
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelSheet sheet = document.Sheets.Single();
+                ExcelRange range = sheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                string svg = range.ToSvg(options);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.NotNull(drawingObject.Glow);
+                Assert.NotNull(drawingObject.Shadow);
+                Assert.Equal(8D, drawingObject.Glow!.Radius);
+                Assert.Equal(5D, drawingObject.Shadow!.BlurRadius);
+                Assert.True(drawingObject.Shadow.OffsetX > 0D);
+                Assert.True(drawingObject.Shadow.OffsetY > 0D);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.Contains("#2563EB", svg, StringComparison.Ordinal);
+                Assert.Contains("#111827", svg, StringComparison.Ordinal);
+
+                Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
+                Assert.NotNull(rendered);
+                Assert.True(CountPixelsNear(rendered!, OfficeColor.FromRgb(37, 99, 235)) > 0, "Expected the blue glow to paint into PNG output.");
+                Assert.True(CountDarkPixels(rendered!) > 0, "Expected the dark shadow to paint into PNG output.");
+            }
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportPreservesDrawingShapeTextLineBreaks() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
@@ -470,6 +626,8 @@ namespace OfficeIMO.Tests {
 
                 ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
                 Assert.False(string.IsNullOrWhiteSpace(drawingObject.FillColorArgb));
+                Assert.False(string.IsNullOrWhiteSpace(drawingObject.StrokeColorArgb));
+                Assert.True(drawingObject.StrokeWidth > 0D);
                 Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
                 Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
             }
@@ -516,6 +674,55 @@ namespace OfficeIMO.Tests {
                 Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
                 Assert.NotNull(rendered);
                 Assert.True(CountPixelsNear(rendered!, OfficeColor.FromRgb(254, 202, 202)) > 100);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRendersAdditionalFlowchartPresetShapesThroughSharedDrawing() {
+            (A.ShapeTypeValues Preset, string ExpectedName)[] presets = {
+                (A.ShapeTypeValues.FlowChartPredefinedProcess, "flowChartPredefinedProcess"),
+                (A.ShapeTypeValues.FlowChartInternalStorage, "flowChartInternalStorage"),
+                (A.ShapeTypeValues.FlowChartMagneticDisk, "flowChartMagneticDisk"),
+                (A.ShapeTypeValues.FlowChartMagneticTape, "flowChartMagneticTape"),
+                (A.ShapeTypeValues.FlowChartMagneticDrum, "flowChartMagneticDrum"),
+                (A.ShapeTypeValues.FlowChartMultidocument, "flowChartMultidocument"),
+                (A.ShapeTypeValues.FlowChartPunchedTape, "flowChartPunchedTape"),
+                (A.ShapeTypeValues.FlowChartSummingJunction, "flowChartSummingJunction"),
+                (A.ShapeTypeValues.FlowChartSort, "flowChartSort"),
+                (A.ShapeTypeValues.FlowChartDisplay, "flowChartDisplay")
+            };
+
+            foreach ((A.ShapeTypeValues preset, string expectedName) in presets) {
+                string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+                using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                    ExcelSheet sheet = document.AddWorkSheet("FlowchartShape");
+                    sheet.CellValue(1, 1, "Name");
+                    sheet.CellValue(2, 2, expectedName);
+                    document.Save(false);
+                }
+
+                AppendSupportedDrawingShape(
+                    filePath,
+                    expectedName,
+                    string.Empty,
+                    preset,
+                    fillHex: "E0F2FE",
+                    strokeHex: "0284C7");
+
+                using ExcelDocument loaded = ExcelDocument.Load(filePath);
+                ExcelSheet loadedSheet = loaded.Sheets.Single();
+                ExcelRange range = loadedSheet.Range("A1:D4");
+                var options = new ExcelImageExportOptions { ShowGridlines = false };
+                ExcelRangeVisualSnapshot snapshot = range.CreateVisualSnapshot(options);
+                OfficeImageExportResult png = range.ExportImage(OfficeImageExportFormat.Png, options);
+                string svg = range.ToSvg(options);
+
+                ExcelVisualDrawingObject drawingObject = Assert.Single(snapshot.DrawingObjects);
+                Assert.Equal(expectedName, drawingObject.ShapePresetName);
+                Assert.Equal(OfficeShapeKind.Path, drawingObject.ShapeKind);
+                Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.DoesNotContain(png.Diagnostics, diagnostic => diagnostic.Code == ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported);
+                Assert.Contains("<path", svg, StringComparison.Ordinal);
             }
         }
 
@@ -1093,7 +1300,18 @@ namespace OfficeIMO.Tests {
             int toColumn = 3,
             int toRow = 3,
             int offsetXPixels = 0,
-            int offsetYPixels = 0) {
+            int offsetYPixels = 0,
+            A.PresetLineDashValues? strokeDash = null,
+            A.LineCapValues? strokeLineCap = null,
+            OfficeStrokeLineJoin? strokeLineJoin = null,
+            string? glowHex = null,
+            int? glowAlpha = null,
+            int glowRadiusPixels = 0,
+            string? shadowHex = null,
+            int? shadowAlpha = null,
+            int shadowDistancePixels = 0,
+            int shadowBlurPixels = 0,
+            int shadowDirectionDegrees = 0) {
             using SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true);
             WorksheetPart worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
             DrawingsPart drawingsPart = worksheetPart.DrawingsPart ?? worksheetPart.AddNewPart<DrawingsPart>();
@@ -1103,7 +1321,7 @@ namespace OfficeIMO.Tests {
 
             drawingsPart.WorksheetDrawing ??= new Xdr.WorksheetDrawing();
             drawingsPart.WorksheetDrawing.Append(
-                CreateSupportedShapeAnchor(1, 1, toColumn, toRow, 2U, name, text, preset, horizontalFlip, verticalFlip, rotationDegrees, fillHex, strokeHex, paragraphAlignment, verticalAlignment, textColorHex, fillSchemeColor, fillLuminanceModulation, fillLuminanceOffset, strokeSchemeColor, textSchemeColor, textFontFamily, textFontSize, textBold, textItalic, textUnderline, textWrap, textShrinkToFit, textResizeShapeToFit, textOrientation, textInsetLeftEmu, textInsetTopEmu, textInsetRightEmu, textInsetBottomEmu, textHardBreak, offsetXPixels, offsetYPixels));
+                CreateSupportedShapeAnchor(1, 1, toColumn, toRow, 2U, name, text, preset, horizontalFlip, verticalFlip, rotationDegrees, fillHex, strokeHex, paragraphAlignment, verticalAlignment, textColorHex, fillSchemeColor, fillLuminanceModulation, fillLuminanceOffset, strokeSchemeColor, textSchemeColor, textFontFamily, textFontSize, textBold, textItalic, textUnderline, textWrap, textShrinkToFit, textResizeShapeToFit, textOrientation, textInsetLeftEmu, textInsetTopEmu, textInsetRightEmu, textInsetBottomEmu, textHardBreak, offsetXPixels, offsetYPixels, strokeDash, strokeLineCap, strokeLineJoin, glowHex, glowAlpha, glowRadiusPixels, shadowHex, shadowAlpha, shadowDistancePixels, shadowBlurPixels, shadowDirectionDegrees));
             drawingsPart.WorksheetDrawing.Save();
             worksheetPart.Worksheet.Save();
         }
@@ -1243,7 +1461,18 @@ namespace OfficeIMO.Tests {
             int? textInsetBottomEmu = null,
             bool textHardBreak = false,
             int offsetXPixels = 0,
-            int offsetYPixels = 0) {
+            int offsetYPixels = 0,
+            A.PresetLineDashValues? strokeDash = null,
+            A.LineCapValues? strokeLineCap = null,
+            OfficeStrokeLineJoin? strokeLineJoin = null,
+            string? glowHex = null,
+            int? glowAlpha = null,
+            int glowRadiusPixels = 0,
+            string? shadowHex = null,
+            int? shadowAlpha = null,
+            int shadowDistancePixels = 0,
+            int shadowBlurPixels = 0,
+            int shadowDirectionDegrees = 0) {
             var transform = new A.Transform2D {
                 HorizontalFlip = horizontalFlip,
                 VerticalFlip = verticalFlip
@@ -1326,6 +1555,42 @@ namespace OfficeIMO.Tests {
                     new A.Text(text ?? name)));
             }
 
+            var outline = new A.Outline(
+                CreateSolidFill(strokeHex, strokeSchemeColor)) {
+                Width = 12700
+            };
+            if (strokeDash.HasValue) {
+                outline.Append(new A.PresetDash { Val = strokeDash.Value });
+            }
+
+            if (strokeLineCap.HasValue) {
+                outline.CapType = strokeLineCap.Value;
+            }
+
+            if (strokeLineJoin.HasValue) {
+                switch (strokeLineJoin.Value) {
+                    case OfficeStrokeLineJoin.Round:
+                        outline.Append(new A.Round());
+                        break;
+                    case OfficeStrokeLineJoin.Bevel:
+                        outline.Append(new A.Bevel());
+                        break;
+                    case OfficeStrokeLineJoin.Miter:
+                        outline.Append(new A.Miter());
+                        break;
+                }
+            }
+
+            A.EffectList? effects = CreateShapeEffects(glowHex, glowAlpha, glowRadiusPixels, shadowHex, shadowAlpha, shadowDistancePixels, shadowBlurPixels, shadowDirectionDegrees);
+            var shapeProperties = new Xdr.ShapeProperties(
+                transform,
+                new A.PresetGeometry { Preset = preset ?? A.ShapeTypeValues.RoundRectangle },
+                CreateSolidFill(fillHex, fillSchemeColor, fillLuminanceModulation, fillLuminanceOffset),
+                outline);
+            if (effects != null) {
+                shapeProperties.Append(effects);
+            }
+
             return new Xdr.TwoCellAnchor(
                 new Xdr.FromMarker(
                     new Xdr.ColumnId(fromColumn.ToString()),
@@ -1341,19 +1606,50 @@ namespace OfficeIMO.Tests {
                     new Xdr.NonVisualShapeProperties(
                         new Xdr.NonVisualDrawingProperties { Id = id, Name = name },
                         new Xdr.NonVisualShapeDrawingProperties(new A.ShapeLocks { NoGrouping = true })),
-                    new Xdr.ShapeProperties(
-                        transform,
-                        new A.PresetGeometry { Preset = preset ?? A.ShapeTypeValues.RoundRectangle },
-                        CreateSolidFill(fillHex, fillSchemeColor, fillLuminanceModulation, fillLuminanceOffset),
-                        new A.Outline(
-                            CreateSolidFill(strokeHex, strokeSchemeColor)) {
-                            Width = 12700
-                        }),
+                    shapeProperties,
                     new Xdr.TextBody(
                         bodyProperties,
                         new A.ListStyle(),
                         paragraph)),
                 new Xdr.ClientData());
+        }
+
+        private static A.EffectList? CreateShapeEffects(
+            string? glowHex,
+            int? glowAlpha,
+            int glowRadiusPixels,
+            string? shadowHex,
+            int? shadowAlpha,
+            int shadowDistancePixels,
+            int shadowBlurPixels,
+            int shadowDirectionDegrees) {
+            var effects = new A.EffectList();
+            if (!string.IsNullOrWhiteSpace(glowHex) && glowRadiusPixels > 0) {
+                var glow = new A.Glow { Radius = glowRadiusPixels * 9525L };
+                glow.Append(CreateEffectColor(glowHex!, glowAlpha));
+                effects.Append(glow);
+            }
+
+            if (!string.IsNullOrWhiteSpace(shadowHex) && (shadowDistancePixels > 0 || shadowBlurPixels > 0)) {
+                var shadow = new A.OuterShadow {
+                    BlurRadius = shadowBlurPixels * 9525L,
+                    Distance = shadowDistancePixels * 9525L,
+                    Direction = shadowDirectionDegrees * 60000
+                };
+                shadow.Append(CreateEffectColor(shadowHex!, shadowAlpha));
+                effects.Append(shadow);
+            }
+
+            return effects.HasChildren ? effects : null;
+        }
+
+        private static A.RgbColorModelHex CreateEffectColor(string rgbHex, int? alpha) {
+            var color = new A.RgbColorModelHex { Val = rgbHex };
+            if (alpha.HasValue) {
+                color.Append(new A.Alpha { Val = alpha.Value });
+            }
+
+            return color;
         }
 
         private static A.SolidFill CreateSolidFill(string rgbHex, string? schemeColor = null, int? luminanceModulation = null, int? luminanceOffset = null) {
@@ -1413,6 +1709,24 @@ namespace OfficeIMO.Tests {
                         Math.Abs(color.G - expected.G) <= 8 &&
                         Math.Abs(color.B - expected.B) <= 8 &&
                         color.A >= 248) {
+                        count++;
+                    }
+                }
+            }
+
+            return count;
+        }
+
+        private static int CountBlueTextPixels(OfficeRasterImage image) {
+            int count = 0;
+            for (int y = 0; y < image.Height; y++) {
+                for (int x = 0; x < image.Width; x++) {
+                    OfficeColor color = image.GetPixel(x, y);
+                    if (color.A >= 248 &&
+                        color.B > color.R + 35 &&
+                        color.B > color.G + 15 &&
+                        color.R < 120 &&
+                        color.G < 170) {
                         count++;
                     }
                 }

@@ -2,6 +2,7 @@
 
 using System.Globalization;
 using System.Text;
+using System.Threading;
 
 namespace OfficeIMO.CSV;
 
@@ -56,6 +57,33 @@ public sealed class CsvLoadOptions
     public bool GenerateMissingHeaderNames { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets how duplicate header names are handled. Default renames duplicate headers to keep name-based row access unambiguous.
+    /// </summary>
+    public CsvDuplicateHeaderBehavior DuplicateHeaderBehavior { get; set; } = CsvDuplicateHeaderBehavior.Rename;
+
+    /// <summary>
+    /// Gets or sets a token that should be materialized as <c>null</c> when loading rows into a <see cref="CsvDocument"/>.
+    /// Raw string streaming callbacks preserve the source text.
+    /// </summary>
+    public string? NullValue { get; set; }
+
+    /// <summary>
+    /// Gets or sets additional date/time formats used by typed row conversion and schema validation.
+    /// </summary>
+    public string[]? DateTimeFormats { get; set; }
+
+    /// <summary>
+    /// Gets or sets how malformed quoted fields are handled. Default is <see cref="CsvQuoteParsingMode.Lenient"/>
+    /// to preserve common PowerShell-style import behavior.
+    /// </summary>
+    public CsvQuoteParsingMode QuoteParsingMode { get; set; } = CsvQuoteParsingMode.Lenient;
+
+    /// <summary>
+    /// Gets or sets columns appended to every loaded row, useful for source file names, import timestamps, or batch metadata.
+    /// </summary>
+    public IReadOnlyDictionary<string, object?>? StaticColumns { get; set; }
+
+    /// <summary>
     /// Gets or sets how parsed records are handled when their field count differs from the header count.
     /// Default pads missing fields and ignores extras, matching common PowerShell CSV import behavior.
     /// </summary>
@@ -65,6 +93,12 @@ public sealed class CsvLoadOptions
     /// Gets or sets the field delimiter character. Default is <c>,</c>.
     /// </summary>
     public char Delimiter { get; set; } = DefaultDelimiter;
+
+    /// <summary>
+    /// Gets or sets the field delimiter text. Leave unset to use <see cref="Delimiter"/>.
+    /// Single-character values keep the optimized character delimiter path; longer values enable flexible delimiter parsing.
+    /// </summary>
+    public string? DelimiterText { get; set; }
 
     /// <summary>
     /// Gets or sets whether the delimiter should be detected from the first meaningful records.
@@ -105,7 +139,96 @@ public sealed class CsvLoadOptions
     public Encoding? Encoding { get; set; }
 
     /// <summary>
-    /// Creates a shallow copy of the options instance.
+    /// Gets or sets compression used when reading from files. Default infers compression from the file extension.
     /// </summary>
-    public CsvLoadOptions Clone() => (CsvLoadOptions)MemberwiseClone();
+    public CsvCompressionType CompressionType { get; set; } = CsvCompressionType.Auto;
+
+    /// <summary>
+    /// Gets or sets an optional limit for decompressed bytes read from compressed CSV files.
+    /// </summary>
+    public long? MaxDecompressedBytes { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional cancellation token checked while reading records.
+    /// </summary>
+    public CancellationToken CancellationToken { get; set; }
+
+    /// <summary>
+    /// Gets or sets how often <see cref="ProgressCallback"/> is called, in emitted records.
+    /// Default is <c>0</c>, which disables progress callbacks.
+    /// </summary>
+    public int ProgressReportInterval { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional callback invoked as records are emitted.
+    /// </summary>
+    public Action<CsvProgress>? ProgressCallback { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether parse errors should be collected into <see cref="ParseErrors"/>.
+    /// </summary>
+    public bool CollectParseErrors { get; set; }
+
+    /// <summary>
+    /// Gets or sets how parse errors are handled. Default throws immediately.
+    /// </summary>
+    public CsvParseErrorAction ParseErrorAction { get; set; } = CsvParseErrorAction.Throw;
+
+    /// <summary>
+    /// Gets or sets the maximum number of collected parse errors before parsing fails. Default is <c>100</c>.
+    /// </summary>
+    public int MaxParseErrors { get; set; } = 100;
+
+    /// <summary>
+    /// Gets or sets the collection receiving parse errors when <see cref="CollectParseErrors"/> is enabled.
+    /// </summary>
+    public IList<CsvParseError>? ParseErrors { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional maximum length for any parsed field.
+    /// </summary>
+    public int? MaxFieldLength { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional maximum length for fields parsed from quoted records.
+    /// </summary>
+    public int? MaxQuotedFieldLength { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether curly quote characters are normalized to straight quotes while reading.
+    /// </summary>
+    public bool NormalizeQuotes { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether repeated string values are reused through a per-read string cache.
+    /// </summary>
+    public bool InternStrings { get; set; }
+
+    /// <summary>
+    /// Creates an options copy with mutable collections snapshotted for deferred reads.
+    /// </summary>
+    public CsvLoadOptions Clone()
+    {
+        if (CollectParseErrors && ParseErrors is null)
+        {
+            ParseErrors = new List<CsvParseError>();
+        }
+
+        var clone = (CsvLoadOptions)MemberwiseClone();
+        clone.Header = Header is null ? null : (string[])Header.Clone();
+        clone.DateTimeFormats = DateTimeFormats is null ? null : (string[])DateTimeFormats.Clone();
+        clone.DelimiterCandidates = DelimiterCandidates is null ? null : (char[])DelimiterCandidates.Clone();
+        if (StaticColumns is not null)
+        {
+            var staticColumns = new Dictionary<string, object?>(StaticColumns.Count);
+            foreach (var column in StaticColumns)
+            {
+                staticColumns.Add(column.Key, column.Value);
+            }
+
+            clone.StaticColumns = staticColumns;
+        }
+
+        return clone;
+    }
 }

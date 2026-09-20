@@ -1,3 +1,5 @@
+using OfficeIMO.Drawing;
+
 namespace OfficeIMO.Pdf;
 
 /// <summary>
@@ -17,7 +19,11 @@ public sealed class PdfExtractedImage {
         string? fileExtension,
         string? mimeType,
         bool isImageFile,
-        int directStreamIdentity = 0) {
+        string? transparencyMaskKind = null,
+        bool transparencyMaskResolved = false,
+        int directStreamIdentity = 0,
+        bool isImageMask = false,
+        OfficeColor? imageMaskColor = null) {
         PageNumber = pageNumber;
         ResourceName = resourceName;
         ObjectNumber = objectNumber;
@@ -30,7 +36,11 @@ public sealed class PdfExtractedImage {
         FileExtension = fileExtension;
         MimeType = mimeType;
         IsImageFile = isImageFile;
+        TransparencyMaskKind = transparencyMaskKind;
+        TransparencyMaskResolved = transparencyMaskResolved;
         DirectStreamIdentity = directStreamIdentity;
+        IsImageMask = isImageMask;
+        ImageMaskColor = imageMaskColor ?? OfficeColor.Black;
     }
 
     /// <summary>One-based page number containing the image resource.</summary>
@@ -61,8 +71,9 @@ public sealed class PdfExtractedImage {
     public string Filter { get; }
 
     /// <summary>
-    /// Extracted bytes. JPEG images are returned as JPEG files. Simple PNG-predictor Flate images are returned as PNG files.
-    /// Other supported image streams return their original encoded bytes.
+    /// Extracted bytes. JPEG images are returned as JPEG files. Simple PNG-predictor Flate
+    /// images, supported ImageMask stencil streams, color-key masked simple and Indexed streams, Decode-aware simple 8-bit DeviceGray/DeviceRGB/basic-converted DeviceCMYK streams, basic ICCBased N=1/3/4 streams, and Decode-aware Indexed palette streams are returned as PNG files when their filters are supported.
+    /// JPEG images with PDF transparency masks can expose unresolved mask metadata when the JPEG payload is passed through without alpha conversion. Other supported image streams return their original encoded bytes.
     /// </summary>
     public byte[] Bytes { get; }
 
@@ -74,4 +85,21 @@ public sealed class PdfExtractedImage {
 
     /// <summary>True when <see cref="Bytes"/> is a complete image file rather than a raw PDF image stream.</summary>
     public bool IsImageFile { get; }
+
+    /// <summary>PDF transparency mask kind attached to the image, such as soft-mask, color-key-mask, or explicit-mask-image.</summary>
+    public string? TransparencyMaskKind { get; }
+
+    /// <summary>True when the extracted image payload includes the PDF transparency mask semantics.</summary>
+    public bool TransparencyMaskResolved { get; }
+
+    /// <summary>True when the source PDF image declared a transparency mask.</summary>
+    public bool HasTransparencyMask => !string.IsNullOrWhiteSpace(TransparencyMaskKind);
+
+    /// <summary>True when the source PDF image declared a transparency mask that is not represented by the extracted payload.</summary>
+    public bool HasUnresolvedTransparencyMask => HasTransparencyMask && !TransparencyMaskResolved;
+
+    /// <summary>True when this image came from a PDF /ImageMask stencil XObject.</summary>
+    public bool IsImageMask { get; }
+
+    internal OfficeColor ImageMaskColor { get; }
 }

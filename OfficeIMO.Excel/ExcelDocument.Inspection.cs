@@ -330,11 +330,13 @@ namespace OfficeIMO.Excel {
                 FillGradientUnsupported = fill?.GradientFill != null && !hasSimpleGradient,
                 FillGradientStartColorArgb = hasSimpleGradient ? gradient.StartColorArgb : null,
                 FillGradientEndColorArgb = hasSimpleGradient ? gradient.EndColorArgb : null,
+                FillGradientStops = hasSimpleGradient ? CreateGradientStopSnapshots(gradient) : Array.Empty<ExcelGradientFillStopSnapshot>(),
                 FillGradientDegree = hasSimpleGradient ? gradient.Degree : null,
                 Border = BuildBorderSnapshot(context, border),
                 HorizontalAlignment = cellFormat.Alignment?.Horizontal?.InnerText,
                 VerticalAlignment = cellFormat.Alignment?.Vertical?.InnerText,
                 TextRotation = ToTextRotation(cellFormat.Alignment?.TextRotation?.Value),
+                TextIndent = cellFormat.Alignment?.Indent?.Value,
                 WrapText = cellFormat.Alignment?.WrapText?.Value == true,
                 ShrinkToFit = cellFormat.Alignment?.ShrinkToFit?.Value == true,
             };
@@ -347,6 +349,9 @@ namespace OfficeIMO.Excel {
 
             return value.Value <= int.MaxValue ? (int)value.Value : (int?)null;
         }
+
+        private static IReadOnlyList<ExcelGradientFillStopSnapshot> CreateGradientStopSnapshots(ExcelGradientFillInfo gradient) =>
+            gradient.Stops.Select(stop => new ExcelGradientFillStopSnapshot(stop.Offset, stop.ColorArgb)).ToArray();
 
         private static ExcelAutoFilterSnapshot? BuildAutoFilterSnapshot(AutoFilter? autoFilter) {
             var reference = autoFilter?.Reference?.Value;

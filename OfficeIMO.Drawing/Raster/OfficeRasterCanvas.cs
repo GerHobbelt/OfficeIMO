@@ -56,7 +56,7 @@ public sealed partial class OfficeRasterCanvas {
         }
     }
 
-    /// <summary>Fills a rectangle with a two-stop linear gradient.</summary>
+    /// <summary>Fills a rectangle with a linear gradient.</summary>
     public void FillLinearGradientRectangle(double x, double y, double width, double height, OfficeLinearGradient gradient) {
         if (gradient == null) {
             throw new ArgumentNullException(nameof(gradient));
@@ -67,7 +67,6 @@ public sealed partial class OfficeRasterCanvas {
         }
 
         OfficeGradientStop start = gradient.Stops[0];
-        OfficeGradientStop end = gradient.Stops[gradient.Stops.Count - 1];
         int left = Clamp((int)Math.Floor(x), 0, Width - 1);
         int top = Clamp((int)Math.Floor(y), 0, Height - 1);
         int right = Clamp((int)Math.Ceiling(x + width), 0, Width);
@@ -85,7 +84,30 @@ public sealed partial class OfficeRasterCanvas {
             for (int px = left; px < right; px++) {
                 double nx = ((px + 0.5D) - x) / width;
                 double ratio = (((nx - gradient.StartX) * dx) + ((ny - gradient.StartY) * dy)) / lengthSquared;
-                BlendPixel(px, py, Interpolate(start.Color, end.Color, Clamp(ratio, 0D, 1D)));
+                BlendPixel(px, py, InterpolateGradient(gradient, Clamp(ratio, 0D, 1D)));
+            }
+        }
+    }
+
+    /// <summary>Fills a rectangle with a radial gradient.</summary>
+    public void FillRadialGradientRectangle(double x, double y, double width, double height, OfficeRadialGradient gradient) {
+        if (gradient == null) {
+            throw new ArgumentNullException(nameof(gradient));
+        }
+
+        if (width <= 0D || height <= 0D || IsOutsideCanvas(x, y, width, height)) {
+            return;
+        }
+
+        int left = Clamp((int)Math.Floor(x), 0, Width - 1);
+        int top = Clamp((int)Math.Floor(y), 0, Height - 1);
+        int right = Clamp((int)Math.Ceiling(x + width), 0, Width);
+        int bottom = Clamp((int)Math.Ceiling(y + height), 0, Height);
+        for (int py = top; py < bottom; py++) {
+            double ny = ((py + 0.5D) - y) / height;
+            for (int px = left; px < right; px++) {
+                double nx = ((px + 0.5D) - x) / width;
+                BlendPixel(px, py, InterpolateGradient(gradient, ComputeRadialRatio(gradient, nx, ny)));
             }
         }
     }
@@ -391,7 +413,7 @@ public sealed partial class OfficeRasterCanvas {
         FillPolygonCore(points, color);
     }
 
-    /// <summary>Fills a polygon with a two-stop linear gradient fitted to the polygon bounds.</summary>
+    /// <summary>Fills a polygon with a linear gradient fitted to the polygon bounds.</summary>
     public void FillLinearGradientPolygon(IReadOnlyList<OfficePoint> points, OfficeLinearGradient gradient) {
         if (gradient == null) {
             throw new ArgumentNullException(nameof(gradient));
@@ -404,13 +426,39 @@ public sealed partial class OfficeRasterCanvas {
         FillPolygonCore(points, gradient);
     }
 
+    /// <summary>Fills a polygon with a radial gradient.</summary>
+    public void FillRadialGradientPolygon(IReadOnlyList<OfficePoint> points, OfficeRadialGradient gradient) {
+        if (points == null) {
+            throw new ArgumentNullException(nameof(points));
+        }
+
+        if (gradient == null) {
+            throw new ArgumentNullException(nameof(gradient));
+        }
+
+        if (points.Count < 3) {
+            return;
+        }
+
+        FillPolygonCore(points, gradient);
+    }
+
     /// <summary>Fills multiple polygon contours using the even-odd fill rule.</summary>
     public void FillPolygonsEvenOdd(IReadOnlyList<IReadOnlyList<OfficePoint>> contours, OfficeColor color) {
         if (color.A == 0 || contours == null || contours.Count == 0) {
             return;
         }
 
-        FillContours(contours, color);
+        FillContours(contours, color, OfficeFillRule.EvenOdd);
+    }
+
+    /// <summary>Fills multiple polygon contours using the non-zero winding fill rule.</summary>
+    public void FillPolygonsNonZero(IReadOnlyList<IReadOnlyList<OfficePoint>> contours, OfficeColor color) {
+        if (color.A == 0 || contours == null || contours.Count == 0) {
+            return;
+        }
+
+        FillContours(contours, color, OfficeFillRule.NonZero);
     }
 
     /// <summary>Strokes a polygon outline.</summary>
@@ -589,7 +637,7 @@ public sealed partial class OfficeRasterCanvas {
         }
     }
 
-    private void FillContours(IReadOnlyList<IReadOnlyList<OfficePoint>> contours, OfficeColor color) {
+    private void FillContours(IReadOnlyList<IReadOnlyList<OfficePoint>> contours, OfficeColor color, OfficeFillRule fillRule) {
         if (color.A == 0 || contours == null || contours.Count == 0) {
             return;
         }
@@ -630,7 +678,7 @@ public sealed partial class OfficeRasterCanvas {
         int bottom = Clamp((int)Math.Ceiling(maxY), 0, Height - 1);
         for (int py = top; py <= bottom; py++) {
             for (int px = left; px <= right; px++) {
-                double coverage = ContoursCoverage(contours, px, py);
+                double coverage = ContoursCoverage(contours, px, py, fillRule);
                 if (coverage > 0D) {
                     BlendPixel(px, py, ApplyCoverage(color, coverage));
                 }
@@ -679,7 +727,6 @@ public sealed partial class OfficeRasterCanvas {
         double width = Math.Max(0.0001D, maxX - minX);
         double height = Math.Max(0.0001D, maxY - minY);
         OfficeGradientStop start = gradient.Stops[0];
-        OfficeGradientStop end = gradient.Stops[gradient.Stops.Count - 1];
         double dx = gradient.EndX - gradient.StartX;
         double dy = gradient.EndY - gradient.StartY;
         double lengthSquared = (dx * dx) + (dy * dy);
@@ -702,7 +749,39 @@ public sealed partial class OfficeRasterCanvas {
 
                 double nx = ((px + 0.5D) - minX) / width;
                 double ratio = (((nx - gradient.StartX) * dx) + ((ny - gradient.StartY) * dy)) / lengthSquared;
-                BlendPixel(px, py, ApplyCoverage(Interpolate(start.Color, end.Color, Clamp(ratio, 0D, 1D)), coverage));
+                BlendPixel(px, py, ApplyCoverage(InterpolateGradient(gradient, Clamp(ratio, 0D, 1D)), coverage));
+            }
+        }
+    }
+
+    private void FillPolygonCore(IReadOnlyList<OfficePoint> points, OfficeRadialGradient gradient) {
+        double minX = points[0].X;
+        double maxX = points[0].X;
+        double minY = points[0].Y;
+        double maxY = points[0].Y;
+        for (int i = 1; i < points.Count; i++) {
+            minX = Math.Min(minX, points[i].X);
+            maxX = Math.Max(maxX, points[i].X);
+            minY = Math.Min(minY, points[i].Y);
+            maxY = Math.Max(maxY, points[i].Y);
+        }
+
+        double width = Math.Max(0.0001D, maxX - minX);
+        double height = Math.Max(0.0001D, maxY - minY);
+        int left = Clamp((int)Math.Floor(minX), 0, Width - 1);
+        int right = Clamp((int)Math.Ceiling(maxX), 0, Width - 1);
+        int top = Clamp((int)Math.Floor(minY), 0, Height - 1);
+        int bottom = Clamp((int)Math.Ceiling(maxY), 0, Height - 1);
+        for (int py = top; py <= bottom; py++) {
+            double ny = ((py + 0.5D) - minY) / height;
+            for (int px = left; px <= right; px++) {
+                double coverage = PolygonCoverage(points, px, py);
+                if (coverage <= 0D) {
+                    continue;
+                }
+
+                double nx = ((px + 0.5D) - minX) / width;
+                BlendPixel(px, py, ApplyCoverage(InterpolateGradient(gradient, ComputeRadialRatio(gradient, nx, ny)), coverage));
             }
         }
     }
@@ -725,6 +804,26 @@ public sealed partial class OfficeRasterCanvas {
 
         return inside;
     }
+
+    private static int GetWindingNumber(IReadOnlyList<OfficePoint> points, double x, double y) {
+        int winding = 0;
+        for (int i = 0, j = points.Count - 1; i < points.Count; j = i++) {
+            OfficePoint start = points[j];
+            OfficePoint end = points[i];
+            if (start.Y <= y) {
+                if (end.Y > y && IsLeft(start, end, x, y) > 0D) {
+                    winding++;
+                }
+            } else if (end.Y <= y && IsLeft(start, end, x, y) < 0D) {
+                winding--;
+            }
+        }
+
+        return winding;
+    }
+
+    private static double IsLeft(OfficePoint start, OfficePoint end, double x, double y) =>
+        ((end.X - start.X) * (y - start.Y)) - ((x - start.X) * (end.Y - start.Y));
 
     private void BlendPixel(int x, int y, OfficeColor color) {
         if (!IsPixelInsideClip(x, y)) {
@@ -758,7 +857,7 @@ public sealed partial class OfficeRasterCanvas {
         return covered / (double)(samples * samples);
     }
 
-    private double ContoursCoverage(IReadOnlyList<IReadOnlyList<OfficePoint>> contours, int x, int y) {
+    private double ContoursCoverage(IReadOnlyList<IReadOnlyList<OfficePoint>> contours, int x, int y, OfficeFillRule fillRule) {
         int samples = CoverageSamples;
         int covered = 0;
         for (int sy = 0; sy < samples; sy++) {
@@ -768,12 +867,18 @@ public sealed partial class OfficeRasterCanvas {
                 int winding = 0;
                 for (int i = 0; i < contours.Count; i++) {
                     IReadOnlyList<OfficePoint> contour = contours[i];
-                    if (contour.Count >= 3 && ContainsPoint(contour, sampleX, sampleY)) {
+                    if (contour.Count < 3) {
+                        continue;
+                    }
+
+                    if (fillRule == OfficeFillRule.NonZero) {
+                        winding += GetWindingNumber(contour, sampleX, sampleY);
+                    } else if (ContainsPoint(contour, sampleX, sampleY)) {
                         winding++;
                     }
                 }
 
-                if ((winding & 1) == 1) {
+                if (fillRule == OfficeFillRule.NonZero ? winding != 0 : (winding & 1) == 1) {
                     covered++;
                 }
             }
@@ -966,6 +1071,65 @@ public sealed partial class OfficeRasterCanvas {
         byte b = InterpolateByte(start.B, end.B, ratio);
         byte a = InterpolateByte(start.A, end.A, ratio);
         return OfficeColor.FromRgba(r, g, b, a);
+    }
+
+    private static OfficeColor InterpolateGradient(OfficeLinearGradient gradient, double ratio) {
+        return InterpolateGradientStops(gradient.Stops, ratio);
+    }
+
+    private static OfficeColor InterpolateGradient(OfficeRadialGradient gradient, double ratio) {
+        return InterpolateGradientStops(gradient.Stops, ratio);
+    }
+
+    private static OfficeColor InterpolateGradientStops(IReadOnlyList<OfficeGradientStop> stops, double ratio) {
+        if (ratio <= stops[0].Offset) {
+            return stops[0].Color;
+        }
+
+        for (int i = 1; i < stops.Count; i++) {
+            OfficeGradientStop next = stops[i];
+            if (ratio <= next.Offset) {
+                OfficeGradientStop previous = stops[i - 1];
+                double span = next.Offset - previous.Offset;
+                double localRatio = span <= double.Epsilon ? 0D : (ratio - previous.Offset) / span;
+                return Interpolate(previous.Color, next.Color, Clamp(localRatio, 0D, 1D));
+            }
+        }
+
+        return stops[stops.Count - 1].Color;
+    }
+
+    private static double ComputeRadialRatio(OfficeRadialGradient gradient, double x, double y) {
+        double vx = x - gradient.StartX;
+        double vy = y - gradient.StartY;
+        double dx = gradient.EndX - gradient.StartX;
+        double dy = gradient.EndY - gradient.StartY;
+        double dr = gradient.EndRadius - gradient.StartRadius;
+        double a = (dx * dx) + (dy * dy) - (dr * dr);
+        double b = -2D * ((vx * dx) + (vy * dy) + (gradient.StartRadius * dr));
+        double c = (vx * vx) + (vy * vy) - (gradient.StartRadius * gradient.StartRadius);
+        if (Math.Abs(a) < 0.0000001D) {
+            if (Math.Abs(b) < 0.0000001D) {
+                return 0D;
+            }
+
+            return Clamp(-c / b, 0D, 1D);
+        }
+
+        double discriminant = (b * b) - (4D * a * c);
+        if (discriminant < 0D) {
+            return 0D;
+        }
+
+        double sqrt = Math.Sqrt(discriminant);
+        double t1 = (-b - sqrt) / (2D * a);
+        double t2 = (-b + sqrt) / (2D * a);
+        double ratio = Math.Max(t1, t2);
+        if (ratio < 0D) {
+            ratio = Math.Min(t1, t2);
+        }
+
+        return Clamp(ratio, 0D, 1D);
     }
 
     private static byte InterpolateByte(byte start, byte end, double ratio) =>

@@ -57,6 +57,8 @@ public static partial class DocumentReader {
             IsBuiltIn = capability.IsBuiltIn,
             SupportsPath = capability.SupportsPath,
             SupportsStream = capability.SupportsStream,
+            SupportsDocumentPath = capability.SupportsDocumentPath,
+            SupportsDocumentStream = capability.SupportsDocumentStream,
             SchemaId = capability.SchemaId,
             SchemaVersion = capability.SchemaVersion,
             DefaultMaxInputBytes = capability.DefaultMaxInputBytes,
@@ -356,6 +358,7 @@ public static partial class DocumentReader {
             MaxInputBytes = o?.MaxInputBytes,
             OpenXmlMaxCharactersInPart = o == null ? ReaderOptions.DefaultOpenXmlMaxCharactersInPart : o.OpenXmlMaxCharactersInPart,
             MaxOpenXmlImageAssets = o == null ? ReaderOptions.DefaultMaxOpenXmlImageAssets : o.MaxOpenXmlImageAssets,
+            OpenPassword = o?.OpenPassword,
             MaxOpenXmlImagePlacementsPerRelationship = o == null ? ReaderOptions.DefaultMaxOpenXmlImagePlacementsPerRelationship : o.MaxOpenXmlImagePlacementsPerRelationship,
             MaxOpenXmlImageAssetBytes = o == null ? ReaderOptions.DefaultMaxOpenXmlImageAssetBytes : o.MaxOpenXmlImageAssetBytes,
             MaxOpenXmlImageTotalAssetBytes = o == null ? ReaderOptions.DefaultMaxOpenXmlImageTotalAssetBytes : o.MaxOpenXmlImageTotalAssetBytes,
@@ -390,6 +393,7 @@ public static partial class DocumentReader {
             MaxInputBytes = options.MaxInputBytes,
             OpenXmlMaxCharactersInPart = options.OpenXmlMaxCharactersInPart,
             MaxOpenXmlImageAssets = options.MaxOpenXmlImageAssets,
+            OpenPassword = options.OpenPassword,
             MaxOpenXmlImagePlacementsPerRelationship = options.MaxOpenXmlImagePlacementsPerRelationship,
             MaxOpenXmlImageAssetBytes = options.MaxOpenXmlImageAssetBytes,
             MaxOpenXmlImageTotalAssetBytes = options.MaxOpenXmlImageTotalAssetBytes,
@@ -535,6 +539,7 @@ public static partial class DocumentReader {
         if (opt == null) return null;
         if (!opt.OpenXmlMaxCharactersInPart.HasValue) return null;
         return new OpenSettings {
+            AutoSave = false,
             MaxCharactersInPart = opt.OpenXmlMaxCharactersInPart.Value
         };
     }

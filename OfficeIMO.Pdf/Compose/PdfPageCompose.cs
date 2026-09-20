@@ -273,10 +273,16 @@ public class PdfPageCompose {
     public PdfPageCompose UseFontFamily(PdfEmbeddedFontFamily fontFamily) { Options.UseFontFamily(fontFamily); return this; }
     /// <summary>Registers a planned embedded-font fallback set for generated rich text runs on this composed page or section.</summary>
     public PdfPageCompose RegisterEmbeddedFontFallbacks(PdfEmbeddedFontFallbackSet fallbackSet) { Options.RegisterEmbeddedFontFallbacks(fallbackSet); return this; }
+    /// <summary>Applies OfficeIMO's built-in generated-text fallback groups for this composed page or section.</summary>
+    public PdfPageCompose UseTextFallbacks(PdfTextFallbackFeatures features = PdfTextFallbackFeatures.Default) { Options.UseTextFallbacks(features); return this; }
+    /// <summary>Registers generated-text fallback fonts from installed system font families without requiring callers to choose PDF font slots.</summary>
+    public PdfPageCompose UseEmbeddedFontFallbacksFromSystem(string? familyNames, int maxFallbackFonts = 2) { Options.UseEmbeddedFontFallbacksFromSystem(familyNames, maxFallbackFonts); return this; }
     /// <summary>Uses caller-supplied TrueType font files for this composed page or section.</summary>
     public PdfPageCompose UseFontFamily(string familyName, byte[] regular, byte[]? bold = null, byte[]? italic = null, byte[]? boldItalic = null) { Options.UseFontFamily(familyName, regular, bold, italic, boldItalic); return this; }
     /// <summary>Uses caller-supplied TrueType font files for this composed page or section.</summary>
     public PdfPageCompose UseFontFamily(string familyName, string regularPath, string? boldPath = null, string? italicPath = null, string? boldItalicPath = null) { Options.UseFontFamily(familyName, regularPath, boldPath, italicPath, boldItalicPath); return this; }
+    /// <summary>Sets or clears the page-scoped generated text line-break callback used for long unspaced tokens.</summary>
+    public PdfPageCompose TextLineBreaks(PdfTextLineBreakCallback? callback) { Options.SetTextLineBreaks(callback); return this; }
     /// <summary>Sets or clears the page-scoped generated text hyphenation callback used for long unspaced tokens.</summary>
     public PdfPageCompose TextHyphenation(PdfTextHyphenationCallback? callback) { Options.SetTextHyphenation(callback); return this; }
     /// <summary>Configures default text style for the page.</summary>

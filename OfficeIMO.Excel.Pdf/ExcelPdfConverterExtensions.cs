@@ -22,8 +22,8 @@ namespace OfficeIMO.Excel.Pdf {
             IReadOnlyList<string> sheetNames = GetSheetNames(reader, options);
             bool hasExplicitSheetSelection = HasExplicitSheetSelection(options);
             IReadOnlyList<WorksheetPdfExportPlan> exportPlans = BuildWorksheetExportPlans(document, reader, sheetNames, options, hasExplicitSheetSelection, defaultFontFamily);
-            RegisterWorksheetFonts(pdfOptions, exportPlans, options, preserveConfiguredFontSlots);
-            ApplyDefaultEmbeddedFontFallback(pdfOptions, options, preserveConfiguredFontSlots);
+            HashSet<PdfCore.PdfStandardFont> registeredFontSlots = RegisterWorksheetFonts(pdfOptions, exportPlans, options, preserveConfiguredFontSlots);
+            ApplyTextFallbacks(pdfOptions, options, preserveConfiguredFontSlots, registeredFontSlots);
             var pdf = PdfCore.PdfDocument.Create(pdfOptions);
             IReadOnlyDictionary<string, string> sheetDestinations = BuildSheetDestinationMap(exportPlans);
             IReadOnlyDictionary<string, string> cellDestinations = BuildCellDestinationMap(exportPlans);
@@ -74,6 +74,19 @@ namespace OfficeIMO.Excel.Pdf {
             }
 
             return pdf;
+        }
+
+        /// <summary>
+        /// Converts an Excel workbook to a PDF document and returns conversion diagnostics with it.
+        /// </summary>
+        public static PdfCore.PdfDocumentConversionResult ToPdfDocumentResult(this ExcelDocument document, ExcelPdfSaveOptions? options = null) {
+            if (document == null) {
+                throw new ArgumentNullException(nameof(document));
+            }
+
+            options ??= new ExcelPdfSaveOptions();
+            PdfCore.PdfDocument pdf = document.ToPdfDocument(options);
+            return new PdfCore.PdfDocumentConversionResult(pdf, options.ConversionReport);
         }
 
         private static PdfCore.PdfImageStyle CreateConverterImageStyle() => new() {

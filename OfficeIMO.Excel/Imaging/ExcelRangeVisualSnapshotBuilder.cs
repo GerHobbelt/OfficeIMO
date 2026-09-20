@@ -399,6 +399,9 @@ namespace OfficeIMO.Excel {
                     drawing.FillColorArgb,
                     drawing.StrokeColorArgb,
                     drawing.StrokeWidth,
+                    drawing.StrokeDashStyle,
+                    drawing.StrokeLineCap,
+                    drawing.StrokeLineJoin,
                     drawing.Text,
                     drawing.TextAlignment,
                     drawing.TextVerticalAlignment,
@@ -414,6 +417,8 @@ namespace OfficeIMO.Excel {
                     drawing.TextInsetTop,
                     drawing.TextInsetRight,
                     drawing.TextInsetBottom,
+                    drawing.Glow,
+                    drawing.Shadow,
                     GetDrawingDiagnosticSource(sheet, drawing)));
             }
 
@@ -441,12 +446,34 @@ namespace OfficeIMO.Excel {
                 FillGradientUnsupported = fillColorArgb == null && style.FillGradientUnsupported,
                 FillGradientStartColorArgb = fillColorArgb == null ? style.FillGradientStartColorArgb : null,
                 FillGradientEndColorArgb = fillColorArgb == null ? style.FillGradientEndColorArgb : null,
+                FillGradientStops = fillColorArgb == null ? style.FillGradientStops : Array.Empty<ExcelGradientFillStopSnapshot>(),
                 FillGradientDegree = fillColorArgb == null ? style.FillGradientDegree : null,
-                Border = style.Border,
+                Border = MergeConditionalBorder(style.Border, format.Border),
                 HorizontalAlignment = style.HorizontalAlignment,
                 VerticalAlignment = style.VerticalAlignment,
+                TextIndent = style.TextIndent,
                 WrapText = style.WrapText,
                 ShrinkToFit = style.ShrinkToFit
+            };
+        }
+
+        private static ExcelCellBorderSnapshot? MergeConditionalBorder(ExcelCellBorderSnapshot? styleBorder, ExcelCellBorderSnapshot? conditionalBorder) {
+            if (conditionalBorder == null) {
+                return styleBorder;
+            }
+
+            if (styleBorder == null) {
+                return conditionalBorder;
+            }
+
+            return new ExcelCellBorderSnapshot {
+                Left = conditionalBorder.Left ?? styleBorder.Left,
+                Right = conditionalBorder.Right ?? styleBorder.Right,
+                Top = conditionalBorder.Top ?? styleBorder.Top,
+                Bottom = conditionalBorder.Bottom ?? styleBorder.Bottom,
+                Diagonal = conditionalBorder.Diagonal ?? styleBorder.Diagonal,
+                DiagonalUp = conditionalBorder.Diagonal != null ? conditionalBorder.DiagonalUp : styleBorder.DiagonalUp,
+                DiagonalDown = conditionalBorder.Diagonal != null ? conditionalBorder.DiagonalDown : styleBorder.DiagonalDown
             };
         }
 
@@ -707,6 +734,7 @@ namespace OfficeIMO.Excel {
                         snapshotHeight,
                         pair.Value.Author,
                         pair.Value.Text,
+                        BuildRichTextRuns(pair.Value.RichTextRuns),
                         bodyObstacles,
                         out ExcelVisualCommentBody body)) {
                         bodies.Add(body);
@@ -748,6 +776,7 @@ namespace OfficeIMO.Excel {
                         snapshotHeight,
                         ResolveThreadedCommentTitle(pair.Value),
                         FormatThreadedCommentBody(pair.Value),
+                        Array.Empty<ExcelVisualTextRun>(),
                         bodyObstacles,
                         out ExcelVisualCommentBody body)) {
                         bodies.Add(body);
@@ -810,6 +839,7 @@ namespace OfficeIMO.Excel {
             double snapshotHeight,
             string? title,
             string? text,
+            IReadOnlyList<ExcelVisualTextRun>? richTextRuns,
             IReadOnlyList<ExcelVisualBounds> bodyObstacles,
             out ExcelVisualCommentBody body) {
             body = null!;
@@ -840,6 +870,7 @@ namespace OfficeIMO.Excel {
                 indicator.Threaded,
                 resolvedTitle,
                 resolvedText,
+                richTextRuns,
                 indicator.Source);
             return true;
         }

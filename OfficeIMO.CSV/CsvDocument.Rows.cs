@@ -21,6 +21,24 @@ public sealed partial class CsvDocument
         return array;
     }
 
+    private IEnumerable<object?[]> EnumerateRawRows()
+    {
+        if (_mode == CsvLoadMode.Stream && _streamingSource is not null)
+        {
+            return _streamingSource.ReadRows();
+        }
+
+        return EnumerateInMemoryRows();
+
+        IEnumerable<object?[]> EnumerateInMemoryRows()
+        {
+            foreach (var row in _rows)
+            {
+                yield return row.Values;
+            }
+        }
+    }
+
     private static IReadOnlyList<string> GenerateDefaultHeader(int count)
     {
         var result = new List<string>(count);
@@ -34,29 +52,166 @@ public sealed partial class CsvDocument
 
     private static IReadOnlyList<string> NormalizeParsedHeader(IReadOnlyList<string> header, CsvLoadOptions options)
     {
-        if (!options.GenerateMissingHeaderNames)
+        if (!options.GenerateMissingHeaderNames && options.DuplicateHeaderBehavior == CsvDuplicateHeaderBehavior.Preserve)
         {
             return header.ToArray();
         }
 
         var result = new string[header.Count];
+        var sourceNames = CreateHeaderNameSet(header);
+        var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var generated = 1;
         for (var i = 0; i < header.Count; i++)
         {
             var name = header[i];
-            if (string.IsNullOrEmpty(name))
+            if (string.IsNullOrEmpty(name) && options.GenerateMissingHeaderNames)
             {
                 do
                 {
                     name = $"H{generated++}";
                 }
-                while (header.Contains(name, StringComparer.OrdinalIgnoreCase) || result.Contains(name, StringComparer.OrdinalIgnoreCase));
+                while (sourceNames.Contains(name) || assigned.Contains(name));
+            }
+
+            if (!string.IsNullOrEmpty(name) && !assigned.Add(name))
+            {
+                name = options.DuplicateHeaderBehavior switch
+                {
+                    CsvDuplicateHeaderBehavior.Preserve => name,
+                    CsvDuplicateHeaderBehavior.Rename => CreateUniqueDuplicateHeaderName(name, sourceNames, assigned),
+                    CsvDuplicateHeaderBehavior.Throw => throw new CsvException($"CSV header contains duplicate column name '{name}'."),
+                    _ => throw new ArgumentOutOfRangeException(nameof(options), options.DuplicateHeaderBehavior, "Unsupported duplicate CSV header behavior.")
+                };
+
+                assigned.Add(name);
             }
 
             result[i] = name;
         }
 
         return result;
+    }
+
+    private static HashSet<string> CreateHeaderNameSet(IReadOnlyList<string> header)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < header.Count; i++)
+        {
+            if (!string.IsNullOrEmpty(header[i]))
+            {
+                names.Add(header[i]);
+            }
+        }
+
+        return names;
+    }
+
+    private static string CreateUniqueDuplicateHeaderName(string name, HashSet<string> sourceHeader, HashSet<string> assignedHeader)
+    {
+        var suffix = 2;
+        string candidate;
+        do
+        {
+            candidate = $"{name}_{suffix++}";
+        }
+        while (sourceHeader.Contains(candidate) || assignedHeader.Contains(candidate));
+
+        return candidate;
+    }
+
+    internal static IReadOnlyList<string> AppendStaticColumnsToHeader(IReadOnlyList<string> header, CsvLoadOptions options)
+    {
+        if (options.StaticColumns is null || options.StaticColumns.Count == 0)
+        {
+            return header;
+        }
+
+        var combined = new string[header.Count + options.StaticColumns.Count];
+        for (var i = 0; i < header.Count; i++)
+        {
+            combined[i] = header[i];
+        }
+
+        var index = header.Count;
+        foreach (var staticColumn in options.StaticColumns)
+        {
+            combined[index++] = staticColumn.Key;
+        }
+
+        return NormalizeParsedHeader(combined, options);
+    }
+
+    internal static IReadOnlyList<string> BuildParsedStringValues(IReadOnlyList<string> values, int headerCount, CsvLoadOptions options)
+    {
+        var staticCount = options.StaticColumns?.Count ?? 0;
+        var sourceHeaderCount = headerCount - staticCount;
+        var aligned = AlignParsedStringValues(values, sourceHeaderCount, options.ColumnCountMismatchPolicy);
+        if (staticCount == 0)
+        {
+            return aligned;
+        }
+
+        var result = new string[headerCount];
+        for (var i = 0; i < aligned.Count; i++)
+        {
+            result[i] = aligned[i];
+        }
+
+        var index = aligned.Count;
+        foreach (var staticColumn in options.StaticColumns!)
+        {
+            result[index++] = Convert.ToString(staticColumn.Value, options.Culture) ?? string.Empty;
+        }
+
+        return result;
+    }
+
+    internal static object?[] BuildParsedObjectValues(IReadOnlyList<string> values, int headerCount, CsvLoadOptions options)
+    {
+        return FillParsedObjectValues(values, headerCount, options, target: null);
+    }
+
+    internal static object?[] FillParsedObjectValues(IReadOnlyList<string> values, int headerCount, CsvLoadOptions options, object?[]? target)
+    {
+        var staticCount = options.StaticColumns?.Count ?? 0;
+        var sourceHeaderCount = headerCount - staticCount;
+        var aligned = target is { Length: var length } && length == headerCount
+            ? target
+            : new object?[headerCount];
+
+        var copyCount = Math.Min(values.Count, sourceHeaderCount);
+        if (values.Count != sourceHeaderCount && options.ColumnCountMismatchPolicy == CsvColumnCountMismatchPolicy.Strict)
+        {
+            throw new CsvException($"Row contains {values.Count} values but header defines {sourceHeaderCount} columns.");
+        }
+
+        for (var i = 0; i < copyCount; i++)
+        {
+            aligned[i] = NormalizeLoadedValue(values[i], options);
+        }
+
+        for (var i = copyCount; i < sourceHeaderCount; i++)
+        {
+            aligned[i] = string.Empty;
+        }
+
+        if (staticCount > 0)
+        {
+            var index = sourceHeaderCount;
+            foreach (var staticColumn in options.StaticColumns!)
+            {
+                aligned[index++] = staticColumn.Value;
+            }
+        }
+
+        return aligned;
+    }
+
+    private static object? NormalizeLoadedValue(string value, CsvLoadOptions options)
+    {
+        return options.NullValue is not null && string.Equals(value, options.NullValue, StringComparison.Ordinal)
+            ? null
+            : value;
     }
 
     private static IReadOnlyList<string> AlignParsedStringValues(IReadOnlyList<string> values, int headerCount, CsvColumnCountMismatchPolicy policy)

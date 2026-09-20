@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Globalization;
+using System.IO.Compression;
 using System.Text;
 
 namespace OfficeIMO.CSV;
@@ -16,6 +17,12 @@ public sealed class CsvSaveOptions
     /// Gets or sets the field delimiter character. Default is <c>,</c>.
     /// </summary>
     public char Delimiter { get; set; } = DefaultDelimiter;
+
+    /// <summary>
+    /// Gets or sets the field delimiter text. Leave unset to use <see cref="Delimiter"/>.
+    /// Single-character values keep the optimized character delimiter path; longer values enable flexible delimiter writing.
+    /// </summary>
+    public string? DelimiterText { get; set; }
 
     /// <summary>
     /// Gets or sets the newline sequence written between records. Default is <see cref="Environment.NewLine"/>.
@@ -36,6 +43,41 @@ public sealed class CsvSaveOptions
     /// Gets or sets the text encoding used when writing to files. Defaults to UTF-8 without BOM when omitted.
     /// </summary>
     public Encoding? Encoding { get; set; }
+
+    /// <summary>
+    /// Gets or sets compression used when writing files. Default infers compression from the file extension.
+    /// </summary>
+    public CsvCompressionType CompressionType { get; set; } = CsvCompressionType.Auto;
+
+    /// <summary>
+    /// Gets or sets the compression level used when writing compressed CSV files.
+    /// </summary>
+    public CompressionLevel CompressionLevel { get; set; } = CompressionLevel.Optimal;
+
+    /// <summary>
+    /// Gets or sets the token written for <c>null</c> values. Defaults to an empty field.
+    /// </summary>
+    public string? NullValue { get; set; }
+
+    /// <summary>
+    /// Gets or sets a custom date/time format used when writing <see cref="DateTime"/> and <see cref="DateTimeOffset"/> values.
+    /// </summary>
+    public string? DateTimeFormat { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether date/time values are converted to UTC before formatting.
+    /// </summary>
+    public bool UseUtc { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether file output appends to an existing CSV file.
+    /// </summary>
+    public bool Append { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether file output should fail if the destination already exists.
+    /// </summary>
+    public bool NoClobber { get; set; }
 
     /// <summary>
     /// Gets or sets how formula-like values are handled before writing CSV output. Default preserves values exactly.

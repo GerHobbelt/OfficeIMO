@@ -38,11 +38,16 @@ new CsvDocument()
 
 - Keeps headers and rows as a first-class document model instead of ad hoc string arrays.
 - Loads from files, streams, or text and saves through configurable delimiter, culture, encoding, and newline options.
+- Supports single-character delimiters through `Delimiter` and multi-character delimiters through `DelimiterText`.
+- Reads and writes compressed CSV files with extension-based detection for gzip, deflate, Brotli, and zlib.
 - Can escape formula-like values during save when producing CSV files that people will open in spreadsheet applications.
+- Handles real-world import details such as duplicate headers, generated blank headers, null tokens, static metadata columns, custom date formats, comments, W3C `#Fields:` headers, and mismatched row lengths.
+- Provides cancellation, progress callbacks, parse-error collection, field-length limits, quote normalization, and string interning for import pipelines.
 - Supports `AddRow`, `AddColumn`, `RemoveColumn`, `SortBy`, `Filter`, and `Transform`.
-- Provides schema validation with required columns, typed columns, defaults, and custom rules.
+- Provides schema inference and schema validation with required columns, typed columns, defaults, and custom rules.
 - Maps rows to typed objects with explicit no-reflection mapping.
 - Supports streaming mode for large files and explicit materialization when transforms are needed.
+- Includes benchmark lanes against Dataplat/dbatools CSV, Sep, Sylvan, CsvHelper, and OfficeIMO fast paths.
 
 ## Schema example
 
@@ -69,6 +74,30 @@ document.Validate(out var errors);
 foreach (var error in errors) {
     Console.WriteLine($"{error.RowIndex}:{error.ColumnName} - {error.Message}");
 }
+```
+
+Use `ConvertUsing` when a column needs domain-specific conversion before it becomes a `DataTable` or `IDataReader` value:
+
+```csharp
+var document = CsvDocument.Load("input.csv")
+    .EnsureSchema(schema => schema
+        .Column("Priority")
+        .AsInt32()
+        .ConvertUsing(value => string.Equals(Convert.ToString(value), "high", StringComparison.OrdinalIgnoreCase) ? 10 : 1));
+
+DataTable table = document.ToDataTable();
+```
+
+Infer a schema from sampled rows when the incoming file should define the import contract:
+
+```csharp
+var document = CsvDocument.Load("input.csv", new CsvLoadOptions {
+    DateTimeFormats = new[] { "dd-MMM-yyyy" }
+});
+
+CsvSchema inferred = document.InferSchema(sampleSize: 1000);
+document.EnsureInferredSchema()
+    .ValidateOrThrow();
 ```
 
 ## Typed mapping
@@ -153,6 +182,128 @@ var transformed = CsvDocument.Load("large.csv", new CsvLoadOptions {
 transformed.Save("ready.csv");
 ```
 
+Use `CreateDataReader` when the next hop expects an ADO.NET reader, such as `DataTable.Load` or a provider bulk-copy API. Schema inference can expose typed columns while the rows remain forward-only:
+
+```csharp
+using System.Data;
+
+var document = CsvDocument.Load("large.csv", new CsvLoadOptions {
+    Mode = CsvLoadMode.Stream
+});
+
+using var reader = document.CreateDataReader(new CsvDataReaderOptions {
+    InferSchema = true,
+    SchemaSampleSize = 1000
+});
+
+var table = new DataTable();
+table.Load(reader);
+```
+
+## Real-world headers
+
+CSV exports often contain blank or repeated header names. By default, blank headers are generated as `H1`, `H2`, and duplicate names are renamed with suffixes so name-based row access stays unambiguous:
+
+```csharp
+var document = CsvDocument.Parse("Name,Name\nAlpha,Beta\n");
+
+Console.WriteLine(string.Join(", ", document.Header));
+// Name, Name_2
+```
+
+Use `DuplicateHeaderBehavior` when a pipeline needs to preserve source names exactly or reject ambiguous files:
+
+```csharp
+var strict = new CsvLoadOptions {
+    DuplicateHeaderBehavior = CsvDuplicateHeaderBehavior.Throw
+};
+
+CsvDocument.Load("input.csv", strict);
+```
+
+Append static metadata columns during import when a database or audit pipeline needs source context on every row:
+
+```csharp
+var document = CsvDocument.Load("input.csv", new CsvLoadOptions {
+    StaticColumns = new Dictionary<string, object?> {
+        ["SourceFile"] = "input.csv",
+        ["ImportedUtc"] = DateTime.UtcNow
+    }
+});
+```
+
+Use `NullValue` and `DateTimeFormats` when a CSV producer uses explicit null tokens or non-default date shapes:
+
+```csharp
+var document = CsvDocument.Load("input.csv", new CsvLoadOptions {
+    NullValue = "<null>",
+    DateTimeFormats = new[] { "dd-MMM-yyyy", "yyyyMMdd-HHmmss" }
+});
+
+DateTime created = document.AsEnumerable().First().AsDateTime("Created");
+```
+
+The parser defaults to lenient quoted-field handling for compatibility with common PowerShell CSV imports. Use strict mode when malformed quotes should fail the import:
+
+```csharp
+var document = CsvDocument.Load("input.csv", new CsvLoadOptions {
+    QuoteParsingMode = CsvQuoteParsingMode.Strict
+});
+```
+
+Use `DelimiterText` for multi-character delimiters such as `||` or `::`. Quoted fields can still contain the delimiter text:
+
+```csharp
+var document = CsvDocument.Parse(
+    "Name||Value\nAlpha||\"one||two\"\n",
+    new CsvLoadOptions { DelimiterText = "||" });
+
+document.Save("pipes.csv", new CsvSaveOptions {
+    DelimiterText = "||",
+    NewLine = "\n"
+});
+```
+
+Long-running import paths can opt into cancellation and progress reporting without changing the document model:
+
+```csharp
+using var cancellation = new CancellationTokenSource();
+
+var document = CsvDocument.Load("large.csv", new CsvLoadOptions {
+    Mode = CsvLoadMode.Stream,
+    CancellationToken = cancellation.Token,
+    ProgressReportInterval = 10_000,
+    ProgressCallback = progress =>
+        Console.WriteLine($"{progress.RecordsRead} records read")
+});
+```
+
+## Export options
+
+CSV output supports null tokens, date/time formatting, UTC conversion, append, no-clobber checks, compression, quoting, encoding, and formula escaping:
+
+```csharp
+CsvDocument.Load("input.csv")
+    .Save("output.csv.gz", new CsvSaveOptions {
+        NullValue = "<null>",
+        DateTimeFormat = "yyyy-MM-ddTHH:mm:ssZ",
+        UseUtc = true,
+        CompressionType = CsvCompressionType.Auto,
+        FormulaInjectionPolicy = CsvFormulaInjectionPolicy.Escape,
+        NewLine = "\n"
+    });
+```
+
+Append without rewriting the header:
+
+```csharp
+CsvDocument.Load("next.csv")
+    .Save("combined.csv", new CsvSaveOptions {
+        Append = true,
+        IncludeHeader = false
+    });
+```
+
 ## Objects and ad hoc data
 
 `FromObjects` is useful for small exports from anonymous objects, DTOs, or dictionaries:
@@ -165,6 +316,17 @@ var rows = new[] {
 
 CsvDocument.FromObjects(rows)
     .Save("summary.csv");
+```
+
+Use direct object writing for larger exports when the caller does not need to materialize a `CsvDocument` first. The same save options are honored, including null tokens, date/time formatting, UTC conversion, compression, append, and no-clobber checks:
+
+```csharp
+CsvDocument.SaveObjects("summary.csv.gz", rows, new CsvSaveOptions {
+    NullValue = "<null>",
+    DateTimeFormat = "yyyy-MM-ddTHH:mm:ssZ",
+    UseUtc = true,
+    CompressionType = CsvCompressionType.Auto
+});
 ```
 
 Parse text when a service receives CSV payloads without a temporary file:
@@ -184,6 +346,8 @@ string normalized = document.ToString(new CsvSaveOptions {
 ## Boundaries
 
 - This package owns CSV parsing, writing, transforms, and validation.
+- `DelimiterText` supports explicit multi-character delimiters. Delimiter auto-detection is still character-candidate based.
+- Parallel CSV-to-database import is intentionally outside this package; database bulk copy and provider behavior belong in DbaClientX or the consuming data-access layer.
 - Reader integration belongs in `OfficeIMO.Reader.Csv`.
 - Excel workbook behavior belongs in `OfficeIMO.Excel`.
 
