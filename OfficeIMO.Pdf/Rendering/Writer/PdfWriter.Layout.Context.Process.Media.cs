@@ -19,7 +19,7 @@ internal static partial class PdfWriter {
 
         private void RenderShapeFlowBlock(ShapeBlock sbk, IPdfBlock? nextBlock) {
             PdfDrawingStyle shapeStyle = ResolveDrawingStyle(sbk, currentOpts);
-            PdfDoc.ValidateDrawingStyle(shapeStyle, "Shape");
+            PdfDocument.ValidateDrawingStyle(shapeStyle, "Shape");
             if (shapeStyle.KeepWithNext && nextBlock != null) {
                 double needed = shapeStyle.SpacingBefore + sbk.Shape.Height + shapeStyle.SpacingAfter;
                 double nextHeight = MeasureNextBlockFirstVisualHeight(nextBlock, currentOpts.MarginLeft, width, currentOpts.DefaultFontSize);
@@ -31,7 +31,7 @@ internal static partial class PdfWriter {
 
         private void RenderDrawingFlowBlock(DrawingBlock dbk, IPdfBlock? nextBlock) {
             PdfDrawingStyle drawingStyle = ResolveDrawingStyle(dbk, currentOpts);
-            PdfDoc.ValidateDrawingStyle(drawingStyle, "Drawing");
+            PdfDocument.ValidateDrawingStyle(drawingStyle, "Drawing");
             if (drawingStyle.KeepWithNext && nextBlock != null) {
                 double needed = drawingStyle.SpacingBefore + dbk.Drawing.Height + drawingStyle.SpacingAfter;
                 double nextHeight = MeasureNextBlockFirstVisualHeight(nextBlock, currentOpts.MarginLeft, width, currentOpts.DefaultFontSize);
@@ -45,13 +45,14 @@ internal static partial class PdfWriter {
             double xImg = currentOpts.MarginLeft;
             double contentWidth = currentOpts.PageWidth - currentOpts.MarginLeft - currentOpts.MarginRight;
             PdfImageStyle imageStyle = ResolveImageStyle(ib, currentOpts);
-            PdfDoc.ValidateImageStyleForBox(imageStyle, ib.Width, ib.Height, nameof(imageStyle.ClipPath));
-            PdfDoc.ValidateImageFitDimensions(ib.Info, imageStyle.Fit, nameof(imageStyle.Fit));
+            PdfDocument.ValidateImageStyleForBox(imageStyle, ib.Width, ib.Height, nameof(imageStyle.ClipPath));
+            PdfDocument.ValidateImageFitDimensions(ib.Info, imageStyle.Fit, nameof(imageStyle.Fit));
             double imageSpacingBefore = ResolveTopLevelSpacingBefore(imageStyle.SpacingBefore);
-            double needed = imageSpacingBefore + ib.Height + imageStyle.SpacingAfter;
-            if (imageStyle.Align == PdfAlign.Center) xImg = currentOpts.MarginLeft + Math.Max(0, (contentWidth - ib.Width) / 2);
-            else if (imageStyle.Align == PdfAlign.Right) xImg = currentOpts.MarginLeft + Math.Max(0, contentWidth - ib.Width);
-            EnsureFixedFlowBlockFits("Image", ib.Width, needed, contentWidth);
+            var imageBox = ResolveImageFlowBox(ib, imageStyle, contentWidth, imageSpacingBefore, imageStyle.SpacingAfter);
+            double needed = imageSpacingBefore + imageBox.Height + imageStyle.SpacingAfter;
+            if (imageStyle.Align == PdfAlign.Center) xImg = currentOpts.MarginLeft + Math.Max(0, (contentWidth - imageBox.Width) / 2);
+            else if (imageStyle.Align == PdfAlign.Right) xImg = currentOpts.MarginLeft + Math.Max(0, contentWidth - imageBox.Width);
+            EnsureFixedFlowBlockFits("Image", imageBox.Width, needed, contentWidth);
             if (imageStyle.KeepWithNext && nextBlock != null) {
                 double nextHeight = MeasureNextBlockFirstVisualHeight(nextBlock, currentOpts.MarginLeft, width, currentOpts.DefaultFontSize);
                 double keepHeight = needed + nextHeight;
@@ -59,7 +60,10 @@ internal static partial class PdfWriter {
                 if (nextHeight > 0.001 && keepHeight <= availableHeight + 0.001 && y < yStart - 0.001 && y - keepHeight < currentOpts.MarginBottom) {
                     NewPage();
                     imageSpacingBefore = 0D;
-                    needed = ib.Height + imageStyle.SpacingAfter;
+                    imageBox = ResolveImageFlowBox(ib, imageStyle, contentWidth, imageSpacingBefore, imageStyle.SpacingAfter);
+                    needed = imageBox.Height + imageStyle.SpacingAfter;
+                    if (imageStyle.Align == PdfAlign.Center) xImg = currentOpts.MarginLeft + Math.Max(0, (contentWidth - imageBox.Width) / 2);
+                    else if (imageStyle.Align == PdfAlign.Right) xImg = currentOpts.MarginLeft + Math.Max(0, contentWidth - imageBox.Width);
                 }
             }
 
@@ -69,24 +73,34 @@ internal static partial class PdfWriter {
             }
             if (imageSpacingBefore > 0) y -= imageSpacingBefore;
             EnsurePage();
-            PageImage pageImage = CreatePageImage(ib, imageStyle, xImg, y - ib.Height);
+            PageImage pageImage = CreatePageImage(ib, imageStyle, xImg, y - imageBox.Height, imageBox.Width, imageBox.Height);
             currentPage!.Images.Add(pageImage);
-            AddImageLinkAnnotation(ib, imageStyle, pageImage, xImg, y - ib.Height);
+            if (!string.IsNullOrWhiteSpace(pageImage.AlternativeText)) {
+                int? markedContentId = RegisterFigureStructureElement(pageImage.AlternativeText!);
+                pageImage.MarkedContentId = markedContentId;
+                pageImage.StructElementIndex = FindStructElementIndex(currentPage, markedContentId, "Figure");
+            }
+
+            AddImageLinkAnnotation(ib, imageStyle, pageImage, xImg, y - imageBox.Height, imageBox.Width, imageBox.Height);
+            if (currentOpts.Debug?.ShowFlowObjectBoxes == true) {
+                pageImage.DebugBox = true;
+            }
+
             pageDirty = true;
-            y -= ib.Height + imageStyle.SpacingAfter;
+            y -= imageBox.Height + imageStyle.SpacingAfter;
         }
 
         private void RenderPanelFlowBlock(PanelParagraphBlock ppb, IPdfBlock? nextBlock) {
             double size = currentOpts.DefaultFontSize;
             double leading = size * 1.4;
             var panelFont = ChooseNormal(currentOpts.DefaultFont);
-            double firstBaselineOffset = GetAscender(panelFont, size);
+            double firstBaselineOffset = GetAscenderForOptions(panelFont, size, currentOpts);
             double contentWidth = currentOpts.PageWidth - currentOpts.MarginLeft - currentOpts.MarginRight;
             PanelStyle panelStyle = ResolvePanelStyle(ppb, currentOpts);
             double innerWidth = panelStyle.MaxWidth.HasValue ? Math.Min(contentWidth, panelStyle.MaxWidth.Value) : contentWidth;
             ValidatePanelStyle(panelStyle, innerWidth);
             double textWidthAvail = innerWidth - 2 * panelStyle.PaddingX;
-            var (lines, lineHeights) = WrapRichRuns(ppb.Runs, textWidthAvail, size, panelFont, leading);
+            var (lines, lineHeights) = WrapRichRunsCore(ppb.Runs, textWidthAvail, size, panelFont, leading, null, DefaultParagraphTabStopWidth, currentOpts);
             double panelWidth = innerWidth;
             double xLeft = currentOpts.MarginLeft;
             if (panelStyle.Align == PdfAlign.Center) xLeft = currentOpts.MarginLeft + Math.Max(0, (contentWidth - innerWidth) / 2);
@@ -124,10 +138,11 @@ internal static partial class PdfWriter {
                 double panelTop = y;
                 double panelBottom = y - panelHeight;
                 if (panelBottom < currentOpts.MarginBottom) { NewPage(); panelTop = y; panelBottom = y - panelHeight; }
-                if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xLeft, panelBottom, panelWidth, panelTop - panelBottom); }
-                if (DrawPanelBorder(sb, panelStyle, xLeft, panelBottom, panelWidth, panelTop - panelBottom)) { pageDirty = true; }
+                if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xLeft, panelBottom, panelWidth, panelTop - panelBottom, emitGeneratedStructure); }
+                if (DrawPanelBorder(sb, panelStyle, xLeft, panelBottom, panelWidth, panelTop - panelBottom, emitGeneratedStructure)) { pageDirty = true; }
                 pageDirty = true;
-                WriteRichParagraph(sb, new RichParagraphBlock(ppb.Runs, ppb.Align, ppb.DefaultColor), lines, lineHeights, currentOpts, panelTop - panelStyle.PaddingY - firstBaselineOffset, size, leading, currentPage!.Annotations, xLeft + panelStyle.PaddingX, textWidthAvail);
+                int? panelMarkedContentId = RegisterTextStructureElement("P");
+                WriteRichParagraph(sb, new RichParagraphBlock(ppb.Runs, ppb.Align, ppb.DefaultColor), lines, lineHeights, currentOpts, panelTop - panelStyle.PaddingY - firstBaselineOffset, size, leading, currentPage!.Annotations, xLeft + panelStyle.PaddingX, textWidthAvail, structureType: "P", markedContentId: panelMarkedContentId, structurePage: currentPage);
                 MarkRichFonts(ppb.Runs);
                 y = panelBottom;
                 if (panelStyle.SpacingAfter > 0) {
@@ -141,29 +156,44 @@ internal static partial class PdfWriter {
                 int li = 0; bool firstSeg = true;
                 while (li < lines.Count) {
                     double avail = y - currentOpts.MarginBottom;
-                    if (avail < 0.5) { NewPage(); firstSeg = false; continue; }
                     double topPad = firstSeg ? panelStyle.PaddingY : 0;
                     double minLine = lineHeights[li];
-                    if (avail < topPad + minLine) { NewPage(); firstSeg = false; continue; }
+                    if (avail < topPad + minLine) {
+                        EnsurePanelSegmentCanFitLine(topPad, minLine);
+                        NewPage();
+                        continue;
+                    }
+
                     double roomForText = avail - topPad - panelStyle.PaddingY;
+                    if (roomForText < minLine) {
+                        roomForText = avail - topPad;
+                    }
+
                     int take = 0; double hsum = 0;
                     for (int k = li; k < lines.Count; k++) {
                         double h = lineHeights[k];
                         if (hsum + h > roomForText) break;
                         hsum += h; take++;
                     }
+
+                    if (take == 0) {
+                        EnsurePanelSegmentCanFitLine(topPad, minLine);
+                        NewPage();
+                        continue;
+                    }
+
                     bool lastSeg = (li + take) >= lines.Count;
                     double panelTop = y;
-                    double usedBottomPad = panelStyle.PaddingY;
-                    if (!lastSeg && topPad + hsum + usedBottomPad > avail) usedBottomPad = Math.Max(0, avail - (topPad + hsum));
+                    double usedBottomPad = lastSeg ? panelStyle.PaddingY : Math.Max(0, avail - (topPad + hsum));
                     double panelBottom = y - (topPad + hsum + usedBottomPad);
-                    if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xLeft, panelBottom, panelWidth, panelTop - panelBottom); }
-                    if (DrawPanelBorder(sb, panelStyle, xLeft, panelBottom, panelWidth, panelTop - panelBottom)) { pageDirty = true; }
+                    if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xLeft, panelBottom, panelWidth, panelTop - panelBottom, emitGeneratedStructure); }
+                    if (DrawPanelBorder(sb, panelStyle, xLeft, panelBottom, panelWidth, panelTop - panelBottom, emitGeneratedStructure)) { pageDirty = true; }
                     var sliceLines = new System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>>();
                     var sliceHeights = new System.Collections.Generic.List<double>();
                     for (int k = 0; k < take; k++) { sliceLines.Add(lines[li + k]); sliceHeights.Add(lineHeights[li + k]); }
                     pageDirty = true;
-                    WriteRichParagraph(sb, new RichParagraphBlock(ppb.Runs, ppb.Align, ppb.DefaultColor), sliceLines, sliceHeights, currentOpts, panelTop - topPad - firstBaselineOffset, size, leading, currentPage!.Annotations, xLeft + panelStyle.PaddingX, textWidthAvail);
+                    int? panelMarkedContentId = RegisterTextStructureElement("P");
+                    WriteRichParagraph(sb, new RichParagraphBlock(ppb.Runs, ppb.Align, ppb.DefaultColor), sliceLines, sliceHeights, currentOpts, panelTop - topPad - firstBaselineOffset, size, leading, currentPage!.Annotations, xLeft + panelStyle.PaddingX, textWidthAvail, structureType: "P", markedContentId: panelMarkedContentId, structurePage: currentPage);
                     MarkRichFonts(ppb.Runs);
                     y = panelBottom; li += take; firstSeg = false;
                     if (li < lines.Count) {

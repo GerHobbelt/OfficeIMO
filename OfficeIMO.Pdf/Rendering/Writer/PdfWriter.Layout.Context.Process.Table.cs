@@ -148,29 +148,34 @@ internal static partial class PdfWriter {
                     var cellFont = GetTableRowFont(currentOpts, rowUsesBold);
                     double cellWidth = GetTableCellWidth(colPixel, cell.Column, cell.ColumnSpan, colGapPx);
                     double innerWidth = Math.Max(1, cellWidth - GetTableCellPaddingLeft(style, ri, cell.Column) - GetTableCellPaddingRight(style, ri, cell.Column));
-                    TableCellTextLayout lines = CreateTableCellTextLayout(cell, innerWidth, cellFont, rowSize, rowLeading);
+                    TableCellTextLayout lines = CreateTableCellTextLayout(cell, innerWidth, cellFont, rowSize, rowLeading, currentOpts);
                     rowLines[ri][cell.Column] = lines;
                     if (cell.RowSpan <= 1) {
                         maxLines = Math.Max(maxLines, lines.LineCount);
-                        maxRequiredHeight = Math.Max(maxRequiredHeight, MeasureTableCellContentHeight(cell, lines, 0, lines.LineCount, rowLeading) + GetTableCellPaddingTop(style, ri, cell.Column) + GetTableCellPaddingBottom(style, ri, cell.Column));
+                        maxRequiredHeight = Math.Max(maxRequiredHeight, MeasureTableCellContentHeight(cell, lines, 0, lines.LineCount, rowLeading, innerWidth) + GetTableCellPaddingTop(style, ri, cell.Column) + GetTableCellPaddingBottom(style, ri, cell.Column));
                     }
                 }
                 rowLineCounts[ri] = maxLines;
                 rowHeights[ri] = Math.Max(maxRequiredHeight, GetTableRowMinHeight(style, ri));
             }
-            ApplyTableRowSpanHeights(tb, style, cols, rowLines, rowHeights, rowLeadings, rowGapPx);
+            ApplyTableRowSpanHeights(tb, style, cols, colPixel, rowLines, rowHeights, rowLeadings, colGapPx, rowGapPx);
             double xOrigin = ResolveTableX(tb.Align, style, currentOpts.MarginLeft, contentWidth, tableWidth);
 
             double maxContentHeight = currentOpts.PageHeight - currentOpts.MarginTop - currentOpts.MarginBottom;
             string? captionText = string.IsNullOrWhiteSpace(style.Caption) ? null : style.Caption;
-            System.Collections.Generic.List<string>? captionLines = null;
+            System.Collections.Generic.IReadOnlyList<TextRun>? captionRuns = null;
+            System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>>? captionLines = null;
+            System.Collections.Generic.List<double>? captionLineHeights = null;
             double captionSize = style.CaptionFontSize ?? size;
             double captionLeading = captionSize * 1.25;
             double captionHeight = 0;
             if (captionText != null) {
                 var captionFontForWrap = ChooseNormal(currentOpts.DefaultFont);
-                captionLines = WrapSimpleText(captionText, tableWidth, captionFontForWrap, captionSize).ToList();
-                captionHeight = captionLines.Count * captionLeading;
+                captionRuns = new[] { TextRun.Normal(captionText, style.CaptionColor, captionSize) };
+                var captionWrap = WrapRichRunsCore(captionRuns, tableWidth, captionSize, captionFontForWrap, captionLeading, null, DefaultParagraphTabStopWidth, currentOpts);
+                captionLines = captionWrap.Lines;
+                captionLineHeights = captionWrap.LineHeights;
+                captionHeight = MeasureRichLinesHeight(captionLineHeights, captionLines.Count, captionLeading);
                 double firstRowHeight = rowHeights.Length > 0 ? rowHeights[0] : 0;
                 if (captionHeight + style.CaptionSpacingAfter + firstRowHeight > maxContentHeight + 0.001) {
                     throw new ArgumentException("Table caption and first row exceed the available page content height.");
@@ -210,7 +215,22 @@ internal static partial class PdfWriter {
                 y -= tableSpacingBefore;
             }
 
-            if (captionLines != null) {
+            int? tableStructureElementIndex = null;
+            LayoutResult.Page? tableStructurePage = null;
+            int? EnsureTableStructureElement() {
+                if (!emitGeneratedStructure || currentPage == null) {
+                    return null;
+                }
+
+                if (!ReferenceEquals(tableStructurePage, currentPage)) {
+                    tableStructurePage = currentPage;
+                    tableStructureElementIndex = RegisterStructureContainer("Table");
+                }
+
+                return tableStructureElementIndex;
+            }
+
+            if (captionRuns != null && captionLines != null && captionLineHeights != null) {
                 var captionFont = ChooseNormal(currentOpts.DefaultFont);
                 double firstRowHeight = rowHeights.Length > 0 ? rowHeights[0] : 0;
                 double captionAndFirstRowHeight = captionHeight + style.CaptionSpacingAfter + firstRowHeight;
@@ -219,7 +239,9 @@ internal static partial class PdfWriter {
                     NewPage();
                 }
 
-                WriteLinesInternal("F1", captionSize, captionLeading, xOrigin, tableWidth, y - GetAscender(captionFont, captionSize), captionLines, style.CaptionAlign, style.CaptionColor);
+                int? captionMarkedContentId = RegisterTextStructureElement("Caption", EnsureTableStructureElement());
+                MarkRichFonts(captionRuns);
+                WriteRichParagraph(sb, new RichParagraphBlock(captionRuns, style.CaptionAlign, style.CaptionColor), captionLines, captionLineHeights, currentOpts, FirstTextBaselineFromTop(captionFont, captionSize, y), captionSize, captionLeading, currentPage!.Annotations, xOrigin, tableWidth, structureType: "Caption", markedContentId: captionMarkedContentId, structurePage: currentPage);
                 y -= captionHeight + style.CaptionSpacingAfter;
             }
 
@@ -257,7 +279,47 @@ internal static partial class PdfWriter {
                 }
             }
 
-            void DrawTableRowSegment(int rowIndex, bool renderAsHeader, int startLine, int lineCount, bool suppressCellObjects = false) {
+            double MeasureTableRowSegmentHeight(int rowIndex, int startLine, int lineCount, bool suppressCellObjects) {
+                double rowLeading = rowLeadings[rowIndex];
+                double rowPadTop = GetTableRowMaxPaddingTop(tb, style, rowIndex, cols);
+                double rowPadBottom = GetTableRowMaxPaddingBottom(tb, style, rowIndex, cols);
+                double segmentHeight = rowLeading + rowPadTop + rowPadBottom;
+                var cells = GetTableCellLayouts(tb, rowIndex, cols);
+                for (int cellIndex = 0; cellIndex < cells.Count; cellIndex++) {
+                    TableCellLayout cell = cells[cellIndex];
+                    double cellWidth = GetTableCellWidth(colPixel, cell.Column, cell.ColumnSpan, colGapPx);
+                    double cellPadLeft = GetTableCellPaddingLeft(style, rowIndex, cell.Column);
+                    double cellPadRight = GetTableCellPaddingRight(style, rowIndex, cell.Column);
+                    double innerW = cellWidth - cellPadLeft - cellPadRight;
+                    TableCellTextLayout lines = rowLines[rowIndex][cell.Column];
+                    int sourceStartLine = startLine;
+                    int visibleLineCount = Math.Max(0, Math.Min(lineCount, lines.LineCount - sourceStartLine));
+                    bool includeObjects = !suppressCellObjects && sourceStartLine == 0;
+                    double cellContentHeight = MeasureTableCellContentHeight(cell, lines, sourceStartLine, visibleLineCount, rowLeading, innerW, includeObjects) +
+                        GetTableCellPaddingTop(style, rowIndex, cell.Column) +
+                        GetTableCellPaddingBottom(style, rowIndex, cell.Column);
+                    segmentHeight = Math.Max(segmentHeight, cellContentHeight);
+                }
+
+                return segmentHeight;
+            }
+
+            int GetTableRowSegmentLineCountThatFits(int rowIndex, int startLine, double available) {
+                int remaining = rowLineCounts[rowIndex] - startLine;
+                int best = 0;
+                for (int candidate = 1; candidate <= remaining; candidate++) {
+                    double candidateHeight = MeasureTableRowSegmentHeight(rowIndex, startLine, candidate, suppressCellObjects: false);
+                    if (candidateHeight > available + 0.001) {
+                        break;
+                    }
+
+                    best = candidate;
+                }
+
+                return Math.Max(1, best);
+            }
+
+            void DrawTableRowSegment(int rowIndex, bool renderAsHeader, int startLine, int lineCount, bool suppressCellObjects = false, PageStructElement? existingRowStructureElement = null) {
                 bool renderAsFooter = rowIndex >= footerStartRowIndex;
                 bool rowUsesBold = rowBold[rowIndex];
                 double rowSize = rowSizes[rowIndex];
@@ -271,13 +333,13 @@ internal static partial class PdfWriter {
                 bool wholeRowSegment = startLine == 0 && lineCount == rowLineCounts[rowIndex];
                 double rowPadTop = GetTableRowMaxPaddingTop(tb, style, rowIndex, cols);
                 double rowPadBottom = GetTableRowMaxPaddingBottom(tb, style, rowIndex, cols);
-                double rowHeight = wholeRowSegment ? rowHeights[rowIndex] : Math.Max(1, lineCount) * rowLeading + rowPadTop + rowPadBottom;
+                double rowHeight = wholeRowSegment ? rowHeights[rowIndex] : MeasureTableRowSegmentHeight(rowIndex, startLine, lineCount, suppressCellObjects);
                 double rowBottom = y - rowHeight;
                 if (currentOpts.Debug?.ShowTableRowBoxes == true) { pageDirty = true; DrawRowRect(sb, new PdfColor(1, 0, 1), 0.6, xOrigin, rowBottom, tableWidth, rowHeight); }
                 int bodyRowIndex = rowIndex - headerRowCount;
                 bool stripeBodyRow = bodyRowIndex >= 0 && bodyRowIndex % 2 == 1;
                 bool[] rowFillSkips = GetRowSpanContinuationSkipColumns(tb, rowIndex, cols);
-                if (style?.HeaderFill is not null && renderAsHeader) { pageDirty = true; DrawTableRowFill(sb, style.HeaderFill.Value, xOrigin, colPixel, colGapPx, rowBottom, rowHeight, rowFillSkips); } else if (style?.FooterFill is not null && renderAsFooter) { pageDirty = true; DrawTableRowFill(sb, style.FooterFill.Value, xOrigin, colPixel, colGapPx, rowBottom, rowHeight, rowFillSkips); } else if (!renderAsHeader && !renderAsFooter && style?.RowStripeFill is not null && stripeBodyRow) { pageDirty = true; DrawTableRowFill(sb, style.RowStripeFill.Value, xOrigin, colPixel, colGapPx, rowBottom, rowHeight, rowFillSkips); }
+                if (style?.HeaderFill is not null && renderAsHeader) { pageDirty = true; DrawTableRowFill(sb, style.HeaderFill.Value, xOrigin, colPixel, colGapPx, rowBottom, rowHeight, rowFillSkips, emitGeneratedStructure); } else if (style?.FooterFill is not null && renderAsFooter) { pageDirty = true; DrawTableRowFill(sb, style.FooterFill.Value, xOrigin, colPixel, colGapPx, rowBottom, rowHeight, rowFillSkips, emitGeneratedStructure); } else if (!renderAsHeader && !renderAsFooter && style?.RowStripeFill is not null && stripeBodyRow) { pageDirty = true; DrawTableRowFill(sb, style.RowStripeFill.Value, xOrigin, colPixel, colGapPx, rowBottom, rowHeight, rowFillSkips, emitGeneratedStructure); }
                 if (!renderAsHeader && !renderAsFooter && style?.BodyColumnFills != null) {
                     bool[] bodyColumnFillSkips = GetMergedCellContinuationSkipColumns(tb, rowIndex, cols);
                     double fillX = xOrigin;
@@ -285,7 +347,7 @@ internal static partial class PdfWriter {
                         PdfColor? fill = fillColumn < style.BodyColumnFills.Count ? style.BodyColumnFills[fillColumn] : null;
                         if (fill.HasValue && (fillColumn >= bodyColumnFillSkips.Length || !bodyColumnFillSkips[fillColumn])) {
                             pageDirty = true;
-                            DrawRowFill(sb, fill.Value, fillX, rowBottom, colPixel[fillColumn], rowHeight);
+                            DrawRowFill(sb, fill.Value, fillX, rowBottom, colPixel[fillColumn], rowHeight, emitGeneratedStructure);
                         }
                         fillX += colPixel[fillColumn] + colGapPx;
                     }
@@ -307,21 +369,21 @@ internal static partial class PdfWriter {
                                 }
                             }
 
-                            DrawRowFill(sb, fill, fillX, fillBottom, GetTableCellWidth(colPixel, fillColumn, span, colGapPx), fillHeight);
+                            DrawRowFill(sb, fill, fillX, fillBottom, GetTableCellWidth(colPixel, fillColumn, span, colGapPx), fillHeight, emitGeneratedStructure);
                         }
                         fillX += colPixel[fillColumn] + colGapPx;
                     }
                 }
-                if (style != null && DrawTableCellDataBars(sb, style, cells, rowIndex, cols, xOrigin, y, rowBottom, rowHeight, colPixel, colGapPx, rowHeights, rowGapPx, wholeRowSegment, startLine, rowFillSkips)) {
+                if (style != null && DrawTableCellDataBars(sb, style, cells, rowIndex, cols, xOrigin, y, rowBottom, rowHeight, colPixel, colGapPx, rowHeights, rowGapPx, wholeRowSegment, startLine, rowFillSkips, emitGeneratedStructure)) {
                     pageDirty = true;
                 }
-                if (style != null && DrawTableCellIcons(sb, style, cells, rowIndex, cols, xOrigin, y, rowBottom, rowHeight, colPixel, colGapPx, rowHeights, rowGapPx, wholeRowSegment, startLine, rowFillSkips)) {
+                if (style != null && DrawTableCellIcons(sb, style, cells, rowIndex, cols, xOrigin, y, rowBottom, rowHeight, colPixel, colGapPx, rowHeights, rowGapPx, wholeRowSegment, startLine, rowFillSkips, emitGeneratedStructure)) {
                     pageDirty = true;
                 }
                 if (currentOpts.Debug?.ShowTableBaselines == true) {
                     double x1 = xOrigin;
                     double x2 = xOrigin + tableWidth;
-                    double baselineYDbg = y - padTop - GetAscender(GetTableRowFont(currentOpts, rowUsesBold), rowSize);
+                    double baselineYDbg = y - padTop - GetAscenderForOptions(GetTableRowFont(currentOpts, rowUsesBold), rowSize, currentOpts);
                     pageDirty = true;
                     DrawHLine(sb, new PdfColor(0, 0.6, 0), 0.4, x1, x2, baselineYDbg);
                 }
@@ -329,7 +391,60 @@ internal static partial class PdfWriter {
                 double yRect = rowBottom;
                 double rowWidth = tableWidth;
                 double hRect = rowHeight;
+                if (style?.BorderColor is not null && style.BorderWidth > 0) {
+                    pageDirty = true;
+                    bool[] topBorderSkips = GetRowSpanBoundarySkipColumns(tb, rowIndex - 1, cols);
+                    bool[] bottomBorderSkips = GetRowSpanBoundarySkipColumns(tb, rowIndex, cols);
+                    bool segmentBorderRows = HasSkippedColumns(topBorderSkips, cols) || HasSkippedColumns(bottomBorderSkips, cols);
+                    if (segmentBorderRows) {
+                        DrawTableHorizontalLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, colPixel, colGapPx, yRect + hRect, topBorderSkips, emitGeneratedStructure);
+                        DrawTableHorizontalLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, colPixel, colGapPx, yRect, bottomBorderSkips, emitGeneratedStructure);
+                        DrawVLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, yRect + hRect, yRect, emitGeneratedStructure);
+                        DrawVLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin + tableWidth, yRect + hRect, yRect, emitGeneratedStructure);
+                    } else {
+                        DrawRowRect(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, yRect, rowWidth, hRect, emitGeneratedStructure);
+                    }
+
+                    double xi2 = xOrigin;
+                    double yTop = yRect + hRect;
+                    double yBottom = yRect;
+                    for (int c = 0; c < cols - 1; c++) {
+                        xi2 += colPixel[c];
+                        if (IsTableBoundaryInsideSpannedCell(tb, rowIndex, c, cols)) {
+                            xi2 += colGapPx;
+                            continue;
+                        }
+
+                        if (currentOpts.Debug?.ShowTableColumnGuides == true)
+                            DrawVLine(sb, new PdfColor(0, 0, 1), Math.Max(0.3, style.BorderWidth), xi2, yTop, yBottom);
+                        else
+                            DrawVLine(sb, style.BorderColor.Value, style.BorderWidth, xi2, yTop, yBottom, emitGeneratedStructure);
+                        xi2 += colGapPx;
+                    }
+                }
+                if (style != null && renderAsFooter && rowIndex == footerStartRowIndex) {
+                    PdfColor? footerSeparatorColor = style.FooterSeparatorColor ?? style.RowSeparatorColor;
+                    double footerSeparatorWidth = style.FooterSeparatorWidth > 0 ? style.FooterSeparatorWidth : style.RowSeparatorWidth;
+                    if (footerSeparatorColor is not null && footerSeparatorWidth > 0) {
+                        pageDirty = true;
+                        DrawTableHorizontalLine(sb, footerSeparatorColor.Value, footerSeparatorWidth, xOrigin, colPixel, colGapPx, y, GetRowSpanBoundarySkipColumns(tb, rowIndex - 1, cols), emitGeneratedStructure);
+                    }
+                }
+                PdfColor? separatorColor = renderAsHeader && style?.HeaderSeparatorColor is not null ? style.HeaderSeparatorColor : style?.RowSeparatorColor;
+                double separatorWidth = renderAsHeader && style?.HeaderSeparatorWidth > 0 ? style.HeaderSeparatorWidth : style?.RowSeparatorWidth ?? 0;
+                if (separatorColor is not null && separatorWidth > 0) {
+                    pageDirty = true;
+                    DrawTableHorizontalLine(sb, separatorColor.Value, separatorWidth, xOrigin, colPixel, colGapPx, rowBottom, GetRowSpanBoundarySkipColumns(tb, rowIndex, cols), emitGeneratedStructure);
+                }
                 var textColor = renderAsHeader ? style!.HeaderTextColor : renderAsFooter ? style!.FooterTextColor : style!.TextColor;
+                int? rowStructureElementIndex = null;
+                PageStructElement? rowStructureElement = existingRowStructureElement;
+                if (rowStructureElement == null) {
+                    rowStructureElementIndex = RegisterStructureContainer("TR", EnsureTableStructureElement());
+                    if (rowStructureElementIndex.HasValue) {
+                        rowStructureElement = currentPage!.StructElements[rowStructureElementIndex.Value];
+                    }
+                }
                 for (int cellIndex = 0; cellIndex < cells.Count; cellIndex++) {
                     TableCellLayout cell = cells[cellIndex];
                     int c = cell.Column;
@@ -359,13 +474,13 @@ internal static partial class PdfWriter {
                     if (visibleLineCount > 0) {
                         double availableTextHeight = Math.Max(0, cellHeight - cellPadTop - cellPadBottom);
                         visibleTextHeight = MeasureTableCellTextHeight(lines, sourceStartLine, visibleLineCount, rowLeading);
-                        double visibleContentHeight = MeasureTableCellContentHeight(cell, lines, sourceStartLine, visibleLineCount, rowLeading);
+                        double visibleContentHeight = MeasureTableCellContentHeight(cell, lines, sourceStartLine, visibleLineCount, rowLeading, innerW);
                         double unusedTextHeight = Math.Max(0, availableTextHeight - visibleContentHeight);
                         if (verticalAlign == PdfCellVerticalAlign.Middle) verticalOffset = unusedTextHeight / 2;
                         else if (verticalAlign == PdfCellVerticalAlign.Bottom) verticalOffset = unusedTextHeight;
                     }
 
-                    double firstBaseline = y - cellPadTop - verticalOffset - GetAscender(cellFont, rowSize) + style.RowBaselineOffset;
+                    double firstBaseline = y - cellPadTop - verticalOffset - GetAscenderForOptions(cellFont, rowSize, currentOpts) + style.RowBaselineOffset;
 
                     pageDirty = true;
                     if (cell.Runs.Any(run => run.Bold || rowUsesBold)) { currentPage!.UsedBold = true; usedBold = true; }
@@ -385,12 +500,37 @@ internal static partial class PdfWriter {
                         AddTableCellNamedDestinationName(cell.NamedDestinationName, y);
                     }
 
+                    int? cellLinkStructElementIndex = null;
                     if (visibleLineCount > 0) {
                         var visibleLines = SliceTableCellLines(lines, sourceStartLine, visibleLineCount);
                         visibleLines = StripRichLineLinksWhenCellLinked(visibleLines, linkUri, linkDestinationName);
                         var visibleHeights = SliceTableCellLineHeights(lines, sourceStartLine, visibleLineCount, rowLeading);
                         var paragraph = new RichParagraphBlock(StripRunLinksWhenCellLinked(cell.Runs, linkUri, linkDestinationName), MapTableCellAlignment(align), textColor);
-                        WriteClippedRichParagraph(sb, paragraph, visibleLines, visibleHeights, currentOpts, firstBaseline, rowSize, rowLeading, currentPage!.Annotations, xi - TableCellClipBleed, cellBottom - TableCellClipBleed, cellWidth + (TableCellClipBleed * 2D), cellHeight + (TableCellClipBleed * 2D), xi + cellPadLeft, innerW);
+                        string structureType = renderAsHeader ? "TH" : "TD";
+                        int tableColumnSpan = cell.ColumnSpan > 1 ? cell.ColumnSpan : 1;
+                        int tableRowSpan = wholeRowSegment && cell.RowSpan > 1 ? cell.RowSpan : 1;
+                        bool cellHasLinkTarget = HasCellLinkTarget(linkUri, linkDestinationName);
+                        int? markedContentId;
+                        string markedStructureType = structureType;
+                        if (cellHasLinkTarget && emitGeneratedStructure && currentPage != null) {
+                            PageStructElement? cellElement = rowStructureElement == null
+                                ? null
+                                : RegisterStructureContainer(structureType, rowStructureElement, renderAsHeader ? "Column" : string.Empty, tableColumnSpan, tableRowSpan);
+                            int? cellElementIndex = cellElement == null
+                                ? RegisterStructureContainer(structureType, rowStructureElementIndex, renderAsHeader ? "Column" : string.Empty, tableColumnSpan, tableRowSpan)
+                                : null;
+                            markedStructureType = "Link";
+                            markedContentId = cellElement == null
+                                ? RegisterTextStructureElement(markedStructureType, cellElementIndex)
+                                : RegisterTextStructureElement(markedStructureType, cellElement);
+                            cellLinkStructElementIndex = FindStructElementIndex(currentPage, markedContentId, markedStructureType);
+                        } else {
+                            markedContentId = rowStructureElement == null
+                                ? RegisterTextStructureElement(structureType, rowStructureElementIndex, renderAsHeader ? "Column" : string.Empty, tableColumnSpan, tableRowSpan)
+                                : RegisterTextStructureElement(structureType, rowStructureElement, renderAsHeader ? "Column" : string.Empty, tableColumnSpan, tableRowSpan);
+                        }
+
+                        WriteClippedRichParagraph(sb, paragraph, visibleLines, visibleHeights, currentOpts, firstBaseline, rowSize, rowLeading, currentPage!.Annotations, xi - TableCellClipBleed, cellBottom - TableCellClipBleed, cellWidth + (TableCellClipBleed * 2D), cellHeight + (TableCellClipBleed * 2D), xi + cellPadLeft, innerW, structureType: markedStructureType, markedContentId: markedContentId, structurePage: currentPage);
                     }
                     if (!suppressCellObjects && (cell.Images.Count > 0 || cell.CheckBoxes.Count > 0 || cell.FormFields.Count > 0) && sourceStartLine == 0) {
                         if (CanRenderTableCellCheckBoxInline(cell, lines, sourceStartLine, visibleLineCount)) {
@@ -406,53 +546,8 @@ internal static partial class PdfWriter {
                         double x2 = xi + cellWidth - cellPadRight;
                         double y1 = cellBottom;
                         double y2 = y;
-                        currentPage!.Annotations.Add(new LinkAnnotation { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, Uri = linkUri, DestinationName = linkDestinationName, Contents = linkContents ?? cell.Text });
+                        currentPage!.Annotations.Add(new LinkAnnotation { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, Uri = linkUri, DestinationName = linkDestinationName, Contents = linkContents ?? cell.Text, StructElementIndex = cellLinkStructElementIndex });
                     }
-                }
-                if (style?.BorderColor is not null && style.BorderWidth > 0) {
-                    pageDirty = true;
-                    bool[] topBorderSkips = GetRowSpanBoundarySkipColumns(tb, rowIndex - 1, cols);
-                    bool[] bottomBorderSkips = GetRowSpanBoundarySkipColumns(tb, rowIndex, cols);
-                    bool segmentBorderRows = HasSkippedColumns(topBorderSkips, cols) || HasSkippedColumns(bottomBorderSkips, cols);
-                    if (segmentBorderRows) {
-                        DrawTableHorizontalLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, colPixel, colGapPx, yRect + hRect, topBorderSkips);
-                        DrawTableHorizontalLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, colPixel, colGapPx, yRect, bottomBorderSkips);
-                        DrawVLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, yRect + hRect, yRect);
-                        DrawVLine(sb, style.BorderColor.Value, style.BorderWidth, xOrigin + tableWidth, yRect + hRect, yRect);
-                    } else {
-                        DrawRowRect(sb, style.BorderColor.Value, style.BorderWidth, xOrigin, yRect, rowWidth, hRect);
-                    }
-
-                    double xi2 = xOrigin;
-                    double yTop = yRect + hRect;
-                    double yBottom = yRect;
-                    for (int c = 0; c < cols - 1; c++) {
-                        xi2 += colPixel[c];
-                        if (IsTableBoundaryInsideSpannedCell(tb, rowIndex, c, cols)) {
-                            xi2 += colGapPx;
-                            continue;
-                        }
-
-                        if (currentOpts.Debug?.ShowTableColumnGuides == true)
-                            DrawVLine(sb, new PdfColor(0, 0, 1), Math.Max(0.3, style.BorderWidth), xi2, yTop, yBottom);
-                        else
-                            DrawVLine(sb, style.BorderColor.Value, style.BorderWidth, xi2, yTop, yBottom);
-                        xi2 += colGapPx;
-                    }
-                }
-                if (style != null && renderAsFooter && rowIndex == footerStartRowIndex) {
-                    PdfColor? footerSeparatorColor = style.FooterSeparatorColor ?? style.RowSeparatorColor;
-                    double footerSeparatorWidth = style.FooterSeparatorWidth > 0 ? style.FooterSeparatorWidth : style.RowSeparatorWidth;
-                    if (footerSeparatorColor is not null && footerSeparatorWidth > 0) {
-                        pageDirty = true;
-                        DrawTableHorizontalLine(sb, footerSeparatorColor.Value, footerSeparatorWidth, xOrigin, colPixel, colGapPx, y, GetRowSpanBoundarySkipColumns(tb, rowIndex - 1, cols));
-                    }
-                }
-                PdfColor? separatorColor = renderAsHeader && style?.HeaderSeparatorColor is not null ? style.HeaderSeparatorColor : style?.RowSeparatorColor;
-                double separatorWidth = renderAsHeader && style?.HeaderSeparatorWidth > 0 ? style.HeaderSeparatorWidth : style?.RowSeparatorWidth ?? 0;
-                if (separatorColor is not null && separatorWidth > 0) {
-                    pageDirty = true;
-                    DrawTableHorizontalLine(sb, separatorColor.Value, separatorWidth, xOrigin, colPixel, colGapPx, rowBottom, GetRowSpanBoundarySkipColumns(tb, rowIndex, cols));
                 }
                 if (style?.CellBorders != null && style.CellBorders.Count > 0) {
                     double borderX = xOrigin;
@@ -472,7 +567,7 @@ internal static partial class PdfWriter {
                             }
 
                             pageDirty = true;
-                            DrawCellBorder(sb, cellBorder, borderX, borderBottom, GetTableCellWidth(colPixel, borderColumn, span, colGapPx), borderHeight);
+                            DrawCellBorder(sb, cellBorder, borderX, borderBottom, GetTableCellWidth(colPixel, borderColumn, span, colGapPx), borderHeight, emitGeneratedStructure);
                         }
                         borderX += colPixel[borderColumn] + colGapPx;
                     }
@@ -489,6 +584,7 @@ internal static partial class PdfWriter {
             void DrawSplitTableRow(int rowIndex, bool renderAsHeader) {
                 int startLine = 0;
                 int totalLines = rowLineCounts[rowIndex];
+                PageStructElement? rowStructureElement = null;
                 while (startLine < totalLines) {
                     double available = y - currentOpts.MarginBottom;
                     double rowPadTop = GetTableRowMaxPaddingTop(tb, style, rowIndex, cols);
@@ -499,9 +595,11 @@ internal static partial class PdfWriter {
                         available = y - currentOpts.MarginBottom;
                     }
 
-                    int maxLinesThisPage = Math.Max(1, (int)Math.Floor((available - rowPadTop - rowPadBottom) / rowLeadings[rowIndex]));
-                    int take = Math.Min(totalLines - startLine, maxLinesThisPage);
-                    DrawTableRowSegment(rowIndex, renderAsHeader && startLine == 0, startLine, take);
+                    int take = Math.Min(totalLines - startLine, GetTableRowSegmentLineCountThatFits(rowIndex, startLine, available));
+                    DrawTableRowSegment(rowIndex, renderAsHeader && startLine == 0, startLine, take, existingRowStructureElement: rowStructureElement);
+                    if (rowStructureElement == null && emitGeneratedStructure && currentPage != null) {
+                        rowStructureElement = currentPage.StructElements.LastOrDefault(element => element.StructureType == "TR");
+                    }
                     startLine += take;
 
                     if (startLine < totalLines) {

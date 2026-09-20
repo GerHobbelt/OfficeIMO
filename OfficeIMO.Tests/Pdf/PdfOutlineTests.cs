@@ -8,7 +8,7 @@ namespace OfficeIMO.Tests.Pdf;
 public class PdfOutlineTests {
     [Fact]
     public void CreateOutlineFromHeadings_WritesNestedBookmarksAndInspectorReadsThem() {
-        byte[] bytes = PdfDoc.Create(new PdfOptions {
+        byte[] bytes = PdfDocument.Create(new PdfOptions {
                 CreateOutlineFromHeadings = true,
                 DefaultFont = PdfStandardFont.Helvetica
             })
@@ -41,22 +41,67 @@ public class PdfOutlineTests {
         Assert.Equal("Executive summary", info.Outlines[0].Title);
         Assert.Equal(1, info.Outlines[0].Level);
         Assert.Equal(1, info.Outlines[0].PageNumber);
+        Assert.True(info.Outlines[0].IsExpanded);
         Assert.True(info.Outlines[0].DestinationTop > 0);
 
         PdfOutlineItem child = Assert.Single(info.Outlines[0].Children);
         Assert.Equal("Risk posture", child.Title);
         Assert.Equal(2, child.Level);
         Assert.Equal(1, child.PageNumber);
+        Assert.True(child.IsExpanded);
 
         Assert.Equal("Appendix", info.Outlines[1].Title);
         Assert.Equal(1, info.Outlines[1].Level);
         Assert.Equal(2, info.Outlines[1].PageNumber);
+        Assert.True(info.Outlines[1].IsExpanded);
         Assert.Empty(info.Outlines[1].Children);
     }
 
     [Fact]
+    public void OutlineExpansionLevel_CollapsesGeneratedOutlineBranchesAndInspectorReadsState() {
+        var options = new PdfOptions {
+            CreateOutlineFromHeadings = true,
+            OutlineExpansionLevel = 0,
+            DefaultFont = PdfStandardFont.Helvetica
+        };
+
+        PdfOptions clone = options.Clone();
+        Assert.Equal(0, clone.OutlineExpansionLevel);
+
+        byte[] bytes = PdfDocument.Create(options)
+            .H1("Executive summary")
+            .H2("Risk posture")
+            .H3("Operational detail")
+            .PageBreak()
+            .H1("Appendix")
+            .ToBytes();
+
+        string pdfText = Encoding.ASCII.GetString(bytes);
+        Assert.Matches(@"/Type /Outlines /First \d+ 0 R /Last \d+ 0 R /Count 2", pdfText);
+        Assert.Contains("/Count -2", pdfText);
+        Assert.Contains("/Count -1", pdfText);
+
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+
+        Assert.Equal(2, info.Outlines.Count);
+        Assert.False(info.Outlines[0].IsExpanded);
+        PdfOutlineItem level2 = Assert.Single(info.Outlines[0].Children);
+        Assert.False(level2.IsExpanded);
+        PdfOutlineItem level3 = Assert.Single(level2.Children);
+        Assert.True(level3.IsExpanded);
+        Assert.True(info.Outlines[1].IsExpanded);
+    }
+
+    [Fact]
+    public void OutlineExpansionLevel_RejectsNegativeValues() {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfOptions {
+            OutlineExpansionLevel = -1
+        });
+    }
+
+    [Fact]
     public void CreateOutlineFromHeadings_DefaultsToOffForMinimalOutput() {
-        byte[] bytes = PdfDoc.Create(new PdfOptions {
+        byte[] bytes = PdfDocument.Create(new PdfOptions {
                 DefaultFont = PdfStandardFont.Helvetica
             })
             .H1("Heading")
@@ -73,19 +118,19 @@ public class PdfOutlineTests {
     [Fact]
     public void Headings_RejectEmptyOrWhitespaceTitlesBeforeOutlineGeneration() {
         Assert.Throws<ArgumentNullException>(() =>
-            PdfDoc.Create().H1(null!));
+            PdfDocument.Create().H1(null!));
 
         Assert.Throws<ArgumentException>(() =>
-            PdfDoc.Create().H1(string.Empty));
+            PdfDocument.Create().H1(string.Empty));
 
         Assert.Throws<ArgumentException>(() =>
-            PdfDoc.Create().H2("   "));
+            PdfDocument.Create().H2("   "));
 
         Assert.Throws<ArgumentException>(() =>
-            PdfDoc.Create().H3("\t"));
+            PdfDocument.Create().H3("\t"));
 
         Assert.Throws<ArgumentException>(() =>
-            PdfDoc.Create()
+            PdfDocument.Create()
                 .Compose(compose =>
                     compose.Page(page =>
                         page.Content(content =>

@@ -7,7 +7,12 @@ namespace OfficeIMO.Word.Pdf {
     /// </summary>
     public class PdfSaveOptions {
         /// <summary>
-        /// Optional Word-style font family used as the first-party PDF default font when it maps to Helvetica, Times, or Courier standard PDF families.
+        /// PDF creation options passed to the first-party PDF engine. The options are cloned before export.
+        /// </summary>
+        public PdfCore.PdfOptions? PdfOptions { get; set; }
+
+        /// <summary>
+        /// Optional Word-style font family used as the first-party PDF default font. Installed TrueType faces are embedded when available; otherwise the family maps to the nearest PDF standard font.
         /// </summary>
         public string? FontFamily { get; set; }
 
@@ -63,6 +68,12 @@ namespace OfficeIMO.Word.Pdf {
         public List<PdfExportWarning> Warnings { get; } = new List<PdfExportWarning>();
 
         /// <summary>
+        /// Shared conversion report populated alongside <see cref="Warnings"/> for wrapper-friendly diagnostics.
+        /// The report is cleared at the start of each export.
+        /// </summary>
+        public PdfCore.PdfConversionReport ConversionReport { get; } = new PdfCore.PdfConversionReport();
+
+        /// <summary>
         /// Determines whether page numbers are rendered in the PDF footer. Defaults to true.
         /// </summary>
         public bool IncludePageNumbers { get; set; } = true;
@@ -77,5 +88,10 @@ namespace OfficeIMO.Word.Pdf {
         /// Defaults to false to preserve strict fidelity.
         /// </summary>
         public bool DefaultTableBorders { get; set; } = false;
+
+        internal void ResetExportState() {
+            Warnings.Clear();
+            ConversionReport.Clear();
+        }
     }
 }

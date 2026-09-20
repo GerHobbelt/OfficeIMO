@@ -8,7 +8,7 @@ namespace OfficeIMO.Markdown.Pdf;
 /// First-party Markdown to PDF conversion helpers.
 /// </summary>
 public static partial class MarkdownPdfConverterExtensions {
-    private static void RenderImageBlock(PdfCore.PdfDoc pdf, ImageBlock image, MarkdownPdfSaveOptions options) {
+    private static void RenderImageBlock(PdfCore.PdfDocument pdf, ImageBlock image, MarkdownPdfSaveOptions options) {
         if (!options.IncludeLocalImages) {
             RenderImagePlaceholder(pdf, image);
             return;
@@ -26,14 +26,14 @@ public static partial class MarkdownPdfConverterExtensions {
         double width = image.Width ?? GetImageWidthPoints(info, options);
         double height = image.Height ?? GetImageHeightPoints(info, width, options);
         string? linkUri = NormalizeAbsoluteLink(image.LinkUrl);
-        pdf.Image(bytes, width, height, PdfCore.PdfAlign.Left, spacingBefore: 4, spacingAfter: 6, linkUri: linkUri, linkContents: linkUri == null ? null : image.PlainAlt ?? image.Alt);
+        pdf.Image(bytes, width, height, PdfCore.PdfAlign.Left, spacingBefore: 4, spacingAfter: 6, style: CreateConverterImageStyle(), linkUri: linkUri, linkContents: linkUri == null ? null : image.PlainAlt ?? image.Alt);
 
         if (!string.IsNullOrWhiteSpace(image.Caption)) {
             pdf.Paragraph(builder => builder.Italic(image.Caption!), style: new PdfCore.PdfParagraphStyle { SpacingAfter = 8 });
         }
     }
 
-    private static void RenderImagePlaceholder(PdfCore.PdfDoc pdf, ImageBlock image) {
+    private static void RenderImagePlaceholder(PdfCore.PdfDocument pdf, ImageBlock image) {
         string label = image.PlainAlt ?? image.Alt ?? image.Path;
         if (string.IsNullOrWhiteSpace(label)) {
             label = "Image";
@@ -41,6 +41,10 @@ public static partial class MarkdownPdfConverterExtensions {
 
         pdf.Paragraph(builder => builder.Italic("[Image: " + label + "]"));
     }
+
+    private static PdfCore.PdfImageStyle CreateConverterImageStyle() => new() {
+        ScaleDownToFit = true
+    };
 
 
     private static bool TryReadImageBytes(string path, MarkdownPdfSaveOptions options, out byte[] bytes, out string sourceName, out string warningCode, out string warningMessage) {
@@ -232,6 +236,8 @@ public static partial class MarkdownPdfConverterExtensions {
 
 
     private static void AddWarning(MarkdownPdfSaveOptions options, string code, string source, string message) {
-        options.Warnings.Add(new MarkdownPdfExportWarning(code, source, message));
+        var warning = new MarkdownPdfExportWarning(code, source, message);
+        options.Warnings.Add(warning);
+        options.ConversionReport.Add(warning.ToConversionWarning());
     }
 }

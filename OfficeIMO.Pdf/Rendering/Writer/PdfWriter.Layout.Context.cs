@@ -10,6 +10,7 @@ internal static partial class PdfWriter {
         private readonly System.Collections.Generic.Stack<PdfOptions> optionsStack = new System.Collections.Generic.Stack<PdfOptions>();
         private readonly System.Collections.Generic.Stack<int> pageGroupStack = new System.Collections.Generic.Stack<int>();
         private readonly System.Collections.Generic.HashSet<string> emittedTableCellNamedDestinations = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+        private readonly bool emitGeneratedStructure;
         private PdfOptions currentOpts;
         private int currentPageGroupId;
         private int nextPageGroupId = 1;
@@ -21,9 +22,11 @@ internal static partial class PdfWriter {
         private bool usedBold;
         private bool usedItalic;
         private bool usedBoldItalic;
+        private int _canvasClipDepth;
 
         public LayoutContext(PdfOptions options) {
             currentOpts = options;
+            emitGeneratedStructure = options.TaggedStructureMode == PdfTaggedStructureMode.CatalogMarkers;
             optionsStack.Push(options);
             pageGroupStack.Push(0);
         }
@@ -56,6 +59,9 @@ internal static partial class PdfWriter {
             currentPage != null &&
             (currentPage.Images.Count > 0 ||
             currentPage.Annotations.Count > 0 ||
+            currentPage.TextAnnotations.Count > 0 ||
+            currentPage.FreeTextAnnotations.Count > 0 ||
+            currentPage.HighlightAnnotations.Count > 0 ||
             currentPage.FormFields.Count > 0 ||
             currentPage.GraphicsStates.Count > 0 ||
             currentPage.Shadings.Count > 0 ||

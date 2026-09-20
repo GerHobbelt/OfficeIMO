@@ -1,4 +1,5 @@
 using PdfCore = OfficeIMO.Pdf;
+using DrawingCore = OfficeIMO.Drawing;
 
 namespace OfficeIMO.Excel.Pdf {
     /// <summary>
@@ -13,6 +14,22 @@ namespace OfficeIMO.Excel.Pdf {
         /// The collection is cleared at the start of each export.
         /// </summary>
         public List<ExcelPdfExportWarning> Warnings { get; } = new List<ExcelPdfExportWarning>();
+
+        /// <summary>
+        /// Shared conversion report populated alongside <see cref="Warnings"/> for wrapper-friendly diagnostics.
+        /// The report is cleared at the start of each export.
+        /// </summary>
+        public PdfCore.PdfConversionReport ConversionReport { get; } = new PdfCore.PdfConversionReport();
+
+        /// <summary>
+        /// PDF creation options passed to the first-party PDF engine. The options are cloned before export.
+        /// </summary>
+        public PdfCore.PdfOptions? PdfOptions { get; set; }
+
+        /// <summary>
+        /// Optional workbook default font family used by the first-party PDF engine.
+        /// </summary>
+        public string? FontFamily { get; set; }
 
         /// <summary>
         /// Optional first-party page size in PDF points.
@@ -90,6 +107,16 @@ namespace OfficeIMO.Excel.Pdf {
         public bool UseWorksheetCharts { get; set; } = true;
 
         /// <summary>
+        /// Optional shared chart style applied to exported worksheet chart snapshots and generated chart legend tables.
+        /// </summary>
+        public DrawingCore.OfficeChartStyle? ChartStyle { get; set; }
+
+        /// <summary>
+        /// Optional shared chart layout applied to exported worksheet chart snapshots.
+        /// </summary>
+        public DrawingCore.OfficeChartLayout? ChartLayout { get; set; }
+
+        /// <summary>
         /// When true, worksheet merged cells are exported as PDF table column and row spans. Defaults to true.
         /// </summary>
         public bool UseWorksheetMergedCells { get; set; } = true;
@@ -146,5 +173,10 @@ namespace OfficeIMO.Excel.Pdf {
         /// Text used for empty worksheet cells in the exported PDF table. Defaults to an empty string.
         /// </summary>
         public string EmptyCellText { get; set; } = string.Empty;
+
+        internal void ResetExportState() {
+            Warnings.Clear();
+            ConversionReport.Clear();
+        }
     }
 }

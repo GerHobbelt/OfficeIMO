@@ -92,13 +92,20 @@ internal static partial class PdfWriter {
             public int PageGroupId { get; set; }
             public string Content { get; set; } = string.Empty;
             public System.Collections.Generic.List<LinkAnnotation> Annotations { get; } = new();
+            public System.Collections.Generic.List<TextAnnotation> TextAnnotations { get; } = new();
+            public System.Collections.Generic.List<FreeTextAnnotation> FreeTextAnnotations { get; } = new();
+            public System.Collections.Generic.List<HighlightAnnotation> HighlightAnnotations { get; } = new();
             public System.Collections.Generic.List<FormFieldAnnotation> FormFields { get; } = new();
             public System.Collections.Generic.List<PageImage> Images { get; } = new();
             public System.Collections.Generic.List<PageGraphicsState> GraphicsStates { get; } = new();
             public System.Collections.Generic.List<PageShading> Shadings { get; } = new();
             public System.Collections.Generic.List<PageBookmark> Bookmarks { get; } = new();
             public System.Collections.Generic.List<PageNamedDestination> NamedDestinations { get; } = new();
+            public System.Collections.Generic.List<PageStructElement> StructElements { get; } = new();
+            public System.Collections.Generic.List<PdfGeneratedDrawingAccessibilityEvidence> Drawings { get; } = new();
             public System.Collections.Generic.HashSet<PdfStandardFont> UsedFonts { get; } = new();
+            public int? StructParentIndex { get; set; }
+            public int NextMarkedContentId { get; set; }
             public bool UsedBold { get; set; }
             public bool UsedItalic { get; set; }
             public bool UsedBoldItalic { get; set; }
@@ -113,6 +120,49 @@ internal static partial class PdfWriter {
         public string? Uri { get; set; }
         public string? DestinationName { get; set; }
         public string? Contents { get; set; }
+        public int? StructParentIndex { get; set; }
+        public int? StructElementIndex { get; set; }
+        public PageImage? LinkedImage { get; set; }
+        public int ObjectId { get; set; }
+    }
+
+    private sealed class TextAnnotation {
+        public double X1 { get; set; }
+        public double Y1 { get; set; }
+        public double X2 { get; set; }
+        public double Y2 { get; set; }
+        public string Contents { get; set; } = string.Empty;
+        public PdfTextAnnotationIcon Icon { get; set; }
+        public PdfColor? Color { get; set; }
+        public bool Open { get; set; }
+        public int ObjectId { get; set; }
+    }
+
+    private sealed class FreeTextAnnotation {
+        public double X1 { get; set; }
+        public double Y1 { get; set; }
+        public double X2 { get; set; }
+        public double Y2 { get; set; }
+        public string Contents { get; set; } = string.Empty;
+        public double FontSize { get; set; }
+        public PdfColor TextColor { get; set; }
+        public PdfColor? BorderColor { get; set; }
+        public double BorderWidth { get; set; }
+        public PdfColor? FillColor { get; set; }
+        public PdfAlign TextAlign { get; set; }
+        public double Padding { get; set; }
+        public double? LineHeight { get; set; }
+        public int ObjectId { get; set; }
+    }
+
+    private sealed class HighlightAnnotation {
+        public double X1 { get; set; }
+        public double Y1 { get; set; }
+        public double X2 { get; set; }
+        public double Y2 { get; set; }
+        public string Contents { get; set; } = string.Empty;
+        public PdfColor Color { get; set; }
+        public int ObjectId { get; set; }
     }
 
     private sealed class FormFieldAnnotation {
@@ -135,6 +185,12 @@ internal static partial class PdfWriter {
         public bool AllowsMultipleSelection { get; set; }
     }
 
+    private sealed class FormWidgetStructureReference {
+        public int StructParentIndex { get; set; }
+        public int StructElementIndex { get; set; }
+        public int ObjectId { get; set; }
+    }
+
     private enum FormFieldAnnotationKind {
         Text,
         CheckBox,
@@ -151,6 +207,23 @@ internal static partial class PdfWriter {
     private sealed class PageNamedDestination {
         public string Name { get; set; } = string.Empty;
         public double Y { get; set; }
+    }
+
+    private sealed class PageStructElement {
+        public int? MarkedContentId { get; set; }
+        public System.Collections.Generic.List<int>? AdditionalMarkedContentIds { get; set; }
+        public string StructureType { get; set; } = "P";
+        public string AlternativeText { get; set; } = string.Empty;
+        public string TableHeaderScope { get; set; } = string.Empty;
+        public int TableColumnSpan { get; set; } = 1;
+        public int TableRowSpan { get; set; } = 1;
+        public int? ParentElementIndex { get; set; }
+        public PageStructElement? ParentElement { get; set; }
+        public int? AnnotationObjectId { get; set; }
+        public System.Collections.Generic.List<int>? AdditionalAnnotationObjectIds { get; set; }
+        public int? AnnotationStructParentIndex { get; set; }
+        public System.Collections.Generic.List<int>? AdditionalAnnotationStructParentIndexes { get; set; }
+        public int ObjectId { get; set; }
     }
 
     private sealed class PageNumberInfo {
@@ -202,10 +275,18 @@ internal static partial class PdfWriter {
         public double ClipX { get; set; }
         public double ClipY { get; set; }
         public double ClipHeight { get; set; }
+        public PdfImageSourceCrop? SourceCrop { get; set; }
         public bool IsBackgroundDecoration { get; set; }
         public double Opacity { get; set; } = 1D;
         public double RotationAngle { get; set; }
+        public bool HorizontalFlip { get; set; }
+        public bool VerticalFlip { get; set; }
         public string? GraphicsStateName { get; set; }
+        public string? AlternativeText { get; set; }
+        public int? MarkedContentId { get; set; }
+        public int? StructElementIndex { get; set; }
+        public string? InlineDrawToken { get; set; }
+        public bool DebugBox { get; set; }
         public string Name { get; set; } = string.Empty;
         public int ObjectId { get; set; }
     }

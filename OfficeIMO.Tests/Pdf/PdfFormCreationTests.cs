@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text;
 using OfficeIMO.Pdf;
-using UglyToad.PdfPig;
+using PdfPigDocument = UglyToad.PdfPig.PdfDocument;
 using Xunit;
 
 namespace OfficeIMO.Tests.Pdf;
@@ -9,7 +9,7 @@ namespace OfficeIMO.Tests.Pdf;
 public class PdfFormCreationTests {
     [Fact]
     public void TextField_CreatesInspectableAcroFormField() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .Meta(title: "Generated form")
             .Paragraph(p => p.Text("Generated field:"))
             .TextField("Person.Name", width: 180, height: 24, value: "Ada Lovelace", spacingAfter: 12)
@@ -39,7 +39,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void TextField_CanBeFilledAndFlattened() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .TextField("Person.Name", width: 180, height: 24, value: "Original")
             .ToBytes();
 
@@ -56,8 +56,36 @@ public class PdfFormCreationTests {
     }
 
     [Fact]
+    public void AcroFormDefaultTextAlignment_RoundTripsThroughCatalogAndFields() {
+        byte[] pdf = PdfDocument.Create(new PdfOptions {
+                AcroFormDefaultTextAlignment = PdfFormFieldTextAlignment.Center
+            })
+            .AcroFormDefaultTextAlignment(PdfFormFieldTextAlignment.Right)
+            .TextField("Person.Name", width: 180, height: 24, value: "Ada")
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+        PdfLogicalDocument logical = PdfLogicalDocument.Load(pdf);
+        PdfFormField field = Assert.Single(info.FormFields);
+
+        Assert.Contains("/AcroForm", raw);
+        Assert.Contains("/NeedAppearances false", raw);
+        Assert.Contains("/Q 2", raw);
+        Assert.True(info.HasAcroFormQuadding);
+        Assert.Equal(2, info.AcroFormQuadding);
+        Assert.Equal(PdfFormFieldTextAlignment.Right, info.AcroFormTextAlignment);
+        Assert.True(logical.HasAcroFormQuadding);
+        Assert.Equal(2, logical.AcroFormQuadding);
+        Assert.Equal(PdfFormFieldTextAlignment.Right, logical.AcroFormTextAlignment);
+        Assert.Equal(2, field.Quadding);
+        Assert.Equal(PdfFormFieldTextAlignment.Right, field.TextAlignment);
+        Assert.Equal(PdfFormFieldTextAlignment.Right, Assert.Single(logical.FormFields).TextAlignment);
+    }
+
+    [Fact]
     public void CheckBox_CreatesInspectableAcroFormField() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .Paragraph(p => p.Text("Generated checkbox:"))
             .CheckBox("AcceptTerms", isChecked: true, size: 16, spacingAfter: 12)
             .ToBytes();
@@ -89,7 +117,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void TableCellCheckBox_CreatesInspectableAcroFormFieldInsideCell() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .Table(new[] {
                 new[] {
                     PdfTableCell.WithCheckBoxes(
@@ -118,7 +146,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void TableCellCheckBox_RendersInlineWithSingleLineText() {
-        byte[] pdf = PdfDoc.Create(new PdfOptions {
+        byte[] pdf = PdfDocument.Create(new PdfOptions {
                 PageSize = new PageSize(300, 180),
                 Margins = PageMargins.Uniform(24)
             })
@@ -133,7 +161,7 @@ public class PdfFormCreationTests {
 
         PdfDocumentInfo info = PdfInspector.Inspect(pdf);
         PdfFormWidget widget = Assert.Single(Assert.Single(info.FormFields).Widgets);
-        using var pdfDocument = PdfDocument.Open(new MemoryStream(pdf));
+        using var pdfDocument = PdfPigDocument.Open(new MemoryStream(pdf));
         var line = FindLine(pdfDocument.GetPage(1), "Table approval");
         double lineEndX = line.Max(letter => letter.EndBaseLine.X);
         double baselineY = line[0].StartBaseLine.Y;
@@ -146,7 +174,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void TableCellFormFields_CreateInspectableTextAndChoiceFieldsInsideCell() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .Table(new[] {
                 new[] {
                     PdfTableCell.WithFormFields(
@@ -181,7 +209,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void CheckBox_CanBeFilledAndFlattened() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .CheckBox("AcceptTerms")
             .ToBytes();
 
@@ -206,7 +234,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void RadioButtonGroup_CreatesInspectableAcroFormField() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .Paragraph(p => p.Text("Generated radio buttons:"))
             .RadioButtonGroup("Payment.Method", new[] { "Card", "Cash", "Wire" }, value: "Cash", size: 16, gap: 5, spacingAfter: 12)
             .ToBytes();
@@ -220,7 +248,7 @@ public class PdfFormCreationTests {
         Assert.Contains("/Ff 49152", raw);
         Assert.Contains("/Kids [", raw);
         Assert.Contains("/V /Cash", raw);
-        using var pdfDocument = PdfDocument.Open(new MemoryStream(pdf));
+        using var pdfDocument = PdfPigDocument.Open(new MemoryStream(pdf));
         string pageText = pdfDocument.GetPage(1).Text;
         Assert.Contains("Card", pageText);
         Assert.Contains("Cash", pageText);
@@ -245,7 +273,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void RadioButtonGroup_CanBeFilledAndFlattened() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .RadioButtonGroup("Payment.Method", new[] { "Card", "Cash", "Wire" }, value: "Card")
             .ToBytes();
 
@@ -271,7 +299,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void RadioButtonGroup_RejectsUnknownFillValue() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .RadioButtonGroup("Payment.Method", new[] { "Card", "Cash", "Wire" }, value: "Card")
             .ToBytes();
 
@@ -289,10 +317,11 @@ public class PdfFormCreationTests {
             BorderColor = PdfColor.FromRgb(30, 64, 175),
             BorderWidth = 2,
             TextColor = PdfColor.FromRgb(127, 29, 29),
-            MarkColor = PdfColor.FromRgb(22, 101, 52)
+            MarkColor = PdfColor.FromRgb(22, 101, 52),
+            TextAlignment = PdfFormFieldTextAlignment.Center
         };
 
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .TextField("Styled.Name", value: "Ada", style: style)
             .CheckBox("Styled.Accept", isChecked: true, style: style)
             .ChoiceField("Styled.Country", new[] { "Poland", "Germany" }, value: "Poland", style: style)
@@ -306,7 +335,13 @@ public class PdfFormCreationTests {
         Assert.Contains("0.118 0.251 0.686 RG 2 w", raw, StringComparison.Ordinal);
         Assert.Contains("0.086 0.396 0.204 RG 1.25 w", raw, StringComparison.Ordinal);
         Assert.Contains("0.086 0.396 0.204 rg", raw, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(raw, "/Q 1"));
         Assert.Equal(4, PdfInspector.Inspect(pdf).FormFields.Count);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+        Assert.Equal(PdfFormFieldTextAlignment.Center, Assert.Single(info.FormFields, field => field.Name == "Styled.Name").TextAlignment);
+        Assert.Equal(PdfFormFieldTextAlignment.Center, Assert.Single(info.FormFields, field => field.Name == "Styled.Country").TextAlignment);
+        Assert.Equal(PdfFormFieldTextAlignment.Unknown, Assert.Single(info.FormFields, field => field.Name == "Styled.Accept").TextAlignment);
+        Assert.Equal(PdfFormFieldTextAlignment.Unknown, Assert.Single(info.FormFields, field => field.Name == "Styled.Contact").TextAlignment);
 
         byte[] filled = PdfFormFiller.FillFields(pdf, new Dictionary<string, string> {
             ["Styled.Name"] = "Filled"
@@ -319,8 +354,335 @@ public class PdfFormCreationTests {
     }
 
     [Fact]
+    public void GeneratedFields_UseEmbeddedHelveticaAppearanceResourceWhenDocumentFontIsEmbedded() {
+        string? fontPath = PdfComplianceTestFonts.FindLocalTrueTypeFont();
+        if (fontPath == null) {
+            return;
+        }
+
+        byte[] pdf = PdfDocument.Create(new PdfOptions {
+                CompressContentStreams = false
+            })
+            .UseFontFamily("OfficeIMO Form Body Font", fontPath)
+            .Paragraph(paragraph => paragraph.Text("Embedded body font"))
+            .TextField("Styled.Name", value: "Ada")
+            .ChoiceField("Styled.Country", new[] { "Poland", "Germany" }, value: "Poland")
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("/Subtype /Type0", raw, StringComparison.Ordinal);
+        Assert.Contains("/AcroForm", raw, StringComparison.Ordinal);
+        Assert.Contains("/DA (/Helv 10 Tf", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("<416461> Tj", raw, StringComparison.Ordinal);
+        Assert.Matches(@"/DR << /Font << /Helv \d+ 0 R >> >>", raw);
+    }
+
+    [Fact]
+    public void GeneratedFields_EmitAccessibleMetadata() {
+        var style = new PdfFormFieldStyle {
+            AlternateName = "Accessible field",
+            MappingName = "accessible.field"
+        };
+
+        byte[] pdf = PdfDocument.Create()
+            .TextField("Accessible.Name", value: "Ada", style: style)
+            .CheckBox("Accessible.Accept", isChecked: true, style: style)
+            .ChoiceField("Accessible.Country", new[] { "Poland", "Germany" }, value: "Poland", style: style)
+            .RadioButtonGroup("Accessible.Contact", new[] { "Email", "Phone" }, value: "Phone", style: style)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+
+        Assert.Equal(4, CountOccurrences(raw, "/TU <41636365737369626C65206669656C64>"));
+        Assert.Equal(4, CountOccurrences(raw, "/TM <61636365737369626C652E6669656C64>"));
+        Assert.All(info.FormFields, field => Assert.Equal("Accessible field", field.AlternateName));
+        Assert.All(info.FormFields, field => Assert.Equal("accessible.field", field.MappingName));
+
+        PdfFormFieldStyle clone = style.Clone();
+        style.AlternateName = "Changed";
+        style.MappingName = "changed";
+        Assert.Equal("Accessible field", clone.AlternateName);
+        Assert.Equal("accessible.field", clone.MappingName);
+    }
+
+    [Fact]
+    public void GeneratedFields_EmitCommonFieldFlags() {
+        var style = new PdfFormFieldStyle {
+            IsReadOnly = true,
+            IsRequired = true,
+            IsNoExport = true
+        };
+
+        byte[] pdf = PdfDocument.Create()
+            .TextField("Flags.Name", value: "Ada", style: style)
+            .CheckBox("Flags.Accept", isChecked: true, style: style)
+            .ChoiceField("Flags.Country", new[] { "Poland", "Germany" }, value: "Poland", style: style)
+            .RadioButtonGroup("Flags.Contact", new[] { "Email", "Phone" }, value: "Email", style: style)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+
+        Assert.Contains("/Ff 7", raw, StringComparison.Ordinal);
+        Assert.Contains("/Ff 131079", raw, StringComparison.Ordinal);
+        Assert.Contains("/Ff 49159", raw, StringComparison.Ordinal);
+        Assert.All(info.FormFields, field => {
+            Assert.True(field.IsReadOnly);
+            Assert.True(field.IsRequired);
+            Assert.True(field.IsNoExport);
+        });
+
+        PdfFormField text = Assert.Single(info.FormFields, field => field.Name == "Flags.Name");
+        PdfFormField checkBox = Assert.Single(info.FormFields, field => field.Name == "Flags.Accept");
+        PdfFormField choice = Assert.Single(info.FormFields, field => field.Name == "Flags.Country");
+        PdfFormField radio = Assert.Single(info.FormFields, field => field.Name == "Flags.Contact");
+        Assert.Equal(7, text.Flags);
+        Assert.Equal(7, checkBox.Flags);
+        Assert.Equal(131079, choice.Flags);
+        Assert.Equal(49159, radio.Flags);
+        Assert.True(choice.IsCombo);
+        Assert.True(radio.IsRadioButton);
+    }
+
+    [Fact]
+    public void GeneratedTextField_EmitsMaxLength() {
+        var style = new PdfFormFieldStyle {
+            MaxLength = 32
+        };
+
+        byte[] pdf = PdfDocument.Create()
+            .TextField("Limited.Name", value: "Ada", style: style)
+            .ChoiceField("Limited.Country", new[] { "Poland", "Germany" }, value: "Poland", style: style)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+        PdfFormField text = Assert.Single(info.FormFields, field => field.Name == "Limited.Name");
+        PdfFormField choice = Assert.Single(info.FormFields, field => field.Name == "Limited.Country");
+
+        Assert.Contains("/MaxLen 32", raw, StringComparison.Ordinal);
+        Assert.Equal(32, text.MaxLength);
+        Assert.Null(choice.MaxLength);
+
+        PdfFormFieldStyle clone = style.Clone();
+        style.MaxLength = 64;
+        Assert.Equal(32, clone.MaxLength);
+    }
+
+    [Fact]
+    public void GeneratedCombTextField_RendersAppearancePerCell() {
+        var style = new PdfFormFieldStyle {
+            IsComb = true,
+            MaxLength = 4
+        };
+
+        byte[] pdf = PdfDocument.Create(new PdfOptions {
+                CompressContentStreams = false
+            })
+            .TextField("Comb.Code", value: "AB12", width: 80, height: 22, style: style)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfFormField field = Assert.Single(PdfInspector.Inspect(pdf).FormFields);
+
+        Assert.True(field.IsComb);
+        Assert.Equal(4, field.MaxLength);
+        Assert.Contains("/Ff 16777216", raw, StringComparison.Ordinal);
+        Assert.Contains("/MaxLen 4", raw, StringComparison.Ordinal);
+        Assert.Contains("<41> Tj", raw, StringComparison.Ordinal);
+        Assert.Contains("<42> Tj", raw, StringComparison.Ordinal);
+        Assert.Contains("<31> Tj", raw, StringComparison.Ordinal);
+        Assert.Contains("<32> Tj", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("<41423132> Tj", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GeneratedTextAndChoiceFields_EmitTextSpecificFlags() {
+        var style = new PdfFormFieldStyle {
+            IsMultiline = true,
+            IsPassword = true,
+            DoesNotSpellCheck = true,
+            DoesNotScroll = true
+        };
+
+        byte[] pdf = PdfDocument.Create()
+            .TextField("TextFlags.Secret", value: "Ada", height: 36, style: style)
+            .ChoiceField("TextFlags.Country", new[] { "Poland", "Germany" }, value: "Poland", style: style)
+            .CheckBox("TextFlags.Accept", isChecked: true, style: style)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+        PdfFormField text = Assert.Single(info.FormFields, field => field.Name == "TextFlags.Secret");
+        PdfFormField choice = Assert.Single(info.FormFields, field => field.Name == "TextFlags.Country");
+        PdfFormField checkBox = Assert.Single(info.FormFields, field => field.Name == "TextFlags.Accept");
+
+        Assert.Contains("/Ff 12595200", raw, StringComparison.Ordinal);
+        Assert.Contains("/Ff 4325376", raw, StringComparison.Ordinal);
+        Assert.Equal(12595200, text.Flags);
+        Assert.True(text.IsMultiline);
+        Assert.True(text.IsPassword);
+        Assert.True(text.DoesNotSpellCheck);
+        Assert.True(text.DoesNotScroll);
+        Assert.Equal(4325376, choice.Flags);
+        Assert.True(choice.IsCombo);
+        Assert.True(choice.DoesNotSpellCheck);
+        Assert.False(choice.IsMultiline);
+        Assert.False(choice.IsPassword);
+        Assert.False(choice.DoesNotScroll);
+        Assert.Null(checkBox.Flags);
+        Assert.False(checkBox.DoesNotSpellCheck);
+
+        PdfFormFieldStyle clone = style.Clone();
+        style.IsMultiline = false;
+        style.IsPassword = false;
+        style.DoesNotSpellCheck = false;
+        style.DoesNotScroll = false;
+        Assert.True(clone.IsMultiline);
+        Assert.True(clone.IsPassword);
+        Assert.True(clone.DoesNotSpellCheck);
+        Assert.True(clone.DoesNotScroll);
+    }
+
+    [Fact]
+    public void GeneratedPasswordTextField_MasksNormalAppearance() {
+        var style = new PdfFormFieldStyle {
+            IsPassword = true
+        };
+
+        byte[] pdf = PdfDocument.Create()
+            .TextField("Password.Secret", value: "Secret42", style: style)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfFormField field = Assert.Single(PdfInspector.Inspect(pdf).FormFields);
+
+        Assert.True(field.IsPassword);
+        Assert.Contains("/V <" + Hex("Secret42") + ">", raw, StringComparison.Ordinal);
+        Assert.Contains("<" + Hex("********") + "> Tj", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("<" + Hex("Secret42") + "> Tj", raw, StringComparison.Ordinal);
+
+        byte[] filled = PdfFormFiller.FillFields(pdf, new Dictionary<string, string> {
+            ["Password.Secret"] = "Updated!"
+        });
+        string filledRaw = Encoding.ASCII.GetString(filled);
+        PdfFormField filledField = Assert.Single(PdfInspector.Inspect(filled).FormFields);
+
+        Assert.True(filledField.IsPassword);
+        Assert.Equal("Updated!", filledField.Value);
+        Assert.Contains("/V <" + Hex("Updated!") + ">", filledRaw, StringComparison.Ordinal);
+        Assert.Contains("<" + Hex("********") + "> Tj", filledRaw, StringComparison.Ordinal);
+        Assert.DoesNotContain("<" + Hex("Updated!") + "> Tj", filledRaw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GeneratedTextFields_EmitFileSelectAndCombFlags() {
+        var fileStyle = new PdfFormFieldStyle {
+            IsFileSelect = true
+        };
+        var combStyle = new PdfFormFieldStyle {
+            IsComb = true,
+            MaxLength = 6
+        };
+
+        byte[] pdf = PdfDocument.Create()
+            .TextField("TextFlags.File", value: "C:\\Temp\\Report.pdf", style: fileStyle)
+            .TextField("TextFlags.Code", value: "ABC123", style: combStyle)
+            .ChoiceField("TextFlags.Country", new[] { "Poland", "Germany" }, value: "Poland", style: combStyle)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+        PdfFormField file = Assert.Single(info.FormFields, field => field.Name == "TextFlags.File");
+        PdfFormField comb = Assert.Single(info.FormFields, field => field.Name == "TextFlags.Code");
+        PdfFormField choice = Assert.Single(info.FormFields, field => field.Name == "TextFlags.Country");
+
+        Assert.Contains("/Ff 1048576", raw, StringComparison.Ordinal);
+        Assert.Contains("/Ff 16777216 /MaxLen 6", raw, StringComparison.Ordinal);
+        Assert.Equal(1048576, file.Flags);
+        Assert.True(file.IsFileSelect);
+        Assert.False(file.IsComb);
+        Assert.Equal(16777216, comb.Flags);
+        Assert.True(comb.IsComb);
+        Assert.False(comb.IsFileSelect);
+        Assert.Equal(6, comb.MaxLength);
+        Assert.True(choice.IsCombo);
+        Assert.False(choice.IsComb);
+        Assert.Null(choice.MaxLength);
+
+        PdfFormFieldStyle clone = combStyle.Clone();
+        combStyle.IsComb = false;
+        combStyle.MaxLength = 8;
+        Assert.True(clone.IsComb);
+        Assert.Equal(6, clone.MaxLength);
+
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create()
+            .TextField("TextFlags.InvalidComb", value: "ABC", style: new PdfFormFieldStyle {
+                IsComb = true
+            })
+            .ToBytes());
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create()
+            .TextField("TextFlags.InvalidCombPassword", value: "ABC", style: new PdfFormFieldStyle {
+                IsComb = true,
+                IsPassword = true,
+                MaxLength = 3
+            })
+            .ToBytes());
+    }
+
+    [Fact]
+    public void GeneratedChoiceFields_EmitChoiceSpecificFlags() {
+        var style = new PdfFormFieldStyle {
+            IsEditableChoice = true,
+            IsSortedChoice = true,
+            CommitsOnSelectionChange = true
+        };
+
+        byte[] pdf = PdfDocument.Create()
+            .ChoiceField("ChoiceFlags.Combo", new[] { "Poland", "Germany" }, value: "Poland", style: style)
+            .MultiSelectChoiceField("ChoiceFlags.List", new[] { "Poland", "Germany", "United States" }, values: new[] { "Germany" }, style: style)
+            .TextField("ChoiceFlags.Text", value: "Ada", style: style)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+        PdfFormField combo = Assert.Single(info.FormFields, field => field.Name == "ChoiceFlags.Combo");
+        PdfFormField list = Assert.Single(info.FormFields, field => field.Name == "ChoiceFlags.List");
+        PdfFormField text = Assert.Single(info.FormFields, field => field.Name == "ChoiceFlags.Text");
+
+        Assert.Contains("/Ff 68026368", raw, StringComparison.Ordinal);
+        Assert.Contains("/Ff 69730304", raw, StringComparison.Ordinal);
+        Assert.Equal(68026368, combo.Flags);
+        Assert.True(combo.IsCombo);
+        Assert.True(combo.IsEditableChoice);
+        Assert.True(combo.IsSortedChoice);
+        Assert.True(combo.CommitsOnSelectionChange);
+        Assert.Equal(69730304, list.Flags);
+        Assert.False(list.IsCombo);
+        Assert.False(list.IsEditableChoice);
+        Assert.True(list.IsSortedChoice);
+        Assert.True(list.AllowsMultipleSelection);
+        Assert.True(list.CommitsOnSelectionChange);
+        Assert.Null(text.Flags);
+        Assert.False(text.IsEditableChoice);
+        Assert.False(text.IsSortedChoice);
+        Assert.False(text.CommitsOnSelectionChange);
+
+        PdfFormFieldStyle clone = style.Clone();
+        style.IsEditableChoice = false;
+        style.IsSortedChoice = false;
+        style.CommitsOnSelectionChange = false;
+        Assert.True(clone.IsEditableChoice);
+        Assert.True(clone.IsSortedChoice);
+        Assert.True(clone.CommitsOnSelectionChange);
+    }
+
+    [Fact]
     public void ChoiceField_CreatesInspectableAcroFormField() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .Paragraph(p => p.Text("Generated choice:"))
             .ChoiceField("Country", new[] { "Poland", "Germany", "United States" }, value: "Germany", width: 180, height: 24, spacingAfter: 12)
             .ToBytes();
@@ -352,7 +714,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void ChoiceField_CanBeFilledAndFlattened() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .ChoiceField("Country", new[] { "Poland", "Germany", "United States" }, value: "Poland")
             .ToBytes();
 
@@ -379,7 +741,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void MultiSelectChoiceField_CreatesInspectableAcroFormField() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .Paragraph(p => p.Text("Generated multi-select choice:"))
             .MultiSelectChoiceField("Countries", new[] { "Poland", "Germany", "United States" }, values: new[] { "Poland", "United States" }, width: 190, height: 72)
             .ToBytes();
@@ -409,7 +771,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void MultiSelectChoiceField_CanBeFilledAndFlattened() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .MultiSelectChoiceField("Countries", new[] { "Poland", "Germany", "United States" }, values: new[] { "Poland" })
             .ToBytes();
 
@@ -445,7 +807,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void MultiSelectChoiceField_WithSingleSelectedValueStoresArrayValue() {
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .MultiSelectChoiceField("Countries", new[] { "Poland", "Germany" }, values: new[] { "Poland" })
             .ToBytes();
 
@@ -459,7 +821,7 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void ComposeRowsAndItems_CanPlaceGeneratedFormFields() {
-        byte[] pdf = PdfDoc.Create(new PdfOptions {
+        byte[] pdf = PdfDocument.Create(new PdfOptions {
                 PageWidth = 420,
                 PageHeight = 320,
                 MarginLeft = 36,
@@ -524,43 +886,49 @@ public class PdfFormCreationTests {
 
     [Fact]
     public void GeneratedFields_ValidateFlowGeometry() {
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().TextField(" "));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().TextField("Name", width: 0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().TextField("Name", height: -1));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().TextField("Name", align: PdfAlign.Justify));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().CheckBox(" "));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().CheckBox("AcceptTerms", size: 0));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().CheckBox("AcceptTerms", align: PdfAlign.Justify));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().CheckBox("AcceptTerms", checkedValueName: " "));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().CheckBox("AcceptTerms", checkedValueName: "Off"));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().ChoiceField(" ", new[] { "One" }));
-        Assert.Throws<ArgumentNullException>(() => PdfDoc.Create().ChoiceField("Country", null!));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().ChoiceField("Country", Array.Empty<string>()));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().ChoiceField("Country", new[] { "One", "One" }));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().ChoiceField("Country", new[] { "One", " " }));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().ChoiceField("Country", new[] { "One" }, value: "Two"));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().ChoiceField("Country", new[] { "One" }, width: 0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().ChoiceField("Country", new[] { "One" }, height: -1));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().ChoiceField("Country", new[] { "One" }, align: PdfAlign.Justify));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().MultiSelectChoiceField("Countries", Array.Empty<string>()));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().MultiSelectChoiceField("Countries", new[] { "One" }, values: Array.Empty<string>()));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().MultiSelectChoiceField("Countries", new[] { "One" }, values: new[] { "Two" }));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().MultiSelectChoiceField("Countries", new[] { "One" }, values: new[] { "One", "One" }));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().MultiSelectChoiceField("Countries", new[] { "One" }, height: 0));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup(" ", new[] { "One" }));
-        Assert.Throws<ArgumentNullException>(() => PdfDoc.Create().RadioButtonGroup("Group", null!));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup("Group", Array.Empty<string>()));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "One", "One" }));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "One", " " }));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "One", "Off" }));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "One" }, value: "Two"));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "Y\u2713" }));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "One" }, size: 0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "One" }, gap: -1));
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create().RadioButtonGroup("Group", new[] { "One" }, align: PdfAlign.Justify));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().TextField(" "));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().TextField("Name", width: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().TextField("Name", height: -1));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().TextField("Name", align: PdfAlign.Justify));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().CheckBox(" "));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().CheckBox("AcceptTerms", size: 0));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().CheckBox("AcceptTerms", align: PdfAlign.Justify));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().CheckBox("AcceptTerms", checkedValueName: " "));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().CheckBox("AcceptTerms", checkedValueName: "Off"));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().ChoiceField(" ", new[] { "One" }));
+        Assert.Throws<ArgumentNullException>(() => PdfDocument.Create().ChoiceField("Country", null!));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().ChoiceField("Country", Array.Empty<string>()));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().ChoiceField("Country", new[] { "One", "One" }));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().ChoiceField("Country", new[] { "One", " " }));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().ChoiceField("Country", new[] { "One" }, value: "Two"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().ChoiceField("Country", new[] { "One" }, width: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().ChoiceField("Country", new[] { "One" }, height: -1));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().ChoiceField("Country", new[] { "One" }, align: PdfAlign.Justify));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().MultiSelectChoiceField("Countries", Array.Empty<string>()));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().MultiSelectChoiceField("Countries", new[] { "One" }, values: Array.Empty<string>()));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().MultiSelectChoiceField("Countries", new[] { "One" }, values: new[] { "Two" }));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().MultiSelectChoiceField("Countries", new[] { "One" }, values: new[] { "One", "One" }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().MultiSelectChoiceField("Countries", new[] { "One" }, height: 0));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup(" ", new[] { "One" }));
+        Assert.Throws<ArgumentNullException>(() => PdfDocument.Create().RadioButtonGroup("Group", null!));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup("Group", Array.Empty<string>()));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "One", "One" }));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "One", " " }));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "One", "Off" }));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "One" }, value: "Two"));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "Y\u2713" }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "One" }, size: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "One" }, gap: -1));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().RadioButtonGroup("Group", new[] { "One" }, align: PdfAlign.Justify));
         Assert.Throws<ArgumentOutOfRangeException>(() => new PdfFormFieldStyle { BorderWidth = -1 });
+        Assert.Throws<ArgumentException>(() => new PdfFormFieldStyle { AlternateName = " " });
+        Assert.Throws<ArgumentException>(() => new PdfFormFieldStyle { MappingName = " " });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfFormFieldStyle { TextAlignment = PdfFormFieldTextAlignment.Unknown });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfFormFieldStyle { MaxLength = 0 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PdfOptions { AcroFormDefaultTextAlignment = PdfFormFieldTextAlignment.Unknown });
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().AcroFormDefaultTextAlignment((PdfFormFieldTextAlignment)999));
 
-        Assert.Throws<ArgumentException>(() => PdfDoc.Create()
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create()
             .TextField("Email")
             .CheckBox("Email")
             .ToBytes());
@@ -580,5 +948,26 @@ public class PdfFormCreationTests {
         }
 
         throw new InvalidOperationException("Could not find text line '" + expectedText + "' in rendered PDF.");
+    }
+
+    private static int CountOccurrences(string text, string value) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0) {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
+
+    private static string Hex(string value) {
+        byte[] bytes = Encoding.ASCII.GetBytes(value);
+        var sb = new StringBuilder(bytes.Length * 2);
+        for (int i = 0; i < bytes.Length; i++) {
+            sb.Append(bytes[i].ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        return sb.ToString();
     }
 }

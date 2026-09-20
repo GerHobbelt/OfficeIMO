@@ -6,12 +6,12 @@ namespace OfficeIMO.Pdf;
 /// Represents an image rendered inside a table cell.
 /// </summary>
 public sealed class PdfTableCellImage {
-    /// <summary>Creates a supported table-cell image. JPEG and simple PNG images are supported.</summary>
+    /// <summary>Creates a supported table-cell image. JPEG and simple PNG images, including Adam7 interlace, indexed-color palettes, and alpha soft masks, are supported.</summary>
     public PdfTableCellImage(byte[] data, double width, double height, PdfImageStyle? style = null, string? linkUri = null, string? linkContents = null) {
         Guard.NotNullOrEmpty(data, nameof(data));
         Guard.Positive(width, nameof(width));
         Guard.Positive(height, nameof(height));
-        Guard.OptionalAbsoluteUri(linkUri, nameof(linkUri));
+        Guard.OptionalUriAction(linkUri, nameof(linkUri));
         if (linkContents != null && linkUri == null) {
             throw new ArgumentException("Table cell image link contents require a link URI.", nameof(linkContents));
         }
@@ -22,12 +22,12 @@ public sealed class PdfTableCellImage {
 
         PdfImageStyle? imageStyle = style?.Clone();
         if (imageStyle != null) {
-            PdfDoc.ValidateImageStyleForBox(imageStyle, width, height, nameof(style));
+            PdfDocument.ValidateImageStyleForBox(imageStyle, width, height, nameof(style));
         }
 
-        OfficeImageInfo info = PdfDoc.ValidateImageBytes(data);
+        OfficeImageInfo info = PdfDocument.ValidateImageBytes(data);
         if (imageStyle != null) {
-            PdfDoc.ValidateImageFitDimensions(info, imageStyle.Fit, nameof(style));
+            PdfDocument.ValidateImageFitDimensions(info, imageStyle.Fit, nameof(style));
         }
 
         Data = (byte[])data.Clone();
@@ -54,7 +54,7 @@ public sealed class PdfTableCellImage {
     /// <summary>Optional image style. When omitted, the table cell alignment is used.</summary>
     public PdfImageStyle? Style { get; }
 
-    /// <summary>Optional absolute URI linked from the image rectangle.</summary>
+    /// <summary>Optional absolute URI or catalog-base-relative URI linked from the image rectangle.</summary>
     public string? LinkUri { get; }
 
     /// <summary>Optional PDF annotation contents metadata for the image link.</summary>

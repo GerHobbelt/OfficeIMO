@@ -5,17 +5,18 @@ namespace OfficeIMO.Pdf;
 
 internal static partial class PdfWriter {
     private sealed partial class LayoutContext {
-        private void WriteLinesInternal(string fontRes, double fontSize, double lineHeight, double x, double widthUsed, double startY, System.Collections.Generic.List<string> lines, PdfAlign align, PdfColor? color = null, bool applyBaselineTweak = false) {
+        private void WriteLinesInternal(string fontRes, double fontSize, double lineHeight, double x, double widthUsed, double startY, System.Collections.Generic.List<string> lines, PdfAlign align, PdfColor? color = null, bool applyBaselineTweak = false, string? structureType = null, int? markedContentId = null) {
             EnsurePage();
             pageDirty = true;
+            AppendMarkedContentBegin(sb, structureType, markedContentId);
             var content = new ContentStreamBuilder(sb)
                 .BeginText()
                 .Font(fontRes, fontSize)
                 .TextLeading(lineHeight);
-            var lineFont = fontRes == "F2" ? ChooseBold(ChooseNormal(currentOpts.DefaultFont)) : ChooseNormal(currentOpts.DefaultFont);
+            var lineFont = ResolveFontFromResourceName(fontRes, ChooseNormal(currentOpts.DefaultFont));
             double yStart2 = startY;
             if (applyBaselineTweak) {
-                yStart2 -= GetDescender(lineFont, fontSize) * 0.0;
+                yStart2 -= GetDescenderForOptions(lineFont, fontSize, currentOpts) * 0.0;
             }
             content.TextMatrix(x, yStart2);
             var effectiveColor = color ?? currentOpts.DefaultTextColor ?? PdfColor.Black;
@@ -23,30 +24,31 @@ internal static partial class PdfWriter {
             for (int i = 0; i < lines.Count; i++) {
                 string line = lines[i];
                 double dx = 0;
-                double estWidth = EstimateSimpleTextWidth(line, lineFont, fontSize);
+                double estWidth = EstimateSimpleTextWidthForOptions(line, lineFont, fontSize, currentOpts);
                 if (align == PdfAlign.Center) dx = Math.Max(0, (widthUsed - estWidth) / 2);
                 else if (align == PdfAlign.Right) dx = Math.Max(0, (widthUsed - estWidth));
                 if (Math.Abs(dx) > 0.0001) content.MoveText(dx, 0);
-                content.ShowHexText(EncodeWinAnsiHex(line));
+                content.ShowHexText(EncodeTextHex(line, lineFont, currentOpts));
                 if (Math.Abs(dx) > 0.0001) content.MoveText(-dx, 0);
                 if (i != lines.Count - 1) content.NextTextLine();
             }
             content.EndText();
+            AppendMarkedContentEnd(sb, markedContentId);
         }
 
-        private void WriteLines(string fontRes, double fontSize, double lineHeight, double x, double startY, System.Collections.Generic.List<string> lines, PdfAlign align, PdfColor? color = null, bool applyBaselineTweak = false)
-            => WriteLinesInternal(fontRes, fontSize, lineHeight, x, width, startY, lines, align, color, applyBaselineTweak);
+        private void WriteLines(string fontRes, double fontSize, double lineHeight, double x, double startY, System.Collections.Generic.List<string> lines, PdfAlign align, PdfColor? color = null, bool applyBaselineTweak = false, string? structureType = null, int? markedContentId = null)
+            => WriteLinesInternal(fontRes, fontSize, lineHeight, x, width, startY, lines, align, color, applyBaselineTweak, structureType, markedContentId);
 
-        private void AddHeadingLinkAnnotations(HeadingBlock heading, System.Collections.Generic.List<string> lines, PdfStandardFont font, double fontSize, double lineHeight, double x, double widthUsed, double startBaselineY) {
+        private void AddHeadingLinkAnnotations(HeadingBlock heading, System.Collections.Generic.List<string> lines, PdfStandardFont font, double fontSize, double lineHeight, double x, double widthUsed, double startBaselineY, int? structElementIndex = null) {
             if (string.IsNullOrEmpty(heading.LinkUri) && string.IsNullOrEmpty(heading.LinkDestinationName)) {
                 return;
             }
 
-            double asc = GetAscender(font, fontSize);
-            double desc = GetDescender(font, fontSize);
+            double asc = GetAscenderForOptions(font, fontSize, currentOpts);
+            double desc = GetDescenderForOptions(font, fontSize, currentOpts);
             for (int i = 0; i < lines.Count; i++) {
                 string line = lines[i];
-                double lineWidth = EstimateSimpleTextWidth(line, font, fontSize);
+                double lineWidth = EstimateSimpleTextWidthForOptions(line, font, fontSize, currentOpts);
                 if (lineWidth <= 0.001D) {
                     continue;
                 }
@@ -59,11 +61,36 @@ internal static partial class PdfWriter {
                 double x2 = x1 + Math.Min(widthUsed, lineWidth);
                 double y1 = baselineY - desc;
                 double y2 = baselineY + asc;
-                currentPage!.Annotations.Add(new LinkAnnotation { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, Uri = heading.LinkUri, DestinationName = heading.LinkDestinationName, Contents = heading.LinkContents });
+                currentPage!.Annotations.Add(new LinkAnnotation { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, Uri = heading.LinkUri, DestinationName = heading.LinkDestinationName, Contents = heading.LinkContents, StructElementIndex = structElementIndex });
             }
         }
 
-        private void AddImageLinkAnnotation(ImageBlock image, PdfImageStyle style, PageImage pageImage, double targetX, double targetBottomY) {
+        private void AddHeadingLinkAnnotations(HeadingBlock heading, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.List<RichSeg>> lines, PdfStandardFont font, double fontSize, double lineHeight, double x, double widthUsed, double startBaselineY, int? structElementIndex = null) {
+            if (string.IsNullOrEmpty(heading.LinkUri) && string.IsNullOrEmpty(heading.LinkDestinationName)) {
+                return;
+            }
+
+            double asc = GetAscenderForOptions(font, fontSize, currentOpts);
+            double desc = GetDescenderForOptions(font, fontSize, currentOpts);
+            for (int i = 0; i < lines.Count; i++) {
+                double lineWidth = MeasureRichLineWidth(lines[i], currentOpts);
+                if (lineWidth <= 0.001D) {
+                    continue;
+                }
+
+                double dx = 0D;
+                if (heading.Align == PdfAlign.Center) dx = Math.Max(0, (widthUsed - lineWidth) / 2);
+                else if (heading.Align == PdfAlign.Right) dx = Math.Max(0, widthUsed - lineWidth);
+                double baselineY = startBaselineY - i * lineHeight;
+                double x1 = x + dx;
+                double x2 = x1 + Math.Min(widthUsed, lineWidth);
+                double y1 = baselineY - desc;
+                double y2 = baselineY + asc;
+                currentPage!.Annotations.Add(new LinkAnnotation { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, Uri = heading.LinkUri, DestinationName = heading.LinkDestinationName, Contents = heading.LinkContents, StructElementIndex = structElementIndex });
+            }
+        }
+
+        private void AddImageLinkAnnotation(ImageBlock image, PdfImageStyle style, PageImage pageImage, double targetX, double targetBottomY, double targetWidth, double targetHeight) {
             if (string.IsNullOrEmpty(image.LinkUri)) {
                 return;
             }
@@ -72,14 +99,14 @@ internal static partial class PdfWriter {
             double y1 = pageImage.Y;
             double x2 = pageImage.X + pageImage.W;
             double y2 = pageImage.Y + pageImage.H;
-            if (style.Fit == OfficeImageFit.Cover || style.ClipPath != null) {
+            if (style.Fit == OfficeImageFit.Cover || style.ClipPath != null || style.SourceCrop?.HasCrop == true) {
                 x1 = targetX;
                 y1 = targetBottomY;
-                x2 = targetX + image.Width;
-                y2 = targetBottomY + image.Height;
+                x2 = targetX + targetWidth;
+                y2 = targetBottomY + targetHeight;
             }
 
-            currentPage!.Annotations.Add(new LinkAnnotation { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, Uri = image.LinkUri!, Contents = image.LinkContents });
+            currentPage!.Annotations.Add(new LinkAnnotation { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, Uri = image.LinkUri!, Contents = image.LinkContents, LinkedImage = pageImage });
         }
 
         private void AddNamedDestination(BookmarkBlock bookmark, double topY) {
@@ -99,11 +126,12 @@ internal static partial class PdfWriter {
             AddNamedDestinationName(name!, topY);
         }
 
-        private static double FirstTextBaselineFromTop(PdfStandardFont font, double fontSize, double topY) =>
-            topY - GetAscender(font, fontSize);
+        private double FirstTextBaselineFromTop(PdfStandardFont font, double fontSize, double topY) =>
+            topY - GetAscenderForOptions(font, fontSize, currentOpts);
 
         private void MarkRichFonts(System.Collections.Generic.IEnumerable<TextRun> runs) {
-            foreach (TextRun run in runs) {
+            System.Collections.Generic.IReadOnlyList<TextRun> effectiveRuns = NormalizeFallbackRuns(runs, ChooseNormal(currentOpts.DefaultFont), currentOpts);
+            foreach (TextRun run in effectiveRuns) {
                 PdfStandardFont runBaseFont = ChooseNormal(run.Font ?? currentOpts.DefaultFont);
                 PdfStandardFont runFont = run.Bold && run.Italic
                     ? ChooseBoldItalic(runBaseFont)
@@ -115,9 +143,9 @@ internal static partial class PdfWriter {
                 currentPage!.UsedFonts.Add(runFont);
             }
 
-            if (runs.Any(r => r.Bold)) { currentPage!.UsedBold = true; usedBold = true; }
-            if (runs.Any(r => r.Italic)) { currentPage!.UsedItalic = true; usedItalic = true; }
-            if (runs.Any(r => r.Bold && r.Italic)) { currentPage!.UsedBoldItalic = true; usedBoldItalic = true; }
+            if (effectiveRuns.Any(r => r.Bold)) { currentPage!.UsedBold = true; usedBold = true; }
+            if (effectiveRuns.Any(r => r.Italic)) { currentPage!.UsedItalic = true; usedItalic = true; }
+            if (effectiveRuns.Any(r => r.Bold && r.Italic)) { currentPage!.UsedBoldItalic = true; usedBoldItalic = true; }
         }
 
     }

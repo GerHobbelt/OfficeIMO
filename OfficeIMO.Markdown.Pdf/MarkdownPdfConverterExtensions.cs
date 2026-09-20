@@ -8,10 +8,13 @@ namespace OfficeIMO.Markdown.Pdf;
 /// First-party Markdown to PDF conversion helpers.
 /// </summary>
 public static partial class MarkdownPdfConverterExtensions {
+    private const string DefaultEmbeddedFontFamily = "Arial, Aptos, Calibri, Liberation Sans, DejaVu Sans";
+    private const string DefaultEmbeddedMonospaceFontFamily = "Consolas, Courier New, Liberation Mono, DejaVu Sans Mono";
+
     /// <summary>
     /// Converts Markdown text to a first-party OfficeIMO PDF document model.
     /// </summary>
-    public static PdfCore.PdfDoc ToPdfDocument(this string markdown, MarkdownPdfSaveOptions? options = null) {
+    public static PdfCore.PdfDocument ToPdfDocument(this string markdown, MarkdownPdfSaveOptions? options = null) {
         if (markdown == null) {
             throw new ArgumentNullException(nameof(markdown));
         }
@@ -24,7 +27,7 @@ public static partial class MarkdownPdfConverterExtensions {
     /// <summary>
     /// Converts a Markdown file to a first-party OfficeIMO PDF document model.
     /// </summary>
-    public static PdfCore.PdfDoc ToPdfDocumentFromMarkdownFile(this string path, MarkdownPdfSaveOptions? options = null) {
+    public static PdfCore.PdfDocument ToPdfDocumentFromMarkdownFile(this string path, MarkdownPdfSaveOptions? options = null) {
         if (string.IsNullOrWhiteSpace(path)) {
             throw new ArgumentException("Markdown file path cannot be empty.", nameof(path));
         }
@@ -38,7 +41,7 @@ public static partial class MarkdownPdfConverterExtensions {
     /// <summary>
     /// Converts a Markdown document model to a first-party OfficeIMO PDF document model.
     /// </summary>
-    public static PdfCore.PdfDoc ToPdfDocument(this MarkdownDoc document, MarkdownPdfSaveOptions? options = null) {
+    public static PdfCore.PdfDocument ToPdfDocument(this MarkdownDoc document, MarkdownPdfSaveOptions? options = null) {
         if (document == null) {
             throw new ArgumentNullException(nameof(document));
         }
@@ -46,17 +49,30 @@ public static partial class MarkdownPdfConverterExtensions {
         options ??= new MarkdownPdfSaveOptions();
         options.ResetExportState();
 
-        PdfCore.PdfOptions pdfOptions = options.PdfOptions ?? new PdfCore.PdfOptions();
+        PdfCore.PdfOptions pdfOptions = options.PdfOptions?.Clone() ?? new PdfCore.PdfOptions();
+        pdfOptions.ReportDiagnosticsTo(options.ConversionReport, "OfficeIMO.Markdown.Pdf");
+
+        if (!string.IsNullOrWhiteSpace(options.FontFamily)) {
+            pdfOptions.UseOfficeFontFamily(options.FontFamily);
+        } else if (options.PdfOptions == null) {
+            pdfOptions.UseOfficeFontFamily(DefaultEmbeddedFontFamily);
+        }
+
+        if (options.PdfOptions == null) {
+            pdfOptions.RegisterOfficeFontFamily(DefaultEmbeddedMonospaceFontFamily, PdfCore.PdfStandardFont.Courier);
+        }
+
         if (options.CreateOutlineFromHeadings) {
             pdfOptions.CreateOutlineFromHeadings = true;
         }
 
         MarkdownPdfVisualTheme visualTheme = ResolveVisualTheme(document, options);
-        PdfCore.PdfDoc pdf = PdfCore.PdfDoc.Create(pdfOptions);
+        PdfCore.PdfDocument pdf = PdfCore.PdfDocument.Create(pdfOptions);
         PdfCore.PdfTheme? documentTheme = visualTheme.DocumentThemeSnapshot;
         if (documentTheme != null) {
             pdf.Theme(documentTheme);
         }
+        ApplyMarkdownDefaultFont(pdf, options);
         visualTheme.ApplyPageDecorations(pdf, pdfOptions);
 
         IReadOnlyList<IMarkdownBlock> topLevelBlocks = GetPdfTopLevelBlocks(document);
@@ -68,6 +84,12 @@ public static partial class MarkdownPdfConverterExtensions {
         }
 
         return pdf;
+    }
+
+    private static void ApplyMarkdownDefaultFont(PdfCore.PdfDocument pdf, MarkdownPdfSaveOptions options) {
+        if (PdfCore.PdfStandardFontMapper.TryMapFontFamily(options.FontFamily, out PdfCore.PdfStandardFont font)) {
+            pdf.DefaultTextStyle(style => style.Font(PdfCore.PdfStandardFontMapper.GetFontFamily(font)));
+        }
     }
 
     private static IReadOnlyList<IMarkdownBlock> GetPdfTopLevelBlocks(MarkdownDoc document) {
@@ -98,10 +120,32 @@ public static partial class MarkdownPdfConverterExtensions {
     }
 
     /// <summary>
+    /// Attempts to save Markdown text as a PDF file and returns output diagnostics instead of throwing.
+    /// </summary>
+    public static PdfCore.PdfSaveResult TrySaveAsPdf(this string markdown, string path, MarkdownPdfSaveOptions? options = null) {
+        try {
+            return markdown.ToPdfDocument(options).TrySave(path);
+        } catch (Exception ex) {
+            return PdfCore.PdfSaveResult.FromFailure(path, ex);
+        }
+    }
+
+    /// <summary>
     /// Writes Markdown text as PDF to a stream.
     /// </summary>
     public static void SaveAsPdf(this string markdown, Stream stream, MarkdownPdfSaveOptions? options = null) {
         markdown.ToPdfDocument(options).Save(stream);
+    }
+
+    /// <summary>
+    /// Attempts to write Markdown text as PDF to a stream and returns output diagnostics instead of throwing.
+    /// </summary>
+    public static PdfCore.PdfSaveResult TrySaveAsPdf(this string markdown, Stream stream, MarkdownPdfSaveOptions? options = null) {
+        try {
+            return markdown.ToPdfDocument(options).TrySave(stream);
+        } catch (Exception ex) {
+            return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
+        }
     }
 
     /// <summary>
@@ -119,10 +163,32 @@ public static partial class MarkdownPdfConverterExtensions {
     }
 
     /// <summary>
+    /// Attempts to save a Markdown document model as a PDF file and returns output diagnostics instead of throwing.
+    /// </summary>
+    public static PdfCore.PdfSaveResult TrySaveAsPdf(this MarkdownDoc document, string path, MarkdownPdfSaveOptions? options = null) {
+        try {
+            return document.ToPdfDocument(options).TrySave(path);
+        } catch (Exception ex) {
+            return PdfCore.PdfSaveResult.FromFailure(path, ex);
+        }
+    }
+
+    /// <summary>
     /// Writes a Markdown document model as PDF to a stream.
     /// </summary>
     public static void SaveAsPdf(this MarkdownDoc document, Stream stream, MarkdownPdfSaveOptions? options = null) {
         document.ToPdfDocument(options).Save(stream);
+    }
+
+    /// <summary>
+    /// Attempts to write a Markdown document model as PDF to a stream and returns output diagnostics instead of throwing.
+    /// </summary>
+    public static PdfCore.PdfSaveResult TrySaveAsPdf(this MarkdownDoc document, Stream stream, MarkdownPdfSaveOptions? options = null) {
+        try {
+            return document.ToPdfDocument(options).TrySave(stream);
+        } catch (Exception ex) {
+            return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
+        }
     }
 
     private static MarkdownPdfVisualTheme ResolveVisualTheme(MarkdownDoc document, MarkdownPdfSaveOptions options) {
@@ -147,7 +213,7 @@ public static partial class MarkdownPdfConverterExtensions {
             : MarkdownPdfVisualTheme.Plain();
     }
 
-    private static void RenderBlocks(PdfCore.PdfDoc pdf, IEnumerable<IMarkdownBlock> blocks, MarkdownDoc document, MarkdownPdfSaveOptions options, MarkdownPdfVisualTheme visualTheme, string? skipFirstHeadingTitle = null) {
+    private static void RenderBlocks(PdfCore.PdfDocument pdf, IEnumerable<IMarkdownBlock> blocks, MarkdownDoc document, MarkdownPdfSaveOptions options, MarkdownPdfVisualTheme visualTheme, string? skipFirstHeadingTitle = null) {
         bool skippedPromotedHeading = false;
         var materializedBlocks = blocks as IReadOnlyList<IMarkdownBlock> ?? blocks.ToList();
         for (int i = 0; i < materializedBlocks.Count; i++) {
@@ -170,7 +236,7 @@ public static partial class MarkdownPdfConverterExtensions {
         }
     }
 
-    private static void ApplyMetadata(PdfCore.PdfDoc pdf, MarkdownDoc document, MarkdownPdfSaveOptions options) {
+    private static void ApplyMetadata(PdfCore.PdfDocument pdf, MarkdownDoc document, MarkdownPdfSaveOptions options) {
         string? title = NormalizeMetadata(options.Title);
         string? author = NormalizeMetadata(options.Author);
         string? subject = NormalizeMetadata(options.Subject);

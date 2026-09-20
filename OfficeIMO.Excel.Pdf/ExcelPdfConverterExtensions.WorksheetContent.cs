@@ -112,7 +112,19 @@ namespace OfficeIMO.Excel.Pdf {
                     continue;
                 }
 
-                if (IsSupportedChartSnapshot(snapshot)) {
+                if (!HasRenderableChartData(snapshot)) {
+                    AddWarning(
+                        options,
+                        sheetName,
+                        "WorksheetChart",
+                        $"Worksheet chart '{GetChartDisplayName(snapshot)}' was not exported because it does not contain renderable chart categories and series.");
+                } else if (HasMixedSeriesChartTypes(snapshot)) {
+                    AddWarning(
+                        options,
+                        sheetName,
+                        "WorksheetChart",
+                        $"Worksheet chart '{GetChartDisplayName(snapshot)}' was not exported because mixed per-series chart types are not supported by the first-party PDF chart snapshot renderer yet.");
+                } else if (IsSupportedChartSnapshot(snapshot)) {
                     charts.Add(new WorksheetChartExportData(snapshot));
                 } else {
                     AddWarning(
@@ -130,14 +142,11 @@ namespace OfficeIMO.Excel.Pdf {
         }
 
         private static bool IsSupportedChartSnapshot(ExcelChartSnapshot snapshot) {
-            return IsColumnChart(snapshot.ChartType)
-                   || IsBarChart(snapshot.ChartType)
-                   || IsLineChart(snapshot.ChartType)
-                   || IsAreaChart(snapshot.ChartType)
-                   || IsScatterChart(snapshot.ChartType)
-                   || IsRadarChart(snapshot.ChartType)
-                   || IsPieChart(snapshot.ChartType)
-                   || IsDoughnutChart(snapshot.ChartType);
+            return TryMapChartKind(snapshot.ChartType, out _);
+        }
+
+        private static bool HasRenderableChartData(ExcelChartSnapshot snapshot) {
+            return snapshot.Data.Categories.Count > 0 && snapshot.Data.Series.Count > 0;
         }
 
         private static string GetChartDisplayName(ExcelChartSnapshot snapshot) {
@@ -149,7 +158,9 @@ namespace OfficeIMO.Excel.Pdf {
         }
 
         private static void AddWarning(ExcelPdfSaveOptions options, string sheetName, string feature, string message) {
-            options.Warnings.Add(new ExcelPdfExportWarning(sheetName, feature, message));
+            var warning = new ExcelPdfExportWarning(sheetName, feature, message);
+            options.Warnings.Add(warning);
+            options.ConversionReport.Add(warning.ToConversionWarning());
         }
 
         private static bool IsPdfSupportedImageContentType(string contentType) {

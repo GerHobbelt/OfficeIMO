@@ -1,8 +1,9 @@
 using OfficeIMO.Word;
 using OfficeIMO.Word.Pdf;
 using System.IO;
-using UglyToad.PdfPig;
-using Xunit;
+using PdfPigDocument = UglyToad.PdfPig.PdfDocument;
+using Xunit;
+
 namespace OfficeIMO.Tests {
     public partial class Word {
         [Fact]
@@ -17,9 +18,11 @@ namespace OfficeIMO.Tests {
                 document.AddParagraph("Test");
                 document.Save();
                 document.SaveAsPdf(pdfPath);
-            }
-            Assert.True(File.Exists(pdfPath));
-            using (PdfDocument pdf = PdfDocument.Open(pdfPath)) {
+            }
+
+            Assert.True(File.Exists(pdfPath));
+
+            using (PdfPigDocument pdf = PdfPigDocument.Open(pdfPath)) {
                 var info = pdf.Information;
                 Assert.Equal("Pdf Title", info.Title);
                 Assert.Equal("Pdf Author", info.Author);
@@ -45,12 +48,29 @@ namespace OfficeIMO.Tests {
 
             Assert.True(File.Exists(pdfPath));
 
-            using (PdfDocument pdf = PdfDocument.Open(pdfPath)) {
+            using (PdfPigDocument pdf = PdfPigDocument.Open(pdfPath)) {
                 var info = pdf.Information;
                 Assert.Equal("Native Pdf Title", info.Title);
                 Assert.Equal("Native Pdf Author", info.Author);
                 Assert.Equal("Native Pdf Subject", info.Subject);
                 Assert.Equal("native, keyword", info.Keywords);
+            }
+        }
+
+        [Fact]
+        public void Test_WordDocument_SaveAsPdf_OfficeIMOEngine_FontFamily_Does_Not_Pollute_MetadataKeywords() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeFontMetadata.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeFontMetadata.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                document.BuiltinDocumentProperties.Keywords = "native, keyword";
+                document.AddParagraph("Native metadata font");
+                document.Save();
+                document.SaveAsPdf(pdfPath, new PdfSaveOptions { FontFamily = "Times New Roman" });
+            }
+
+            using (PdfPigDocument pdf = PdfPigDocument.Open(pdfPath)) {
+                Assert.Equal("native, keyword", pdf.Information.Keywords);
             }
         }
     }

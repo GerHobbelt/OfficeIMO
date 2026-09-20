@@ -49,6 +49,7 @@ public sealed partial class PdfOptions {
     private bool _hasExplicitPageNumberStart;
     private PdfPageNumberStyle _pageNumberStyle = PdfPageNumberStyle.Arabic;
     private string? _pageLabelPrefix;
+    private System.Collections.Generic.List<PdfPageLabelRange>? _pageLabelRanges;
     private PdfParagraphStyle? _defaultParagraphStyle;
     private PdfTableStyle? _defaultTableStyle = TableStyles.Light();
     private PdfHeadingStyles? _defaultHeadingStyles;
@@ -58,16 +59,36 @@ public sealed partial class PdfOptions {
     private PdfImageStyle? _defaultImageStyle;
     private PdfDrawingStyle? _defaultDrawingStyle;
     private PdfRowStyle? _defaultRowStyle;
+    private PdfFileVersion _fileVersion = PdfFileVersion.Pdf14;
     private PdfComplianceProfile _complianceProfile;
+    private PdfAIdentification? _pdfAIdentification;
+    private PdfUaIdentification? _pdfUaIdentification;
+    private PdfElectronicInvoiceMetadata? _electronicInvoiceMetadata;
     private PdfOutputIntent? _outputIntent;
+    private PdfTaggedStructureMode _taggedStructureMode;
     private string? _language;
+    private PdfCatalogPageMode? _catalogPageMode;
+    private PdfCatalogPageLayout? _catalogPageLayout;
+    private PdfOpenActionOptions? _openAction;
     private PdfViewerPreferencesOptions? _viewerPreferences;
+    private string? _catalogUriBase;
+    private int _outlineExpansionLevel = int.MaxValue;
+    private PdfFormFieldTextAlignment? _acroFormDefaultTextAlignment;
     private PdfTextWatermark? _textWatermark;
     private PdfImageWatermark? _imageWatermark;
     private PdfPageBorder? _pageBorder;
     private PdfPageBackgroundImage? _pageBackgroundImage;
     private System.Collections.Generic.List<PdfPageBackgroundShape>? _pageBackgroundShapes;
     private System.Collections.Generic.Dictionary<PdfStandardFont, PdfEmbeddedFont>? _embeddedFonts;
+    private System.Collections.Generic.Dictionary<PdfStandardFont, PdfTrueTypeFontProgram>? _embeddedFontPrograms;
+    private System.Collections.Generic.Dictionary<PdfStandardFont, PdfOpenTypeCffFontProgram>? _embeddedOpenTypeCffFontPrograms;
+    private System.Collections.Generic.HashSet<PdfStandardFont>? _embeddedFontProgramFailures;
+    private System.Collections.Generic.HashSet<string>? _reportedEmbeddedFontProgramFailures;
+    private System.Collections.Generic.HashSet<string>? _reportedTextShapingDiagnostics;
+    private PdfTextHyphenationCallback? _textHyphenationCallback;
+    private PdfTextShapingMode _textShapingMode;
+    private PdfConversionReport? _diagnosticsReport;
+    private string _diagnosticsConverter = "OfficeIMO.Pdf";
     private System.Collections.Generic.List<PdfEmbeddedFile>? _embeddedFiles;
 
 }

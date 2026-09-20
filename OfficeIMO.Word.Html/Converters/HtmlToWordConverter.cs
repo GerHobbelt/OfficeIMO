@@ -26,7 +26,11 @@ namespace OfficeIMO.Word.Html {
     /// 4. Follow existing patterns in OfficeIMO.Word for consistency
     /// </summary>
     internal partial class HtmlToWordConverter {
-        private readonly Dictionary<string, string> _footnoteMap = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string[]> _footnoteMap = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string[]> _endnoteMap = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HtmlCommentInfo> _commentMap = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _unsupportedCssDiagnosticKeys = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<IElement> _processedRadioInputs = new();
         private readonly List<ICssStyleRule> _cssRules = new();
         private readonly CssParser _cssParser = new();
         private readonly Dictionary<string, WordImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
@@ -39,6 +43,9 @@ namespace OfficeIMO.Word.Html {
         private HttpClient _httpClient = _sharedHttpClient;
         private CancellationToken _cancellationToken = CancellationToken.None;
         private TimeSpan? _resourceTimeout;
+        private long _imageBytesUsed;
+        private long _cssBytesUsed;
+        private HtmlToWordOptions _options = new HtmlToWordOptions();
         private static readonly Regex _classRegex = new(@"\.([a-zA-Z0-9_-]+)", RegexOptions.Compiled);
         private static readonly HashSet<string> _blockTags = new(StringComparer.OrdinalIgnoreCase) {
             "p", "div", "section", "article", "aside", "nav", "header", "footer", "main",
@@ -57,109 +64,39 @@ namespace OfficeIMO.Word.Html {
             _cancellationToken = cancellationToken;
             _httpClient = options.HttpClient ?? _sharedHttpClient;
             _resourceTimeout = options.ResourceTimeout;
+            _options = options;
 
             var config = Configuration.Default.WithDefaultLoader();
             var context = BrowsingContext.New(config);
             _context = context;
             var document = await context.OpenAsync(req => req.Content(html), cancellationToken).ConfigureAwait(false);
+            ValidateDocumentLimits(document, options);
 
             var wordDoc = WordDocument.Create();
             if (!string.IsNullOrEmpty(options.FontFamily)) {
                 var resolved = ResolveFontFamily(options.FontFamily) ?? options.FontFamily;
                 wordDoc.Settings.FontFamily = resolved;
             }
+            ApplyDocumentMetadata(wordDoc, document);
 
             _footnoteMap.Clear();
+            _endnoteMap.Clear();
+            _commentMap.Clear();
+            _unsupportedCssDiagnosticKeys.Clear();
+            _processedRadioInputs.Clear();
             _cssRules.Clear();
             _imageCache.Clear();
             _cssClassStyles.Clear();
             _pendingTopBookmark = false;
+            _imageBytesUsed = 0;
+            _cssBytesUsed = 0;
+            ResetAccessibilityDiagnosticsState();
 
-            foreach (var path in options.StylesheetPaths) {
-                if (string.IsNullOrEmpty(path)) {
-                    continue;
-                }
-                if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)) {
-                    if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps) {
-                        await LoadAndParseCssAsync(context, new Url(absolute.ToString()), cancellationToken).ConfigureAwait(false);
-                    } else if (absolute.Scheme == Uri.UriSchemeFile && File.Exists(absolute.LocalPath)) {
-                        ParseCss(File.ReadAllText(absolute.LocalPath), absolute.LocalPath);
-                    }
-                } else if (document.BaseUrl != null) {
-                    var url = new Url(new Url(document.BaseUrl), path);
-                    if (url.Scheme == "http" || url.Scheme == "https") {
-                        await LoadAndParseCssAsync(context, url, cancellationToken).ConfigureAwait(false);
-                    } else if (url.Scheme == "file") {
-                        TryLoadCssFromFileUrl(url);
-                    }
-                } else if (File.Exists(path)) {
-                    ParseCss(File.ReadAllText(path), path);
-                }
-            }
-            foreach (var content in options.StylesheetContents) {
-                if (!string.IsNullOrEmpty(content)) {
-                    ParseCss(content);
-                }
-            }
+            await LoadConfiguredStylesheetsAsync(document, options, cancellationToken).ConfigureAwait(false);
+            await LoadHeadStylesheetsAsync(document, cancellationToken).ConfigureAwait(false);
 
-            if (document.Head != null) {
-                Uri? baseUri = null;
-                if (document.BaseUrl != null && Uri.TryCreate(document.BaseUrl.Href, UriKind.Absolute, out var du)) {
-                    baseUri = du;
-                }
-
-                foreach (var node in document.Head.ChildNodes) {
-                    if (node is IHtmlBaseElement baseElement) {
-                        if (Uri.TryCreate(baseElement.Href, UriKind.Absolute, out var bu)) {
-                            baseUri = bu;
-                        }
-                        continue;
-                    }
-                    if (node is IHtmlStyleElement styleElement) {
-                        ParseCss(styleElement.TextContent);
-                        continue;
-                    }
-                    if (node is IHtmlLinkElement linkElement) {
-                        var rel = linkElement.GetAttribute("rel");
-                        if (!string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
-                            continue;
-                        }
-
-                        var hrefAttr = linkElement.GetAttribute("href");
-                        var href = linkElement.Href ?? hrefAttr;
-                        if (string.IsNullOrEmpty(href)) {
-                            continue;
-                        }
-
-                        if (!string.IsNullOrEmpty(hrefAttr) && File.Exists(hrefAttr)) {
-                            ParseCss(File.ReadAllText(hrefAttr), hrefAttr);
-                            continue;
-                        }
-
-                        var url = new Url(href);
-                        if (!url.IsAbsolute && baseUri != null) {
-                            url = new Url(new Url(baseUri.ToString()), href);
-                        }
-
-                        if (url.Scheme == "http" || url.Scheme == "https") {
-                            await LoadAndParseCssAsync(context, url, cancellationToken).ConfigureAwait(false);
-                        } else if (url.Scheme == "file") {
-                            TryLoadCssFromFileUrl(url);
-                        }
-                    }
-                }
-            }
-
-            var footnoteSection = document.QuerySelector("section.footnotes");
-            if (footnoteSection != null) {
-                foreach (var li in footnoteSection.QuerySelectorAll("li")) {
-                    var id = li.GetAttribute("id");
-                    if (!string.IsNullOrEmpty(id)) {
-                        _footnoteMap[id!] = li.TextContent?.Trim() ?? string.Empty;
-                    }
-                }
-                footnoteSection.Remove();
-            }
+            CaptureNoteSections(document);
+            CaptureCommentSections(document);
 
             if (options.DefaultPageSize.HasValue) {
                 wordDoc.PageSettings.PageSize = options.DefaultPageSize.Value;
@@ -172,10 +109,8 @@ namespace OfficeIMO.Word.Html {
             var listStack = new Stack<WordList>();
             WordList? headingList = options.SupportsHeadingNumbering ? wordDoc.AddList(WordListStyle.Headings111) : null;
             if (document.Body != null) {
-                foreach (var child in document.Body.ChildNodes) {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    ProcessNode(child, wordDoc, section, options, null, listStack, new TextFormatting(), null, null, headingList);
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                ProcessNode(document.Body, wordDoc, section, options, null, listStack, new TextFormatting(), null, null, headingList);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -190,112 +125,39 @@ namespace OfficeIMO.Word.Html {
             _cancellationToken = cancellationToken;
             _httpClient = options.HttpClient ?? _sharedHttpClient;
             _resourceTimeout = options.ResourceTimeout;
+            _options = options;
 
             var config = Configuration.Default.WithDefaultLoader();
             var context = BrowsingContext.New(config);
             _context = context;
             var document = await context.OpenAsync(req => req.Content(html), cancellationToken).ConfigureAwait(false);
+            ValidateDocumentLimits(document, options);
+            ApplyDocumentMetadata(doc, document);
 
             _footnoteMap.Clear();
+            _endnoteMap.Clear();
+            _commentMap.Clear();
+            _unsupportedCssDiagnosticKeys.Clear();
+            _processedRadioInputs.Clear();
             _cssRules.Clear();
             _imageCache.Clear();
             _cssClassStyles.Clear();
             _pendingTopBookmark = false;
+            _imageBytesUsed = 0;
+            _cssBytesUsed = 0;
+            ResetAccessibilityDiagnosticsState();
 
-            foreach (var path in options.StylesheetPaths) {
-                if (string.IsNullOrEmpty(path)) {
-                    continue;
-                }
-                if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)) {
-                    if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps) {
-                        await LoadAndParseCssAsync(context, new Url(absolute.ToString()), cancellationToken).ConfigureAwait(false);
-                    } else if (absolute.Scheme == Uri.UriSchemeFile && File.Exists(absolute.LocalPath)) {
-                        ParseCss(File.ReadAllText(absolute.LocalPath), absolute.LocalPath);
-                    }
-                } else if (document.BaseUrl != null) {
-                    var url = new Url(new Url(document.BaseUrl), path);
-                    if (url.Scheme == "http" || url.Scheme == "https") {
-                        await LoadAndParseCssAsync(context, url, cancellationToken).ConfigureAwait(false);
-                    } else if (url.Scheme == "file") {
-                        TryLoadCssFromFileUrl(url);
-                    }
-                } else if (File.Exists(path)) {
-                    ParseCss(File.ReadAllText(path), path);
-                }
-            }
-            foreach (var content in options.StylesheetContents) {
-                if (!string.IsNullOrEmpty(content)) {
-                    ParseCss(content);
-                }
-            }
+            await LoadConfiguredStylesheetsAsync(document, options, cancellationToken).ConfigureAwait(false);
+            await LoadHeadStylesheetsAsync(document, cancellationToken).ConfigureAwait(false);
 
-            if (document.Head != null) {
-                Uri? baseUri = null;
-                if (document.BaseUrl != null && Uri.TryCreate(document.BaseUrl.Href, UriKind.Absolute, out var du)) {
-                    baseUri = du;
-                }
-
-                foreach (var node in document.Head.ChildNodes) {
-                    if (node is IHtmlBaseElement baseElement) {
-                        if (Uri.TryCreate(baseElement.Href, UriKind.Absolute, out var bu)) {
-                            baseUri = bu;
-                        }
-                        continue;
-                    }
-                    if (node is IHtmlStyleElement styleElement) {
-                        ParseCss(styleElement.TextContent);
-                        continue;
-                    }
-                    if (node is IHtmlLinkElement linkElement) {
-                        var rel = linkElement.GetAttribute("rel");
-                        if (!string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
-                            continue;
-                        }
-
-                        var hrefAttr = linkElement.GetAttribute("href");
-                        var href = linkElement.Href ?? hrefAttr;
-                        if (string.IsNullOrEmpty(href)) {
-                            continue;
-                        }
-
-                        if (!string.IsNullOrEmpty(hrefAttr) && File.Exists(hrefAttr)) {
-                            ParseCss(File.ReadAllText(hrefAttr), hrefAttr);
-                            continue;
-                        }
-
-                        var url = new Url(href);
-                        if (!url.IsAbsolute && baseUri != null) {
-                            url = new Url(new Url(baseUri.ToString()), href);
-                        }
-
-                        if (url.Scheme == "http" || url.Scheme == "https") {
-                            await LoadAndParseCssAsync(context, url, cancellationToken).ConfigureAwait(false);
-                        } else if (url.Scheme == "file") {
-                            TryLoadCssFromFileUrl(url);
-                        }
-                    }
-                }
-            }
-
-            var footnoteSection = document.QuerySelector("section.footnotes");
-            if (footnoteSection != null) {
-                foreach (var li in footnoteSection.QuerySelectorAll("li")) {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var id = li.GetAttribute("id");
-                    if (!string.IsNullOrEmpty(id)) {
-                        _footnoteMap[id!] = li.TextContent?.Trim() ?? string.Empty;
-                    }
-                }
-                footnoteSection.Remove();
-            }
+            CaptureNoteSections(document, cancellationToken);
+            CaptureCommentSections(document, cancellationToken);
 
             var listStack = new Stack<WordList>();
             WordList? headingList = options.SupportsHeadingNumbering ? doc.AddList(WordListStyle.Headings111) : null;
             if (document.Body != null) {
-                foreach (var child in document.Body.ChildNodes) {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    ProcessNode(child, doc, section, options, null, listStack, new TextFormatting(), null, null, headingList);
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                ProcessNode(document.Body, doc, section, options, null, listStack, new TextFormatting(), null, null, headingList);
             }
             InsertTopBookmarkIfNeeded(doc);
         }
@@ -315,113 +177,40 @@ namespace OfficeIMO.Word.Html {
             _cancellationToken = cancellationToken;
             _httpClient = options.HttpClient ?? _sharedHttpClient;
             _resourceTimeout = options.ResourceTimeout;
+            _options = options;
 
             var config = Configuration.Default.WithDefaultLoader();
             var context = BrowsingContext.New(config);
             _context = context;
             var document = await context.OpenAsync(req => req.Content(html), cancellationToken).ConfigureAwait(false);
+            ValidateDocumentLimits(document, options);
+            ApplyDocumentMetadata(doc, document);
 
             _footnoteMap.Clear();
+            _endnoteMap.Clear();
+            _commentMap.Clear();
+            _unsupportedCssDiagnosticKeys.Clear();
+            _processedRadioInputs.Clear();
             _cssRules.Clear();
             _imageCache.Clear();
             _cssClassStyles.Clear();
             _pendingTopBookmark = false;
+            _imageBytesUsed = 0;
+            _cssBytesUsed = 0;
+            ResetAccessibilityDiagnosticsState();
 
-            foreach (var path in options.StylesheetPaths) {
-                if (string.IsNullOrEmpty(path)) {
-                    continue;
-                }
-                if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)) {
-                    if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps) {
-                        await LoadAndParseCssAsync(context, new Url(absolute.ToString()), cancellationToken).ConfigureAwait(false);
-                    } else if (absolute.Scheme == Uri.UriSchemeFile && File.Exists(absolute.LocalPath)) {
-                        ParseCss(File.ReadAllText(absolute.LocalPath), absolute.LocalPath);
-                    }
-                } else if (document.BaseUrl != null) {
-                    var url = new Url(new Url(document.BaseUrl), path);
-                    if (url.Scheme == "http" || url.Scheme == "https") {
-                        await LoadAndParseCssAsync(context, url, cancellationToken).ConfigureAwait(false);
-                    } else if (url.Scheme == "file") {
-                        TryLoadCssFromFileUrl(url);
-                    }
-                } else if (File.Exists(path)) {
-                    ParseCss(File.ReadAllText(path), path);
-                }
-            }
-            foreach (var content in options.StylesheetContents) {
-                if (!string.IsNullOrEmpty(content)) {
-                    ParseCss(content);
-                }
-            }
+            await LoadConfiguredStylesheetsAsync(document, options, cancellationToken).ConfigureAwait(false);
+            await LoadHeadStylesheetsAsync(document, cancellationToken).ConfigureAwait(false);
 
-            if (document.Head != null) {
-                Uri? baseUri = null;
-                if (document.BaseUrl != null && Uri.TryCreate(document.BaseUrl.Href, UriKind.Absolute, out var du)) {
-                    baseUri = du;
-                }
-
-                foreach (var node in document.Head.ChildNodes) {
-                    if (node is IHtmlBaseElement baseElement) {
-                        if (Uri.TryCreate(baseElement.Href, UriKind.Absolute, out var bu)) {
-                            baseUri = bu;
-                        }
-                        continue;
-                    }
-                    if (node is IHtmlStyleElement styleElement) {
-                        ParseCss(styleElement.TextContent);
-                        continue;
-                    }
-                    if (node is IHtmlLinkElement linkElement) {
-                        var rel = linkElement.GetAttribute("rel");
-                        if (!string.Equals(rel, "stylesheet", StringComparison.OrdinalIgnoreCase)) {
-                            continue;
-                        }
-
-                        var hrefAttr = linkElement.GetAttribute("href");
-                        var href = linkElement.Href ?? hrefAttr;
-                        if (string.IsNullOrEmpty(href)) {
-                            continue;
-                        }
-
-                        if (!string.IsNullOrEmpty(hrefAttr) && File.Exists(hrefAttr)) {
-                            ParseCss(File.ReadAllText(hrefAttr), hrefAttr);
-                            continue;
-                        }
-
-                        var url = new Url(href);
-                        if (!url.IsAbsolute && baseUri != null) {
-                            url = new Url(new Url(baseUri.ToString()), href);
-                        }
-
-                        if (url.Scheme == "http" || url.Scheme == "https") {
-                            await LoadAndParseCssAsync(context, url, cancellationToken).ConfigureAwait(false);
-                        } else if (url.Scheme == "file") {
-                            TryLoadCssFromFileUrl(url);
-                        }
-                    }
-                }
-            }
-
-            var footnoteSection = document.QuerySelector("section.footnotes");
-            if (footnoteSection != null) {
-                foreach (var li in footnoteSection.QuerySelectorAll("li")) {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var id = li.GetAttribute("id");
-                    if (!string.IsNullOrEmpty(id)) {
-                        _footnoteMap[id!] = li.TextContent?.Trim() ?? string.Empty;
-                    }
-                }
-                footnoteSection.Remove();
-            }
+            CaptureNoteSections(document, cancellationToken);
+            CaptureCommentSections(document, cancellationToken);
 
             var section = doc.Sections.First();
             var listStack = new Stack<WordList>();
             WordList? headingList = options.SupportsHeadingNumbering ? headerFooter.AddList(WordListStyle.Headings111) : null;
             if (document.Body != null) {
-                foreach (var child in document.Body.ChildNodes) {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    ProcessNode(child, doc, section, options, null, listStack, new TextFormatting(), null, headerFooter, headingList);
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                ProcessNode(document.Body, doc, section, options, null, listStack, new TextFormatting(), null, headerFooter, headingList);
             }
         }
 

@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using PdfCore = OfficeIMO.Pdf;
 
 namespace OfficeIMO.Word.Pdf {
 
@@ -7,6 +8,20 @@ namespace OfficeIMO.Word.Pdf {
     /// Provides extension methods for converting <see cref="WordDocument"/> instances to PDF files.
     /// </summary>
     public static partial class WordPdfConverterExtensions {
+        /// <summary>
+        /// Converts the specified <see cref="WordDocument"/> to a first-party OfficeIMO PDF document model.
+        /// </summary>
+        /// <param name="document">The document to convert.</param>
+        /// <param name="options">Optional PDF configuration.</param>
+        /// <returns>The generated first-party PDF document model.</returns>
+        public static PdfCore.PdfDocument ToPdfDocument(this WordDocument document, PdfSaveOptions? options = null) {
+            if (document == null) {
+                throw new ArgumentNullException(nameof(document));
+            }
+
+            return CreateOfficeIMOPdfDocument(document, options);
+        }
+
         /// <summary>
         /// Saves the specified <see cref="WordDocument"/> as a PDF at the given <paramref name="path"/>.
         /// </summary>
@@ -32,7 +47,22 @@ namespace OfficeIMO.Word.Pdf {
                 Directory.CreateDirectory(directory);
             }
 
-            CreateOfficeIMOPdfDocument(document, options).Save(fullPath);
+            document.ToPdfDocument(options).Save(fullPath);
+        }
+
+        /// <summary>
+        /// Attempts to save the specified <see cref="WordDocument"/> as a PDF file and returns output diagnostics instead of throwing.
+        /// </summary>
+        public static PdfCore.PdfSaveResult TrySaveAsPdf(this WordDocument document, string path, PdfSaveOptions? options = null) {
+            try {
+                if (document == null) {
+                    throw new ArgumentNullException(nameof(document));
+                }
+
+                return document.ToPdfDocument(options).TrySave(path);
+            } catch (Exception ex) {
+                return PdfCore.PdfSaveResult.FromFailure(path, ex);
+            }
         }
 
         /// <summary>
@@ -54,9 +84,29 @@ namespace OfficeIMO.Word.Pdf {
                 throw new ArgumentException("Stream must be writable.", nameof(stream));
             }
 
-            CreateOfficeIMOPdfDocument(document, options).Save(stream);
+            document.ToPdfDocument(options).Save(stream);
             if (stream.CanSeek) {
                 stream.Position = 0;
+            }
+        }
+
+        /// <summary>
+        /// Attempts to write the specified <see cref="WordDocument"/> as a PDF to a stream and returns output diagnostics instead of throwing.
+        /// </summary>
+        public static PdfCore.PdfSaveResult TrySaveAsPdf(this WordDocument document, Stream stream, PdfSaveOptions? options = null) {
+            try {
+                if (document == null) {
+                    throw new ArgumentNullException(nameof(document));
+                }
+
+                PdfCore.PdfSaveResult result = document.ToPdfDocument(options).TrySave(stream);
+                if (result.Succeeded && stream != null && stream.CanSeek) {
+                    stream.Position = 0;
+                }
+
+                return result;
+            } catch (Exception ex) {
+                return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
             }
         }
 
@@ -71,7 +121,7 @@ namespace OfficeIMO.Word.Pdf {
                 throw new ArgumentNullException(nameof(document));
             }
 
-            return CreateOfficeIMOPdfDocument(document, options).ToBytes();
+            return document.ToPdfDocument(options).ToBytes();
         }
 
         /// <summary>
@@ -88,7 +138,7 @@ namespace OfficeIMO.Word.Pdf {
 
             cancellationToken.ThrowIfCancellationRequested();
             using (MemoryStream stream = new MemoryStream()) {
-                await CreateOfficeIMOPdfDocument(document, options).SaveAsync(stream, cancellationToken).ConfigureAwait(false);
+                await document.ToPdfDocument(options).SaveAsync(stream, cancellationToken).ConfigureAwait(false);
                 return stream.ToArray();
             }
         }
@@ -121,7 +171,22 @@ namespace OfficeIMO.Word.Pdf {
                 Directory.CreateDirectory(directory);
             }
 
-            await CreateOfficeIMOPdfDocument(document, options).SaveAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            await document.ToPdfDocument(options).SaveAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Attempts to save the specified <see cref="WordDocument"/> as a PDF file asynchronously and returns output diagnostics instead of throwing.
+        /// </summary>
+        public static async Task<PdfCore.PdfSaveResult> TrySaveAsPdfAsync(this WordDocument document, string path, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) {
+            try {
+                if (document == null) {
+                    throw new ArgumentNullException(nameof(document));
+                }
+
+                return await document.ToPdfDocument(options).TrySaveAsync(path, cancellationToken).ConfigureAwait(false);
+            } catch (Exception ex) {
+                return PdfCore.PdfSaveResult.FromFailure(path, ex);
+            }
         }
 
         /// <summary>
@@ -147,9 +212,29 @@ namespace OfficeIMO.Word.Pdf {
                 throw new ArgumentException("Stream must be writable.", nameof(stream));
             }
 
-            await CreateOfficeIMOPdfDocument(document, options).SaveAsync(stream, cancellationToken).ConfigureAwait(false);
+            await document.ToPdfDocument(options).SaveAsync(stream, cancellationToken).ConfigureAwait(false);
             if (stream.CanSeek) {
                 stream.Position = 0;
+            }
+        }
+
+        /// <summary>
+        /// Attempts to write the specified <see cref="WordDocument"/> as a PDF to a stream asynchronously and returns output diagnostics instead of throwing.
+        /// </summary>
+        public static async Task<PdfCore.PdfSaveResult> TrySaveAsPdfAsync(this WordDocument document, Stream stream, PdfSaveOptions? options = null, CancellationToken cancellationToken = default) {
+            try {
+                if (document == null) {
+                    throw new ArgumentNullException(nameof(document));
+                }
+
+                PdfCore.PdfSaveResult result = await document.ToPdfDocument(options).TrySaveAsync(stream, cancellationToken).ConfigureAwait(false);
+                if (result.Succeeded && stream != null && stream.CanSeek) {
+                    stream.Position = 0;
+                }
+
+                return result;
+            } catch (Exception ex) {
+                return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
             }
         }
 

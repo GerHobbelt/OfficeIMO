@@ -9,18 +9,22 @@ namespace OfficeIMO.Excel.Pdf {
         /// <summary>
         /// Converts an Excel workbook to a first-party OfficeIMO PDF document model.
         /// </summary>
-        public static PdfCore.PdfDoc ToPdfDocument(this ExcelDocument document, ExcelPdfSaveOptions? options = null) {
+        public static PdfCore.PdfDocument ToPdfDocument(this ExcelDocument document, ExcelPdfSaveOptions? options = null) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
 
             options ??= new ExcelPdfSaveOptions();
-            options.Warnings.Clear();
-            var pdf = PdfCore.PdfDoc.Create(CreatePdfOptions(options));
+            options.ResetExportState();
+            PdfCore.PdfOptions pdfOptions = CreatePdfOptions(options, out bool preserveConfiguredFontSlots);
+            PdfCore.PdfStandardFont defaultFontFamily = PdfCore.PdfStandardFontMapper.GetFontFamily(pdfOptions.DefaultFont);
             using ExcelDocumentReader reader = document.CreateReader();
             IReadOnlyList<string> sheetNames = GetSheetNames(reader, options);
             bool hasExplicitSheetSelection = HasExplicitSheetSelection(options);
-            IReadOnlyList<WorksheetPdfExportPlan> exportPlans = BuildWorksheetExportPlans(document, reader, sheetNames, options, hasExplicitSheetSelection);
+            IReadOnlyList<WorksheetPdfExportPlan> exportPlans = BuildWorksheetExportPlans(document, reader, sheetNames, options, hasExplicitSheetSelection, defaultFontFamily);
+            RegisterWorksheetFonts(pdfOptions, exportPlans, options, preserveConfiguredFontSlots);
+            ApplyDefaultEmbeddedFontFallback(pdfOptions, options, preserveConfiguredFontSlots);
+            var pdf = PdfCore.PdfDocument.Create(pdfOptions);
             IReadOnlyDictionary<string, string> sheetDestinations = BuildSheetDestinationMap(exportPlans);
             IReadOnlyDictionary<string, string> cellDestinations = BuildCellDestinationMap(exportPlans);
             foreach (WorksheetPdfExportPlan plan in exportPlans) {
@@ -39,12 +43,12 @@ namespace OfficeIMO.Excel.Pdf {
                         IReadOnlyDictionary<string, IReadOnlyList<WorksheetImageExportData>> imagesByCellReference = CreateWorksheetImageMap(plan);
                         foreach (WorksheetImageExportData image in plan.Images) {
                             if (!imagesByCellReference.ContainsKey(NormalizeCellReference(image.CellReference))) {
-                                item.Image(image.Bytes, image.WidthPoints, image.HeightPoints, PdfCore.PdfAlign.Left, spacingBefore: 4, spacingAfter: 6);
+                                item.Image(image.Bytes, image.WidthPoints, image.HeightPoints, PdfCore.PdfAlign.Left, spacingBefore: 4, spacingAfter: 6, style: CreateConverterImageStyle());
                             }
                         }
 
                         foreach (WorksheetChartExportData chart in plan.Charts) {
-                            AddWorksheetChart(item, chart);
+                            AddWorksheetChart(item, chart, plan.SheetName, options);
                         }
 
                         if (plan.HasTable) {
@@ -56,7 +60,7 @@ namespace OfficeIMO.Excel.Pdf {
                                 }
 
                                 item.Table(
-                                    CreatePdfRows(values, plan.ExportData.Styles, plan.ExportData.Hyperlinks, plan.ExportData.CellReferences, plan.ExportData.MergedCells, imagesByCellReference, chunk.RowIndexes, chunk.StartColumn, chunk.ColumnCount, options.EmptyCellText, sheetDestinations, cellDestinations, plan.SheetName),
+                                    CreatePdfRows(values, plan.ExportData.Styles, plan.ExportData.Hyperlinks, plan.ExportData.CellReferences, plan.ExportData.MergedCells, imagesByCellReference, chunk.RowIndexes, chunk.StartColumn, chunk.ColumnCount, options.EmptyCellText, sheetDestinations, cellDestinations, plan.SheetName, defaultFontFamily),
                                     style: CreateTableStyle(options, plan.PageSetup, chunk.RowIndexes, chunk.HeaderRowCount, plan.ExportData.Styles, plan.ExportData.ConditionalFills, plan.ExportData.ColumnWidths, plan.ExportData.RowHeights, chunk.StartColumn, chunk.ColumnCount));
                             }
                         }
@@ -71,6 +75,10 @@ namespace OfficeIMO.Excel.Pdf {
 
             return pdf;
         }
+
+        private static PdfCore.PdfImageStyle CreateConverterImageStyle() => new() {
+            ScaleDownToFit = true
+        };
 
         /// <summary>
         /// Converts an Excel workbook to PDF bytes.
@@ -87,10 +95,32 @@ namespace OfficeIMO.Excel.Pdf {
         }
 
         /// <summary>
+        /// Attempts to save an Excel workbook as a PDF file and returns output diagnostics instead of throwing.
+        /// </summary>
+        public static PdfCore.PdfSaveResult TrySaveAsPdf(this ExcelDocument document, string path, ExcelPdfSaveOptions? options = null) {
+            try {
+                return document.ToPdfDocument(options).TrySave(path);
+            } catch (Exception ex) {
+                return PdfCore.PdfSaveResult.FromFailure(path, ex);
+            }
+        }
+
+        /// <summary>
         /// Writes an Excel workbook as PDF to a stream.
         /// </summary>
         public static void SaveAsPdf(this ExcelDocument document, Stream stream, ExcelPdfSaveOptions? options = null) {
             document.ToPdfDocument(options).Save(stream);
+        }
+
+        /// <summary>
+        /// Attempts to write an Excel workbook as PDF to a stream and returns output diagnostics instead of throwing.
+        /// </summary>
+        public static PdfCore.PdfSaveResult TrySaveAsPdf(this ExcelDocument document, Stream stream, ExcelPdfSaveOptions? options = null) {
+            try {
+                return document.ToPdfDocument(options).TrySave(stream);
+            } catch (Exception ex) {
+                return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
+            }
         }
 
     }

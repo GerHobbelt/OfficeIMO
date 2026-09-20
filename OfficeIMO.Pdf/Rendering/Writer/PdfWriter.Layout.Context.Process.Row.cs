@@ -30,7 +30,7 @@ internal static partial class PdfWriter {
 
                 for (int boundary = 0; boundary < ncols - 1; boundary++) {
                     double separatorX = colXs[boundary] + colWs[boundary] + (rowGap / 2D);
-                    DrawVLine(sb, rowStyle.ColumnSeparatorColor.Value, rowStyle.ColumnSeparatorWidth, separatorX, topY, bottomY);
+                    DrawVLine(sb, rowStyle.ColumnSeparatorColor.Value, rowStyle.ColumnSeparatorWidth, separatorX, topY, bottomY, emitGeneratedStructure);
                 }
 
                 pageDirty = true;
@@ -38,6 +38,12 @@ internal static partial class PdfWriter {
 
             var colStates = CreateRowColumnStates(ncols);
             var colItems = BuildRowColumnItems(rb, colWs);
+            var columnListStructureElementIndexes = new int?[ncols];
+            var columnListStructurePages = new LayoutResult.Page?[ncols];
+            var columnActiveListGroupIds = new int[ncols];
+            for (int i = 0; i < ncols; i++) {
+                columnActiveListGroupIds[i] = -1;
+            }
 
             static System.Collections.Generic.List<(int idx, int line, int subline)> CreateRowColumnStates(int columnCount) {
                 var states = new System.Collections.Generic.List<(int idx, int line, int subline)>(columnCount);
@@ -125,6 +131,18 @@ internal static partial class PdfWriter {
                     double remain = avail;
                     while (idx < items.Count && remain > 0.1) {
                         var it = items[idx];
+                        if (it is ColListItem currentListItem) {
+                            if (columnActiveListGroupIds[ci] != currentListItem.ListGroupId) {
+                                columnActiveListGroupIds[ci] = currentListItem.ListGroupId;
+                                columnListStructureElementIndexes[ci] = null;
+                                columnListStructurePages[ci] = null;
+                            }
+                        } else {
+                            columnActiveListGroupIds[ci] = -1;
+                            columnListStructureElementIndexes[ci] = null;
+                            columnListStructurePages[ci] = null;
+                        }
+
                         if (it is ColPar par) {
                             var pblock = par.Block;
                             var lines = par.Lines;
@@ -190,17 +208,20 @@ internal static partial class PdfWriter {
                             for (int k = 0; k < take; k++) { sliceLines.Add(lines[start + k]); sliceHeights.Add(heights[start + k]); }
                             pageDirty = true;
                             var paragraphFont = ChooseNormal(currentOpts.DefaultFont);
-                            WriteRichParagraph(sb, pblock, sliceLines, sliceHeights, currentOpts, FirstTextBaselineFromTop(paragraphFont, size, yCol), size, leading, currentPage!.Annotations, xCol + par.XOffset, par.TextWidth, start == 0 ? xCol + par.FirstLineXOffset : null, start == 0 ? par.FirstLineTextWidth : null);
+                            int? markedContentId = RegisterTextStructureElement("P");
+                            WriteRichParagraph(sb, pblock, sliceLines, sliceHeights, currentOpts, FirstTextBaselineFromTop(paragraphFont, size, yCol), size, leading, currentPage!.Annotations, xCol + par.XOffset, par.TextWidth, start == 0 ? xCol + par.FirstLineXOffset : null, start == 0 ? par.FirstLineTextWidth : null, "P", markedContentId, currentPage);
                             MarkRichFonts(pblock.Runs);
                             yCol -= hsum; remain -= hsum; consumed += hsum; line += take;
                             if (line >= lines.Count) { double space = spacingAfter; if (space <= remain) { yCol -= space; remain -= space; consumed += space; } idx++; line = 0; }
                         } else if (it is ColHead ch) {
                             var hb2 = ch.Block;
                             var lines = ch.Lines;
+                            var heights = ch.Heights;
                             double leading = ch.Leading;
                             double size = ch.Size;
                             double spacingBefore = (consumed > 0.001 || ch.ApplySpacingBeforeAtTop) ? ch.SpacingBefore : 0D;
-                            double needed = spacingBefore + lines.Count * leading + ch.SpacingAfter;
+                            double textHeight = MeasureRichLinesHeight(heights, lines.Count, leading);
+                            double needed = spacingBefore + textHeight + ch.SpacingAfter;
                             if (ch.KeepWithNext && idx + 1 < items.Count) {
                                 double nextHeight = MeasureColItemFirstVisualHeight(items[idx + 1]);
                                 double keepHeight = needed + nextHeight;
@@ -225,13 +246,28 @@ internal static partial class PdfWriter {
                             }
                             var headingFont = ch.Bold ? ChooseBold(ChooseNormal(currentOpts.DefaultFont)) : ChooseNormal(currentOpts.DefaultFont);
                             double firstBaseline = FirstTextBaselineFromTop(headingFont, size, yCol);
-                            AddHeadingLinkAnnotations(hb2, lines, headingFont, size, leading, xCol, wCol, firstBaseline);
-                            WriteLinesInternal(ch.Bold ? "F2" : "F1", size, leading, xCol, wCol, firstBaseline, lines, hb2.Align, ch.Color, applyBaselineTweak: false);
+                            string structureType = "H" + hb2.Level.ToString(CultureInfo.InvariantCulture);
+                            bool hasLinkTarget = !string.IsNullOrEmpty(hb2.LinkUri) || !string.IsNullOrEmpty(hb2.LinkDestinationName);
+                            int? linkStructElementIndex = null;
+                            string markedStructureType = structureType;
+                            int? markedContentId;
+                            if (hasLinkTarget && emitGeneratedStructure && currentPage != null) {
+                                int? headingElementIndex = RegisterStructureContainer(structureType);
+                                linkStructElementIndex = currentPage.StructElements.Count;
+                                markedStructureType = "Link";
+                                markedContentId = RegisterTextStructureElement(markedStructureType, headingElementIndex);
+                            } else {
+                                markedContentId = RegisterTextStructureElement(structureType);
+                            }
+
+                            AddHeadingLinkAnnotations(hb2, lines, headingFont, size, leading, xCol, wCol, firstBaseline, linkStructElementIndex);
+                            WriteRichParagraph(sb, new RichParagraphBlock(ch.Runs, hb2.Align, ch.Color), lines, heights, currentOpts, firstBaseline, size, leading, currentPage!.Annotations, xCol, wCol, structureType: markedStructureType, markedContentId: markedContentId, structurePage: currentPage);
+                            MarkRichFonts(ch.Runs);
                             if (ch.Bold) {
                                 currentPage!.UsedBold = true;
                                 usedBold = true;
                             }
-                            double consumedHeight = lines.Count * leading + ch.SpacingAfter;
+                            double consumedHeight = textHeight + ch.SpacingAfter;
                             yCol -= consumedHeight; remain -= consumedHeight; consumed += consumedHeight; idx++;
                         } else if (it is ColListItem listItem) {
                             var lines = listItem.Lines;
@@ -295,16 +331,30 @@ internal static partial class PdfWriter {
                             pageDirty = true;
                             var listFont = ChooseNormal(currentOpts.DefaultFont);
                             double baselineY = FirstTextBaselineFromTop(listFont, listItem.Size, yCol);
+                            int? listElementIndex = line == 0 || listItem.StructureElement == null
+                                ? EnsurePageStructureContainer("L", ref columnListStructureElementIndexes[ci], ref columnListStructurePages[ci])
+                                : null;
+                            int? listItemElementIndex = line == 0 || listItem.StructureElement == null
+                                ? RegisterStructureContainer("LI", listElementIndex)
+                                : null;
+                            if (listItemElementIndex.HasValue && currentPage != null) {
+                                listItem.StructureElement = currentPage.StructElements[listItemElementIndex.Value];
+                            }
+
                             if (line == 0) {
                                 if (!string.IsNullOrEmpty(listItem.BookmarkName)) {
                                     AddNamedDestinationName(listItem.BookmarkName!, yCol);
                                 }
 
                                 var markerLines = new System.Collections.Generic.List<string>(1) { listItem.Marker };
-                                WriteLinesInternal("F1", listItem.Size, leading, xCol + listItem.MarkerXOffset, listItem.MarkerWidth, baselineY, markerLines, listItem.MarkerAlign, listItem.Color, applyBaselineTweak: true);
+                                int? labelMarkedContentId = RegisterTextStructureElement("Lbl", listItemElementIndex);
+                                WriteLinesInternal("F1", listItem.Size, leading, xCol + listItem.MarkerXOffset, listItem.MarkerWidth, baselineY, markerLines, listItem.MarkerAlign, listItem.Color, applyBaselineTweak: true, structureType: "Lbl", markedContentId: labelMarkedContentId);
                             }
 
-                            WriteRichParagraph(sb, new RichParagraphBlock(listItem.Runs, listItem.TextAlign, listItem.Color), sliceLines, sliceHeights, currentOpts, baselineY, listItem.Size, leading, currentPage!.Annotations, xCol + listItem.TextXOffset, listItem.TextWidth);
+                            int? bodyMarkedContentId = line == 0 || listItem.StructureElement == null
+                                ? RegisterTextStructureElement("LBody", listItemElementIndex)
+                                : RegisterTextStructureElement("LBody", listItem.StructureElement);
+                            WriteRichParagraph(sb, new RichParagraphBlock(listItem.Runs, listItem.TextAlign, listItem.Color), sliceLines, sliceHeights, currentOpts, baselineY, listItem.Size, leading, currentPage!.Annotations, xCol + listItem.TextXOffset, listItem.TextWidth, structureType: "LBody", markedContentId: bodyMarkedContentId, structurePage: currentPage);
                             MarkRichFonts(listItem.Runs);
                             yCol -= hsum;
                             remain -= hsum;
@@ -361,10 +411,11 @@ internal static partial class PdfWriter {
 
                                 double panelTop = yCol;
                                 double panelBottom = yCol - panelHeight;
-                                if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom); }
-                                if (DrawPanelBorder(sb, panelStyle, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom)) { pageDirty = true; }
+                                if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom, emitGeneratedStructure); }
+                                if (DrawPanelBorder(sb, panelStyle, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom, emitGeneratedStructure)) { pageDirty = true; }
                                 pageDirty = true;
-                                WriteRichParagraph(sb, new RichParagraphBlock(pblock.Runs, pblock.Align, pblock.DefaultColor), lines, heights, currentOpts, panelTop - panelStyle.PaddingY - panel.FirstBaselineOffset, panel.Size, panel.Leading, currentPage!.Annotations, xPanel + panelStyle.PaddingX, panel.TextWidth);
+                                int? panelMarkedContentId = RegisterTextStructureElement("P");
+                                WriteRichParagraph(sb, new RichParagraphBlock(pblock.Runs, pblock.Align, pblock.DefaultColor), lines, heights, currentOpts, panelTop - panelStyle.PaddingY - panel.FirstBaselineOffset, panel.Size, panel.Leading, currentPage!.Annotations, xPanel + panelStyle.PaddingX, panel.TextWidth, structureType: "P", markedContentId: panelMarkedContentId, structurePage: currentPage);
                                 MarkRichFonts(pblock.Runs);
 
                                 yCol = panelBottom;
@@ -382,6 +433,7 @@ internal static partial class PdfWriter {
                                 double topPad = start == 0 ? panelStyle.PaddingY : 0;
                                 double minLine = heights[start];
                                 if (remain < topPad + minLine) {
+                                    EnsurePanelSegmentCanFitLine(topPad, minLine);
                                     if (consumed > 0) break;
                                     remain = 0;
                                     break;
@@ -401,14 +453,17 @@ internal static partial class PdfWriter {
                                     take++;
                                 }
 
-                                if (take == 0) break;
+                                if (take == 0) {
+                                    EnsurePanelSegmentCanFitLine(topPad, minLine);
+                                    break;
+                                }
 
                                 bool lastSeg = start + take >= lines.Count;
                                 double panelTop = yCol;
                                 double usedBottomPad = lastSeg ? panelStyle.PaddingY : Math.Max(0, remain - (topPad + hsum));
                                 double panelBottom = yCol - (topPad + hsum + usedBottomPad);
-                                if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom); }
-                                if (DrawPanelBorder(sb, panelStyle, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom)) { pageDirty = true; }
+                                if (panelStyle.Background.HasValue) { pageDirty = true; DrawRowFill(sb, panelStyle.Background.Value, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom, emitGeneratedStructure); }
+                                if (DrawPanelBorder(sb, panelStyle, xPanel, panelBottom, panel.PanelWidth, panelTop - panelBottom, emitGeneratedStructure)) { pageDirty = true; }
 
                                 var sliceLines = new System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>>();
                                 var sliceHeights = new System.Collections.Generic.List<double>();
@@ -418,7 +473,8 @@ internal static partial class PdfWriter {
                                 }
 
                                 pageDirty = true;
-                                WriteRichParagraph(sb, new RichParagraphBlock(pblock.Runs, pblock.Align, pblock.DefaultColor), sliceLines, sliceHeights, currentOpts, panelTop - topPad - panel.FirstBaselineOffset, panel.Size, panel.Leading, currentPage!.Annotations, xPanel + panelStyle.PaddingX, panel.TextWidth);
+                                int? panelMarkedContentId = RegisterTextStructureElement("P");
+                                WriteRichParagraph(sb, new RichParagraphBlock(pblock.Runs, pblock.Align, pblock.DefaultColor), sliceLines, sliceHeights, currentOpts, panelTop - topPad - panel.FirstBaselineOffset, panel.Size, panel.Leading, currentPage!.Annotations, xPanel + panelStyle.PaddingX, panel.TextWidth, structureType: "P", markedContentId: panelMarkedContentId, structurePage: currentPage);
                                 MarkRichFonts(pblock.Runs);
 
                                 double segmentHeight = panelTop - panelBottom;
@@ -483,7 +539,22 @@ internal static partial class PdfWriter {
                                 consumed += tableSpacingBefore;
                             }
 
-                            if (line == 0 && table.CaptionLines != null) {
+                            int? tableStructureElementIndex = null;
+                            LayoutResult.Page? tableStructurePage = null;
+                            int? EnsureTableStructureElement() {
+                                if (!emitGeneratedStructure || currentPage == null) {
+                                    return null;
+                                }
+
+                                if (!ReferenceEquals(tableStructurePage, currentPage)) {
+                                    tableStructurePage = currentPage;
+                                    tableStructureElementIndex = RegisterStructureContainer("Table");
+                                }
+
+                                return tableStructureElementIndex;
+                            }
+
+                            if (line == 0 && table.CaptionRuns != null && table.CaptionLines != null && table.CaptionLineHeights != null) {
                                 double firstRowHeight = table.RowHeights.Length > 0 ? table.RowHeights[0] : 0;
                                 double neededWithFirstRow = table.CaptionHeight + firstRowHeight;
                                 if (neededWithFirstRow > maxContentHeight + 0.001) {
@@ -495,7 +566,9 @@ internal static partial class PdfWriter {
                                 double captionSize = tableStyle.CaptionFontSize ?? table.Size;
                                 var captionFont = ChooseNormal(currentOpts.DefaultFont);
                                 pageDirty = true;
-                                WriteLinesInternal("F1", captionSize, table.CaptionLeading, xTable, table.Width, yCol - GetAscender(captionFont, captionSize), table.CaptionLines, tableStyle.CaptionAlign, tableStyle.CaptionColor);
+                                int? captionMarkedContentId = RegisterTextStructureElement("Caption", EnsureTableStructureElement());
+                                MarkRichFonts(table.CaptionRuns);
+                                WriteRichParagraph(sb, new RichParagraphBlock(table.CaptionRuns, tableStyle.CaptionAlign, tableStyle.CaptionColor), table.CaptionLines, table.CaptionLineHeights, currentOpts, FirstTextBaselineFromTop(captionFont, captionSize, yCol), captionSize, table.CaptionLeading, currentPage!.Annotations, xTable, table.Width, structureType: "Caption", markedContentId: captionMarkedContentId, structurePage: currentPage);
                                 yCol -= table.CaptionHeight;
                                 remain -= table.CaptionHeight;
                                 consumed += table.CaptionHeight;
@@ -532,9 +605,9 @@ internal static partial class PdfWriter {
                                 int bodyRowIndex = rowIndex - table.HeaderRowCount;
                                 bool stripeBodyRow = bodyRowIndex >= 0 && bodyRowIndex % 2 == 1;
                                 bool[] rowFillSkips = GetRowSpanContinuationSkipColumns(tbColumn, rowIndex, table.Columns);
-                                if (tableStyle.HeaderFill is not null && renderAsHeader) { pageDirty = true; DrawTableRowFill(sb, tableStyle.HeaderFill.Value, xTable, table.ColumnWidths, columnGap, rowBottom, rowHeight, rowFillSkips); }
-                                else if (tableStyle.FooterFill is not null && renderAsFooter) { pageDirty = true; DrawTableRowFill(sb, tableStyle.FooterFill.Value, xTable, table.ColumnWidths, columnGap, rowBottom, rowHeight, rowFillSkips); }
-                                else if (!renderAsHeader && !renderAsFooter && tableStyle.RowStripeFill is not null && stripeBodyRow) { pageDirty = true; DrawTableRowFill(sb, tableStyle.RowStripeFill.Value, xTable, table.ColumnWidths, columnGap, rowBottom, rowHeight, rowFillSkips); }
+                                if (tableStyle.HeaderFill is not null && renderAsHeader) { pageDirty = true; DrawTableRowFill(sb, tableStyle.HeaderFill.Value, xTable, table.ColumnWidths, columnGap, rowBottom, rowHeight, rowFillSkips, emitGeneratedStructure); }
+                                else if (tableStyle.FooterFill is not null && renderAsFooter) { pageDirty = true; DrawTableRowFill(sb, tableStyle.FooterFill.Value, xTable, table.ColumnWidths, columnGap, rowBottom, rowHeight, rowFillSkips, emitGeneratedStructure); }
+                                else if (!renderAsHeader && !renderAsFooter && tableStyle.RowStripeFill is not null && stripeBodyRow) { pageDirty = true; DrawTableRowFill(sb, tableStyle.RowStripeFill.Value, xTable, table.ColumnWidths, columnGap, rowBottom, rowHeight, rowFillSkips, emitGeneratedStructure); }
 
                                 if (!renderAsHeader && !renderAsFooter && tableStyle.BodyColumnFills != null) {
                                     bool[] bodyColumnFillSkips = GetMergedCellContinuationSkipColumns(tbColumn, rowIndex, table.Columns);
@@ -543,7 +616,7 @@ internal static partial class PdfWriter {
                                         PdfColor? fill = fillColumn < tableStyle.BodyColumnFills.Count ? tableStyle.BodyColumnFills[fillColumn] : null;
                                         if (fill.HasValue && (fillColumn >= bodyColumnFillSkips.Length || !bodyColumnFillSkips[fillColumn])) {
                                             pageDirty = true;
-                                            DrawRowFill(sb, fill.Value, fillX, rowBottom, table.ColumnWidths[fillColumn], rowHeight);
+                                            DrawRowFill(sb, fill.Value, fillX, rowBottom, table.ColumnWidths[fillColumn], rowHeight, emitGeneratedStructure);
                                         }
                                         fillX += table.ColumnWidths[fillColumn] + columnGap;
                                     }
@@ -566,20 +639,21 @@ internal static partial class PdfWriter {
                                             }
 
                                             pageDirty = true;
-                                            DrawRowFill(sb, fill, fillX, fillBottom, GetTableCellWidth(table.ColumnWidths, fillColumn, span, columnGap), fillHeight);
+                                            DrawRowFill(sb, fill, fillX, fillBottom, GetTableCellWidth(table.ColumnWidths, fillColumn, span, columnGap), fillHeight, emitGeneratedStructure);
                                         }
                                         fillX += table.ColumnWidths[fillColumn] + columnGap;
                                     }
                                 }
-                                if (DrawTableCellDataBars(sb, tableStyle, cells, rowIndex, table.Columns, xTable, yCol, rowBottom, rowHeight, table.ColumnWidths, columnGap, table.RowHeights, columnTableRowGap, wholeRowSegment, startLine, rowFillSkips)) {
+                                if (DrawTableCellDataBars(sb, tableStyle, cells, rowIndex, table.Columns, xTable, yCol, rowBottom, rowHeight, table.ColumnWidths, columnGap, table.RowHeights, columnTableRowGap, wholeRowSegment, startLine, rowFillSkips, emitGeneratedStructure)) {
                                     pageDirty = true;
                                 }
-                                if (DrawTableCellIcons(sb, tableStyle, cells, rowIndex, table.Columns, xTable, yCol, rowBottom, rowHeight, table.ColumnWidths, columnGap, table.RowHeights, columnTableRowGap, wholeRowSegment, startLine, rowFillSkips)) {
+                                if (DrawTableCellIcons(sb, tableStyle, cells, rowIndex, table.Columns, xTable, yCol, rowBottom, rowHeight, table.ColumnWidths, columnGap, table.RowHeights, columnTableRowGap, wholeRowSegment, startLine, rowFillSkips, emitGeneratedStructure)) {
                                     pageDirty = true;
                                 }
 
                                 var textColor = renderAsHeader ? tableStyle.HeaderTextColor : renderAsFooter ? tableStyle.FooterTextColor : tableStyle.TextColor;
                                 double xi = xTable;
+                                int? rowStructureElementIndex = RegisterStructureContainer("TR", EnsureTableStructureElement());
                                 for (int cellIndex = 0; cellIndex < cells.Count; cellIndex++) {
                                     TableCellLayout cell = cells[cellIndex];
                                     int c = cell.Column;
@@ -608,13 +682,13 @@ internal static partial class PdfWriter {
                                     if (visibleLineCount > 0) {
                                         double availableTextHeight = Math.Max(0, cellHeight - cellPadTop - cellPadBottom);
                                         visibleTextHeight = MeasureTableCellTextHeight(lines, sourceStartLine, visibleLineCount, rowLeading);
-                                        double visibleContentHeight = MeasureTableCellContentHeight(cell, lines, sourceStartLine, visibleLineCount, rowLeading);
+                                        double visibleContentHeight = MeasureTableCellContentHeight(cell, lines, sourceStartLine, visibleLineCount, rowLeading, innerW);
                                         double unusedTextHeight = Math.Max(0, availableTextHeight - visibleContentHeight);
                                         if (verticalAlign == PdfCellVerticalAlign.Middle) verticalOffset = unusedTextHeight / 2;
                                         else if (verticalAlign == PdfCellVerticalAlign.Bottom) verticalOffset = unusedTextHeight;
                                     }
 
-                                    double firstBaseline = yCol - cellPadTop - verticalOffset - GetAscender(cellFont, rowSize) + tableStyle.RowBaselineOffset;
+                                    double firstBaseline = yCol - cellPadTop - verticalOffset - GetAscenderForOptions(cellFont, rowSize, currentOpts) + tableStyle.RowBaselineOffset;
 
                                     pageDirty = true;
                                     if (cell.Runs.Any(run => run.Bold || rowUsesBold)) { currentPage!.UsedBold = true; usedBold = true; }
@@ -634,12 +708,28 @@ internal static partial class PdfWriter {
                                         AddTableCellNamedDestinationName(cell.NamedDestinationName, yCol);
                                     }
 
+                                    int? cellLinkStructElementIndex = null;
                                     if (visibleLineCount > 0) {
                                         var visibleLines = SliceTableCellLines(lines, sourceStartLine, visibleLineCount);
                                         visibleLines = StripRichLineLinksWhenCellLinked(visibleLines, linkUri, linkDestinationName);
                                         var visibleHeights = SliceTableCellLineHeights(lines, sourceStartLine, visibleLineCount, rowLeading);
                                         var paragraph = new RichParagraphBlock(StripRunLinksWhenCellLinked(cell.Runs, linkUri, linkDestinationName), MapTableCellAlignment(align), textColor);
-                                        WriteClippedRichParagraph(sb, paragraph, visibleLines, visibleHeights, currentOpts, firstBaseline, rowSize, rowLeading, currentPage!.Annotations, xi - TableCellClipBleed, cellBottom - TableCellClipBleed, cellWidth + (TableCellClipBleed * 2D), cellHeight + (TableCellClipBleed * 2D), xi + cellPadLeft, innerW);
+                                        string structureType = renderAsHeader ? "TH" : "TD";
+                                        int tableColumnSpan = cell.ColumnSpan > 1 ? cell.ColumnSpan : 1;
+                                        int tableRowSpan = wholeRowSegment && cell.RowSpan > 1 ? cell.RowSpan : 1;
+                                        bool cellHasLinkTarget = HasCellLinkTarget(linkUri, linkDestinationName);
+                                        int? markedContentId;
+                                        string markedStructureType = structureType;
+                                        if (cellHasLinkTarget && emitGeneratedStructure && currentPage != null) {
+                                            int? cellElementIndex = RegisterStructureContainer(structureType, rowStructureElementIndex, renderAsHeader ? "Column" : string.Empty, tableColumnSpan, tableRowSpan);
+                                            markedStructureType = "Link";
+                                            markedContentId = RegisterTextStructureElement(markedStructureType, cellElementIndex);
+                                            cellLinkStructElementIndex = FindStructElementIndex(currentPage, markedContentId, markedStructureType);
+                                        } else {
+                                            markedContentId = RegisterTextStructureElement(structureType, rowStructureElementIndex, renderAsHeader ? "Column" : string.Empty, tableColumnSpan, tableRowSpan);
+                                        }
+
+                                        WriteClippedRichParagraph(sb, paragraph, visibleLines, visibleHeights, currentOpts, firstBaseline, rowSize, rowLeading, currentPage!.Annotations, xi - TableCellClipBleed, cellBottom - TableCellClipBleed, cellWidth + (TableCellClipBleed * 2D), cellHeight + (TableCellClipBleed * 2D), xi + cellPadLeft, innerW, structureType: markedStructureType, markedContentId: markedContentId, structurePage: currentPage);
                                     }
                                     if (!suppressCellObjects && (cell.Images.Count > 0 || cell.CheckBoxes.Count > 0 || cell.FormFields.Count > 0) && sourceStartLine == 0) {
                                         if (CanRenderTableCellCheckBoxInline(cell, lines, sourceStartLine, visibleLineCount)) {
@@ -651,7 +741,7 @@ internal static partial class PdfWriter {
                                     }
 
                                     if (HasCellLinkTarget(linkUri, linkDestinationName)) {
-                                        currentPage!.Annotations.Add(new LinkAnnotation { X1 = xi + cellPadLeft, Y1 = cellBottom, X2 = xi + cellWidth - cellPadRight, Y2 = yCol, Uri = linkUri, DestinationName = linkDestinationName, Contents = linkContents ?? cell.Text });
+                                        currentPage!.Annotations.Add(new LinkAnnotation { X1 = xi + cellPadLeft, Y1 = cellBottom, X2 = xi + cellWidth - cellPadRight, Y2 = yCol, Uri = linkUri, DestinationName = linkDestinationName, Contents = linkContents ?? cell.Text, StructElementIndex = cellLinkStructElementIndex });
                                     }
                                 }
 
@@ -661,12 +751,12 @@ internal static partial class PdfWriter {
                                     bool[] bottomBorderSkips = GetRowSpanBoundarySkipColumns(tbColumn, rowIndex, table.Columns);
                                     bool segmentBorderRows = HasSkippedColumns(topBorderSkips, table.Columns) || HasSkippedColumns(bottomBorderSkips, table.Columns);
                                     if (segmentBorderRows) {
-                                        DrawTableHorizontalLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, table.ColumnWidths, columnGap, rowBottom + rowHeight, topBorderSkips);
-                                        DrawTableHorizontalLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, table.ColumnWidths, columnGap, rowBottom, bottomBorderSkips);
-                                        DrawVLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, rowBottom + rowHeight, rowBottom);
-                                        DrawVLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable + table.Width, rowBottom + rowHeight, rowBottom);
+                                        DrawTableHorizontalLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, table.ColumnWidths, columnGap, rowBottom + rowHeight, topBorderSkips, emitGeneratedStructure);
+                                        DrawTableHorizontalLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, table.ColumnWidths, columnGap, rowBottom, bottomBorderSkips, emitGeneratedStructure);
+                                        DrawVLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, rowBottom + rowHeight, rowBottom, emitGeneratedStructure);
+                                        DrawVLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable + table.Width, rowBottom + rowHeight, rowBottom, emitGeneratedStructure);
                                     } else {
-                                        DrawRowRect(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, rowBottom, table.Width, rowHeight);
+                                        DrawRowRect(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xTable, rowBottom, table.Width, rowHeight, emitGeneratedStructure);
                                     }
 
                                     double xi2 = xTable;
@@ -677,7 +767,7 @@ internal static partial class PdfWriter {
                                             continue;
                                         }
 
-                                        DrawVLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xi2, rowBottom + rowHeight, rowBottom);
+                                        DrawVLine(sb, tableStyle.BorderColor.Value, tableStyle.BorderWidth, xi2, rowBottom + rowHeight, rowBottom, emitGeneratedStructure);
                                         xi2 += columnGap;
                                     }
                                 }
@@ -687,7 +777,7 @@ internal static partial class PdfWriter {
                                     double footerSeparatorWidth = tableStyle.FooterSeparatorWidth > 0 ? tableStyle.FooterSeparatorWidth : tableStyle.RowSeparatorWidth;
                                     if (footerSeparatorColor is not null && footerSeparatorWidth > 0) {
                                         pageDirty = true;
-                                        DrawTableHorizontalLine(sb, footerSeparatorColor.Value, footerSeparatorWidth, xTable, table.ColumnWidths, columnGap, yCol, GetRowSpanBoundarySkipColumns(tbColumn, rowIndex - 1, table.Columns));
+                                        DrawTableHorizontalLine(sb, footerSeparatorColor.Value, footerSeparatorWidth, xTable, table.ColumnWidths, columnGap, yCol, GetRowSpanBoundarySkipColumns(tbColumn, rowIndex - 1, table.Columns), emitGeneratedStructure);
                                     }
                                 }
 
@@ -695,7 +785,7 @@ internal static partial class PdfWriter {
                                 double separatorWidth = renderAsHeader && tableStyle.HeaderSeparatorWidth > 0 ? tableStyle.HeaderSeparatorWidth : tableStyle.RowSeparatorWidth;
                                 if (separatorColor is not null && separatorWidth > 0) {
                                     pageDirty = true;
-                                    DrawTableHorizontalLine(sb, separatorColor.Value, separatorWidth, xTable, table.ColumnWidths, columnGap, rowBottom, GetRowSpanBoundarySkipColumns(tbColumn, rowIndex, table.Columns));
+                                    DrawTableHorizontalLine(sb, separatorColor.Value, separatorWidth, xTable, table.ColumnWidths, columnGap, rowBottom, GetRowSpanBoundarySkipColumns(tbColumn, rowIndex, table.Columns), emitGeneratedStructure);
                                 }
 
                                 if (tableStyle.CellBorders != null && tableStyle.CellBorders.Count > 0) {
@@ -716,7 +806,7 @@ internal static partial class PdfWriter {
                                             }
 
                                             pageDirty = true;
-                                            DrawCellBorder(sb, cellBorder, borderX, borderBottom, GetTableCellWidth(table.ColumnWidths, borderColumn, span, columnGap), borderHeight);
+                                            DrawCellBorder(sb, cellBorder, borderX, borderBottom, GetTableCellWidth(table.ColumnWidths, borderColumn, span, columnGap), borderHeight, emitGeneratedStructure);
                                         }
                                         borderX += table.ColumnWidths[borderColumn] + columnGap;
                                     }
@@ -836,16 +926,16 @@ internal static partial class PdfWriter {
                             if (spacingBefore > 0) yCol -= spacingBefore;
                             double x1 = xCol, x2 = xCol + wCol, yLine = yCol - hr2.Thickness * 0.5;
                             pageDirty = true;
-                            DrawHLine(sb, hr2.Color, hr2.Thickness, x1, x2, yLine);
+                            DrawHLine(sb, hr2.Color, hr2.Thickness, x1, x2, yLine, emitGeneratedStructure);
                             yCol -= hr2.Thickness + hr2.SpacingAfter; remain -= needed; consumed += needed; idx++;
                         } else if (it is ColImg ciimg) {
                             var ib2 = ciimg.Block;
-                            PdfImageStyle imageStyle = ResolveImageStyle(ib2, currentOpts);
-                            PdfDoc.ValidateImageStyleForBox(imageStyle, ib2.Width, ib2.Height, nameof(imageStyle.ClipPath));
-                            PdfDoc.ValidateImageFitDimensions(ib2.Info, imageStyle.Fit, nameof(imageStyle.Fit));
+                            PdfImageStyle imageStyle = ciimg.Style;
+                            PdfDocument.ValidateImageStyleForBox(imageStyle, ib2.Width, ib2.Height, nameof(imageStyle.ClipPath));
+                            PdfDocument.ValidateImageFitDimensions(ib2.Info, imageStyle.Fit, nameof(imageStyle.Fit));
                             double spacingBefore = ResolveColumnSpacingBefore(imageStyle.SpacingBefore, consumed);
-                            double needed = spacingBefore + ib2.Height + imageStyle.SpacingAfter;
-                            EnsureFixedFlowBlockFits("Image", ib2.Width, needed, wCol);
+                            double needed = spacingBefore + ciimg.Height + imageStyle.SpacingAfter;
+                            EnsureFixedFlowBlockFits("Image", ciimg.Width, needed, wCol);
                             if (imageStyle.KeepWithNext && idx + 1 < items.Count) {
                                 double nextHeight = MeasureColItemFirstVisualHeight(items[idx + 1]);
                                 double keepHeight = needed + nextHeight;
@@ -861,17 +951,17 @@ internal static partial class PdfWriter {
                             if (needed > remain && consumed == 0) { remain = 0; break; }
                             if (spacingBefore > 0) yCol -= spacingBefore;
                             double xImg = xCol;
-                            if (imageStyle.Align == PdfAlign.Center) xImg = xCol + Math.Max(0, (wCol - ib2.Width) / 2);
-                            else if (imageStyle.Align == PdfAlign.Right) xImg = xCol + Math.Max(0, wCol - ib2.Width);
-                            PageImage pageImage = CreatePageImage(ib2, imageStyle, xImg, yCol - ib2.Height);
+                            if (imageStyle.Align == PdfAlign.Center) xImg = xCol + Math.Max(0, (wCol - ciimg.Width) / 2);
+                            else if (imageStyle.Align == PdfAlign.Right) xImg = xCol + Math.Max(0, wCol - ciimg.Width);
+                            PageImage pageImage = CreatePageImage(ib2, imageStyle, xImg, yCol - ciimg.Height, ciimg.Width, ciimg.Height);
                             currentPage!.Images.Add(pageImage);
-                            AddImageLinkAnnotation(ib2, imageStyle, pageImage, xImg, yCol - ib2.Height);
+                            AddImageLinkAnnotation(ib2, imageStyle, pageImage, xImg, yCol - ciimg.Height, ciimg.Width, ciimg.Height);
                             pageDirty = true;
-                            yCol -= ib2.Height + imageStyle.SpacingAfter; remain -= needed; consumed += needed; idx++;
+                            yCol -= ciimg.Height + imageStyle.SpacingAfter; remain -= needed; consumed += needed; idx++;
                         } else if (it is ColShape cs) {
                             var shape = cs.Block;
                             PdfDrawingStyle shapeStyle = ResolveDrawingStyle(shape, currentOpts);
-                            PdfDoc.ValidateDrawingStyle(shapeStyle, "Shape");
+                            PdfDocument.ValidateDrawingStyle(shapeStyle, "Shape");
                             double spacingBefore = ResolveColumnSpacingBefore(shapeStyle.SpacingBefore, consumed);
                             double needed = spacingBefore + shape.Shape.Height + shapeStyle.SpacingAfter;
                             EnsureFixedFlowBlockFits("Shape", shape.Shape.Width, needed, wCol);
@@ -889,8 +979,8 @@ internal static partial class PdfWriter {
                             if (needed > remain && consumed > 0) break;
                             if (needed > remain && consumed == 0) { remain = 0; break; }
                             if (spacingBefore > 0) yCol -= spacingBefore;
-                            DrawShapeAt(shape, shapeStyle, xCol, wCol, yCol);
-                            AddShapeLinkAnnotation(shape, shapeStyle, xCol, wCol, yCol);
+                            int? structElementIndex = DrawShapeAt(shape, shapeStyle, xCol, wCol, yCol);
+                            AddShapeLinkAnnotation(shape, shapeStyle, xCol, wCol, yCol, structElementIndex);
                             yCol -= shape.Shape.Height + shapeStyle.SpacingAfter;
                             remain -= needed;
                             consumed += needed;
@@ -898,7 +988,7 @@ internal static partial class PdfWriter {
                         } else if (it is ColDrawing cd) {
                             var drawing = cd.Block;
                             PdfDrawingStyle drawingStyle = ResolveDrawingStyle(drawing, currentOpts);
-                            PdfDoc.ValidateDrawingStyle(drawingStyle, "Drawing");
+                            PdfDocument.ValidateDrawingStyle(drawingStyle, "Drawing");
                             double spacingBefore = ResolveColumnSpacingBefore(drawingStyle.SpacingBefore, consumed);
                             double needed = spacingBefore + drawing.Drawing.Height + drawingStyle.SpacingAfter;
                             EnsureFixedFlowBlockFits("Drawing", drawing.Drawing.Width, needed, wCol);
@@ -916,8 +1006,8 @@ internal static partial class PdfWriter {
                             if (needed > remain && consumed > 0) break;
                             if (needed > remain && consumed == 0) { remain = 0; break; }
                             if (spacingBefore > 0) yCol -= spacingBefore;
-                            DrawDrawingAt(drawing, drawingStyle, xCol, wCol, yCol);
-                            AddDrawingLinkAnnotation(drawing, drawingStyle, xCol, wCol, yCol);
+                            int? structElementIndex = DrawDrawingAt(drawing, drawingStyle, xCol, wCol, yCol);
+                            AddDrawingLinkAnnotation(drawing, drawingStyle, xCol, wCol, yCol, structElementIndex);
                             yCol -= drawing.Drawing.Height + drawingStyle.SpacingAfter;
                             remain -= needed;
                             consumed += needed;

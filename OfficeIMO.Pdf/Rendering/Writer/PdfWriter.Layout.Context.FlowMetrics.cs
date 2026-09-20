@@ -16,6 +16,34 @@ internal static partial class PdfWriter {
             }
         }
 
+        private (double Width, double Height) ResolveImageFlowBox(ImageBlock image, PdfImageStyle style, double frameWidth, double spacingBefore, double spacingAfter) {
+            double imageWidth = image.Width;
+            double imageHeight = image.Height;
+            if (!style.ScaleDownToFit) {
+                return (imageWidth, imageHeight);
+            }
+
+            double availableHeight = currentOpts.PageHeight - currentOpts.MarginTop - currentOpts.MarginBottom - spacingBefore - spacingAfter;
+            double scale = 1D;
+            if (imageWidth > frameWidth) {
+                scale = Math.Min(scale, frameWidth / imageWidth);
+            }
+
+            if (availableHeight > 0D && imageHeight * scale > availableHeight) {
+                scale = Math.Min(scale, availableHeight / imageHeight);
+            }
+
+            if (scale >= 1D) {
+                return (imageWidth, imageHeight);
+            }
+
+            if (scale <= 0D || double.IsNaN(scale) || double.IsInfinity(scale)) {
+                return (imageWidth, imageHeight);
+            }
+
+            return (imageWidth * scale, imageHeight * scale);
+        }
+
         private static void ValidateHorizontalRule(PdfHorizontalRuleStyle rule) {
             if (rule.Thickness <= 0 || double.IsNaN(rule.Thickness) || double.IsInfinity(rule.Thickness)) {
                 throw new ArgumentException("Horizontal rule thickness must be a positive finite value.");
@@ -62,10 +90,18 @@ internal static partial class PdfWriter {
             }
         }
 
-        private void RenderListItem(System.Collections.Generic.IReadOnlyList<TextRun> runs, System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>> lines, System.Collections.Generic.List<double> lineHeights, string marker, double markerX, double markerWidth, PdfAlign markerAlign, double textX, double textWidth, PdfAlign textAlign, PdfColor? color, double size, double leading, double spacingBefore, double spacingAfter, string? bookmarkName) {
+        private void EnsurePanelSegmentCanFitLine(double topPadding, double lineHeight) {
+            double availableHeight = currentOpts.PageHeight - currentOpts.MarginTop - currentOpts.MarginBottom;
+            if (topPadding + lineHeight > availableHeight + 0.001D) {
+                throw new ArgumentException("Panel vertical padding and first line height exceed the available page content height.");
+            }
+        }
+
+        private void RenderListItem(System.Collections.Generic.IReadOnlyList<TextRun> runs, System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>> lines, System.Collections.Generic.List<double> lineHeights, string marker, double markerX, double markerWidth, PdfAlign markerAlign, double textX, double textWidth, PdfAlign textAlign, PdfColor? color, double size, double leading, double spacingBefore, double spacingAfter, string? bookmarkName, ref int? listStructureElementIndex, ref LayoutResult.Page? listStructurePage) {
             int lineIndex = 0;
             bool firstSegment = true;
             var listFont = ChooseNormal(currentOpts.DefaultFont);
+            PageStructElement? listItemElement = null;
             spacingBefore = ResolveTopLevelSpacingBefore(spacingBefore);
             if (spacingBefore > 0) {
                 if (y - spacingBefore < currentOpts.MarginBottom) {
@@ -112,17 +148,27 @@ internal static partial class PdfWriter {
                 }
 
                 double baselineY = FirstTextBaselineFromTop(listFont, size, y);
+                int? listElementIndex = firstSegment ? EnsurePageStructureContainer("L", ref listStructureElementIndex, ref listStructurePage) : null;
+                int? listItemElementIndex = firstSegment ? RegisterStructureContainer("LI", listElementIndex) : null;
                 if (firstSegment) {
+                    if (listItemElementIndex.HasValue && currentPage != null) {
+                        listItemElement = currentPage.StructElements[listItemElementIndex.Value];
+                    }
+
                     if (!string.IsNullOrEmpty(bookmarkName)) {
                         AddNamedDestinationName(bookmarkName!, y);
                     }
 
                     var markerLines = new System.Collections.Generic.List<string>(1) { marker };
-                    WriteLinesInternal("F1", size, leading, markerX, markerWidth, baselineY, markerLines, markerAlign, color, applyBaselineTweak: true);
+                    int? labelMarkedContentId = RegisterTextStructureElement("Lbl", listItemElementIndex);
+                    WriteLinesInternal("F1", size, leading, markerX, markerWidth, baselineY, markerLines, markerAlign, color, applyBaselineTweak: true, structureType: "Lbl", markedContentId: labelMarkedContentId);
                 }
 
                 pageDirty = true;
-                WriteRichParagraph(sb, new RichParagraphBlock(runs, textAlign, color), segmentLines, segmentHeights, currentOpts, baselineY, size, leading, currentPage!.Annotations, textX, textWidth);
+                int? bodyMarkedContentId = firstSegment || listItemElement == null
+                    ? RegisterTextStructureElement("LBody", listItemElementIndex)
+                    : RegisterTextStructureElement("LBody", listItemElement);
+                WriteRichParagraph(sb, new RichParagraphBlock(runs, textAlign, color), segmentLines, segmentHeights, currentOpts, baselineY, size, leading, currentPage!.Annotations, textX, textWidth, structureType: "LBody", markedContentId: bodyMarkedContentId, structurePage: currentPage);
                 MarkRichFonts(runs);
                 y -= heightSum;
                 lineIndex += take;
@@ -153,7 +199,7 @@ internal static partial class PdfWriter {
             double leading = GetParagraphLeading(paragraphStyle, fontSize);
             double spacingBefore = GetParagraphSpacingBefore(paragraphStyle);
             var textFrame = GetParagraphTextFrame(paragraphStyle, frameX, frameWidth);
-            var wrap = WrapRichRuns(paragraph.Runs, textFrame.Width, fontSize, ChooseNormal(currentOpts.DefaultFont), leading, textFrame.FirstLineWidth, GetParagraphTabStopWidth(paragraphStyle));
+            var wrap = WrapRichRunsCore(paragraph.Runs, textFrame.Width, fontSize, ChooseNormal(currentOpts.DefaultFont), leading, textFrame.FirstLineWidth, GetParagraphTabStopWidth(paragraphStyle), currentOpts);
             return wrap.LineHeights.Count == 0 ? spacingBefore : spacingBefore + wrap.LineHeights[0];
         }
 
@@ -204,7 +250,7 @@ internal static partial class PdfWriter {
                 double size = fontSize;
                 double leading = size * 1.4;
                 double textWidth = innerWidth - 2 * panelStyle.PaddingX;
-                var wrap = WrapRichRuns(panel.Runs, textWidth, size, ChooseNormal(currentOpts.DefaultFont), leading);
+                var wrap = WrapRichRunsCore(panel.Runs, textWidth, size, ChooseNormal(currentOpts.DefaultFont), leading, null, DefaultParagraphTabStopWidth, currentOpts);
                 double firstLineHeight = wrap.LineHeights.Count == 0 ? 0D : wrap.LineHeights[0];
                 return panelStyle.SpacingBefore + panelStyle.PaddingY + firstLineHeight + panelStyle.PaddingY;
             }
@@ -241,7 +287,7 @@ internal static partial class PdfWriter {
                     TableCellLayout cell = firstRowCells[cellIndex];
                     double cellWidth = GetTableCellWidth(columnLayout.Widths, cell.Column, cell.ColumnSpan, columnGap);
                     double innerWidth = Math.Max(1D, cellWidth - GetTableCellPaddingLeft(style, 0, cell.Column) - GetTableCellPaddingRight(style, 0, cell.Column));
-                    var lines = WrapSimpleText(cell.Text, innerWidth, GetTableRowFont(currentOpts, rowUsesBold), rowSize);
+                    var lines = WrapSimpleTextForOptions(cell.Text, innerWidth, GetTableRowFont(currentOpts, rowUsesBold), rowSize, currentOpts);
                     maxLines = Math.Max(maxLines, lines.Count);
                 }
 
@@ -250,7 +296,7 @@ internal static partial class PdfWriter {
                 if (!string.IsNullOrWhiteSpace(style.Caption)) {
                     double captionSize = style.CaptionFontSize ?? fontSize;
                     double captionLeading = captionSize * 1.25D;
-                    var captionLines = WrapSimpleText(style.Caption!, tableWidth, ChooseNormal(currentOpts.DefaultFont), captionSize);
+                    var captionLines = WrapSimpleTextForOptions(style.Caption!, tableWidth, ChooseNormal(currentOpts.DefaultFont), captionSize, currentOpts);
                     captionHeight = captionLines.Count * captionLeading + style.CaptionSpacingAfter;
                 }
 
@@ -280,7 +326,8 @@ internal static partial class PdfWriter {
 
             if (block is ImageBlock image) {
                 PdfImageStyle style = ResolveImageStyle(image, currentOpts);
-                return style.SpacingBefore + image.Height + style.SpacingAfter;
+                var box = ResolveImageFlowBox(image, style, frameWidth, style.SpacingBefore, style.SpacingAfter);
+                return style.SpacingBefore + box.Height + style.SpacingAfter;
             }
 
             if (block is ShapeBlock shape) {
@@ -354,7 +401,7 @@ internal static partial class PdfWriter {
             }
             if (spacingBefore > 0) y -= spacingBefore;
             double yLine = y - ruleStyle.Thickness * 0.5;
-            DrawHLine(sb, ruleStyle.Color, ruleStyle.Thickness, containerX, containerX + containerWidth, yLine);
+            DrawHLine(sb, ruleStyle.Color, ruleStyle.Thickness, containerX, containerX + containerWidth, yLine, emitGeneratedStructure);
             pageDirty = true;
             y -= ruleStyle.Thickness + ruleStyle.SpacingAfter;
         }

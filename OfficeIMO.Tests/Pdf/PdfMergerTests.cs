@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using OfficeIMO.Pdf;
-using UglyToad.PdfPig;
+using PdfPigDocument = UglyToad.PdfPig.PdfDocument;
 using Xunit;
 
 namespace OfficeIMO.Tests.Pdf;
@@ -21,7 +21,7 @@ public class PdfMergerTests {
 
         byte[] merged = PdfMerger.Merge(first, second);
 
-        using var pdf = PdfDocument.Open(new MemoryStream(merged));
+        using var pdf = PdfPigDocument.Open(new MemoryStream(merged));
         Assert.Equal(4, pdf.NumberOfPages);
 
         var read = PdfReadDocument.Load(merged);
@@ -44,7 +44,7 @@ public class PdfMergerTests {
 
     [Fact]
     public void Merge_PreservesImageStreams() {
-        byte[] withImage = PdfDoc.Create()
+        byte[] withImage = PdfDocument.Create()
             .Meta(title: "Image source", author: "OfficeIMO")
             .Image(CreateMinimalRgbPng(), 24, 24)
             .Paragraph(p => p.Text("Image source page"))
@@ -53,7 +53,7 @@ public class PdfMergerTests {
 
         byte[] merged = PdfMerger.Merge(withImage, textOnly);
 
-        using var pdf = PdfDocument.Open(new MemoryStream(merged));
+        using var pdf = PdfPigDocument.Open(new MemoryStream(merged));
         Assert.Equal(2, pdf.NumberOfPages);
 
         string pdfText = Encoding.ASCII.GetString(merged);
@@ -63,6 +63,34 @@ public class PdfMergerTests {
 
         string text = NormalizeExtractedText(PdfReadDocument.Load(merged).ExtractText());
         AssertContainsInOrder(text, "Imagesourcepage", "Textonlypage");
+    }
+
+    [Fact]
+    public void Merge_WithFlattenVisualAnnotationsOption_PaintsVisualAnnotationsAndRemovesLiveAnnotations() {
+        byte[] annotated = BuildAnnotatedPdf("Annotated source", "Annotated merge source");
+        byte[] plain = BuildPdf("Plain source", "Plain merge page");
+
+        byte[] merged = PdfMerger.Merge(
+            new PdfMergeOptions {
+                FlattenVisualAnnotations = true
+            },
+            annotated,
+            plain);
+        string pdf = Encoding.ASCII.GetString(merged);
+        PdfDocumentInfo info = PdfInspector.Inspect(merged);
+
+        Assert.Equal(2, info.PageCount);
+        Assert.False(info.HasAnnotations);
+        Assert.Equal(0, info.AnnotationCount);
+        Assert.DoesNotContain("/Subtype /FreeText", pdf, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Subtype /Highlight", pdf, StringComparison.Ordinal);
+        Assert.Contains("/OfficeIMOAnnot1 Do", pdf, StringComparison.Ordinal);
+        Assert.Contains("/OfficeIMOAnnot2 Do", pdf, StringComparison.Ordinal);
+        Assert.Contains("BT /Helv", pdf, StringComparison.Ordinal);
+        Assert.Contains("1 0.9 0.1 rg 0 0 120 14 re f", pdf, StringComparison.Ordinal);
+
+        string text = NormalizeExtractedText(PdfReadDocument.Load(merged).ExtractText());
+        AssertContainsInOrder(text, "Annotatedmergesource", "Plainmergepage");
     }
 
     [Fact]
@@ -296,7 +324,7 @@ public class PdfMergerTests {
     }
 
     private static byte[] BuildPdf(string title, string firstPageText, params (string Text, PageSize Size)[] extraPages) {
-        var doc = PdfDoc.Create()
+        var doc = PdfDocument.Create()
             .Meta(title: title, author: "OfficeIMO")
             .Paragraph(p => p.Text(firstPageText));
 
@@ -312,6 +340,23 @@ public class PdfMergerTests {
         }
 
         return doc.ToBytes();
+    }
+
+    private static byte[] BuildAnnotatedPdf(string title, string pageText) {
+        return PdfDocument.Create(new PdfOptions {
+                CompressContentStreams = false
+            })
+            .Meta(title: title, author: "OfficeIMO")
+            .Paragraph(p => p.Text(pageText))
+            .FreeTextAnnotation(
+                "Merge review note",
+                width: 150,
+                height: 44,
+                borderColor: new PdfColor(0.2D, 0.4D, 0.8D),
+                fillColor: new PdfColor(0.95D, 0.98D, 1D),
+                textAlign: PdfAlign.Center)
+            .HighlightAnnotation("Merge highlight", width: 120, height: 14, color: new PdfColor(1D, 0.9D, 0.1D))
+            .ToBytes();
     }
 
     private static void AssertContainsInOrder(string text, params string[] expected) {

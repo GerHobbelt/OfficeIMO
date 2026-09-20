@@ -1,6 +1,8 @@
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using DocumentFormat.OpenXml.Wordprocessing;
+using System.Globalization;
+using System.Text;
 
 namespace OfficeIMO.Word.Html {
     internal partial class HtmlToWordConverter {
@@ -39,6 +41,7 @@ namespace OfficeIMO.Word.Html {
 
             WordList list = ordered ? CreateOrderedList() : CreateBulletedList();
             ApplyListStyle(list, ordered, listStyleType, typeAttr);
+            ApplyListIndentMetadata(list, element);
 
             if (ordered) {
                 int? startValue = null;
@@ -67,6 +70,7 @@ namespace OfficeIMO.Word.Html {
                         } else {
                             list = CreateOrderedList(allowContinue: false);
                             ApplyListStyle(list, ordered, listStyleType, typeAttr);
+                            ApplyListIndentMetadata(list, element);
                             list.SetStartNumberingValue(liValue);
                             listStack.Pop();
                             listStack.Push(list);
@@ -110,6 +114,10 @@ namespace OfficeIMO.Word.Html {
             if (string.IsNullOrWhiteSpace(value)) {
                 return null;
             }
+            var quoted = ExtractQuotedListStyleToken(value);
+            if (quoted != null) {
+                return quoted;
+            }
             var tokens = value.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var raw in tokens) {
                 var token = NormalizeListStyleToken(raw);
@@ -117,6 +125,29 @@ namespace OfficeIMO.Word.Html {
                     return token;
                 }
             }
+            return null;
+        }
+
+        private static string? ExtractQuotedListStyleToken(string value) {
+            char quote = '\0';
+            int start = -1;
+            for (int i = 0; i < value.Length; i++) {
+                if (value[i] == '\'' || value[i] == '"') {
+                    quote = value[i];
+                    start = i + 1;
+                    break;
+                }
+            }
+            if (start < 0) {
+                return null;
+            }
+
+            for (int i = start; i < value.Length; i++) {
+                if (value[i] == quote) {
+                    return NormalizeListStyleToken(value.Substring(start, i - start));
+                }
+            }
+
             return null;
         }
 
@@ -128,12 +159,23 @@ namespace OfficeIMO.Word.Html {
             if (trimmed.Length == 0) {
                 return null;
             }
+            var importantIndex = trimmed.IndexOf("!important", StringComparison.OrdinalIgnoreCase);
+            if (importantIndex >= 0) {
+                trimmed = trimmed.Substring(0, importantIndex).Trim();
+            }
             var token = trimmed.TrimEnd(',');
+            var quoted = false;
+            if (token.Length >= 2 && ((token[0] == '\'' && token[token.Length - 1] == '\'') || (token[0] == '"' && token[token.Length - 1] == '"'))) {
+                quoted = true;
+                token = token.Substring(1, token.Length - 2);
+            }
+            token = DecodeCssStringToken(token);
             if (token.StartsWith("url(", StringComparison.OrdinalIgnoreCase)) {
                 return null;
             }
-            token = token.Trim().ToLowerInvariant();
-            return token switch {
+            var normalizedToken = token.Trim();
+            var lowerToken = normalizedToken.ToLowerInvariant();
+            return lowerToken switch {
                 "disc" => "disc",
                 "circle" => "circle",
                 "square" => "square",
@@ -146,8 +188,87 @@ namespace OfficeIMO.Word.Html {
                 "upper-latin" => "upper-alpha",
                 "lower-roman" => "lower-roman",
                 "upper-roman" => "upper-roman",
-                _ => null,
+                "lower-russian" => "lower-russian",
+                "upper-russian" => "upper-russian",
+                "hebrew" => "hebrew",
+                "hebrew-1" => "hebrew-1",
+                "hebrew-2" => "hebrew-2",
+                "arabic-alpha" => "arabic-alpha",
+                "arabic-abjad" => "arabic-abjad",
+                "hiragana" => "hiragana",
+                "hiragana-iroha" => "hiragana-iroha",
+                "katakana" => "katakana",
+                "katakana-iroha" => "katakana-iroha",
+                "dash" => "dash",
+                "hyphen" => "dash",
+                "-" => "dash",
+                "\u2013" => "en-dash",
+                "en-dash" => "en-dash",
+                "\u2014" => "em-dash",
+                "em-dash" => "em-dash",
+                "*" => "asterisk",
+                "asterisk" => "asterisk",
+                "+" => "plus",
+                "plus" => "plus",
+                _ => quoted && normalizedToken.Length > 0 ? "custom:" + normalizedToken : null,
             };
+        }
+
+        private static string DecodeCssStringToken(string token) {
+            if (token.IndexOf('\\') < 0) {
+                return token;
+            }
+
+            var decoded = new StringBuilder(token.Length);
+            for (int i = 0; i < token.Length; i++) {
+                if (token[i] != '\\' || i + 1 >= token.Length) {
+                    decoded.Append(token[i]);
+                    continue;
+                }
+
+                var start = i + 1;
+                var end = start;
+                while (end < token.Length && end - start < 6 && Uri.IsHexDigit(token[end])) {
+                    end++;
+                }
+
+                if (end > start && int.TryParse(token.Substring(start, end - start), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var codePoint)) {
+                    decoded.Append(char.ConvertFromUtf32(codePoint));
+                    i = end - 1;
+                    if (i + 1 < token.Length && char.IsWhiteSpace(token[i + 1])) {
+                        i++;
+                    }
+                    continue;
+                }
+
+                decoded.Append(token[start]);
+                i = start;
+            }
+
+            return decoded.ToString();
+        }
+
+        private static void ApplyListIndentMetadata(WordList list, IElement element) {
+            if (list.Numbering.Levels.Count == 0) {
+                return;
+            }
+
+            var level = list.Numbering.Levels[0];
+            if (TryGetTwipsAttribute(element, "data-left-indent-twips", out var leftIndentTwips)) {
+                level.IndentationLeft = leftIndentTwips;
+            }
+
+            if (TryGetTwipsAttribute(element, "data-hanging-indent-twips", out var hangingIndentTwips)) {
+                level.IndentationHanging = hangingIndentTwips;
+            }
+        }
+
+        private static bool TryGetTwipsAttribute(IElement element, string name, out int value) {
+            value = 0;
+            var raw = element.GetAttribute(name);
+            return !string.IsNullOrWhiteSpace(raw)
+                && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value)
+                && value >= 0;
         }
 
         private static void ApplyListStyle(WordList list, bool ordered, string? listStyleType, string? typeAttr) {
@@ -181,6 +302,17 @@ namespace OfficeIMO.Word.Html {
                     "upper-alpha" => NumberFormatValues.UpperLetter,
                     "lower-roman" => NumberFormatValues.LowerRoman,
                     "upper-roman" => NumberFormatValues.UpperRoman,
+                    "lower-russian" => NumberFormatValues.RussianLower,
+                    "upper-russian" => NumberFormatValues.RussianUpper,
+                    "hebrew" => NumberFormatValues.Hebrew1,
+                    "hebrew-1" => NumberFormatValues.Hebrew1,
+                    "hebrew-2" => NumberFormatValues.Hebrew2,
+                    "arabic-alpha" => NumberFormatValues.ArabicAlpha,
+                    "arabic-abjad" => NumberFormatValues.ArabicAbjad,
+                    "hiragana" => NumberFormatValues.Aiueo,
+                    "hiragana-iroha" => NumberFormatValues.Iroha,
+                    "katakana" => NumberFormatValues.AiueoFullWidth,
+                    "katakana-iroha" => NumberFormatValues.IrohaFullWidth,
                     "none" => NumberFormatValues.None,
                     _ => NumberFormatValues.Decimal,
                 };
@@ -204,6 +336,26 @@ namespace OfficeIMO.Word.Html {
                     level._level.NumberingFormat = new NumberingFormat { Val = NumberFormatValues.None };
                     level.LevelText = string.Empty;
                     break;
+                case "dash":
+                    level.LevelText = "-";
+                    break;
+                case "en-dash":
+                    level.LevelText = "\u2013";
+                    break;
+                case "em-dash":
+                    level.LevelText = "\u2014";
+                    break;
+                case "asterisk":
+                    level.LevelText = "*";
+                    break;
+                case "plus":
+                    level.LevelText = "+";
+                    break;
+                default:
+                    if (bulletToken.StartsWith("custom:", StringComparison.Ordinal)) {
+                        level.LevelText = token.Substring("custom:".Length);
+                    }
+                    break;
                 // disc/default -> no change
             }
         }
@@ -213,7 +365,9 @@ namespace OfficeIMO.Word.Html {
             var list = listStack.Peek();
             int level = listStack.Count - 1;
             var paragraph = list.AddItem("", level);
+            WordParagraph? blockAnchor = paragraph;
 
+            ApplyParagraphStyleFromCss(paragraph, element);
             ApplyClassStyle(element, paragraph, options);
             AddBookmarkIfPresent(element, paragraph);
             var bidi = GetBidiFromDir(element);
@@ -221,8 +375,80 @@ namespace OfficeIMO.Word.Html {
                 paragraph.BiDi = bidi.Value;
             }
             foreach (var child in element.ChildNodes) {
-                ProcessNode(child, doc, section, options, paragraph, listStack, formatting, cell, headerFooter);
+                if (IsListItemTableChild(child)) {
+                    var tableAnchor = blockAnchor ?? paragraph;
+                    ProcessNode(child, doc, section, options, tableAnchor, listStack, formatting, cell, headerFooter);
+                    blockAnchor = GetTrailingAnchorAfterTable(tableAnchor, section, cell, headerFooter);
+                    continue;
+                }
+
+                var anchor = IsListItemBlockChild(child) ? blockAnchor : paragraph;
+                ProcessNode(child, doc, section, options, anchor, listStack, formatting, cell, headerFooter);
+                if (IsListItemBlockChild(child)) {
+                    blockAnchor = GetLastParagraphInSameContainer(paragraph, section, cell, headerFooter);
+                }
             }
+            ApplyPageBreakAfterFromCss(paragraph, element);
+        }
+
+        private static bool IsListItemTableChild(INode node) =>
+            node is IElement element && string.Equals(element.TagName, "table", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsListItemBlockChild(INode node) =>
+            node is IElement element && _blockTags.Contains(element.TagName);
+
+        private static WordParagraph GetLastParagraphInSameContainer(
+            WordParagraph anchor,
+            WordSection section,
+            WordTableCell? cell,
+            WordHeaderFooter? headerFooter) {
+            var parent = anchor._paragraph.Parent;
+            var paragraphs = GetParagraphsInScope(section, cell, headerFooter);
+            for (int i = paragraphs.Count - 1; i >= 0; i--) {
+                var candidate = paragraphs[i];
+                if (ReferenceEquals(candidate._paragraph.Parent, parent)) {
+                    return candidate;
+                }
+            }
+
+            return anchor;
+        }
+
+        private static WordParagraph? GetTrailingAnchorAfterTable(
+            WordParagraph anchor,
+            WordSection section,
+            WordTableCell? cell,
+            WordHeaderFooter? headerFooter) {
+            if (cell != null || headerFooter != null) {
+                return GetLastParagraphInSameContainer(anchor, section, cell, headerFooter);
+            }
+
+            var parent = anchor._paragraph.Parent;
+            if (parent == null) {
+                return null;
+            }
+
+            var children = parent.ChildElements.ToList();
+            var anchorIndex = children.IndexOf(anchor._paragraph);
+            if (anchorIndex < 0) {
+                return null;
+            }
+
+            var table = children
+                .Skip(anchorIndex + 1)
+                .OfType<Table>()
+                .LastOrDefault();
+            if (table == null) {
+                return null;
+            }
+
+            var trailing = table.NextSibling<Paragraph>();
+            if (trailing == null) {
+                trailing = new Paragraph();
+                table.InsertAfterSelf(trailing);
+            }
+
+            return new WordParagraph(anchor._document, trailing);
         }
 
         private static bool TryGetListItemValue(IHtmlListItemElement element, out int value) {

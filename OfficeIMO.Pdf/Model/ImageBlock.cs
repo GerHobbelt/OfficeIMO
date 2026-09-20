@@ -13,13 +13,14 @@ internal sealed class ImageBlock : IPdfBlock {
     public PdfAlign Align => (Style ?? new PdfImageStyle()).Align;
     public OfficeClipPath? ClipPath => Style?.ClipPath;
     public OfficeImageFit Fit => (Style ?? new PdfImageStyle()).Fit;
+    public string? AlternativeText => Style?.AlternativeText;
 
     public ImageBlock(byte[] data, double width, double height, OfficeImageInfo info, PdfImageStyle? style = null, string? linkUri = null, string? linkContents = null) {
         Guard.NotNullOrEmpty(data, nameof(data));
         Guard.Positive(width, nameof(width));
         Guard.Positive(height, nameof(height));
         Guard.NotNull(info, nameof(info));
-        Guard.OptionalAbsoluteUri(linkUri, nameof(linkUri));
+        Guard.OptionalUriAction(linkUri, nameof(linkUri));
         if (linkContents != null && linkUri == null) {
             throw new ArgumentException("Image link contents require a link URI.", nameof(linkContents));
         }

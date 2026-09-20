@@ -12,8 +12,11 @@ internal static partial class PdfWriter {
             double spacingBefore = (y < yStart - 0.001 || headingStyle?.ApplySpacingBeforeAtTop == true) ? headingStyle?.SpacingBefore ?? 0D : 0D;
             double spacingAfter = GetHeadingSpacingAfter(headingStyle, leading);
             var headingFont = GetHeadingFont(currentOpts, headingStyle);
-            var lines = WrapSimpleText(hb.Text, width, headingFont, size);
-            double needed = spacingBefore + lines.Count * leading + spacingAfter;
+            PdfColor? headingColor = hb.Color ?? headingStyle?.Color;
+            System.Collections.Generic.IReadOnlyList<TextRun> headingRuns = CreateHeadingTextRuns(hb, headingStyle, headingColor);
+            var (lines, lineHeights) = WrapRichRunsCore(headingRuns, width, size, ChooseNormal(currentOpts.DefaultFont), leading, null, DefaultParagraphTabStopWidth, currentOpts);
+            double textHeight = MeasureRichLinesHeight(lineHeights, lines.Count, leading);
+            double needed = spacingBefore + textHeight + spacingAfter;
             bool keepWithNext = headingStyle?.KeepWithNext ?? true;
             if (keepWithNext && nextBlock != null) {
                 double keepHeight = needed + MeasureNextBlockFirstVisualHeight(nextBlock, currentOpts.MarginLeft, width, currentOpts.DefaultFontSize);
@@ -21,31 +24,48 @@ internal static partial class PdfWriter {
                 if (keepHeight > needed + 0.001 && keepHeight <= availableHeight + 0.001 && y < yStart - 0.001 && y - keepHeight < currentOpts.MarginBottom) {
                     NewPage();
                     spacingBefore = headingStyle?.ApplySpacingBeforeAtTop == true ? headingStyle.SpacingBefore : 0D;
-                    needed = spacingBefore + lines.Count * leading + spacingAfter;
+                    needed = spacingBefore + textHeight + spacingAfter;
                 }
             }
 
             if (y - needed < currentOpts.MarginBottom) {
                 NewPage();
                 spacingBefore = headingStyle?.ApplySpacingBeforeAtTop == true ? headingStyle.SpacingBefore : 0D;
-                needed = spacingBefore + lines.Count * leading + spacingAfter;
+                needed = spacingBefore + textHeight + spacingAfter;
             }
             if (spacingBefore > 0) {
                 y -= spacingBefore;
             }
 
+            EnsurePage();
+            pageDirty = true;
             if (currentOpts.CreateOutlineFromHeadings) {
                 currentPage!.Bookmarks.Add(new PageBookmark { Level = hb.Level, Title = hb.Text, Y = y });
             }
             double firstBaseline = FirstTextBaselineFromTop(headingFont, size, y);
-            AddHeadingLinkAnnotations(hb, lines, headingFont, size, leading, currentOpts.MarginLeft, width, firstBaseline);
             string headingFontResource = GetHeadingFontResource(headingStyle);
-            WriteLines(headingFontResource, size, leading, currentOpts.MarginLeft, firstBaseline, lines, hb.Align, hb.Color ?? headingStyle?.Color, applyBaselineTweak: false);
+            string structureType = "H" + hb.Level.ToString(CultureInfo.InvariantCulture);
+            bool hasLinkTarget = !string.IsNullOrEmpty(hb.LinkUri) || !string.IsNullOrEmpty(hb.LinkDestinationName);
+            int? linkStructElementIndex = null;
+            string markedStructureType = structureType;
+            int? markedContentId;
+            if (hasLinkTarget && emitGeneratedStructure && currentPage != null) {
+                int? headingElementIndex = RegisterStructureContainer(structureType);
+                linkStructElementIndex = currentPage.StructElements.Count;
+                markedStructureType = "Link";
+                markedContentId = RegisterTextStructureElement(markedStructureType, headingElementIndex);
+            } else {
+                markedContentId = RegisterTextStructureElement(structureType);
+            }
+
+            AddHeadingLinkAnnotations(hb, lines, headingFont, size, leading, currentOpts.MarginLeft, width, firstBaseline, linkStructElementIndex);
+            WriteRichParagraph(sb, new RichParagraphBlock(headingRuns, hb.Align, headingColor), lines, lineHeights, currentOpts, firstBaseline, size, leading, currentPage!.Annotations, currentOpts.MarginLeft, width, structureType: markedStructureType, markedContentId: markedContentId, structurePage: currentPage);
+            MarkRichFonts(headingRuns);
             if (GetHeadingBold(headingStyle)) {
                 currentPage!.UsedBold = true;
                 usedBold = true;
             }
-            y -= lines.Count * leading + spacingAfter;
+            y -= textHeight + spacingAfter;
         }
 
         private void RenderRichParagraphFlowBlock(RichParagraphBlock rpb, IPdfBlock? nextBlock) {
@@ -55,7 +75,7 @@ internal static partial class PdfWriter {
             double spacingBefore = GetParagraphSpacingBefore(paragraphStyle);
             double spacingAfter = GetParagraphSpacingAfter(paragraphStyle, leading);
             var textFrame = GetParagraphTextFrame(paragraphStyle, currentOpts.MarginLeft, width);
-            var (lines, lineHeights) = WrapRichRuns(rpb.Runs, textFrame.Width, size, ChooseNormal(currentOpts.DefaultFont), leading, textFrame.FirstLineWidth, GetParagraphTabStopWidth(paragraphStyle));
+            var (lines, lineHeights) = WrapRichRunsCore(rpb.Runs, textFrame.Width, size, ChooseNormal(currentOpts.DefaultFont), leading, textFrame.FirstLineWidth, GetParagraphTabStopWidth(paragraphStyle), currentOpts);
             if (paragraphStyle?.KeepWithNext == true && nextBlock != null && lines.Count > 0) {
                 double nextHeight = MeasureNextBlockFirstVisualHeight(nextBlock, currentOpts.MarginLeft, width, size);
                 double keepHeight = spacingBefore + lineHeights.Sum() + spacingAfter + nextHeight;
@@ -139,7 +159,8 @@ internal static partial class PdfWriter {
                 bool sliceStartsAtFirstLine = lineIndex == 0;
                 pageDirty = true;
                 var paragraphFont = ChooseNormal(currentOpts.DefaultFont);
-                WriteRichParagraph(sb, rpb, sliceLines, sliceHeights, currentOpts, FirstTextBaselineFromTop(paragraphFont, size, y), size, leading, currentPage!.Annotations, textFrame.X, textFrame.Width, sliceStartsAtFirstLine ? textFrame.FirstLineX : null, sliceStartsAtFirstLine ? textFrame.FirstLineWidth : null);
+                int? markedContentId = RegisterTextStructureElement("P");
+                WriteRichParagraph(sb, rpb, sliceLines, sliceHeights, currentOpts, FirstTextBaselineFromTop(paragraphFont, size, y), size, leading, currentPage!.Annotations, textFrame.X, textFrame.Width, sliceStartsAtFirstLine ? textFrame.FirstLineX : null, sliceStartsAtFirstLine ? textFrame.FirstLineWidth : null, "P", markedContentId, currentPage);
                 y -= heightSum;
                 lineIndex += take;
                 firstSegment = false;

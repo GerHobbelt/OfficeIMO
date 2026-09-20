@@ -4,8 +4,8 @@ namespace OfficeIMO.Pdf;
 
 /// <summary>Builder for nested elements used within item builders.</summary>
 public class PdfElementCompose {
-    private readonly PdfDoc _doc;
-    internal PdfElementCompose(PdfDoc doc) { _doc = doc; }
+    private readonly PdfDocument _doc;
+    internal PdfElementCompose(PdfDocument doc) { _doc = doc; }
     /// <summary>Adds invisible vertical space to the current flow.</summary>
     public PdfElementCompose Spacer(double height) { _doc.Spacer(height); return this; }
     /// <summary>Starts a new page from the current nested element flow.</summary>
@@ -13,42 +13,42 @@ public class PdfElementCompose {
     /// <summary>Adds an H1 heading.</summary>
     /// <param name="text">Heading text.</param>
     /// <param name="style">Optional heading style.</param>
-    /// <param name="linkUri">Optional absolute URI for a heading link annotation.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for a heading link annotation.</param>
     /// <param name="linkContents">Optional link annotation contents metadata.</param>
     public PdfElementCompose H1(string text, PdfHeadingStyle? style = null, string? linkUri = null, string? linkContents = null) { _doc.H1(text, style: style, linkUri: linkUri, linkContents: linkContents); return this; }
     /// <summary>Adds an H1 heading with explicit alignment and color.</summary>
     /// <param name="text">Heading text.</param>
     /// <param name="align">Heading alignment.</param>
     /// <param name="color">Optional heading color.</param>
-    /// <param name="linkUri">Optional absolute URI for a heading link annotation.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for a heading link annotation.</param>
     /// <param name="style">Optional heading style.</param>
     /// <param name="linkContents">Optional link annotation contents metadata.</param>
     public PdfElementCompose H1(string text, PdfAlign align, PdfColor? color = null, string? linkUri = null, PdfHeadingStyle? style = null, string? linkContents = null) { _doc.H1(text, align, color, linkUri, style, linkContents); return this; }
     /// <summary>Adds an H2 heading.</summary>
     /// <param name="text">Heading text.</param>
     /// <param name="style">Optional heading style.</param>
-    /// <param name="linkUri">Optional absolute URI for a heading link annotation.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for a heading link annotation.</param>
     /// <param name="linkContents">Optional link annotation contents metadata.</param>
     public PdfElementCompose H2(string text, PdfHeadingStyle? style = null, string? linkUri = null, string? linkContents = null) { _doc.H2(text, style: style, linkUri: linkUri, linkContents: linkContents); return this; }
     /// <summary>Adds an H2 heading with explicit alignment and color.</summary>
     /// <param name="text">Heading text.</param>
     /// <param name="align">Heading alignment.</param>
     /// <param name="color">Optional heading color.</param>
-    /// <param name="linkUri">Optional absolute URI for a heading link annotation.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for a heading link annotation.</param>
     /// <param name="style">Optional heading style.</param>
     /// <param name="linkContents">Optional link annotation contents metadata.</param>
     public PdfElementCompose H2(string text, PdfAlign align, PdfColor? color = null, string? linkUri = null, PdfHeadingStyle? style = null, string? linkContents = null) { _doc.H2(text, align, color, linkUri, style, linkContents); return this; }
     /// <summary>Adds an H3 heading.</summary>
     /// <param name="text">Heading text.</param>
     /// <param name="style">Optional heading style.</param>
-    /// <param name="linkUri">Optional absolute URI for a heading link annotation.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for a heading link annotation.</param>
     /// <param name="linkContents">Optional link annotation contents metadata.</param>
     public PdfElementCompose H3(string text, PdfHeadingStyle? style = null, string? linkUri = null, string? linkContents = null) { _doc.H3(text, style: style, linkUri: linkUri, linkContents: linkContents); return this; }
     /// <summary>Adds an H3 heading with explicit alignment and color.</summary>
     /// <param name="text">Heading text.</param>
     /// <param name="align">Heading alignment.</param>
     /// <param name="color">Optional heading color.</param>
-    /// <param name="linkUri">Optional absolute URI for a heading link annotation.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for a heading link annotation.</param>
     /// <param name="style">Optional heading style.</param>
     /// <param name="linkContents">Optional link annotation contents metadata.</param>
     public PdfElementCompose H3(string text, PdfAlign align, PdfColor? color = null, string? linkUri = null, PdfHeadingStyle? style = null, string? linkContents = null) { _doc.H3(text, align, color, linkUri, style, linkContents); return this; }
@@ -78,7 +78,7 @@ public class PdfElementCompose {
     public PdfElementCompose Table(System.Collections.Generic.IEnumerable<PdfTableCell[]> rows, PdfAlign align = PdfAlign.Left, PdfTableStyle? style = null) { _doc.Table(rows, align, style); return this; }
     /// <summary>Adds a simple text table and attaches link URIs to specific cells.</summary>
     /// <param name="rows">Sequence of row arrays.</param>
-    /// <param name="links">Per-cell absolute link URIs keyed by zero-based row and column.</param>
+    /// <param name="links">Per-cell absolute or catalog-base-relative link URIs keyed by zero-based row and column.</param>
     /// <param name="align">Table alignment.</param>
     /// <param name="style">Optional table styling.</param>
     public PdfElementCompose TableWithLinks(System.Collections.Generic.IEnumerable<string[]> rows, System.Collections.Generic.Dictionary<(int Row, int Col), string> links, PdfAlign align = PdfAlign.Left, PdfTableStyle? style = null) { _doc.TableWithLinks(rows, links, align, style); return this; }
@@ -113,6 +113,12 @@ public class PdfElementCompose {
     public PdfElementCompose MultiSelectChoiceField(string name, System.Collections.Generic.IEnumerable<string> options, System.Collections.Generic.IEnumerable<string>? values = null, double width = 180, double height = 72, PdfAlign align = PdfAlign.Left, double fontSize = 10, double spacingBefore = 0, double spacingAfter = 6, PdfFormFieldStyle? style = null) { _doc.MultiSelectChoiceField(name, options, values, width, height, align, fontSize, spacingBefore, spacingAfter, style); return this; }
     /// <summary>Adds a simple AcroForm radio button group at the current nested element flow position.</summary>
     public PdfElementCompose RadioButtonGroup(string name, System.Collections.Generic.IEnumerable<string> options, string? value = null, double size = 14, double gap = 6, PdfAlign align = PdfAlign.Left, double spacingBefore = 0, double spacingAfter = 6, PdfFormFieldStyle? style = null) { _doc.RadioButtonGroup(name, options, value, size, gap, align, spacingBefore, spacingAfter, style); return this; }
+    /// <summary>Adds a PDF text annotation at the current nested element flow position.</summary>
+    public PdfElementCompose TextAnnotation(string contents, double width = 18D, double height = 18D, PdfAlign? align = null, double? spacingBefore = null, double? spacingAfter = null, PdfTextAnnotationIcon icon = PdfTextAnnotationIcon.Comment, PdfColor? color = null, bool open = false) { _doc.TextAnnotation(contents, width, height, align, spacingBefore, spacingAfter, icon, color, open); return this; }
+    /// <summary>Adds a PDF free-text annotation at the current nested element flow position.</summary>
+    public PdfElementCompose FreeTextAnnotation(string contents, double width, double height, PdfAlign? align = null, double? spacingBefore = null, double? spacingAfter = null, double fontSize = 10D, PdfColor? textColor = null, PdfColor? borderColor = null, double borderWidth = 1D, PdfColor? fillColor = null, PdfAlign textAlign = PdfAlign.Left, double padding = 3D, double? lineHeight = null) { _doc.FreeTextAnnotation(contents, width, height, align, spacingBefore, spacingAfter, fontSize, textColor, borderColor, borderWidth, fillColor, textAlign, padding, lineHeight); return this; }
+    /// <summary>Adds a PDF highlight annotation rectangle at the current nested element flow position.</summary>
+    public PdfElementCompose HighlightAnnotation(string contents, double width, double height, PdfAlign? align = null, double? spacingBefore = null, double? spacingAfter = null, PdfColor? color = null) { _doc.HighlightAnnotation(contents, width, height, align, spacingBefore, spacingAfter, color); return this; }
     /// <summary>Adds a shared OfficeIMO.Drawing shape.</summary>
     public PdfElementCompose Shape(OfficeShape shape, PdfAlign? align = null, double? spacingBefore = null, double? spacingAfter = null, PdfDrawingStyle? style = null, string? linkUri = null, string? linkContents = null) { _doc.Shape(shape, align, spacingBefore, spacingAfter, style, linkUri, linkContents); return this; }
     /// <summary>Adds a shared OfficeIMO.Drawing scene.</summary>
@@ -129,7 +135,7 @@ public class PdfElementCompose {
     public PdfElementCompose Polygon(System.Collections.Generic.IEnumerable<OfficePoint> points, PdfColor? strokeColor = null, double strokeWidth = 1, PdfColor? fillColor = null, PdfAlign? align = null, double? spacingBefore = null, double? spacingAfter = null, OfficeStrokeDashStyle strokeDashStyle = OfficeStrokeDashStyle.Solid, OfficeStrokeLineCap? strokeLineCap = null, OfficeStrokeLineJoin? strokeLineJoin = null, PdfDrawingStyle? style = null, string? linkUri = null, string? linkContents = null) { _doc.Polygon(points, strokeColor, strokeWidth, fillColor, align, spacingBefore, spacingAfter, strokeDashStyle, strokeLineCap, strokeLineJoin, style, linkUri, linkContents); return this; }
     /// <summary>Adds a freeform path vector shape.</summary>
     public PdfElementCompose Path(System.Collections.Generic.IEnumerable<OfficePathCommand> commands, PdfColor? strokeColor = null, double strokeWidth = 1, PdfColor? fillColor = null, PdfAlign? align = null, double? spacingBefore = null, double? spacingAfter = null, OfficeStrokeDashStyle strokeDashStyle = OfficeStrokeDashStyle.Solid, OfficeStrokeLineCap? strokeLineCap = null, OfficeStrokeLineJoin? strokeLineJoin = null, PdfDrawingStyle? style = null, string? linkUri = null, string? linkContents = null) { _doc.Path(commands, strokeColor, strokeWidth, fillColor, align, spacingBefore, spacingAfter, strokeDashStyle, strokeLineCap, strokeLineJoin, style, linkUri, linkContents); return this; }
-    /// <summary>Adds an image from supported image bytes at the current nested element flow position. JPEG and simple non-interlaced 8-bit PNG images, including grayscale-alpha/RGBA soft masks, are currently supported.</summary>
+    /// <summary>Adds an image from supported image bytes at the current nested element flow position. JPEG and simple PNG images, including Adam7 interlace, indexed-color palettes, and alpha soft masks, are currently supported.</summary>
     /// <param name="jpegBytes">Supported image bytes.</param>
     /// <param name="width">Target width in points.</param>
     /// <param name="height">Target height in points.</param>
@@ -139,7 +145,27 @@ public class PdfElementCompose {
     /// <param name="spacingBefore">Top spacing (pt), inherited from the current default image style when omitted.</param>
     /// <param name="spacingAfter">Bottom spacing (pt), inherited from the current default image style when omitted.</param>
     /// <param name="style">Optional reusable image placement style.</param>
-    /// <param name="linkUri">Optional absolute URI for an image link annotation.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for an image link annotation.</param>
     /// <param name="linkContents">Optional link annotation contents metadata.</param>
-    public PdfElementCompose Image(byte[] jpegBytes, double width, double height, PdfAlign? align = null, OfficeClipPath? clipPath = null, OfficeImageFit? fit = null, double? spacingBefore = null, double? spacingAfter = null, PdfImageStyle? style = null, string? linkUri = null, string? linkContents = null) { _doc.Image(jpegBytes, width, height, align, clipPath, fit, spacingBefore, spacingAfter, style, linkUri, linkContents); return this; }
+    public PdfElementCompose Image(byte[] jpegBytes, double width, double height, PdfAlign? align = null, OfficeClipPath? clipPath = null, OfficeImageFit? fit = null, double? spacingBefore = null, double? spacingAfter = null, PdfImageStyle? style = null, string? linkUri = null, string? linkContents = null) =>
+        Image(jpegBytes, width, height, align, clipPath, fit, spacingBefore, spacingAfter, style, linkUri, linkContents, alternativeText: null);
+
+    /// <summary>Adds a meaningful image from supported image bytes with alternate text.</summary>
+    public PdfElementCompose Image(byte[] jpegBytes, double width, double height, string? alternativeText) =>
+        Image(jpegBytes, width, height, align: null, clipPath: null, fit: null, spacingBefore: null, spacingAfter: null, style: null, linkUri: null, linkContents: null, alternativeText: alternativeText);
+
+    /// <summary>Adds an image from supported image bytes. JPEG and simple PNG images, including Adam7 interlace, indexed-color palettes, and alpha soft masks, are currently supported.</summary>
+    /// <param name="jpegBytes">Supported image bytes.</param>
+    /// <param name="width">Target width in points.</param>
+    /// <param name="height">Target height in points.</param>
+    /// <param name="align">Image alignment inside content width.</param>
+    /// <param name="clipPath">Optional local clipping path applied before drawing the image.</param>
+    /// <param name="fit">Image fitting mode inside the target box.</param>
+    /// <param name="spacingBefore">Top spacing (pt), inherited from the current default image style when omitted.</param>
+    /// <param name="spacingAfter">Bottom spacing (pt), inherited from the current default image style when omitted.</param>
+    /// <param name="style">Optional reusable image placement style.</param>
+    /// <param name="linkUri">Optional absolute URI or catalog-base-relative URI for an image link annotation.</param>
+    /// <param name="linkContents">Optional link annotation contents metadata.</param>
+    /// <param name="alternativeText">Optional alternate text for meaningful generated images.</param>
+    public PdfElementCompose Image(byte[] jpegBytes, double width, double height, PdfAlign? align, OfficeClipPath? clipPath, OfficeImageFit? fit, double? spacingBefore, double? spacingAfter, PdfImageStyle? style, string? linkUri, string? linkContents, string? alternativeText) { _doc.Image(jpegBytes, width, height, align, clipPath, fit, spacingBefore, spacingAfter, style, linkUri, linkContents, alternativeText); return this; }
 }

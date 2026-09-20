@@ -4,10 +4,10 @@ namespace OfficeIMO.Pdf;
 /// Page-level configuration (size, margins, default styles) and content/footers.
 /// </summary>
 public class PdfPageCompose {
-    private readonly PdfDoc _doc;
+    private readonly PdfDocument _doc;
     private readonly PdfOptions _options;
     internal PdfOptions Options => _options;
-    internal PdfPageCompose(PdfDoc doc, PdfOptions options) { _doc = doc; _options = options; }
+    internal PdfPageCompose(PdfDocument doc, PdfOptions options) { _doc = doc; _options = options; }
 
     /// <summary>Sets page size using a predefined <see cref="PageSize"/>.</summary>
     public PdfPageCompose Size(PageSize size) {
@@ -177,6 +177,16 @@ public class PdfPageCompose {
 
     /// <summary>Applies reusable page-scoped default styles.</summary>
     public PdfPageCompose Theme(PdfTheme theme) { Guard.NotNull(theme, nameof(theme)); theme.Clone().ApplyTo(Options); return this; }
+    /// <summary>Uses a caller-supplied TrueType font family for this composed page or section.</summary>
+    public PdfPageCompose UseFontFamily(PdfEmbeddedFontFamily fontFamily) { Options.UseFontFamily(fontFamily); return this; }
+    /// <summary>Registers a planned embedded-font fallback set for generated rich text runs on this composed page or section.</summary>
+    public PdfPageCompose RegisterEmbeddedFontFallbacks(PdfEmbeddedFontFallbackSet fallbackSet) { Options.RegisterEmbeddedFontFallbacks(fallbackSet); return this; }
+    /// <summary>Uses caller-supplied TrueType font files for this composed page or section.</summary>
+    public PdfPageCompose UseFontFamily(string familyName, byte[] regular, byte[]? bold = null, byte[]? italic = null, byte[]? boldItalic = null) { Options.UseFontFamily(familyName, regular, bold, italic, boldItalic); return this; }
+    /// <summary>Uses caller-supplied TrueType font files for this composed page or section.</summary>
+    public PdfPageCompose UseFontFamily(string familyName, string regularPath, string? boldPath = null, string? italicPath = null, string? boldItalicPath = null) { Options.UseFontFamily(familyName, regularPath, boldPath, italicPath, boldItalicPath); return this; }
+    /// <summary>Sets or clears the page-scoped generated text hyphenation callback used for long unspaced tokens.</summary>
+    public PdfPageCompose TextHyphenation(PdfTextHyphenationCallback? callback) { Options.SetTextHyphenation(callback); return this; }
     /// <summary>Configures default text style for the page.</summary>
     public PdfPageCompose DefaultTextStyle(System.Action<PdfTextStyleCompose> style) { Guard.NotNull(style, nameof(style)); var s = new PdfTextStyleCompose(Options); style(s); return this; }
     /// <summary>Configures default text style for the page from a reusable text style object.</summary>
@@ -203,6 +213,8 @@ public class PdfPageCompose {
     public PdfPageCompose DefaultRowStyle(PdfRowStyle style) { Guard.NotNull(style, nameof(style)); Options.DefaultRowStyle = style; return this; }
     /// <summary>Builds the page content using a column/row flow.</summary>
     public PdfPageCompose Content(System.Action<PdfContentCompose> build) { Guard.NotNull(build, nameof(build)); var c = new PdfContentCompose(_doc); build(c); return this; }
+    /// <summary>Adds foreground page content at absolute top-left page coordinates.</summary>
+    public PdfPageCompose Canvas(System.Action<PdfPageCanvas> build) { _doc.Canvas(build); return this; }
     /// <summary>Defines the header layout and content.</summary>
     public PdfPageCompose Header(System.Action<PdfHeaderCompose> build) { Guard.NotNull(build, nameof(build)); var h = new PdfHeaderCompose(Options); build(h); return this; }
     /// <summary>Defines the footer layout and content.</summary>

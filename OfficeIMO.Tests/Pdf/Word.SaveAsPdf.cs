@@ -1,10 +1,11 @@
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Word;
 using OfficeIMO.Word.Pdf;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
-using UglyToad.PdfPig;
+using PdfPigDocument = UglyToad.PdfPig.PdfDocument;
 using Xunit;
 using PdfCore = OfficeIMO.Pdf;
 
@@ -202,7 +203,7 @@ public partial class Word {
         }
 
         Assert.True(File.Exists(pdfPath));
-        AssertPdfUsesFont(pdfPath, "Courier");
+        AssertPdfUsesAnyFont(pdfPath, "Courier New", "Courier");
     }
 
     [Fact]
@@ -222,6 +223,21 @@ public partial class Word {
     }
 
     [Fact]
+    public void Test_WordDocument_SaveAsPdf_ExplicitMappedDefaultFontFamily_StaysOnStandardFamily() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfExplicitSerifDefaultFont.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfExplicitSerifDefaultFont.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            document.AddParagraph("Hello explicit serif default font");
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions { FontFamily = "serif" });
+        }
+
+        Assert.True(File.Exists(pdfPath));
+        AssertPdfUsesFont(pdfPath, "Times");
+    }
+
+    [Fact]
     public void Test_WordDocument_SaveAsPdf_DocumentDefaultFont() {
         string docPath = Path.Combine(_directoryWithFiles, "PdfDocumentDefaultFont.docx");
         string pdfPath = Path.Combine(_directoryWithFiles, "PdfDocumentDefaultFont.pdf");
@@ -234,7 +250,74 @@ public partial class Word {
         }
 
         Assert.True(File.Exists(pdfPath));
-        AssertPdfUsesFont(pdfPath, "Courier");
+        AssertPdfUsesAnyFont(pdfPath, "Consolas", "Courier");
+    }
+
+    [Fact]
+    public void Test_WordDocument_SaveAsPdf_DocumentMappedDefaultFont_StaysOnStandardFamily() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfDocumentMappedDefaultFont.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfDocumentMappedDefaultFont.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            document.Settings.FontFamily = "serif";
+            document.AddParagraph("Hello mapped document default font");
+            document.Save();
+            document.SaveAsPdf(pdfPath);
+        }
+
+        Assert.True(File.Exists(pdfPath));
+        AssertPdfUsesFont(pdfPath, "Times");
+    }
+
+    [Fact]
+    public void Test_WordDocument_SaveAsPdf_DocumentDefaultFont_FallsBack_To_HighAnsi_When_Primary_Font_Is_Unmapped() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfDocumentDefaultFontHighAnsiFallback.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfDocumentDefaultFontHighAnsiFallback.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            document.Settings.FontFamily = "OfficeIMO Missing Theme Font";
+            document.Settings.FontFamilyHighAnsi = "Times New Roman";
+            document.AddParagraph("Hello HighAnsi fallback font");
+            document.Save();
+            document.SaveAsPdf(pdfPath);
+        }
+
+        Assert.True(File.Exists(pdfPath));
+        AssertPdfUsesFont(pdfPath, "Times");
+    }
+
+    [Fact]
+    public void Test_WordDocument_SaveAsPdf_RequestedUnavailableFont_FallsBack_To_DocumentDefaultFont() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfUnavailableRequestedFontFallsBack.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfUnavailableRequestedFontFallsBack.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            document.Settings.FontFamily = "OfficeIMO Missing Theme Font";
+            document.Settings.FontFamilyHighAnsi = "Times New Roman";
+            document.AddParagraph("Hello unavailable requested font fallback");
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions { FontFamily = "OfficeIMO Missing Requested Font" });
+        }
+
+        Assert.True(File.Exists(pdfPath));
+        AssertPdfUsesFont(pdfPath, "Times");
+    }
+
+    [Fact]
+    public void Test_WordDocument_SaveAsPdf_Preserves_Default_Font_Slot_During_Font_Prepass() {
+        string docPath = Path.Combine(_directoryWithFiles, "PdfDefaultFontSlotPrepass.docx");
+        string pdfPath = Path.Combine(_directoryWithFiles, "PdfDefaultFontSlotPrepass.pdf");
+
+        using (WordDocument document = WordDocument.Create(docPath)) {
+            document.AddParagraph("Styled serif").SetFontFamily("Georgia");
+            document.AddParagraph("Default serif");
+            document.Save();
+            document.SaveAsPdf(pdfPath, new PdfSaveOptions { FontFamily = "Times New Roman" });
+        }
+
+        Assert.True(File.Exists(pdfPath));
+        AssertPdfUsesFont(pdfPath, "Times");
+        AssertPdfDoesNotUseFont(pdfPath, "Georgia");
     }
 
     [Theory]
@@ -337,7 +420,7 @@ public partial class Word {
 
         Assert.True(File.Exists(pdfPath));
 
-        using PdfDocument pdf = PdfDocument.Open(pdfPath);
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
         var hello = Assert.Single(pdf.GetPage(1).GetWords(), word => word.Text == "Hello");
         double expectedMarginPoints = marginCm * 72D / 2.54D;
         Assert.InRange(hello.BoundingBox.Left, expectedMarginPoints - 2D, expectedMarginPoints + 4D);
@@ -359,7 +442,7 @@ public partial class Word {
 
         Assert.True(File.Exists(pdfPath));
 
-        using PdfDocument pdf = PdfDocument.Open(pdfPath);
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
         var hello = Assert.Single(pdf.GetPage(1).GetWords(), word => word.Text == "Hello");
         double expectedLeftMarginPoints = 72D / 2.54D;
         Assert.InRange(hello.BoundingBox.Left, expectedLeftMarginPoints - 2D, expectedLeftMarginPoints + 4D);
@@ -489,6 +572,44 @@ public partial class Word {
         return Encoding.GetEncoding("ISO-8859-1").GetString(streamData);
     }
 
+    private static string ReadPdfPageContent(byte[] bytes, int pageNumber = 1) {
+        var document = PdfCore.PdfReadDocument.Load(bytes);
+        var (objects, _) = PdfCore.PdfSyntax.ParseObjects(bytes);
+        int pageObjectNumber = document.Pages[pageNumber - 1].ObjectNumber;
+        if (!objects.TryGetValue(pageObjectNumber, out PdfCore.PdfIndirectObject pageObject) ||
+            pageObject.Value is not PdfCore.PdfDictionary pageDictionary) {
+            throw new InvalidOperationException("Page object was not found.");
+        }
+
+        if (!pageDictionary.Items.TryGetValue("Contents", out PdfCore.PdfObject contents)) {
+            throw new InvalidOperationException("Page contents were not found.");
+        }
+
+        var streams = new List<string>();
+        AppendPdfPageContentStreams(objects, contents, streams);
+        return string.Join("\n", streams);
+    }
+
+    private static void AppendPdfPageContentStreams(
+        Dictionary<int, PdfCore.PdfIndirectObject> objects,
+        PdfCore.PdfObject contents,
+        List<string> streams) {
+        if (contents is PdfCore.PdfReference reference) {
+            if (objects.TryGetValue(reference.ObjectNumber, out PdfCore.PdfIndirectObject indirect) &&
+                indirect.Value is PdfCore.PdfStream stream) {
+                streams.Add(Encoding.GetEncoding("ISO-8859-1").GetString(stream.Data));
+            }
+
+            return;
+        }
+
+        if (contents is PdfCore.PdfArray array) {
+            foreach (PdfCore.PdfObject item in array.Items) {
+                AppendPdfPageContentStreams(objects, item, streams);
+            }
+        }
+    }
+
     private static int FindPdfStreamDataStart(byte[] bytes) {
         byte[] lfPattern = Encoding.ASCII.GetBytes("stream\n");
         int lfStart = IndexOf(bytes, lfPattern, 0);
@@ -515,12 +636,28 @@ public partial class Word {
     }
 
     private static void AssertPdfUsesFont(string pdfPath, string expectedFontNamePart) {
-        using PdfDocument pdf = PdfDocument.Open(pdfPath);
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
         Assert.Contains(pdf.GetPage(1).Letters, letter =>
             letter.FontName != null &&
             letter.FontName.Contains(expectedFontNamePart, StringComparison.OrdinalIgnoreCase));
 
         string pdfContent = Encoding.ASCII.GetString(File.ReadAllBytes(pdfPath));
         Assert.Contains("/BaseFont /" + expectedFontNamePart, pdfContent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AssertPdfUsesAnyFont(string pdfPath, params string[] expectedFontNameParts) {
+        using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+        Assert.Contains(pdf.GetPage(1).Letters, letter =>
+            letter.FontName != null &&
+            expectedFontNameParts.Any(expected => letter.FontName.Contains(expected, StringComparison.OrdinalIgnoreCase)));
+
+        string pdfContent = Encoding.ASCII.GetString(File.ReadAllBytes(pdfPath));
+        Assert.Contains(expectedFontNameParts, expected =>
+            pdfContent.Contains("/BaseFont /" + expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void AssertPdfDoesNotUseFont(string pdfPath, string fontNamePart) {
+        string pdfContent = Encoding.ASCII.GetString(File.ReadAllBytes(pdfPath));
+        Assert.DoesNotContain("/BaseFont /" + fontNamePart, pdfContent, StringComparison.OrdinalIgnoreCase);
     }
 }

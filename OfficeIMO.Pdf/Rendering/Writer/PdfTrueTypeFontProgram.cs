@@ -1,10 +1,17 @@
 namespace OfficeIMO.Pdf;
 
-internal sealed class PdfTrueTypeFontProgram {
+internal sealed partial class PdfTrueTypeFontProgram {
+    private readonly byte[] _data;
     private readonly ushort[] _advanceWidths;
     private readonly Dictionary<int, int> _cmap;
+    private readonly Dictionary<string, TableRecord> _tables;
+    private readonly SortedSet<int> _usedGlyphIds = new();
+    private readonly Dictionary<int, string> _usedGlyphToUnicode = new();
+    private readonly object _usageLock = new();
 
-    private PdfTrueTypeFontProgram(string fontName, int unitsPerEm, int xMin, int yMin, int xMax, int yMax, int ascent, int descent, int capHeight, double italicAngle, int flags, int stemV, ushort[] advanceWidths, Dictionary<int, int> cmap) {
+    private PdfTrueTypeFontProgram(byte[] data, Dictionary<string, TableRecord> tables, string fontName, int unitsPerEm, int xMin, int yMin, int xMax, int yMax, int ascent, int descent, int capHeight, double italicAngle, int flags, int stemV, ushort[] advanceWidths, Dictionary<int, int> cmap) {
+        _data = data.ToArray();
+        _tables = new Dictionary<string, TableRecord>(tables, StringComparer.Ordinal);
         FontName = fontName;
         UnitsPerEm = unitsPerEm;
         FontBBox = new[] { ScaleMetric(xMin, unitsPerEm), ScaleMetric(yMin, unitsPerEm), ScaleMetric(xMax, unitsPerEm), ScaleMetric(yMax, unitsPerEm) };
@@ -28,6 +35,138 @@ internal sealed class PdfTrueTypeFontProgram {
     public int Flags { get; }
     public int StemV { get; }
 
+    public double MeasureWinAnsiTextWidth(string? text, double fontSize) {
+        if (string.IsNullOrEmpty(text)) {
+            return 0D;
+        }
+
+        double width = 0D;
+        for (int index = 0; index < text!.Length; index++) {
+            width += GetWinAnsiGlyphWidth1000(text[index]) * fontSize / 1000D;
+        }
+
+        return width;
+    }
+
+    public double MeasureTextWidth(string? text, double fontSize, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar) {
+        if (string.IsNullOrEmpty(text)) {
+            return 0D;
+        }
+
+        return ShapeText(text!, shapingMode).TotalAdvanceWidth1000 * fontSize / 1000D;
+    }
+
+    public double GetAscender(double fontSize) =>
+        Ascent * fontSize / 1000D;
+
+    public double GetDescender(double fontSize) =>
+        Math.Abs(Descent) * fontSize / 1000D;
+
+    public int GlyphCount => _advanceWidths.Length;
+
+    internal byte[] FontDataSnapshot => _data.ToArray();
+
+    public bool TryGetGlyphId(int unicodeScalar, out int glyphId) =>
+        _cmap.TryGetValue(unicodeScalar, out glyphId);
+
+    public int GetGlyphWidth1000(int glyphId) {
+        if (glyphId < 0 || glyphId >= _advanceWidths.Length) {
+            return _advanceWidths.Length == 0 ? 500 : ScaleMetric(_advanceWidths[_advanceWidths.Length - 1], UnitsPerEm);
+        }
+
+        return ScaleMetric(_advanceWidths[glyphId], UnitsPerEm);
+    }
+
+    public string EncodeTextAsGlyphHex(string text, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar) {
+        Guard.NotNull(text, nameof(text));
+        return ShapeText(text, shapingMode).ToGlyphHex();
+    }
+
+    internal PdfGlyphRun ShapeText(string text) {
+        Guard.NotNull(text, nameof(text));
+        return ShapeText(text, PdfTextShapingOptions.ForRendering(FontName));
+    }
+
+    internal PdfGlyphRun ShapeText(string text, PdfTextShapingMode shapingMode) {
+        Guard.NotNull(text, nameof(text));
+        return ShapeText(text, PdfTextShapingOptions.ForRendering(FontName, shapingMode));
+    }
+
+    internal PdfGlyphRun ShapeText(string text, PdfTextShapingOptions options) {
+        Guard.NotNull(text, nameof(text));
+        return PdfUnicodeScalarTextShaper.Instance.ShapeText(text, this, options);
+    }
+
+    public IReadOnlyList<(int GlyphId, string UnicodeText)> GetGlyphToUnicodeMappings() {
+        lock (_usageLock) {
+            if (_usedGlyphToUnicode.Count > 0) {
+                return _usedGlyphToUnicode
+                    .OrderBy(entry => entry.Key)
+                    .Select(entry => (entry.Key, entry.Value))
+                    .ToArray();
+            }
+        }
+
+        var glyphToUnicode = new Dictionary<int, string>();
+        var glyphToScalar = new Dictionary<int, int>();
+        foreach (var entry in _cmap) {
+            if (entry.Value <= 0) {
+                continue;
+            }
+
+            if (!glyphToScalar.TryGetValue(entry.Value, out int existingScalar) || entry.Key < existingScalar) {
+                glyphToScalar[entry.Value] = entry.Key;
+                glyphToUnicode[entry.Value] = char.ConvertFromUtf32(entry.Key);
+            }
+        }
+
+        return glyphToUnicode
+            .OrderBy(entry => entry.Key)
+            .Select(entry => (entry.Key, entry.Value))
+            .ToArray();
+    }
+
+    internal IReadOnlyList<int> GetUsedGlyphIds() {
+        lock (_usageLock) {
+            return _usedGlyphIds.Count == 0
+                ? Array.Empty<int>()
+                : _usedGlyphIds.ToArray();
+        }
+    }
+
+    internal void ResetGlyphUsage() {
+        lock (_usageLock) {
+            _usedGlyphIds.Clear();
+            _usedGlyphToUnicode.Clear();
+        }
+    }
+
+    internal void RecordGlyphUsage(int glyphId, int unicodeScalar) =>
+        RecordGlyphUsage(glyphId, char.ConvertFromUtf32(unicodeScalar));
+
+    internal void RecordGlyphUsage(int glyphId, string unicodeText) {
+        if (glyphId < 0) {
+            return;
+        }
+
+        lock (_usageLock) {
+            _usedGlyphIds.Add(glyphId);
+            if (glyphId > 0 &&
+                !string.IsNullOrEmpty(unicodeText) &&
+                (!_usedGlyphToUnicode.TryGetValue(glyphId, out string? existingText) || ShouldReplaceGlyphUnicodeText(unicodeText, existingText))) {
+                _usedGlyphToUnicode[glyphId] = unicodeText;
+            }
+        }
+    }
+
+    private static bool ShouldReplaceGlyphUnicodeText(string candidate, string existing) {
+        if (candidate.Length != existing.Length) {
+            return candidate.Length > existing.Length;
+        }
+
+        return string.CompareOrdinal(candidate, existing) < 0;
+    }
+
     public static PdfTrueTypeFontProgram Parse(byte[] data, string? fontNameOverride = null) {
         Guard.NotNull(data, nameof(data));
         if (data.Length < 12) {
@@ -35,6 +174,10 @@ internal sealed class PdfTrueTypeFontProgram {
         }
 
         uint scalerType = ReadUInt32(data, 0);
+        if (scalerType == 0x4F54544F) {
+            throw new NotSupportedException("This font program parser handles TrueType fonts with glyf outlines. Use the OpenType/CFF parser path for fonts with an OTTO scaler.");
+        }
+
         if (scalerType != 0x00010000 && scalerType != 0x74727565) {
             throw new NotSupportedException("Only TrueType fonts with glyf outlines can be embedded by OfficeIMO.Pdf at this stage.");
         }
@@ -96,23 +239,25 @@ internal sealed class PdfTrueTypeFontProgram {
         if ((macStyle & 0x02) != 0 || Math.Abs(italicAngle) > 0.01D) flags |= 64;
         int stemV = Math.Max(50, Math.Min(220, 80 + ((weightClass - 400) / 10)));
 
-        return new PdfTrueTypeFontProgram(fontName, unitsPerEm, xMin, yMin, xMax, yMax, ascent, descent, capHeight, italicAngle, flags, stemV, widths, charMap);
+        return new PdfTrueTypeFontProgram(data, tables, fontName, unitsPerEm, xMin, yMin, xMax, yMax, ascent, descent, capHeight, italicAngle, flags, stemV, widths, charMap);
     }
 
     public int[] BuildWinAnsiWidths() {
         var widths = new int[224];
         for (int code = 32; code <= 255; code++) {
-            char character = PdfWinAnsiEncoding.Decode((byte)code);
-            if (!_cmap.TryGetValue(character, out int glyphId)) {
-                widths[code - 32] = 500;
-                continue;
-            }
-
-            ushort advance = glyphId >= 0 && glyphId < _advanceWidths.Length ? _advanceWidths[glyphId] : _advanceWidths[_advanceWidths.Length - 1];
-            widths[code - 32] = ScaleMetric(advance, UnitsPerEm);
+            widths[code - 32] = GetWinAnsiGlyphWidth1000(PdfWinAnsiEncoding.Decode((byte)code));
         }
 
         return widths;
+    }
+
+    private int GetWinAnsiGlyphWidth1000(char character) {
+        if (!_cmap.TryGetValue(character, out int glyphId)) {
+            return 500;
+        }
+
+        ushort advance = glyphId >= 0 && glyphId < _advanceWidths.Length ? _advanceWidths[glyphId] : _advanceWidths[_advanceWidths.Length - 1];
+        return ScaleMetric(advance, UnitsPerEm);
     }
 
     private static Dictionary<string, TableRecord> ReadTableDirectory(byte[] data) {
@@ -123,6 +268,7 @@ internal sealed class PdfTrueTypeFontProgram {
             int offset = recordOffset + index * 16;
             EnsureRange(data, offset, 16);
             string tag = Encoding.ASCII.GetString(data, offset, 4);
+            uint checksum = ReadUInt32(data, offset + 4);
             uint tableOffset = ReadUInt32(data, offset + 8);
             uint tableLength = ReadUInt32(data, offset + 12);
             if (tableOffset > int.MaxValue || tableLength > int.MaxValue) {
@@ -130,7 +276,7 @@ internal sealed class PdfTrueTypeFontProgram {
             }
 
             EnsureRange(data, (int)tableOffset, (int)tableLength);
-            tables[tag] = new TableRecord((int)tableOffset, (int)tableLength);
+            tables[tag] = new TableRecord((int)tableOffset, (int)tableLength, checksum);
         }
 
         return tables;
@@ -163,6 +309,7 @@ internal sealed class PdfTrueTypeFontProgram {
     private static Dictionary<int, int> ReadUnicodeCMap(byte[] data, TableRecord cmapTable) {
         int tableStart = cmapTable.Offset;
         int numTables = ReadUInt16(data, tableStart + 2);
+        int selectedFormat12Offset = -1;
         int selectedOffset = -1;
         int fallbackOffset = -1;
         for (int i = 0; i < numTables; i++) {
@@ -173,9 +320,14 @@ internal sealed class PdfTrueTypeFontProgram {
             int subtableOffset = checked(tableStart + (int)ReadUInt32(data, record + 4));
             EnsureRange(data, subtableOffset, 2);
             int format = ReadUInt16(data, subtableOffset);
-            if (format == 4 && platformId == 3 && (encodingId == 1 || encodingId == 0)) {
+            if (format == 12 && ((platformId == 3 && encodingId == 10) || platformId == 0)) {
+                selectedFormat12Offset = subtableOffset;
+                continue;
+            }
+
+            if (format == 4 && platformId == 3 && (encodingId == 1 || encodingId == 0) && selectedOffset < 0) {
                 selectedOffset = subtableOffset;
-                break;
+                continue;
             }
 
             if (format == 4 && fallbackOffset < 0) {
@@ -185,13 +337,13 @@ internal sealed class PdfTrueTypeFontProgram {
             }
         }
 
-        int offset = selectedOffset >= 0 ? selectedOffset : fallbackOffset;
+        int offset = selectedFormat12Offset >= 0 ? selectedFormat12Offset : selectedOffset >= 0 ? selectedOffset : fallbackOffset;
         if (offset < 0) {
             throw new NotSupportedException("TrueType font does not contain a supported Unicode cmap subtable.");
         }
 
         int selectedFormat = ReadUInt16(data, offset);
-        return selectedFormat == 4 ? ReadFormat4CMap(data, offset) : ReadFormat0CMap(data, offset);
+        return selectedFormat == 12 ? ReadFormat12CMap(data, offset) : selectedFormat == 4 ? ReadFormat4CMap(data, offset) : ReadFormat0CMap(data, offset);
     }
 
     private static Dictionary<int, int> ReadFormat0CMap(byte[] data, int offset) {
@@ -242,6 +394,41 @@ internal sealed class PdfTrueTypeFontProgram {
 
                 if (glyphId != 0) {
                     map[code] = glyphId;
+                }
+            }
+        }
+
+        return map;
+    }
+
+    private static Dictionary<int, int> ReadFormat12CMap(byte[] data, int offset) {
+        EnsureRange(data, offset, 16);
+        uint length = ReadUInt32(data, offset + 4);
+        if (length > int.MaxValue) {
+            throw new NotSupportedException("TrueType format 12 cmap table is too large.");
+        }
+
+        EnsureRange(data, offset, (int)length);
+        uint groupCount = ReadUInt32(data, offset + 12);
+        if (groupCount > (uint)((length - 16) / 12)) {
+            throw new NotSupportedException("TrueType format 12 cmap group count is invalid.");
+        }
+
+        var map = new Dictionary<int, int>();
+        int groupOffset = offset + 16;
+        for (uint group = 0; group < groupCount; group++) {
+            uint startCharCode = ReadUInt32(data, groupOffset);
+            uint endCharCode = ReadUInt32(data, groupOffset + 4);
+            uint startGlyphId = ReadUInt32(data, groupOffset + 8);
+            groupOffset += 12;
+            if (startCharCode > 0x10FFFF || endCharCode > 0x10FFFF || endCharCode < startCharCode) {
+                continue;
+            }
+
+            for (uint code = startCharCode; code <= endCharCode; code++) {
+                uint glyph = startGlyphId + (code - startCharCode);
+                if (glyph <= int.MaxValue) {
+                    map[(int)code] = (int)glyph;
                 }
             }
         }
@@ -302,6 +489,30 @@ internal sealed class PdfTrueTypeFontProgram {
     private static int ScaleMetric(int value, int unitsPerEm) =>
         (int)Math.Round(value * 1000D / unitsPerEm, MidpointRounding.AwayFromZero);
 
+    private static int ReadScalar(string text, ref int index) {
+        char ch = text[index++];
+        if (char.IsHighSurrogate(ch)) {
+            if (index < text.Length && char.IsLowSurrogate(text[index])) {
+                return char.ConvertToUtf32(ch, text[index++]);
+            }
+
+            throw new ArgumentException("Text contains an unmatched high surrogate at index " + (index - 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ".", nameof(text));
+        }
+
+        if (char.IsLowSurrogate(ch)) {
+            throw new ArgumentException("Text contains an unmatched low surrogate at index " + (index - 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ".", nameof(text));
+        }
+
+        return ch;
+    }
+
+    internal static ArgumentException CreateUnsupportedGlyphException(string text, int index, int scalar) {
+        string codePoint = "U+" + scalar.ToString("X", System.Globalization.CultureInfo.InvariantCulture);
+        string display = scalar <= 0x10FFFF ? char.ConvertFromUtf32(scalar) : string.Empty;
+        string rendered = display.Length == 0 || char.IsControl(display, 0) ? string.Empty : " '" + display + "'";
+        return new ArgumentException("Text contains character " + codePoint + rendered + " at index " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + " that is not covered by the embedded TrueType font.", nameof(text));
+    }
+
     private static double ReadFixed16Dot16(byte[] data, int offset) {
         int raw = (int)ReadUInt32(data, offset);
         return raw / 65536D;
@@ -329,12 +540,14 @@ internal sealed class PdfTrueTypeFontProgram {
     }
 
     private readonly struct TableRecord {
-        public TableRecord(int offset, int length) {
+        public TableRecord(int offset, int length, uint checksum = 0) {
             Offset = offset;
             Length = length;
+            Checksum = checksum;
         }
 
         public int Offset { get; }
         public int Length { get; }
+        public uint Checksum { get; }
     }
 }

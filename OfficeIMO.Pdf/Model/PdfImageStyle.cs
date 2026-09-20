@@ -9,8 +9,10 @@ public sealed class PdfImageStyle {
     private PdfAlign _align = PdfAlign.Left;
     private OfficeImageFit _fit = OfficeImageFit.Stretch;
     private OfficeClipPath? _clipPath;
+    private PdfImageSourceCrop? _sourceCrop;
     private double _spacingBefore;
     private double _spacingAfter;
+    private string? _alternativeText;
 
     /// <summary>Image alignment within the current content frame.</summary>
     public PdfAlign Align {
@@ -25,7 +27,7 @@ public sealed class PdfImageStyle {
     public OfficeImageFit Fit {
         get => _fit;
         set {
-            PdfDoc.ValidateImageFit(value, nameof(Fit));
+            PdfDocument.ValidateImageFit(value, nameof(Fit));
             _fit = value;
         }
     }
@@ -34,6 +36,12 @@ public sealed class PdfImageStyle {
     public OfficeClipPath? ClipPath {
         get => _clipPath?.Clone();
         set => _clipPath = value?.Clone();
+    }
+
+    /// <summary>Optional source crop applied before fitting the image into the target box.</summary>
+    public PdfImageSourceCrop? SourceCrop {
+        get => _sourceCrop?.Clone();
+        set => _sourceCrop = value?.Clone();
     }
 
     /// <summary>Vertical space before the image in the surrounding document flow, in points.</summary>
@@ -57,15 +65,33 @@ public sealed class PdfImageStyle {
     /// <summary>Moves the image to the next page with the first visible part of the following block when they fit together.</summary>
     public bool KeepWithNext { get; set; }
 
+    /// <summary>When true, oversized flow images are proportionally reduced to fit the current page or column frame.</summary>
+    public bool ScaleDownToFit { get; set; }
+
+    /// <summary>Optional alternate text for meaningful generated images.</summary>
+    public string? AlternativeText {
+        get => _alternativeText;
+        set {
+            if (value != null) {
+                Guard.NotNullOrWhiteSpace(value, nameof(AlternativeText));
+            }
+
+            _alternativeText = value;
+        }
+    }
+
     /// <summary>Creates a copy of this image style.</summary>
     public PdfImageStyle Clone() {
         return new PdfImageStyle {
             Align = Align,
             Fit = Fit,
             ClipPath = _clipPath,
+            SourceCrop = _sourceCrop,
             SpacingBefore = SpacingBefore,
             SpacingAfter = SpacingAfter,
-            KeepWithNext = KeepWithNext
+            KeepWithNext = KeepWithNext,
+            ScaleDownToFit = ScaleDownToFit,
+            AlternativeText = AlternativeText
         };
     }
 

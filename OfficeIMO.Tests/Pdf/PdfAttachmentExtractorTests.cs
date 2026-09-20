@@ -13,7 +13,7 @@ public class PdfAttachmentExtractorTests {
         byte[] invoiceXml = Encoding.UTF8.GetBytes("<invoice>42</invoice>");
         byte[] sourceBytes = Encoding.UTF8.GetBytes("Source payload");
 
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .AttachFile("invoice.xml", invoiceXml, "application/xml", PdfAssociatedFileRelationship.Data, "Structured invoice XML")
             .AttachFile("source.txt", sourceBytes, "text/plain", PdfAssociatedFileRelationship.Source)
             .Paragraph(p => p.Text("Attachment readback proof."))
@@ -48,6 +48,21 @@ public class PdfAttachmentExtractorTests {
     }
 
     [Fact]
+    public void GeneratedEmbeddedFileNameTreeSortsAttachmentNames() {
+        byte[] pdf = PdfDocument.Create(new PdfOptions {
+                CompressContentStreams = false
+            })
+            .AttachFile("z.xml", Encoding.UTF8.GetBytes("<z />"), "application/xml", PdfAssociatedFileRelationship.Data)
+            .AttachFile("a.xml", Encoding.UTF8.GetBytes("<a />"), "application/xml", PdfAssociatedFileRelationship.Data)
+            .Paragraph(p => p.Text("Sorted attachment name tree."))
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(pdf);
+
+        Assert.Matches(@"/Names \[<612E786D6C> \d+ 0 R <7A2E786D6C> \d+ 0 R\]", content);
+    }
+
+    [Fact]
     public void ExtractAttachments_ReadsSimpleHandBuiltEmbeddedFilePdf() {
         IReadOnlyList<PdfExtractedAttachment> attachments = PdfAttachmentExtractor.ExtractAttachments(BuildSimpleEmbeddedFilePdf());
 
@@ -78,9 +93,24 @@ public class PdfAttachmentExtractorTests {
     }
 
     [Fact]
+    public void ExtractAttachments_ReadsCatalogAssociatedFilesWithoutEmbeddedFileNameTree() {
+        IReadOnlyList<PdfExtractedAttachment> attachments = PdfAttachmentExtractor.ExtractAttachments(BuildAssociatedFileOnlyPdf());
+
+        PdfExtractedAttachment attachment = Assert.Single(attachments);
+        Assert.Equal("data.xml", attachment.Name);
+        Assert.Equal("data.xml", attachment.FileName);
+        Assert.Equal("text/xml", attachment.MimeType);
+        Assert.Equal(PdfAssociatedFileRelationship.Data, attachment.Relationship);
+        Assert.Equal("AF", attachment.Source);
+        Assert.Equal(5, attachment.FileSpecObjectNumber);
+        Assert.Equal(6, attachment.EmbeddedFileObjectNumber);
+        Assert.Equal("data", Encoding.ASCII.GetString(attachment.Bytes));
+    }
+
+    [Fact]
     public void ExtractAttachments_SupportsPathStreamAndDirectoryOutputs() {
         byte[] payload = Encoding.UTF8.GetBytes("directory payload");
-        byte[] pdf = PdfDoc.Create()
+        byte[] pdf = PdfDocument.Create()
             .AttachFile("payload.txt", payload, "text/plain", PdfAssociatedFileRelationship.Supplement)
             .Paragraph(p => p.Text("Directory extraction proof."))
             .ToBytes();
@@ -197,6 +227,41 @@ public class PdfAttachmentExtractorTests {
         output.WriteByte((byte)'\n');
         WriteAscii(output, footer);
         return output.ToArray();
+    }
+
+    private static byte[] BuildAssociatedFileOnlyPdf() {
+        string pdf = string.Join("\n", new[] {
+            "%PDF-1.7",
+            "1 0 obj",
+            "<< /Type /Catalog /Pages 2 0 R /AF [5 0 R] >>",
+            "endobj",
+            "2 0 obj",
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            "endobj",
+            "3 0 obj",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>",
+            "endobj",
+            "4 0 obj",
+            "<< /Length 0 >>",
+            "stream",
+            "",
+            "endstream",
+            "endobj",
+            "5 0 obj",
+            "<< /Type /Filespec /F (data.xml) /AFRelationship /Data /EF << /F 6 0 R >> >>",
+            "endobj",
+            "6 0 obj",
+            "<< /Type /EmbeddedFile /Subtype /text#2Fxml /Length 4 >>",
+            "stream",
+            "data",
+            "endstream",
+            "endobj",
+            "trailer",
+            "<< /Root 1 0 R /Size 7 >>",
+            "%%EOF"
+        });
+
+        return Encoding.ASCII.GetBytes(pdf);
     }
 
     private static byte[] DeflateZlib(byte[] data) {
