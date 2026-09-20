@@ -2,6 +2,7 @@ using OfficeIMO.Excel.LegacyXls.Compound;
 using OfficeIMO.Excel.LegacyXls.Diagnostics;
 using OfficeIMO.Excel.LegacyXls.Biff;
 using OfficeIMO.Excel.LegacyXls.Projection;
+using OfficeIMO.Shared;
 
 namespace OfficeIMO.Excel.LegacyXls.Model {
     /// <summary>
@@ -19,6 +20,7 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
         private readonly List<LegacyXlsExternalReference> _externalReferences = new();
         private readonly List<LegacyXlsExternalQueryConnection> _externalQueryConnections = new();
         private readonly List<LegacyXlsDataConsolidationReference> _dataConsolidationReferences = new();
+        private readonly List<LegacyXlsDataConsolidationName> _dataConsolidationNames = new();
         private readonly List<LegacyXlsPivotTableRecord> _pivotTableRecords = new();
         private readonly List<LegacyXlsChartRecord> _chartRecords = new();
         private readonly List<LegacyXlsDrawingRecord> _drawingRecords = new();
@@ -97,6 +99,11 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
         public IReadOnlyList<LegacyXlsDataConsolidationReference> DataConsolidationReferences => _dataConsolidationReferences;
 
         /// <summary>
+        /// Gets DConName named consolidation sources discovered during import.
+        /// </summary>
+        public IReadOnlyList<LegacyXlsDataConsolidationName> DataConsolidationNames => _dataConsolidationNames;
+
+        /// <summary>
         /// Gets preserve-only PivotTable BIFF records discovered during import.
         /// </summary>
         public IReadOnlyList<LegacyXlsPivotTableRecord> PivotTableRecords => _pivotTableRecords;
@@ -155,6 +162,8 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
         /// Gets preserve-only BIFF feature records discovered during import.
         /// </summary>
         public IReadOnlyList<LegacyXlsPreservedFeatureRecord> PreservedFeatureRecords => _preservedFeatureRecords;
+
+        internal LegacyXlsDocumentProperties? DocumentProperties { get; private set; }
 
         /// <summary>
         /// Gets workbook-level BIFF metadata records decoded during import.
@@ -307,6 +316,11 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
         public string? LastWriteUserName { get; private set; }
 
         /// <summary>
+        /// Gets workbook write-reservation metadata parsed from a FileSharing record, if present.
+        /// </summary>
+        public LegacyXlsWriteReservation? WriteReservation { get; private set; }
+
+        /// <summary>
         /// Gets parsed workbook protection metadata.
         /// </summary>
         public LegacyXlsWorkbookProtection? Protection { get; private set; }
@@ -328,6 +342,8 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
         internal List<LegacyXlsExternalQueryConnection> MutableExternalQueryConnections => _externalQueryConnections;
 
         internal List<LegacyXlsDataConsolidationReference> MutableDataConsolidationReferences => _dataConsolidationReferences;
+
+        internal List<LegacyXlsDataConsolidationName> MutableDataConsolidationNames => _dataConsolidationNames;
 
         internal List<LegacyXlsPivotTableRecord> MutablePivotTableRecords => _pivotTableRecords;
 
@@ -352,6 +368,10 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
         internal List<LegacyXlsUnsupportedFeature> MutableUnsupportedFeatures => _unsupportedFeatures;
 
         internal List<LegacyXlsPreservedFeatureRecord> MutablePreservedFeatureRecords => _preservedFeatureRecords;
+
+        internal void SetDocumentProperties(LegacyXlsDocumentProperties properties) {
+            DocumentProperties = properties ?? throw new ArgumentNullException(nameof(properties));
+        }
 
         internal List<LegacyXlsFormulaTokenRecord> MutableFormulaTokenRecords => _formulaTokenRecords;
 
@@ -470,6 +490,13 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
 
         internal void SetLastWriteUserName(string? value) {
             LastWriteUserName = value;
+        }
+
+        internal void SetWriteReservation(bool readOnlyRecommended, ushort? passwordHash, string? userName) {
+            WriteReservation = new LegacyXlsWriteReservation(
+                readOnlyRecommended,
+                passwordHash.HasValue ? passwordHash.Value.ToString("X4") : null,
+                userName);
         }
 
         internal void AddWindow(LegacyXlsWorkbookWindow window) {
@@ -601,9 +628,12 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
             if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 
             options ??= new LegacyXlsImportOptions();
-            if (!LegacyCompoundFileReader.TryRead(bytes, out LegacyCompoundFile? compoundFile, out var compoundDiagnostics)) {
+            if (!OfficeCompoundFileReader.TryRead(bytes, out OfficeCompoundFile? compoundFile, out string? compoundError)) {
                 var workbook = new LegacyXlsWorkbook();
-                workbook.MutableDiagnostics.AddRange(compoundDiagnostics);
+                if (!string.IsNullOrWhiteSpace(compoundError)) {
+                    workbook.MutableDiagnostics.Add(CreateCompoundDiagnostic(compoundError!));
+                }
+
                 if (workbook.MutableDiagnostics.Count == 0) {
                     workbook.MutableDiagnostics.Add(new LegacyXlsImportDiagnostic(
                         LegacyXlsDiagnosticSeverity.Error,
@@ -634,8 +664,30 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
             }
 
             LegacyXlsWorkbook parsedWorkbook = LegacyBiffWorkbookParser.Parse(workbookStream, options);
+            LegacyOleDocumentPropertyReader.AddDocumentProperties(compoundFile, parsedWorkbook, options);
             LegacyCompoundFeatureScanner.AddPreserveOnlyFeatures(compoundFile, parsedWorkbook, options);
             return parsedWorkbook;
+        }
+
+        private static LegacyXlsImportDiagnostic CreateCompoundDiagnostic(string message) {
+            if (message.IndexOf("signature", StringComparison.OrdinalIgnoreCase) >= 0) {
+                return new LegacyXlsImportDiagnostic(
+                    LegacyXlsDiagnosticSeverity.Error,
+                    "XLS-COMPOUND-SIGNATURE",
+                    message);
+            }
+
+            if (message.IndexOf("sector sizes", StringComparison.OrdinalIgnoreCase) >= 0) {
+                return new LegacyXlsImportDiagnostic(
+                    LegacyXlsDiagnosticSeverity.Error,
+                    "XLS-COMPOUND-SECTOR-SIZE",
+                    message);
+            }
+
+            return new LegacyXlsImportDiagnostic(
+                LegacyXlsDiagnosticSeverity.Error,
+                "XLS-COMPOUND-CORRUPT",
+                message);
         }
 
         /// <summary>

@@ -1,8 +1,6 @@
 # OfficeIMO.Visio Roadmap
 
 Date: 2026-06-05
-Current branch/worktree: `codex/visio-market-review-20260605` at `C:\Support\GitHub\OfficeIMO-visio-market-review-20260605`
-Current baseline: `origin/master` at `b31d0f80` (`Merge pull request #1884 from EvotecIT/codex/pdf-premium-next-20260604`)
 Last major Visio PR merged: https://github.com/EvotecIT/OfficeIMO/pull/1865
 
 ## Where We Are
@@ -35,7 +33,7 @@ The external stencil and graph slice from PR #1865 is merged. The next checkpoin
 Current focused proof on this worktree:
 
 ```powershell
-dotnet test .\OfficeIMO.Tests\OfficeIMO.Tests.csproj -c Release --framework net8.0 --filter "FullyQualifiedName~Visio"
+dotnet test .\OfficeIMO.Visio.Tests\OfficeIMO.Visio.Tests.csproj -c Release --framework net8.0 --filter "FullyQualifiedName~Visio"
 ```
 
 Result: `738/738` Visio-filtered tests passed.

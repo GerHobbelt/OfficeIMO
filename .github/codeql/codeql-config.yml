@@ -35,11 +35,11 @@ paths:
 paths-ignore:
   - Assets/PowerPointTemplates
   - Docs
-  - OfficeIMO.CSV.Tests
-  - OfficeIMO.Excel.Benchmarks
+  - OfficeIMO.*.Tests
+  - OfficeIMO.*.Tests/**
+  - OfficeIMO.*.Benchmarks*
+  - OfficeIMO.*.Benchmarks*/**
   - OfficeIMO.Examples
-  - OfficeIMO.Markdown.Benchmarks
-  - OfficeIMO.MarkdownRenderer.Wpf.Tests
-  - OfficeIMO.Tests
   - OfficeIMO.VerifyTests
+  - OfficeIMO.VerifyTests/**
   - Website/static/assets/prism

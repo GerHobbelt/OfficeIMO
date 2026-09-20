@@ -142,17 +142,67 @@ jobs:
           path: '**/*.trx'
 
   test-ubuntu-matrix:
-    name: 'Ubuntu ${{ matrix.framework }}'
+    name: 'Ubuntu ${{ matrix.framework }} / ${{ matrix.partition }}'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
-        framework: [net8.0, net10.0]
         include:
           - framework: net8.0
-            collectCoverage: true
+            partition: markdown-large
+            collectCoverage: false
           - framework: net10.0
+            partition: markdown-large
+            collectCoverage: false
+          - framework: net8.0
+            partition: markdown-suite
+            collectCoverage: false
+          - framework: net10.0
+            partition: markdown-suite
+            collectCoverage: false
+          - framework: net8.0
+            partition: pdf-visual-inspector
+            collectCoverage: false
+          - framework: net10.0
+            partition: pdf-visual-inspector
+            collectCoverage: false
+          - framework: net8.0
+            partition: pdf-core
+            collectCoverage: false
+          - framework: net10.0
+            partition: pdf-core
+            collectCoverage: false
+          - framework: net8.0
+            partition: excel-image-charts
+            collectCoverage: false
+          - framework: net10.0
+            partition: excel-image-charts
+            collectCoverage: false
+          - framework: net8.0
+            partition: excel-legacy-reader
+            collectCoverage: false
+          - framework: net10.0
+            partition: excel-legacy-reader
+            collectCoverage: false
+          - framework: net8.0
+            partition: excel-core-named
+            collectCoverage: false
+          - framework: net10.0
+            partition: excel-core-named
+            collectCoverage: false
+          - framework: net8.0
+            partition: word-rtf-html
+            collectCoverage: false
+          - framework: net10.0
+            partition: word-rtf-html
+            collectCoverage: false
+          - framework: net8.0
+            partition: other-projects
+            collectCoverage: false
+          - framework: net10.0
+            partition: other-projects
             collectCoverage: false
     steps:
       - name: Checkout code
@@ -171,122 +221,202 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Restore dependencies
-        run: dotnet restore OfficeIMO.sln
+      - name: Restore test dependencies
+        run: |
+          if [ "${{ matrix.partition }}" = "other-projects" ]; then
+            dotnet restore OfficeIMO.Shared.Tests/OfficeIMO.Shared.Tests.csproj
+          fi
+          if [[ "${{ matrix.partition }}" == markdown-* ]]; then
+            dotnet restore OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj
+          fi
+          if [[ "${{ matrix.partition }}" == excel-* ]]; then
+            dotnet restore OfficeIMO.Excel.Tests/OfficeIMO.Excel.Tests.csproj
+          fi
+          if [[ "${{ matrix.partition }}" == "word-rtf-html" || "${{ matrix.partition }}" == "markdown-large" ]]; then
+            dotnet restore OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj
+          fi
+          if [ "${{ matrix.partition }}" = "word-rtf-html" ]; then
+            dotnet restore OfficeIMO.Rtf.Tests/OfficeIMO.Rtf.Tests.csproj
+            dotnet restore OfficeIMO.Html.Tests/OfficeIMO.Html.Tests.csproj
+          fi
+          if [[ "${{ matrix.partition }}" == pdf-* ]]; then
+            dotnet restore OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj
+          fi
+          if [ "${{ matrix.partition }}" = "other-projects" ]; then
+            dotnet restore OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj
+            dotnet restore OfficeIMO.GoogleWorkspace.Tests/OfficeIMO.GoogleWorkspace.Tests.csproj
+            dotnet restore OfficeIMO.Markup.Tests/OfficeIMO.Markup.Tests.csproj
+            dotnet restore OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj
+            dotnet restore OfficeIMO.Visio.Tests/OfficeIMO.Visio.Tests.csproj
+            dotnet restore OfficeIMO.Reader.Tests/OfficeIMO.Reader.Tests.csproj
+            dotnet restore OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj
+            dotnet restore OfficeIMO.VerifyTests/OfficeIMO.VerifyTests.csproj
+            dotnet restore OfficeIMO.MarkdownRenderer.Wpf.Tests/OfficeIMO.MarkdownRenderer.Wpf.Tests.csproj
+          fi
 
-      - name: Build solution
-        run: dotnet build OfficeIMO.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+      - name: Build test projects
+        run: |
+          if [ "${{ matrix.partition }}" = "other-projects" ]; then
+            dotnet build OfficeIMO.Shared.Tests/OfficeIMO.Shared.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+          fi
+          if [[ "${{ matrix.partition }}" == markdown-* ]]; then
+            dotnet build OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+          fi
+          if [[ "${{ matrix.partition }}" == excel-* ]]; then
+            dotnet build OfficeIMO.Excel.Tests/OfficeIMO.Excel.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+          fi
+          if [[ "${{ matrix.partition }}" == "word-rtf-html" || "${{ matrix.partition }}" == "markdown-large" ]]; then
+            dotnet build OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+          fi
+          if [ "${{ matrix.partition }}" = "word-rtf-html" ]; then
+            dotnet build OfficeIMO.Rtf.Tests/OfficeIMO.Rtf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.Html.Tests/OfficeIMO.Html.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+          fi
+          if [[ "${{ matrix.partition }}" == pdf-* ]]; then
+            dotnet build OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+          fi
+          if [ "${{ matrix.partition }}" = "other-projects" ]; then
+            dotnet build OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.GoogleWorkspace.Tests/OfficeIMO.GoogleWorkspace.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.Markup.Tests/OfficeIMO.Markup.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.Visio.Tests/OfficeIMO.Visio.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.Reader.Tests/OfficeIMO.Reader.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.VerifyTests/OfficeIMO.VerifyTests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.MarkdownRenderer.Wpf.Tests/OfficeIMO.MarkdownRenderer.Wpf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+          fi
 
       - name: Run tests
         run: |
           # Keep the heavy Excel image visual gate on its dedicated script path; run test projects
           # explicitly so Ubuntu does not spend the job budget walking every solution project.
-          # OfficeIMO.Tests contains long-running graphics/PDF/image-export contracts. Split it
-          # into smaller VSTest processes so Linux runners do not cancel a huge single testhost.
           test_filter='Category!=ExcelImageVisualGate'
-          run_officeimo_tests() {
+          run_shared_tests() {
             local name="$1"
             local filter="$2"
             local collect_coverage="${3:-false}"
             local coverage_args=()
-            # Collect OfficeIMO.Tests coverage only once on the primary Linux net8.0 leg;
-            # repeated collection on every partition makes the hosted runner cancel long
-            # Excel slices before VSTest can flush a failure summary.
+            # Keep PR test partitions focused on contract proof. Coverage collection is
+            # intentionally disabled for the matrix because it turns data-heavy Markdown
+            # and PDF slices into long-running hosted-runner jobs.
             if [ "${{ matrix.collectCoverage }}" = "true" ] && [ "${collect_coverage}" = "true" ]; then
               coverage_args=(--collect "XPlat Code Coverage")
             fi
             echo ""
-            echo "== OfficeIMO.Tests: ${name} =="
-            dotnet test OfficeIMO.Tests/OfficeIMO.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "(${filter})&${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx "${coverage_args[@]}"
+            echo "== OfficeIMO.Shared.Tests: ${name} =="
+            dotnet test OfficeIMO.Shared.Tests/OfficeIMO.Shared.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "(${filter})&${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx "${coverage_args[@]}"
           }
 
-          audit_officeimo_test_partitions() {
+          run_excel_tests() {
+            local name="$1"
+            local filter="$2"
+            echo ""
+            echo "== OfficeIMO.Excel.Tests: ${name} =="
+            dotnet test OfficeIMO.Excel.Tests/OfficeIMO.Excel.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "(${filter})&${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_word_tests() {
+            local name="$1"
+            local filter="$2"
+            echo ""
+            echo "== OfficeIMO.Word.Tests: ${name} =="
+            dotnet test OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "(${filter})&${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_markdown_tests() {
+            local name="$1"
+            local filter="$2"
+            echo ""
+            echo "== OfficeIMO.Markdown.Tests: ${name} =="
+            dotnet test OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "(${filter})&${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_powerpoint_tests() {
+            echo ""
+            echo "== OfficeIMO.PowerPoint.Tests =="
+            dotnet test OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_visio_tests() {
+            echo ""
+            echo "== OfficeIMO.Visio.Tests =="
+            dotnet test OfficeIMO.Visio.Tests/OfficeIMO.Visio.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_rtf_tests() {
+            echo ""
+            echo "== OfficeIMO.Rtf.Tests =="
+            dotnet test OfficeIMO.Rtf.Tests/OfficeIMO.Rtf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_html_tests() {
+            echo ""
+            echo "== OfficeIMO.Html.Tests =="
+            dotnet test OfficeIMO.Html.Tests/OfficeIMO.Html.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_reader_tests() {
+            echo ""
+            echo "== OfficeIMO.Reader.Tests =="
+            dotnet test OfficeIMO.Reader.Tests/OfficeIMO.Reader.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_pdf_tests() {
+            local name="$1"
+            local filter="$2"
+            echo ""
+            echo "== OfficeIMO.Pdf.Tests: ${name} =="
+            dotnet test OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "(${filter})&${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_drawing_tests() {
+            echo ""
+            echo "== OfficeIMO.Drawing.Tests =="
+            dotnet test OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_googleworkspace_tests() {
+            echo ""
+            echo "== OfficeIMO.GoogleWorkspace.Tests =="
+            dotnet test OfficeIMO.GoogleWorkspace.Tests/OfficeIMO.GoogleWorkspace.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          run_markup_tests() {
+            echo ""
+            echo "== OfficeIMO.Markup.Tests =="
+            dotnet test OfficeIMO.Markup.Tests/OfficeIMO.Markup.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          }
+
+          audit_retired_aggregate_tests() {
+            echo ""
+            echo "== retired aggregate test project audit =="
+            if [ -f OfficeIMO.Tests/OfficeIMO.Tests.csproj ]; then
+              echo "OfficeIMO.Tests/OfficeIMO.Tests.csproj must stay retired. Put tests in a domain project or OfficeIMO.Shared.Tests."
+              exit 1
+            fi
+            if find OfficeIMO.Tests -maxdepth 1 -name '*.cs' -print -quit 2>/dev/null | grep -q .; then
+              echo "OfficeIMO.Tests still contains root test sources. Move them to a domain test project or OfficeIMO.Shared.Tests."
+              exit 1
+            fi
+          }
+
+          audit_markdown_test_partitions() {
             local list_file
             list_file="$(mktemp)"
             echo ""
-            echo "== OfficeIMO.Tests: partition coverage audit =="
-            dotnet test OfficeIMO.Tests/OfficeIMO.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity quiet --framework ${{ matrix.framework }} --list-tests --filter "${test_filter}" > "${list_file}"
+            echo "== OfficeIMO.Markdown.Tests: partition coverage audit =="
+            dotnet test OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity quiet --framework ${{ matrix.framework }} --list-tests --filter "${test_filter}" > "${list_file}"
             python3 - "${list_file}" <<'PY'
           import sys
 
           with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
               discovered = [line.strip() for line in handle if line.startswith("    ") and line.strip()]
 
-          def has(name, text):
-              return text in name
-
-          pdf_visual = (
-              "OfficeIMO.Tests.Pdf.PdfDocumentVisualQualityTests",
-              "OfficeIMO.Tests.Pdf.PdfInspectorTests",
-              "OfficeIMO.Tests.Pdf.PdfReaderAndFooterRegressionTests",
-              "OfficeIMO.Tests.Pdf.MarkdownSaveAsPdfVisualTests",
-              "OfficeIMO.Tests.Pdf.PdfDocumentRasterVisualBaselineTests",
-          )
-          excel_core_exclusions = (
-              "OfficeIMO.Tests.Excel.Test_ExcelChart",
-              "OfficeIMO.Tests.Excel.SharedChartRenderer",
-              "OfficeIMO.Tests.Excel.Test_ClosedXmlGap",
-              "OfficeIMO.Tests.Excel.LegacyXls",
-              "OfficeIMO.Tests.Excel.PerformanceReview",
-              "OfficeIMO.Tests.Excel.SaveAsPdf",
-              "OfficeIMO.Tests.Excel.ToPdfDocument",
-              "OfficeIMO.Tests.Excel.PdfTables",
-              "OfficeIMO.Tests.Excel.ReportWorkflow",
-              "OfficeIMO.Tests.Excel.Reader",
-              "OfficeIMO.Tests.Excel.ReadRows",
-              "OfficeIMO.Tests.Excel.ExcelHttp",
-          )
-          simple_partitions = (
-              "OfficeIMO.Tests.MarkdownMoreCasesTests",
-              "OfficeIMO.Tests.MarkdownRoundTripTests",
-              "OfficeIMO.Tests.MarkdownSuite",
-              "OfficeIMO.Tests.ExcelImageExport",
-              "OfficeIMO.Tests.Excel.Test_ExcelChart",
-              "OfficeIMO.Tests.Excel.SharedChartRenderer",
-              "OfficeIMO.Tests.Excel.Test_ClosedXmlGap",
-              "OfficeIMO.Tests.Excel.LegacyXls",
-              "OfficeIMO.Tests.Excel.PerformanceReview",
-              "OfficeIMO.Tests.Excel.Reader",
-              "OfficeIMO.Tests.Excel.ReadRows",
-              "OfficeIMO.Tests.Excel.ExcelHttp",
-              "OfficeIMO.Tests.Excel.SaveAsPdf",
-              "OfficeIMO.Tests.Excel.ToPdfDocument",
-              "OfficeIMO.Tests.Excel.PdfTables",
-              "OfficeIMO.Tests.Excel.ReportWorkflow",
-              "OfficeIMO.Tests.ExcelCellAndRangeTests",
-              "OfficeIMO.Tests.ExcelDelimitedImportTests",
-              "OfficeIMO.Tests.ExcelFluent",
-              "OfficeIMO.Tests.ExcelInfoBuilderTests",
-              "OfficeIMO.Tests.ExcelNamed",
-              "OfficeIMO.Tests.ExcelPowerShell",
-              "OfficeIMO.Tests.ExcelRange",
-              "OfficeIMO.Tests.ExcelRows",
-              "OfficeIMO.Tests.ExcelSheet",
-              "OfficeIMO.Tests.ExcelCoerce",
-              "OfficeIMO.Tests.Word",
-              "OfficeIMO.Tests.ImageEmbedderTests",
-              "OfficeIMO.Tests.ParagraphParent",
-              "OfficeIMO.Tests.WordParagraph",
-              "OfficeIMO.Tests.WordTable",
-              "OfficeIMO.Tests.Ordering.WordOrderPreservationTests",
-              "OfficeIMO.Tests.Rtf",
-              "OfficeIMO.Tests.Html",
-              "OfficeIMO.Tests.HtmlDomTraversalTests",
-              "OfficeIMO.Tests.HtmlTableMergeTests",
-              "OfficeIMO.Tests.MarkdownHtmlToMarkdownTests",
-              "OfficeIMO.Tests.Drawing",
-              "OfficeIMO.Tests.Visio",
-              "OfficeIMO.Tests.PowerPoint",
-              "OfficeIMO.Tests.Reader",
-              "OfficeIMO.Tests.Markup",
-              "OfficeIMO.Tests.Google",
-              "OfficeIMO.Tests.PackageDependency",
-              "OfficeIMO.Tests.Workflow",
-              "OfficeIMO.Tests.OfficeEncryption",
-              "OfficeIMO.Tests.ConversionOptionsTests",
-              "OfficeIMO.Tests.ConverterExceptions",
-              "OfficeIMO.Tests.FontResolverTests",
+          markdown_partitions = (
               "OfficeIMO.Tests.Markdown.",
+              "OfficeIMO.Tests.MarkdownSuite",
+              "OfficeIMO.Tests.MarkdownHtmlToMarkdownTests",
               "OfficeIMO.Tests.Markdown_",
               "OfficeIMO.Tests.MarkdownTranscript",
               "OfficeIMO.Tests.MarkdownReaderBomTests",
@@ -296,57 +426,77 @@ jobs:
               "OfficeIMO.Tests.MarkdownStreamingPreviewTests",
               "OfficeIMO.Tests.Markdown_Renderer",
               "OfficeIMO.Tests.Markdown_IntelligenceX",
-              "OfficeIMO.Tests.PathCrossPlatform",
           )
 
-          def assigned(name):
-              if any(has(name, item) for item in simple_partitions):
-                  return True
-              if any(has(name, item) for item in pdf_visual):
-                  return True
-              if has(name, "OfficeIMO.Tests.Pdf.") and not any(has(name, item) for item in pdf_visual):
-                  return True
-              if has(name, "OfficeIMO.Tests.MarkdownPdfTests") or has(name, "OfficeIMO.Tests.PdfReadLayoutSmokeTests"):
-                  return True
-              if has(name, "OfficeIMO.Tests.Excel.") and not any(has(name, item) for item in excel_core_exclusions):
-                  return True
-              return False
-
-          unassigned = [name for name in discovered if not assigned(name)]
+          unassigned = [name for name in discovered if not any(partition in name for partition in markdown_partitions)]
           if unassigned:
-              print("OfficeIMO.Tests partition audit found tests that are not assigned to a named CI slice:")
+              print("OfficeIMO.Markdown.Tests partition audit found tests that are not assigned to a named CI slice:")
               for name in unassigned:
                   print(f"  {name}")
               sys.exit(1)
 
-          print(f"OfficeIMO.Tests partition audit covered {len(discovered)} discovered tests.")
+          print(f"OfficeIMO.Markdown.Tests partition audit covered {len(discovered)} discovered tests.")
           PY
             rm -f "${list_file}"
           }
 
-          audit_officeimo_test_partitions
-          run_officeimo_tests "markdown-large" 'FullyQualifiedName~OfficeIMO.Tests.MarkdownMoreCasesTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownRoundTripTests' true
-          run_officeimo_tests "markdown-suite" 'FullyQualifiedName~OfficeIMO.Tests.MarkdownSuite'
-          run_officeimo_tests "pdf-visual-inspector" 'FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfDocumentVisualQualityTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfInspectorTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfReaderAndFooterRegressionTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.MarkdownSaveAsPdfVisualTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfDocumentRasterVisualBaselineTests'
-          run_officeimo_tests "pdf-core" '(FullyQualifiedName~OfficeIMO.Tests.Pdf.&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfDocumentVisualQualityTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfInspectorTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfReaderAndFooterRegressionTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.MarkdownSaveAsPdfVisualTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfDocumentRasterVisualBaselineTests)|FullyQualifiedName~OfficeIMO.Tests.MarkdownPdfTests|FullyQualifiedName~OfficeIMO.Tests.PdfReadLayoutSmokeTests'
-          run_officeimo_tests "excel-image" 'FullyQualifiedName~OfficeIMO.Tests.ExcelImageExport'
-          run_officeimo_tests "excel-charts" 'FullyQualifiedName~OfficeIMO.Tests.Excel.Test_ExcelChart|FullyQualifiedName~OfficeIMO.Tests.Excel.SharedChartRenderer'
-          run_officeimo_tests "excel-closedxml-gap" 'FullyQualifiedName~OfficeIMO.Tests.Excel.Test_ClosedXmlGap'
-          run_officeimo_tests "excel-legacy-xls" 'FullyQualifiedName~OfficeIMO.Tests.Excel.LegacyXls'
-          run_officeimo_tests "excel-performance" 'FullyQualifiedName~OfficeIMO.Tests.Excel.PerformanceReview'
-          run_officeimo_tests "excel-reader" 'FullyQualifiedName~OfficeIMO.Tests.Excel.Reader|FullyQualifiedName~OfficeIMO.Tests.Excel.ReadRows|FullyQualifiedName~OfficeIMO.Tests.Excel.ExcelHttp'
-          run_officeimo_tests "excel-save-pdf" 'FullyQualifiedName~OfficeIMO.Tests.Excel.SaveAsPdf|FullyQualifiedName~OfficeIMO.Tests.Excel.ToPdfDocument|FullyQualifiedName~OfficeIMO.Tests.Excel.PdfTables|FullyQualifiedName~OfficeIMO.Tests.Excel.ReportWorkflow'
-          run_officeimo_tests "excel-named-typed" 'FullyQualifiedName~OfficeIMO.Tests.ExcelCellAndRangeTests|FullyQualifiedName~OfficeIMO.Tests.ExcelDelimitedImportTests|FullyQualifiedName~OfficeIMO.Tests.ExcelFluent|FullyQualifiedName~OfficeIMO.Tests.ExcelInfoBuilderTests|FullyQualifiedName~OfficeIMO.Tests.ExcelNamed|FullyQualifiedName~OfficeIMO.Tests.ExcelPowerShell|FullyQualifiedName~OfficeIMO.Tests.ExcelRange|FullyQualifiedName~OfficeIMO.Tests.ExcelRows|FullyQualifiedName~OfficeIMO.Tests.ExcelSheet|FullyQualifiedName~OfficeIMO.Tests.ExcelCoerce'
-          run_officeimo_tests "excel-core" '(FullyQualifiedName~OfficeIMO.Tests.Excel.&FullyQualifiedName!~OfficeIMO.Tests.Excel.Test_ExcelChart&FullyQualifiedName!~OfficeIMO.Tests.Excel.SharedChartRenderer&FullyQualifiedName!~OfficeIMO.Tests.Excel.Test_ClosedXmlGap&FullyQualifiedName!~OfficeIMO.Tests.Excel.LegacyXls&FullyQualifiedName!~OfficeIMO.Tests.Excel.PerformanceReview&FullyQualifiedName!~OfficeIMO.Tests.Excel.SaveAsPdf&FullyQualifiedName!~OfficeIMO.Tests.Excel.ToPdfDocument&FullyQualifiedName!~OfficeIMO.Tests.Excel.PdfTables&FullyQualifiedName!~OfficeIMO.Tests.Excel.ReportWorkflow&FullyQualifiedName!~OfficeIMO.Tests.Excel.Reader&FullyQualifiedName!~OfficeIMO.Tests.Excel.ReadRows&FullyQualifiedName!~OfficeIMO.Tests.Excel.ExcelHttp)'
-          run_officeimo_tests "word" 'FullyQualifiedName~OfficeIMO.Tests.Word|FullyQualifiedName~OfficeIMO.Tests.ImageEmbedderTests|FullyQualifiedName~OfficeIMO.Tests.ParagraphParent|FullyQualifiedName~OfficeIMO.Tests.WordParagraph|FullyQualifiedName~OfficeIMO.Tests.WordTable|FullyQualifiedName~OfficeIMO.Tests.Ordering.WordOrderPreservationTests'
-          run_officeimo_tests "rtf" 'FullyQualifiedName~OfficeIMO.Tests.Rtf'
-          run_officeimo_tests "html" 'FullyQualifiedName~OfficeIMO.Tests.Html|FullyQualifiedName~OfficeIMO.Tests.HtmlDomTraversalTests|FullyQualifiedName~OfficeIMO.Tests.HtmlTableMergeTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownHtmlToMarkdownTests'
-          run_officeimo_tests "drawing-visio" 'FullyQualifiedName~OfficeIMO.Tests.Drawing|FullyQualifiedName~OfficeIMO.Tests.Visio'
-          run_officeimo_tests "powerpoint-reader-markup-other" 'FullyQualifiedName~OfficeIMO.Tests.PowerPoint|FullyQualifiedName~OfficeIMO.Tests.Reader|FullyQualifiedName~OfficeIMO.Tests.Markup|FullyQualifiedName~OfficeIMO.Tests.Google|FullyQualifiedName~OfficeIMO.Tests.PackageDependency|FullyQualifiedName~OfficeIMO.Tests.Workflow|FullyQualifiedName~OfficeIMO.Tests.OfficeEncryption|FullyQualifiedName~OfficeIMO.Tests.ConversionOptionsTests|FullyQualifiedName~OfficeIMO.Tests.ConverterExceptions|FullyQualifiedName~OfficeIMO.Tests.FontResolverTests|FullyQualifiedName~OfficeIMO.Tests.Markdown.|FullyQualifiedName~OfficeIMO.Tests.Markdown_|FullyQualifiedName~OfficeIMO.Tests.MarkdownTranscript|FullyQualifiedName~OfficeIMO.Tests.MarkdownReaderBomTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownBlankLinesTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownDefinitionLinesTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownOrderedListsTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownStreamingPreviewTests|FullyQualifiedName~OfficeIMO.Tests.Markdown_Renderer|FullyQualifiedName~OfficeIMO.Tests.Markdown_IntelligenceX|FullyQualifiedName~OfficeIMO.Tests.PathCrossPlatform'
+          if [ "${{ matrix.framework }}" = "net8.0" ] && [ "${{ matrix.partition }}" = "markdown-large" ]; then
+            audit_markdown_test_partitions
+          fi
 
-          dotnet test OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
-          dotnet test OfficeIMO.VerifyTests/OfficeIMO.VerifyTests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
-          dotnet test OfficeIMO.MarkdownRenderer.Wpf.Tests/OfficeIMO.MarkdownRenderer.Wpf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          case "${{ matrix.partition }}" in
+            markdown-large)
+              run_word_tests "word-markdown-roundtrip" 'FullyQualifiedName~OfficeIMO.Tests.MarkdownMoreCasesTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownRoundTripTests'
+              run_markdown_tests "markdown-root" 'FullyQualifiedName~OfficeIMO.Tests.Markdown.'
+              ;;
+            markdown-suite)
+              run_markdown_tests "markdown-suite" 'FullyQualifiedName~OfficeIMO.Tests.MarkdownSuite'
+              run_markdown_tests "markdown-named" 'FullyQualifiedName~OfficeIMO.Tests.MarkdownHtmlToMarkdownTests|FullyQualifiedName~OfficeIMO.Tests.Markdown_|FullyQualifiedName~OfficeIMO.Tests.MarkdownTranscript|FullyQualifiedName~OfficeIMO.Tests.MarkdownReaderBomTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownBlankLinesTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownDefinitionLinesTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownOrderedListsTests|FullyQualifiedName~OfficeIMO.Tests.MarkdownStreamingPreviewTests|FullyQualifiedName~OfficeIMO.Tests.Markdown_Renderer|FullyQualifiedName~OfficeIMO.Tests.Markdown_IntelligenceX'
+              ;;
+            pdf-visual-inspector)
+              run_pdf_tests "pdf-visual-inspector" 'FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfDocumentVisualQualityTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfInspectorTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfReaderAndFooterRegressionTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.MarkdownSaveAsPdfVisualTests|FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfDocumentRasterVisualBaselineTests'
+              ;;
+            pdf-core)
+              run_pdf_tests "pdf-core" '(FullyQualifiedName~OfficeIMO.Tests.Pdf.&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfDocumentVisualQualityTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfInspectorTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfReaderAndFooterRegressionTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.MarkdownSaveAsPdfVisualTests&FullyQualifiedName!~OfficeIMO.Tests.Pdf.PdfDocumentRasterVisualBaselineTests)|FullyQualifiedName~OfficeIMO.Tests.MarkdownPdfTests|FullyQualifiedName~OfficeIMO.Tests.PdfReadLayoutSmokeTests'
+              ;;
+            excel-image-charts)
+              run_excel_tests "excel-image" 'FullyQualifiedName~OfficeIMO.Tests.ExcelImageExport'
+              run_excel_tests "excel-charts" 'FullyQualifiedName~OfficeIMO.Tests.Excel.Test_ExcelChart|FullyQualifiedName~OfficeIMO.Tests.Excel.SharedChartRenderer'
+              run_excel_tests "excel-closedxml-gap" 'FullyQualifiedName~OfficeIMO.Tests.Excel.Test_ClosedXmlGap'
+              ;;
+            excel-legacy-reader)
+              run_excel_tests "excel-legacy-xls" 'FullyQualifiedName~OfficeIMO.Tests.Excel.LegacyXls'
+              run_excel_tests "excel-performance" 'FullyQualifiedName~OfficeIMO.Tests.Excel.PerformanceReview'
+              run_excel_tests "excel-reader" 'FullyQualifiedName~OfficeIMO.Tests.Excel.Reader|FullyQualifiedName~OfficeIMO.Tests.Excel.ReadRows|FullyQualifiedName~OfficeIMO.Tests.Excel.ExcelHttp'
+              run_excel_tests "excel-save-pdf" 'FullyQualifiedName~OfficeIMO.Tests.Excel.SaveAsPdf|FullyQualifiedName~OfficeIMO.Tests.Excel.ToPdfDocument|FullyQualifiedName~OfficeIMO.Tests.Excel.PdfTables|FullyQualifiedName~OfficeIMO.Tests.Excel.ReportWorkflow'
+              ;;
+            excel-core-named)
+              run_excel_tests "excel-named-typed" 'FullyQualifiedName~OfficeIMO.Tests.ExcelCellAndRangeTests|FullyQualifiedName~OfficeIMO.Tests.ExcelDelimitedImportTests|FullyQualifiedName~OfficeIMO.Tests.ExcelFluent|FullyQualifiedName~OfficeIMO.Tests.ExcelInfoBuilderTests|FullyQualifiedName~OfficeIMO.Tests.ExcelNamed|FullyQualifiedName~OfficeIMO.Tests.ExcelPowerShell|FullyQualifiedName~OfficeIMO.Tests.ExcelRange|FullyQualifiedName~OfficeIMO.Tests.ExcelRows|FullyQualifiedName~OfficeIMO.Tests.ExcelSheet|FullyQualifiedName~OfficeIMO.Tests.ExcelCoerce'
+              run_excel_tests "excel-core" '(FullyQualifiedName~OfficeIMO.Tests.Excel.&FullyQualifiedName!~OfficeIMO.Tests.Excel.Test_ExcelChart&FullyQualifiedName!~OfficeIMO.Tests.Excel.SharedChartRenderer&FullyQualifiedName!~OfficeIMO.Tests.Excel.Test_ClosedXmlGap&FullyQualifiedName!~OfficeIMO.Tests.Excel.LegacyXls&FullyQualifiedName!~OfficeIMO.Tests.Excel.PerformanceReview&FullyQualifiedName!~OfficeIMO.Tests.Excel.SaveAsPdf&FullyQualifiedName!~OfficeIMO.Tests.Excel.ToPdfDocument&FullyQualifiedName!~OfficeIMO.Tests.Excel.PdfTables&FullyQualifiedName!~OfficeIMO.Tests.Excel.ReportWorkflow&FullyQualifiedName!~OfficeIMO.Tests.Excel.Reader&FullyQualifiedName!~OfficeIMO.Tests.Excel.ReadRows&FullyQualifiedName!~OfficeIMO.Tests.Excel.ExcelHttp)'
+              ;;
+            word-rtf-html)
+              run_word_tests "word" 'FullyQualifiedName~OfficeIMO.Tests.Word|FullyQualifiedName~OfficeIMO.Tests.ImageEmbedderTests|FullyQualifiedName~OfficeIMO.Tests.ParagraphParentMutationTests'
+              run_rtf_tests
+              run_html_tests
+              ;;
+            other-projects)
+              audit_retired_aggregate_tests
+              run_drawing_tests
+              run_googleworkspace_tests
+              run_markup_tests
+              run_powerpoint_tests
+              run_visio_tests
+              run_reader_tests
+              run_shared_tests "shared-contracts" 'FullyQualifiedName~OfficeIMO.Shared.Tests.'
+              dotnet test OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+              dotnet test OfficeIMO.VerifyTests/OfficeIMO.VerifyTests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+              dotnet test OfficeIMO.MarkdownRenderer.Wpf.Tests/OfficeIMO.MarkdownRenderer.Wpf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+              ;;
+            *)
+              echo "Unknown partition: ${{ matrix.partition }}"
+              exit 1
+              ;;
+          esac
 
       - name: Summarize failing tests
         if: failure() && env.SUMMARIZE_FAILURES == 'true'
@@ -386,7 +536,7 @@ jobs:
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: test-results-ubuntu-${{ matrix.framework }}
+          name: test-results-ubuntu-${{ matrix.framework }}-${{ matrix.partition }}
           path: '**/*.trx'
       - name: Upload coverage to Codecov
         if: ${{ matrix.collectCoverage }}
@@ -418,10 +568,14 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore test dependencies
-        run: dotnet restore OfficeIMO.Tests/OfficeIMO.Tests.csproj
+        run: |
+          dotnet restore OfficeIMO.Excel.Tests/OfficeIMO.Excel.Tests.csproj
+          dotnet restore OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj
 
       - name: Build test project
-        run: dotnet build OfficeIMO.Tests/OfficeIMO.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
+        run: |
+          dotnet build OfficeIMO.Excel.Tests/OfficeIMO.Excel.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
+          dotnet build OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
 
       - name: Run Excel image visual gate
         shell: pwsh
@@ -484,7 +638,10 @@ jobs:
 
       - name: Run tests
         run: |
-          dotnet test OfficeIMO.Tests/OfficeIMO.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName=OfficeIMO.Tests.Word.Test_WordDocument_SaveAsPdf|FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfReadStreamTests|FullyQualifiedName~OfficeIMO.Tests.HtmlCoreTests|FullyQualifiedName~OfficeIMO.Tests.Markdown.Test_SaveAsMarkdown_FileAndRead" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          dotnet test OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName=OfficeIMO.Tests.Word.Test_WordDocument_SaveAsPdf" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          dotnet test OfficeIMO.Html.Tests/OfficeIMO.Html.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.Tests.HtmlCoreTests" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          dotnet test OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfReadStreamTests" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          dotnet test OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.Tests.Markdown.Test_SaveAsMarkdown_FileAndRead" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
           dotnet test OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.CSV.Tests" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
           dotnet test OfficeIMO.VerifyTests/OfficeIMO.VerifyTests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.VerifyTests" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
 

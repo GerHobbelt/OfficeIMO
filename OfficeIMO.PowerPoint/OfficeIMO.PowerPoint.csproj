@@ -6,7 +6,7 @@
         <AssemblyName>OfficeIMO.PowerPoint</AssemblyName>
         <AssemblyTitle>OfficeIMO.PowerPoint</AssemblyTitle>
 
-        <VersionPrefix>1.0.46</VersionPrefix>
+        <VersionPrefix>1.0.47</VersionPrefix>
         <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
         <TargetFrameworks Condition=" '$([MSBuild]::IsOsPlatform(`Windows`))' ">
             $(TargetFrameworks);net472
@@ -86,7 +86,9 @@
     </ItemGroup>
 
     <ItemGroup>
-        <InternalsVisibleTo Include="OfficeIMO.Tests" />
+        <InternalsVisibleTo Include="OfficeIMO.PowerPoint.Tests" />
+        <InternalsVisibleTo Include="OfficeIMO.Pdf.Tests" />
+        <InternalsVisibleTo Include="OfficeIMO.Html.Tests" />
         <InternalsVisibleTo Include="OfficeIMO.PowerPoint.Pdf" />
         <InternalsVisibleTo Include="OfficeIMO.PowerPoint.Html" />
     </ItemGroup>
