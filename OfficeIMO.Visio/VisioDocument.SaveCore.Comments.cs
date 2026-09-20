@@ -43,12 +43,29 @@ namespace OfficeIMO.Visio {
             PackagePart commentsPart,
             IReadOnlyList<VisioPage> pages,
             IReadOnlyDictionary<VisioPage, Dictionary<string, VisioMaster>> effectivePageMasters) {
+            string serializedComments = BuildCommentsXmlForSave(pages, effectivePageMasters);
+
+            using Stream stream = commentsPart.GetStream(FileMode.Create, FileAccess.Write);
+            using StreamWriter writer = new(stream, new UTF8Encoding(false));
+            writer.Write(serializedComments);
+        }
+
+        private static void ValidateCommentsForSave(
+            IReadOnlyList<VisioPage> pages,
+            IReadOnlyDictionary<VisioPage, Dictionary<string, VisioMaster>> effectivePageMasters) {
+            _ = BuildCommentsXmlForSave(pages, effectivePageMasters);
+        }
+
+        private static string BuildCommentsXmlForSave(
+            IReadOnlyList<VisioPage> pages,
+            IReadOnlyDictionary<VisioPage, Dictionary<string, VisioMaster>> effectivePageMasters) {
             XNamespace ns = VisioNamespace;
             Dictionary<CommentAuthorKey, int> authorIds = new();
             List<(VisioPage Page, VisioComment Comment, int AuthorId)> comments = new();
 
             foreach (VisioPage page in pages) {
                 foreach (VisioComment comment in page.Comments) {
+                    ValidateCommentForSave(comment);
                     CommentAuthorKey authorKey = new(comment.AuthorName, comment.AuthorInitials, comment.AuthorResolutionId);
                     if (!authorIds.TryGetValue(authorKey, out int authorId)) {
                         authorId = authorIds.Count + 1;
@@ -56,6 +73,9 @@ namespace OfficeIMO.Visio {
                     }
 
                     comments.Add((page, comment, authorId));
+                    if (comments.Count > MaxLoadedComments) {
+                        throw new InvalidDataException($"Visio comments part contains more than {MaxLoadedComments} comments.");
+                    }
                 }
             }
 
@@ -104,9 +124,27 @@ namespace OfficeIMO.Visio {
                 authorList,
                 commentList));
 
-            using Stream stream = commentsPart.GetStream(FileMode.Create, FileAccess.Write);
-            using StreamWriter writer = new(stream, new UTF8Encoding(false));
-            writer.Write(commentsXml.Declaration + Environment.NewLine + commentsXml.ToString(SaveOptions.DisableFormatting));
+            string serializedComments = commentsXml.Declaration + Environment.NewLine + commentsXml.ToString(SaveOptions.DisableFormatting);
+            ValidateCommentsXmlForSave(serializedComments);
+            return serializedComments;
+        }
+
+        private static void ValidateCommentForSave(VisioComment comment) {
+            string text = comment.Text ?? string.Empty;
+            if (text.Length > MaxCommentTextCharacters) {
+                throw new InvalidDataException($"Visio comment text exceeds {MaxCommentTextCharacters} characters.");
+            }
+        }
+
+        private static void ValidateCommentsXmlForSave(string commentsXml) {
+            if (commentsXml.Length > MaxCommentsXmlCharacters) {
+                throw new InvalidDataException($"Visio comments part exceeds {MaxCommentsXmlCharacters} XML characters.");
+            }
+
+            int byteCount = Encoding.UTF8.GetByteCount(commentsXml);
+            if (byteCount > MaxCommentsPartBytes) {
+                throw new InvalidDataException($"Visio comments part exceeds {MaxCommentsPartBytes} bytes.");
+            }
         }
 
         private static int AssignSaveFallbackCommentId(VisioComment comment, XElement commentList) {

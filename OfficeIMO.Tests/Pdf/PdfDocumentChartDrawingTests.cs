@@ -116,6 +116,52 @@ public class PdfDocumentChartDrawingTests {
     }
 
     [Fact]
+    public void WordChartNumberExtraction_RejectsSparsePointIndexesBeyondLimit() {
+        var values = new Values(
+            new NumberReference(
+                new NumberingCache(
+                    new PointCount { Val = 1U },
+                    new NumericPoint(new NumericValue("1")) { Index = 100_000U })));
+        MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("ExtractNativeWordChartNumberValues", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        TargetInvocationException exception = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object?[] { values }));
+
+        Assert.Contains("point index", exception.InnerException?.Message);
+    }
+
+    [Fact]
+    public void WordChartNumberExtraction_RejectsExcessivePointCounts() {
+        var cache = new NumberingCache(new PointCount { Val = 4097U });
+        for (int index = 0; index < 4097; index++) {
+            cache.Append(new NumericPoint(new NumericValue("1")));
+        }
+
+        var values = new Values(new NumberReference(cache));
+        MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("ExtractNativeWordChartNumberValues", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        TargetInvocationException exception = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object?[] { values }));
+
+        Assert.Contains("maximum supported point count", exception.InnerException?.Message);
+    }
+
+    [Fact]
+    public void WordChartLayout_RejectsOversizedDataLabelPointIndexes() {
+        var chartElement = new BarChart(
+            new BarDirection { Val = BarDirectionValues.Column },
+            CreateBarSeries(0U, new[] { "Q1" }, new[] { 1D }, new DataLabels(
+                new DataLabel(
+                    new DocumentFormat.OpenXml.Drawing.Charts.Index { Val = 100_000U },
+                    new ShowValue { Val = true }))));
+        var plotArea = new PlotArea(chartElement);
+        var chart = new Chart(plotArea);
+        MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("CreateNativeWordChartLayout", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        TargetInvocationException exception = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { chart, chartElement, plotArea, OfficeChartKind.ColumnClustered, 1 }));
+
+        Assert.Contains("point index", exception.InnerException?.Message);
+    }
+
+    [Fact]
     public void WordChartSeriesExtraction_ExtendsCategoriesAcrossAllSeries() {
         var chart = new BarChart(
             new BarDirection { Val = BarDirectionValues.Column },
@@ -130,6 +176,23 @@ public class PdfDocumentChartDrawingTests {
 
         Assert.Equal(2, series.Count);
         Assert.Equal(new[] { "Q1", "Q2", "Q3", "Q4" }, categories);
+    }
+
+    [Fact]
+    public void WordChartSeriesExtraction_RejectsTooManySeriesBeforeOrdering() {
+        var chart = new BarChart(
+            new BarDirection { Val = BarDirectionValues.Column },
+            new BarGrouping { Val = BarGroupingValues.Clustered });
+        for (uint index = 0; index < 257; index++) {
+            chart.Append(CreateBarSeries(index, new[] { "Q1" }, new[] { 1D }));
+        }
+
+        MethodInfo method = typeof(WordPdfConverterExtensions).GetMethod("ExtractNativeWordChartSeries", BindingFlags.NonPublic | BindingFlags.Static)!;
+        object?[] args = { new Chart(), chart, OfficeChartKind.ColumnClustered, new Dictionary<A.SchemeColorValues, OfficeColor>(), null };
+
+        TargetInvocationException exception = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, args));
+
+        Assert.Contains("maximum supported series count", exception.InnerException?.Message);
     }
 
     [Fact]
@@ -406,6 +469,32 @@ public class PdfDocumentChartDrawingTests {
         Assert.Equal("1,235", thousands);
         Assert.Equal("1.2", millions);
         Assert.Equal("1,235 K", literalSuffix);
+    }
+
+
+    [Fact]
+    public void FlowDrawing_SelectsSignedNumberFormatSectionWithoutSplittingAllSeparators() {
+        MethodInfo method = typeof(OfficeChartDrawingRenderer).GetMethod("FormatDataLabelValue", BindingFlags.NonPublic | BindingFlags.Static)!;
+        string semicolonHeavyFormat = "0; -0 ; zero" + new string(';', 100000);
+
+        string positive = (string)method.Invoke(null, new object?[] { 12D, semicolonHeavyFormat })!;
+        string negative = (string)method.Invoke(null, new object?[] { -12D, semicolonHeavyFormat })!;
+        string zero = (string)method.Invoke(null, new object?[] { 0D, semicolonHeavyFormat })!;
+
+        Assert.Equal("12", positive);
+        Assert.Equal("-12", negative);
+        Assert.Equal("0", zero);
+    }
+
+    [Fact]
+    public void FlowDrawing_IgnoresBracketDirectivesInDataLabelNumberFormatsLinearly() {
+        MethodInfo method = typeof(OfficeChartDrawingRenderer).GetMethod("FormatDataLabelValue", BindingFlags.NonPublic | BindingFlags.Static)!;
+        string unmatchedPrefixFormat = new string('[', 4096) + "0";
+        string directivePrefix = (string)method.Invoke(null, new object?[] { 123D, "[Red]$0" })!;
+        string unmatchedPrefix = (string)method.Invoke(null, new object?[] { 123D, unmatchedPrefixFormat })!;
+
+        Assert.Equal("$123", directivePrefix);
+        Assert.Equal(new string('[', 4096) + "123", unmatchedPrefix);
     }
 
     [Fact]
