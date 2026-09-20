@@ -152,7 +152,10 @@ namespace OfficeIMO.Excel {
         private static Dictionary<string, ExcelVisualConditionalDataBar> BuildDataBarMap(IReadOnlyList<ExcelVisualConditionalDataBar> dataBars) {
             var resolved = new Dictionary<string, ExcelVisualConditionalDataBar>(StringComparer.Ordinal);
             foreach (ExcelVisualConditionalDataBar dataBar in dataBars) {
-                resolved[Key(dataBar.Row, dataBar.Column)] = dataBar;
+                string key = Key(dataBar.Row, dataBar.Column);
+                if (!resolved.ContainsKey(key)) {
+                    resolved[key] = dataBar;
+                }
             }
 
             return resolved;
@@ -193,7 +196,7 @@ namespace OfficeIMO.Excel {
 
         private static void AppendSvgChart(StringBuilder builder, ExcelRangeVisualSnapshot snapshot, ExcelVisualChart chart, ExcelImageExportOptions options, List<OfficeImageExportDiagnostic>? diagnostics) {
             double scale = options.Scale;
-            if (!TryCreateOfficeChartSnapshot(chart.Snapshot, chart.Width * scale, chart.Height * scale, diagnostics, snapshot.SheetName, out OfficeChartSnapshot? officeSnapshot) || officeSnapshot == null) {
+            if (!TryCreateOfficeChartSnapshot(chart.Snapshot, chart.Width, chart.Height, diagnostics, snapshot.SheetName, out OfficeChartSnapshot? officeSnapshot) || officeSnapshot == null) {
                 return;
             }
 
@@ -367,6 +370,11 @@ namespace OfficeIMO.Excel {
             double y = cell.Y * scale;
             double w = cell.Width * scale;
             double h = cell.Height * scale;
+            if (TryCreateBorderBox(border, scale, out OfficeBorderBox borderBox)) {
+                OfficeBorderBoxRenderer.DrawRaster(canvas, x, y, w, h, borderBox);
+                return;
+            }
+
             DrawBorder(canvas, x, y, x + w, y, border.Top, scale);
             DrawBorder(canvas, x + w, y, x + w, y + h, border.Right, scale);
             DrawBorder(canvas, x, y + h, x + w, y + h, border.Bottom, scale);
@@ -404,6 +412,11 @@ namespace OfficeIMO.Excel {
             double y = cell.Y * scale;
             double w = cell.Width * scale;
             double h = cell.Height * scale;
+            if (TryCreateBorderBox(border, scale, out OfficeBorderBox borderBox)) {
+                OfficeBorderBoxRenderer.AppendSvg(builder, x, y, w, h, borderBox);
+                return;
+            }
+
             AppendSvgLine(builder, x, y, x + w, y, border.Top, scale);
             AppendSvgLine(builder, x + w, y, x + w, y + h, border.Right, scale);
             AppendSvgLine(builder, x, y + h, x + w, y + h, border.Bottom, scale);
@@ -442,6 +455,46 @@ namespace OfficeIMO.Excel {
                 width,
                 dashStyle,
                 dashArray != null && dashStyle == OfficeStrokeDashStyle.Dot ? OfficeStrokeLineCap.Round : null);
+        }
+
+        private static bool TryCreateBorderBox(ExcelCellBorderSnapshot border, double scale, out OfficeBorderBox borderBox) {
+            borderBox = default;
+            if (!TryCreateBorderSide(border.Left, scale, out OfficeBorderSide? left) ||
+                !TryCreateBorderSide(border.Top, scale, out OfficeBorderSide? top) ||
+                !TryCreateBorderSide(border.Right, scale, out OfficeBorderSide? right) ||
+                !TryCreateBorderSide(border.Bottom, scale, out OfficeBorderSide? bottom)) {
+                return false;
+            }
+
+            OfficeBorderSide? diagonalDown = null;
+            OfficeBorderSide? diagonalUp = null;
+            if (border.DiagonalDown || border.DiagonalUp) {
+                if (!TryCreateBorderSide(border.Diagonal, scale, out OfficeBorderSide? diagonal)) {
+                    return false;
+                }
+
+                diagonalDown = border.DiagonalDown ? diagonal : null;
+                diagonalUp = border.DiagonalUp ? diagonal : null;
+            }
+
+            borderBox = new OfficeBorderBox(left, top, right, bottom, diagonalDown, diagonalUp);
+            return borderBox.HasVisibleSide;
+        }
+
+        private static bool TryCreateBorderSide(ExcelBorderSideSnapshot? border, double scale, out OfficeBorderSide? side) {
+            side = null;
+            if (border == null || !TryResolveBorderStroke(border.Style, scale, out ExcelBorderStroke stroke)) {
+                return true;
+            }
+
+            OfficeColor color = ResolveArgb(border.ColorArgb) ?? OfficeColor.Black;
+            side = new OfficeBorderSide(
+                color,
+                stroke.Width,
+                stroke.DashStyle,
+                stroke.DoubleLine ? OfficeBorderLineKind.Double : OfficeBorderLineKind.Single,
+                stroke.DoubleLineOffset);
+            return true;
         }
 
         private static bool TryResolveBorderStroke(string? style, double scale, out ExcelBorderStroke stroke) {

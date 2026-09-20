@@ -1,4 +1,3 @@
-using System.IO;
 using OfficeIMO.Drawing;
 
 namespace OfficeIMO.Excel {
@@ -11,9 +10,17 @@ namespace OfficeIMO.Excel {
             HashSet<string>? selected = resolved.SheetNames == null
                 ? null
                 : new HashSet<string>(resolved.SheetNames, StringComparer.OrdinalIgnoreCase);
+            if (resolved.SheetNames != null) {
+                ValidateRequestedSheetNames(resolved.SheetNames);
+            }
+
             var results = new List<OfficeImageExportResult>();
             foreach (ExcelSheet sheet in Sheets) {
                 if (selected != null && !selected.Contains(sheet.Name)) {
+                    continue;
+                }
+
+                if (selected == null && sheet.Hidden && !resolved.IncludeHiddenSheets) {
                     continue;
                 }
 
@@ -46,29 +53,20 @@ namespace OfficeIMO.Excel {
         /// Saves workbook sheets as PNG files in a folder.
         /// </summary>
         public IReadOnlyList<OfficeImageExportResult> SaveAsImages(string folderPath, ExcelWorkbookImageExportOptions? options = null) =>
-            SaveAsImages(folderPath, OfficeImageExportFormat.Png, options);
+            new ExcelWorkbookImageExportBuilder(this, options).AsPng().Save(folderPath);
 
         /// <summary>
         /// Saves workbook sheets as image files in a folder.
         /// </summary>
         public IReadOnlyList<OfficeImageExportResult> SaveAsImages(string folderPath, OfficeImageExportFormat format, ExcelWorkbookImageExportOptions? options = null) {
-            if (string.IsNullOrWhiteSpace(folderPath)) {
-                throw new ArgumentException("Output folder cannot be null or whitespace.", nameof(folderPath));
+            ExcelWorkbookImageExportBuilder builder = new ExcelWorkbookImageExportBuilder(this, options);
+            if (format == OfficeImageExportFormat.Svg) {
+                builder.AsSvg();
+            } else {
+                builder.AsPng();
             }
 
-            string fullFolder = Path.GetFullPath(folderPath);
-            Directory.CreateDirectory(fullFolder);
-            IReadOnlyList<OfficeImageExportResult> results = ExportImages(format, options);
-            string extension = format == OfficeImageExportFormat.Svg ? ".svg" : ".png";
-            var usedNames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < results.Count; i++) {
-                OfficeImageExportResult result = results[i];
-                string name = string.IsNullOrWhiteSpace(result.Name) ? "sheet-" + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) : result.Name!;
-                string path = Path.Combine(fullFolder, GetUniqueFileName(SanitizeFileName(name), extension, usedNames));
-                File.WriteAllBytes(path, result.Bytes);
-            }
-
-            return results;
+            return builder.Save(folderPath);
         }
 
         private static ExcelWorkbookImageExportOptions NormalizeWorkbookOptions(ExcelWorkbookImageExportOptions? options) {
@@ -89,42 +87,31 @@ namespace OfficeIMO.Excel {
                 DefaultColumnWidthPixels = source.DefaultColumnWidthPixels,
                 DefaultRowHeightPixels = source.DefaultRowHeightPixels,
                 SheetNames = source.SheetNames,
+                IncludeHiddenSheets = source.IncludeHiddenSheets,
                 HeaderFooterDateTime = source.HeaderFooterDateTime ?? DateTime.Now,
                 UseWorksheetPrintAreas = source.UseWorksheetPrintAreas,
                 SplitWorksheetsByManualPageBreaks = source.SplitWorksheetsByManualPageBreaks
             };
-            if (resolved.Scale <= 0D || double.IsNaN(resolved.Scale) || double.IsInfinity(resolved.Scale)) {
-                throw new ArgumentOutOfRangeException(nameof(options), "Scale must be a finite positive number.");
-            }
+            OfficeImageExportOptions.ValidateScale(resolved.Scale, nameof(options));
 
             return resolved;
         }
 
-        private static string SanitizeFileName(string name) {
-            char[] invalid = Path.GetInvalidFileNameChars();
-            var chars = name.ToCharArray();
-            for (int i = 0; i < chars.Length; i++) {
-                if (Array.IndexOf(invalid, chars[i]) >= 0) {
-                    chars[i] = '_';
-                }
+        private void ValidateRequestedSheetNames(IReadOnlyList<string> sheetNames) {
+            if (sheetNames.Count == 0) {
+                return;
             }
 
-            return new string(chars).Trim();
-        }
-
-        private static string GetUniqueFileName(string baseName, string extension, Dictionary<string, int> usedNames) {
-            if (string.IsNullOrWhiteSpace(baseName)) {
-                baseName = "sheet";
+            var available = new HashSet<string>(Sheets.Select(sheet => sheet.Name), StringComparer.OrdinalIgnoreCase);
+            var missing = sheetNames
+                .Where(sheetName => !available.Contains(sheetName))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (missing.Length > 0) {
+                throw new ArgumentException(
+                    "Workbook image export requested worksheet names that do not exist: " + string.Join(", ", missing) + ".",
+                    nameof(sheetNames));
             }
-
-            if (!usedNames.TryGetValue(baseName, out int count)) {
-                usedNames[baseName] = 1;
-                return baseName + extension;
-            }
-
-            count++;
-            usedNames[baseName] = count;
-            return baseName + "-" + count.ToString(System.Globalization.CultureInfo.InvariantCulture) + extension;
         }
     }
 }

@@ -63,7 +63,8 @@ public sealed class CsvObjectWriter : IDisposable
             throw new InvalidOperationException("Data rows cannot contain null entries.");
         }
 
-        EnsureColumns(ObjectDataHelpers.GetColumnNames(item));
+        var itemColumns = ObjectDataHelpers.GetColumnNames(item);
+        EnsureColumns(itemColumns, requireOrder: !ObjectDataHelpers.IsDictionaryLike(item));
         var columns = _columns!;
 
         var values = new object?[columns.Count];
@@ -93,11 +94,8 @@ public sealed class CsvObjectWriter : IDisposable
             throw new ArgumentNullException(nameof(values));
         }
 
+        ValidateProjectedValueCount(columns, values.Count);
         EnsureColumns(columns);
-        if (values.Count != _columns!.Count)
-        {
-            throw new CsvException($"Row contains {values.Count} values but header defines {_columns.Count} columns.");
-        }
 
         if (_useDefaultWritePath && values is object?[] arrayValues)
         {
@@ -131,11 +129,8 @@ public sealed class CsvObjectWriter : IDisposable
             throw new ArgumentNullException(nameof(values));
         }
 
+        ValidateProjectedValueCount(columns, values.Length);
         EnsureColumns(columns);
-        if (values.Length != _columns!.Count)
-        {
-            throw new CsvException($"Row contains {values.Length} values but header defines {_columns.Count} columns.");
-        }
 
         WriteBuffered(values);
     }
@@ -165,11 +160,8 @@ public sealed class CsvObjectWriter : IDisposable
             throw new ArgumentNullException(nameof(valueAccessor));
         }
 
+        ValidateProjectedValueCount(columns, valueCount);
         EnsureColumns(columns);
-        if (valueCount != _columns!.Count)
-        {
-            throw new CsvException($"Row contains {valueCount} values but header defines {_columns.Count} columns.");
-        }
 
         CsvWriter.WriteRecordBuffered(_writer, _rowBuffer, valueCount, state, valueAccessor, _options.Delimiter, _options.NewLine, _options.Culture, _options.FormulaInjectionPolicy, _options.QuoteMode, _quoteFields, _columns);
     }
@@ -183,7 +175,11 @@ public sealed class CsvObjectWriter : IDisposable
         }
 
         _disposed = true;
-        if (!_leaveOpen)
+        if (_leaveOpen)
+        {
+            _writer.Flush();
+        }
+        else
         {
             _writer.Dispose();
         }
@@ -197,10 +193,11 @@ public sealed class CsvObjectWriter : IDisposable
         }
     }
 
-    private void EnsureColumns(IReadOnlyList<string> columns)
+    private void EnsureColumns(IReadOnlyList<string> columns, bool requireOrder = true)
     {
         if (_columns != null)
         {
+            ValidateColumns(columns, requireOrder);
             return;
         }
 
@@ -209,10 +206,53 @@ public sealed class CsvObjectWriter : IDisposable
             throw new InvalidOperationException("Unable to infer column names. Use objects with properties or dictionaries.");
         }
 
-        _columns = columns;
+        _columns = columns.ToArray();
         if (_options.IncludeHeader)
         {
             WriteHeader();
+        }
+    }
+
+    private void ValidateProjectedValueCount(IReadOnlyList<string> columns, int valueCount)
+    {
+        var expectedCount = _columns?.Count ?? columns.Count;
+        if (valueCount != expectedCount)
+        {
+            throw new CsvException($"Row contains {valueCount} values but header defines {expectedCount} columns.");
+        }
+    }
+
+    private void ValidateColumns(IReadOnlyList<string> columns, bool requireOrder)
+    {
+        if (columns.Count != _columns!.Count)
+        {
+            throw new CsvException($"Row defines {columns.Count} columns but header defines {_columns.Count} columns.");
+        }
+
+        if (!requireOrder)
+        {
+            ValidateColumnSet(columns);
+            return;
+        }
+
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (!string.Equals(columns[i], _columns[i], StringComparison.Ordinal))
+            {
+                throw new CsvException($"Row column '{columns[i]}' at index {i} does not match header column '{_columns[i]}'.");
+            }
+        }
+    }
+
+    private void ValidateColumnSet(IReadOnlyList<string> columns)
+    {
+        var expected = new HashSet<string>(_columns!, StringComparer.Ordinal);
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (!expected.Remove(columns[i]))
+            {
+                throw new CsvException($"Row column '{columns[i]}' does not match the header columns.");
+            }
         }
     }
 

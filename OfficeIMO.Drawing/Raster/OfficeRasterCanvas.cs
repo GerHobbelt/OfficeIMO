@@ -8,11 +8,14 @@ namespace OfficeIMO.Drawing;
 /// </summary>
 public sealed partial class OfficeRasterCanvas {
     private const int AntiAliasSamples = 3;
+    private const double MinimumDashSegmentAdvance = 1E-9D;
     private static readonly OfficeTrueTypeFont? DefaultFont = OfficeTrueTypeFont.TryLoadDefault();
     private readonly OfficeRasterImage? _image;
     private readonly OfficeRasterRenderTarget? _target;
     private readonly OfficeTrueTypeFont? _font;
     private int CoverageSamples => _target != null && _target.Supersampling > 1 ? 1 : AntiAliasSamples;
+
+    private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
 
     /// <summary>
     /// Creates a canvas over the supplied image.

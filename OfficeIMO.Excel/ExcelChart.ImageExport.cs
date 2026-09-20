@@ -194,7 +194,8 @@ namespace OfficeIMO.Excel {
             OfficeChartAxisTickLabelPosition verticalAxisTickLabelPosition = GetImageExportVerticalAxisTickLabelPosition(plotArea, categoryAxis, valueAxis);
             OfficeChartAxisCrossingPosition horizontalAxisCrossingPosition = GetImageExportHorizontalAxisCrossingPosition(plotArea, categoryAxis);
             OfficeChartAxisCrossingPosition verticalAxisCrossingPosition = GetImageExportVerticalAxisCrossingPosition(plotArea, valueAxis);
-            bool reverseCategoryAxis = GetImageExportReverseCategoryAxis(plotArea, categoryAxis);
+            bool reverseCategoryAxis = GetImageExportReverseCategoryAxis(categoryAxis);
+            bool categoryAxisOrientationSpecified = HasImageExportCategoryAxisOrientation(categoryAxis);
             double? legendFontSize = TryGetImageExportLegendFontSize(chart, out double resolvedLegendFontSize) ? resolvedLegendFontSize : null;
             string? legendFontFamily = TryGetImageExportLegendFontFamily(chart, out string? resolvedLegendFontFamily) ? resolvedLegendFontFamily : null;
             OfficeFontStyle? legendFontStyle = TryGetImageExportLegendFontStyle(chart, out OfficeFontStyle resolvedLegendFontStyle) ? resolvedLegendFontStyle : null;
@@ -207,12 +208,15 @@ namespace OfficeIMO.Excel {
             string? axisTitleFontFamily = TryGetImageExportAxisTitleFontFamily(plotArea, out string? resolvedAxisTitleFontFamily) ? resolvedAxisTitleFontFamily : null;
             OfficeFontStyle? axisTextFontStyle = TryGetImageExportAxisTextFontStyle(plotArea, out OfficeFontStyle resolvedAxisTextFontStyle) ? resolvedAxisTextFontStyle : null;
             OfficeFontStyle? axisTitleFontStyle = TryGetImageExportAxisTitleFontStyle(plotArea, out OfficeFontStyle resolvedAxisTitleFontStyle) ? resolvedAxisTitleFontStyle : null;
+            bool showCategoryAxis = IsImageExportAxisVisible(categoryAxis);
+            bool showValueAxis = IsImageExportAxisVisible(valueAxis);
             bool showCategoryAxisLine = IsImageExportAxisLineVisible(categoryAxis);
             bool showValueAxisLine = IsImageExportAxisLineVisible(valueAxis);
             bool showCategoryAxisLabels = IsImageExportAxisLabelsVisible(categoryAxis);
             bool showValueAxisLabels = IsImageExportAxisLabelsVisible(valueAxis);
             C.ScatterStyleValues? scatterStyle = GetImageExportScatterStyle(plotArea);
             bool connectScatterPoints = GetImageExportConnectScatterPoints(scatterStyle);
+            bool hasAxisVisibility = !showCategoryAxis || !showValueAxis;
             bool hasAxisLineVisibility = !showCategoryAxisLine || !showValueAxisLine;
             bool hasAxisNumberFormat = horizontalAxisNumberFormat != null || verticalAxisNumberFormat != null || categoryAxisNumberFormat != null;
             bool hasAxisDisplayUnit = horizontalAxisDisplayUnit.Divisor != null || verticalAxisDisplayUnit.Divisor != null;
@@ -230,10 +234,13 @@ namespace OfficeIMO.Excel {
             bool hasAxisLabelPosition = horizontalAxisTickLabelPosition != OfficeChartAxisTickLabelPosition.NextTo || verticalAxisTickLabelPosition != OfficeChartAxisTickLabelPosition.NextTo;
             bool hasAxisCrossingPosition = horizontalAxisCrossingPosition != OfficeChartAxisCrossingPosition.AutoZero ||
                 verticalAxisCrossingPosition != OfficeChartAxisCrossingPosition.AutoZero;
-            bool hasCategoryAxisOrientation = reverseCategoryAxis;
+            bool hasCategoryAxisOrientation = categoryAxisOrientationSpecified;
             bool fillRadarSeries = GetImageExportFillRadarSeries(plotArea);
             bool hasRadarFillLayout = !fillRadarSeries;
             bool hasScatterStyleLayout = !connectScatterPoints;
+            bool hasLegendLayout = legend == null ||
+                legend.GetFirstChild<C.LegendPosition>() != null ||
+                legend.GetFirstChild<C.Overlay>() != null;
             bool hasTextFont = legendFontSize != null ||
                 legendFontFamily != null ||
                 legendFontStyle != null ||
@@ -248,10 +255,11 @@ namespace OfficeIMO.Excel {
                 axisTitleFontStyle != null;
             bool hasLayout =
                 dataLabels != null ||
-                legend != null ||
+                hasLegendLayout ||
                 title?.GetFirstChild<C.Overlay>() != null ||
                 categoryAxisTitle != null ||
                 valueAxisTitle != null ||
+                hasAxisVisibility ||
                 hasAxisLineVisibility ||
                 hasAxisNumberFormat ||
                 hasAxisDisplayUnit ||
@@ -323,7 +331,10 @@ namespace OfficeIMO.Excel {
                 horizontalAxisCrossingPosition: horizontalAxisCrossingPosition,
                 verticalAxisCrossingPosition: verticalAxisCrossingPosition,
                 reverseCategoryAxis: reverseCategoryAxis,
+                categoryAxisOrientationSpecified: categoryAxisOrientationSpecified,
                 fillRadarSeries: fillRadarSeries,
+                showCategoryAxis: showCategoryAxis,
+                showValueAxis: showValueAxis,
                 showCategoryAxisLine: showCategoryAxisLine,
                 showValueAxisLine: showValueAxisLine,
                 showCategoryAxisLabels: showCategoryAxisLabels,
@@ -363,8 +374,14 @@ namespace OfficeIMO.Excel {
         private static Dictionary<int, ImageExportSeriesStyle> GetImageExportSeriesStyles(C.PlotArea plotArea, ExcelChartData data, WorkbookPart workbookPart) {
             var styles = new Dictionary<int, ImageExportSeriesStyle>();
             int seriesOrder = 0;
-            foreach (OpenXmlCompositeElement series in plotArea.Descendants<OpenXmlCompositeElement>().Where(IsSeriesElement)) {
+            foreach (OpenXmlCompositeElement series in plotArea.Descendants<OpenXmlCompositeElement>()
+                         .Where(IsSeriesElement)
+                         .OrderBy(item => item.GetFirstChild<C.Index>()?.Val?.Value ?? uint.MaxValue)) {
                 int index = seriesOrder++;
+                if (index < 0 || index >= data.Series.Count) {
+                    continue;
+                }
+
                 ImageExportSeriesStyle style = new ImageExportSeriesStyle();
 
                 C.ChartShapeProperties? properties = series.GetFirstChild<C.ChartShapeProperties>();
@@ -377,7 +394,7 @@ namespace OfficeIMO.Excel {
                     }
                 }
 
-                int valueCount = index >= 0 && index < data.Series.Count ? data.Series[index].Values.Count : 0;
+                int valueCount = data.Series[index].Values.Count;
                 C.Marker? marker = series.GetFirstChild<C.Marker>();
                 C.ScatterStyleValues? scatterStyle = (series.Parent as C.ScatterChart)?.GetFirstChild<C.ScatterStyle>()?.Val?.Value;
                 style.ShowMarkers = GetImageExportShowMarkers(marker, scatterStyle);
@@ -532,11 +549,14 @@ namespace OfficeIMO.Excel {
         private static OpenXmlCompositeElement? ResolveImageExportValueAxis(C.PlotArea plotArea) =>
             (OpenXmlCompositeElement?)ResolveValueAxis(plotArea, ExcelChartAxisGroup.Primary) ?? ResolveScatterYAxis(plotArea);
 
+        private static bool IsImageExportAxisVisible(OpenXmlCompositeElement? axis) =>
+            axis == null || !IsEnabled(axis.GetFirstChild<C.Delete>());
+
         private static bool IsImageExportAxisLineVisible(OpenXmlCompositeElement? axis) =>
-            axis == null || !HasNoLine(axis.GetFirstChild<C.ShapeProperties>());
+            axis == null || (IsImageExportAxisVisible(axis) && !HasNoLine(axis.GetFirstChild<C.ShapeProperties>()));
 
         private static bool IsImageExportAxisLabelsVisible(OpenXmlCompositeElement? axis) =>
-            axis == null || axis.GetFirstChild<C.TickLabelPosition>()?.Val?.Value != C.TickLabelPositionValues.None;
+            axis == null || (IsImageExportAxisVisible(axis) && axis.GetFirstChild<C.TickLabelPosition>()?.Val?.Value != C.TickLabelPositionValues.None);
 
         private static IReadOnlyList<string?>? GetImageExportPointColors(OpenXmlCompositeElement series, int valueCount, string? markerFill, WorkbookPart workbookPart) {
             if (valueCount <= 0 && string.IsNullOrWhiteSpace(markerFill)) {

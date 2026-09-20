@@ -8,7 +8,7 @@ public sealed partial class CsvDocument
 
     private static readonly char[] DefaultDelimiterCandidates = { ',', ';', '|', '\t' };
 
-    private static CsvLoadOptions ResolveLoadOptions(Func<TextReader> readerFactory, CsvLoadOptions options)
+    private static CsvLoadOptions ResolveLoadOptions(Func<TextReader> readerFactory, CsvLoadOptions options, bool useHeaderDiscoveryForDelimiterDetection = true)
     {
         if (!options.DetectDelimiter)
         {
@@ -16,19 +16,19 @@ public sealed partial class CsvDocument
         }
 
         var resolved = options.Clone();
-        resolved.Delimiter = DetectDelimiter(readerFactory, options);
+        resolved.Delimiter = DetectDelimiter(readerFactory, options, useHeaderDiscoveryForDelimiterDetection);
         resolved.DetectDelimiter = false;
         return resolved;
     }
 
-    private static char DetectDelimiter(Func<TextReader> readerFactory, CsvLoadOptions options)
+    private static char DetectDelimiter(Func<TextReader> readerFactory, CsvLoadOptions options, bool useHeaderDiscovery)
     {
         var candidates = options.DelimiterCandidates is { Length: > 0 }
             ? options.DelimiterCandidates
             : DefaultDelimiterCandidates;
 
         using var reader = readerFactory();
-        var samples = ReadDelimiterDetectionSamples(reader, options).ToArray();
+        var samples = ReadDelimiterDetectionSamples(reader, options, useHeaderDiscovery).ToArray();
         if (samples.Length == 0)
         {
             return options.Delimiter;
@@ -50,49 +50,220 @@ public sealed partial class CsvDocument
         return bestScore.FirstLineFieldCount > 1 ? bestDelimiter : options.Delimiter;
     }
 
-    private static IEnumerable<string> ReadDelimiterDetectionSamples(TextReader reader, CsvLoadOptions options)
+    private static IEnumerable<string> ReadDelimiterDetectionSamples(TextReader reader, CsvLoadOptions options, bool useHeaderDiscovery)
     {
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
+        var candidates = options.DelimiterCandidates is { Length: > 0 }
+            ? options.DelimiterCandidates
+            : DefaultDelimiterCandidates;
+        var recordsToSkip = GetInitialRecordsToSkip(options);
+        var allowPreHeaderCommentSkip = true;
+        using var records = ReadLogicalDelimiterDetectionRecords(
+            reader,
+            line => ShouldSkipCommentDuringDelimiterDetection(line, options, useHeaderDiscovery, allowPreHeaderCommentSkip),
+            line => IsDelimiterDetectionHeaderCandidate(line, options, candidates)).GetEnumerator();
+        while (records.MoveNext())
         {
-            if (line.Length == 0)
+            var record = records.Current;
+            if (IsBlankDelimiterDetectionRecord(record, options))
             {
                 if (options.AllowEmptyLines)
                 {
-                    yield return line;
+                    if (recordsToSkip > 0)
+                    {
+                        recordsToSkip--;
+                        continue;
+                    }
+
+                    yield return record;
+                    allowPreHeaderCommentSkip = false;
                     break;
                 }
 
                 continue;
             }
 
-            if ((options.SkipCommentRowsBeforeHeader || options.SkipCommentRows) &&
-                line.Length > 0 &&
-                line[0] == options.CommentCharacter &&
-                !IsW3CFieldsLine(line, options))
+            if (ShouldSkipCommentDuringDelimiterDetection(record, options, useHeaderDiscovery, allowPreHeaderCommentSkip))
             {
                 continue;
             }
 
-            yield return line;
+            if (recordsToSkip > 0)
+            {
+                recordsToSkip--;
+                continue;
+            }
+
+            yield return record;
+            allowPreHeaderCommentSkip = false;
             break;
         }
 
         var count = 1;
-        while (count < DelimiterDetectionSampleLimit && (line = reader.ReadLine()) is not null)
+        while (count < DelimiterDetectionSampleLimit && records.MoveNext())
         {
-            if (line.Length == 0 && !options.AllowEmptyLines)
+            var record = records.Current;
+            if (IsBlankDelimiterDetectionRecord(record, options) && !options.AllowEmptyLines)
             {
                 continue;
             }
 
-            yield return line;
+            if (ShouldSkipCommentDuringDelimiterDetection(record, options, useHeaderDiscovery, allowPreHeaderCommentSkip))
+            {
+                continue;
+            }
+
+            yield return record;
             count++;
         }
     }
 
+    private static bool IsBlankDelimiterDetectionRecord(string record, CsvLoadOptions options) =>
+        record.Length == 0 || (options.TrimWhitespace && record.Trim().Length == 0);
+
+    private static IEnumerable<string> ReadLogicalDelimiterDetectionRecords(
+        TextReader reader,
+        Func<string, bool> shouldSkipRawCommentRecord,
+        Func<string, bool> isHeaderCandidate)
+    {
+        var pendingLines = new Queue<string>();
+        while (TryReadDelimiterDetectionLine(reader, pendingLines, out var line))
+        {
+            if (shouldSkipRawCommentRecord(line) && !IsLogicalDelimiterDetectionRecordComplete(line))
+            {
+                SkipRawDelimiterDetectionCommentRecord(reader, pendingLines, line, isHeaderCandidate);
+                continue;
+            }
+
+            if (IsLogicalDelimiterDetectionRecordComplete(line))
+            {
+                yield return line;
+                continue;
+            }
+
+            var record = new StringBuilder(line);
+            while (TryReadDelimiterDetectionLine(reader, pendingLines, out line))
+            {
+                record.Append('\n');
+                record.Append(line);
+                if (IsLogicalDelimiterDetectionRecordComplete(record.ToString()))
+                {
+                    break;
+                }
+            }
+
+            yield return record.ToString();
+        }
+    }
+
+    private static bool TryReadDelimiterDetectionLine(TextReader reader, Queue<string> pendingLines, out string line)
+    {
+        if (pendingLines.Count > 0)
+        {
+            line = pendingLines.Dequeue();
+            return true;
+        }
+
+        var next = reader.ReadLine();
+        if (next is null)
+        {
+            line = string.Empty;
+            return false;
+        }
+
+        line = next;
+        return true;
+    }
+
+    private static void SkipRawDelimiterDetectionCommentRecord(
+        TextReader reader,
+        Queue<string> pendingLines,
+        string firstLine,
+        Func<string, bool> isHeaderCandidate)
+    {
+        var continuations = new List<string>();
+        while (reader.ReadLine() is { } next)
+        {
+            continuations.Add(next);
+            var candidate = string.Concat(firstLine, "\n", next);
+            if (IsLogicalDelimiterDetectionRecordComplete(candidate))
+            {
+                return;
+            }
+
+            if (!isHeaderCandidate(firstLine) && isHeaderCandidate(next))
+            {
+                EnqueueDelimiterDetectionContinuations(pendingLines, continuations);
+                return;
+            }
+
+            firstLine = candidate;
+        }
+
+        EnqueueDelimiterDetectionContinuations(pendingLines, continuations);
+    }
+
+    private static void EnqueueDelimiterDetectionContinuations(Queue<string> pendingLines, List<string> continuations)
+    {
+        foreach (var continuation in continuations)
+        {
+            pendingLines.Enqueue(continuation);
+        }
+    }
+
+    private static bool IsLogicalDelimiterDetectionRecordComplete(string record)
+    {
+        var inQuotes = false;
+        for (var i = 0; i < record.Length; i++)
+        {
+            if (record[i] != '"')
+            {
+                continue;
+            }
+
+            if (inQuotes && i + 1 < record.Length && record[i + 1] == '"')
+            {
+                i++;
+                continue;
+            }
+
+            inQuotes = !inQuotes;
+        }
+
+        return !inQuotes;
+    }
+
+    private static bool ShouldSkipCommentDuringDelimiterDetection(string line, CsvLoadOptions options, bool useHeaderDiscovery, bool allowPreHeaderCommentSkip)
+    {
+        if (line.Length == 0 || line[0] != options.CommentCharacter)
+        {
+            return false;
+        }
+
+        var canReadW3CFieldsHeader = useHeaderDiscovery &&
+            allowPreHeaderCommentSkip &&
+            options.HasHeaderRow &&
+            options.Header is null &&
+            options.RecognizeW3CFieldsHeader;
+
+        var skipPreHeaderComment = allowPreHeaderCommentSkip &&
+            useHeaderDiscovery &&
+            options.HasHeaderRow &&
+            options.Header is null &&
+            options.SkipCommentRowsBeforeHeader;
+
+        if (!options.SkipCommentRows && !skipPreHeaderComment)
+        {
+            return false;
+        }
+
+        return !canReadW3CFieldsHeader || !IsW3CFieldsLine(line, options);
+    }
+
     private static bool IsW3CFieldsLine(string line, CsvLoadOptions options) =>
         options.RecognizeW3CFieldsHeader && line.StartsWith("#Fields:", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDelimiterDetectionHeaderCandidate(string line, CsvLoadOptions options, IReadOnlyList<char> candidates) =>
+        IsW3CFieldsLine(line, options) || candidates.Any(line.Contains);
 
     private static DelimiterScore ScoreDelimiter(IReadOnlyList<string> samples, char delimiter)
     {

@@ -4,17 +4,7 @@ namespace OfficeIMO.Excel {
     /// <summary>
     /// Options for dependency-free Excel range, worksheet, and workbook image export.
     /// </summary>
-    public class ExcelImageExportOptions {
-        /// <summary>
-        /// Output scale multiplier. A value of 2 creates a 2x PNG/SVG surface.
-        /// </summary>
-        public double Scale { get; set; } = 1D;
-
-        /// <summary>
-        /// Background color used behind the rendered worksheet range.
-        /// </summary>
-        public OfficeColor BackgroundColor { get; set; } = OfficeColor.White;
-
+    public class ExcelImageExportOptions : OfficeImageExportOptions {
         /// <summary>
         /// Gridline color used when <see cref="ShowGridlines"/> is enabled.
         /// </summary>
@@ -126,9 +116,15 @@ namespace OfficeIMO.Excel {
     /// </summary>
     public sealed class ExcelWorkbookImageExportOptions : ExcelImageExportOptions {
         /// <summary>
-        /// Optional list of worksheet names to export. When omitted, all worksheets are exported.
+        /// Optional list of worksheet names to export. When omitted, visible worksheets are exported.
         /// </summary>
         public IReadOnlyList<string>? SheetNames { get; set; }
+
+        /// <summary>
+        /// When true and <see cref="SheetNames"/> is omitted, workbook image export includes hidden and very hidden worksheets.
+        /// Explicitly named worksheets are exported regardless of visibility.
+        /// </summary>
+        public bool IncludeHiddenSheets { get; set; }
 
         /// <summary>
         /// Timestamp used for dynamic Excel header/footer date and time fields in worksheet image exports.
@@ -145,5 +141,27 @@ namespace OfficeIMO.Excel {
         /// When true, workbook image export asks each worksheet to split output at manual row and column page breaks.
         /// </summary>
         public bool SplitWorksheetsByManualPageBreaks { get; set; }
+
+        internal ExcelWorkbookImageExportOptions CloneWorkbook() => new ExcelWorkbookImageExportOptions {
+            Scale = Scale,
+            BackgroundColor = BackgroundColor,
+            GridlineColor = GridlineColor,
+            ShowGridlines = ShowGridlines,
+            IncludeHidden = IncludeHidden,
+            IncludeImages = IncludeImages,
+            IncludeCharts = IncludeCharts,
+            IncludeDrawingObjects = IncludeDrawingObjects,
+            IncludeConditionalFormatting = IncludeConditionalFormatting,
+            ConditionalFormattingDate = ConditionalFormattingDate,
+            ShowHyperlinkHints = ShowHyperlinkHints,
+            ShowCommentBodies = ShowCommentBodies,
+            DefaultColumnWidthPixels = DefaultColumnWidthPixels,
+            DefaultRowHeightPixels = DefaultRowHeightPixels,
+            SheetNames = SheetNames,
+            IncludeHiddenSheets = IncludeHiddenSheets,
+            HeaderFooterDateTime = HeaderFooterDateTime,
+            UseWorksheetPrintAreas = UseWorksheetPrintAreas,
+            SplitWorksheetsByManualPageBreaks = SplitWorksheetsByManualPageBreaks
+        };
     }
 }

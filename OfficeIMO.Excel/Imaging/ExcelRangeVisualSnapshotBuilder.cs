@@ -22,6 +22,7 @@ namespace OfficeIMO.Excel {
                 ? new List<OfficeImageExportDiagnostic>()
                 : new List<OfficeImageExportDiagnostic>(initialDiagnostics);
             Dictionary<int, ExcelRowSnapshot> rowDefinitions = sheet.GetRowDefinitions().ToDictionary(row => row.Index);
+            bool defaultRowsHidden = sheet.DefaultRowsHidden;
             List<ExcelColumnSnapshot> columnDefinitions = sheet.GetColumnDefinitions().ToList();
             List<ExcelMergedRangeSnapshot> merges = sheet.GetMergedRanges()
                 .Where(merge => Intersects(merge.StartRow, merge.StartColumn, merge.EndRow, merge.EndColumn, firstRow, firstColumn, lastRow, lastColumn))
@@ -44,7 +45,7 @@ namespace OfficeIMO.Excel {
             double y = 0D;
             for (int row = firstRow; row <= lastRow; row++) {
                 rowDefinitions.TryGetValue(row, out ExcelRowSnapshot? definition);
-                if (definition?.Hidden == true && !options.IncludeHidden) {
+                if (IsHiddenRow(row, rowDefinitions, defaultRowsHidden) && !options.IncludeHidden) {
                     continue;
                 }
 
@@ -62,6 +63,7 @@ namespace OfficeIMO.Excel {
                     lastRow,
                     lastColumn,
                     rowDefinitions,
+                    defaultRowsHidden,
                     columnDefinitions,
                     diagnostics);
             }
@@ -96,7 +98,14 @@ namespace OfficeIMO.Excel {
             }
 
             var cells = new List<ExcelVisualCell>();
-            Dictionary<string, ExcelHyperlinkSnapshot> hyperlinkMap = ExcelWorksheetHyperlinkResolver.BuildMap(sheet.WorksheetPart);
+            Dictionary<string, ExcelHyperlinkSnapshot> hyperlinkMap = rows.Count > 0 && columns.Count > 0
+                ? ExcelWorksheetHyperlinkResolver.BuildMap(
+                    sheet.WorksheetPart,
+                    rows.Min(row => row.Index),
+                    columns.Min(column => column.Index),
+                    rows.Max(row => row.Index),
+                    columns.Max(column => column.Index))
+                : new Dictionary<string, ExcelHyperlinkSnapshot>(StringComparer.OrdinalIgnoreCase);
             foreach (ExcelVisualRow row in rows) {
                 foreach (ExcelVisualColumn column in columns) {
                     string key = Key(row.Index, column.Index);
@@ -143,19 +152,19 @@ namespace OfficeIMO.Excel {
                 }
             }
 
-            AddIntersectingMergeOriginCells(sheet, options, firstRow, firstColumn, lastRow, lastColumn, merges, rowDefinitions, columnDefinitions, columnsByIndex, rowsByIndex, hyperlinkMap, cells);
+            AddIntersectingMergeOriginCells(sheet, options, firstRow, firstColumn, lastRow, lastColumn, merges, rowDefinitions, defaultRowsHidden, columnDefinitions, columnsByIndex, rowsByIndex, hyperlinkMap, cells);
 
             ExcelConditionalVisualState conditionalVisuals = options.IncludeConditionalFormatting
                 ? ExcelConditionalVisualEvaluator.Evaluate(sheet, cells, range, options.ConditionalFormattingDate ?? DateTime.Today, diagnostics)
                 : ExcelConditionalVisualState.Empty;
-            if (conditionalVisuals.FillColors.Count > 0) {
-                cells = ApplyConditionalFills(cells, conditionalVisuals.FillColors);
+            if (conditionalVisuals.CellFormats.Count > 0) {
+                cells = ApplyConditionalCellFormats(cells, conditionalVisuals.CellFormats);
             }
 
             List<ExcelVisualSparkline> sparklines = BuildSparklines(sheet, firstRow, firstColumn, lastRow, lastColumn, columnsByIndex, rowsByIndex, diagnostics);
-            List<ExcelVisualDrawingObject> drawingObjects = BuildDrawingObjects(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
-            List<ExcelVisualImage> images = BuildImages(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
-            List<ExcelVisualChart> charts = BuildCharts(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
+            List<ExcelVisualDrawingObject> drawingObjects = BuildDrawingObjects(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
+            List<ExcelVisualImage> images = BuildImages(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
+            List<ExcelVisualChart> charts = BuildCharts(sheet, options, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions, columnsByIndex, rowsByIndex, diagnostics);
             IReadOnlyList<ExcelVisualBounds> commentBodyObstacles = BuildCommentBodyObstacles(drawingObjects, images, charts);
             CommentVisuals commentVisuals = BuildCommentVisuals(sheet, options, firstRow, firstColumn, lastRow, lastColumn, columnsByIndex, rowsByIndex, x, y, commentBodyObstacles, diagnostics);
             List<ExcelVisualDrawingLayer> drawingLayers = BuildDrawingLayers(drawingObjects, images, charts, commentVisuals.Bodies);
@@ -182,10 +191,10 @@ namespace OfficeIMO.Excel {
                 diagnostics.AsReadOnly());
         }
 
-        private static List<ExcelVisualCell> ApplyConditionalFills(IReadOnlyList<ExcelVisualCell> cells, IReadOnlyDictionary<string, string> fillColors) {
+        private static List<ExcelVisualCell> ApplyConditionalCellFormats(IReadOnlyList<ExcelVisualCell> cells, IReadOnlyDictionary<string, ExcelConditionalCellFormat> formats) {
             var resolved = new List<ExcelVisualCell>(cells.Count);
             foreach (ExcelVisualCell cell in cells) {
-                if (fillColors.TryGetValue(Key(cell.Row, cell.Column), out string? fillColor)) {
+                if (formats.TryGetValue(Key(cell.Row, cell.Column), out ExcelConditionalCellFormat? format)) {
                     resolved.Add(new ExcelVisualCell(
                         cell.Row,
                         cell.Column,
@@ -194,7 +203,7 @@ namespace OfficeIMO.Excel {
                         cell.Width,
                         cell.Height,
                         cell.Text,
-                        CloneStyleWithFill(cell.Style, fillColor),
+                        CloneStyleWithConditionalFormat(cell.Style, format),
                         cell.CoveredByMerge,
                         cell.Hyperlink,
                         cell.RichTextRuns,
@@ -255,6 +264,7 @@ namespace OfficeIMO.Excel {
             int lastColumn,
             IReadOnlyList<ExcelMergedRangeSnapshot> merges,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             IReadOnlyList<ExcelColumnSnapshot> columnDefinitions,
             IReadOnlyDictionary<int, ExcelVisualColumn> columnsByIndex,
             IReadOnlyDictionary<int, ExcelVisualRow> rowsByIndex,
@@ -277,7 +287,7 @@ namespace OfficeIMO.Excel {
 
                 double height = 0D;
                 for (int row = merge.StartRow; row <= merge.EndRow; row++) {
-                    height += ResolveVisibleRowHeight(row, rowDefinitions, options);
+                    height += ResolveVisibleRowHeight(row, rowDefinitions, defaultRowsHidden, options);
                 }
 
                 if (width <= 0D || height <= 0D) {
@@ -285,7 +295,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 double x = ResolveRelativeColumnOffset(firstColumn, merge.StartColumn, 0, columnDefinitions, options);
-                double y = ResolveRelativeRowOffset(firstRow, merge.StartRow, 0, rowDefinitions, options);
+                double y = ResolveRelativeRowOffset(firstRow, merge.StartRow, 0, rowDefinitions, defaultRowsHidden, options);
                 ExcelCellStyleSnapshot style = sheet.GetCellStyle(merge.StartRow, merge.StartColumn);
                 ExcelCellData valueData = sheet.GetCellValueSnapshot(merge.StartRow, merge.StartColumn);
                 string rawText = sheet.TryGetCellText(merge.StartRow, merge.StartColumn, out string cellText)
@@ -319,6 +329,7 @@ namespace OfficeIMO.Excel {
             int lastRow,
             int lastColumn,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             IReadOnlyList<ExcelColumnSnapshot> columnDefinitions,
             IReadOnlyDictionary<int, ExcelVisualColumn> columnsByIndex,
             IReadOnlyDictionary<int, ExcelVisualRow> rowsByIndex,
@@ -334,7 +345,7 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                if (!options.IncludeHidden && IsHiddenAnchorInRange(drawing.Row, drawing.Column, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions)) {
+                if (!options.IncludeHidden && IsHiddenAnchorInRange(drawing.Row, drawing.Column, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions)) {
                     diagnostics.Add(new OfficeImageExportDiagnostic(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.DrawingShapeAnchorHidden,
@@ -348,6 +359,7 @@ namespace OfficeIMO.Excel {
                     firstRow,
                     firstColumn,
                     rowDefinitions,
+                    defaultRowsHidden,
                     columnDefinitions,
                     columnsByIndex,
                     rowsByIndex,
@@ -408,27 +420,28 @@ namespace OfficeIMO.Excel {
             return drawingObjects;
         }
 
-        private static ExcelCellStyleSnapshot CloneStyleWithFill(ExcelCellStyleSnapshot style, string fillColorArgb) {
+        private static ExcelCellStyleSnapshot CloneStyleWithConditionalFormat(ExcelCellStyleSnapshot style, ExcelConditionalCellFormat format) {
+            string? fillColorArgb = string.IsNullOrWhiteSpace(format.FillColorArgb) ? null : format.FillColorArgb;
             return new ExcelCellStyleSnapshot {
                 StyleIndex = style.StyleIndex,
                 NumberFormatId = style.NumberFormatId,
                 NumberFormatCode = style.NumberFormatCode,
                 IsDateLike = style.IsDateLike,
-                Bold = style.Bold,
-                Italic = style.Italic,
-                Underline = style.Underline,
-                FontName = style.FontName,
-                FontSize = style.FontSize,
+                Bold = format.FontBold ?? style.Bold,
+                Italic = format.FontItalic ?? style.Italic,
+                Underline = format.FontUnderline ?? style.Underline,
+                FontName = string.IsNullOrWhiteSpace(format.FontName) ? style.FontName : format.FontName,
+                FontSize = format.FontSize ?? style.FontSize,
                 TextRotation = style.TextRotation,
-                FontColorArgb = style.FontColorArgb,
-                FillColorArgb = fillColorArgb,
-                FillPatternType = "solid",
-                FillPatternForegroundColorArgb = fillColorArgb,
-                FillPatternBackgroundColorArgb = fillColorArgb,
-                FillGradientUnsupported = false,
-                FillGradientStartColorArgb = null,
-                FillGradientEndColorArgb = null,
-                FillGradientDegree = null,
+                FontColorArgb = string.IsNullOrWhiteSpace(format.FontColorArgb) ? style.FontColorArgb : format.FontColorArgb,
+                FillColorArgb = fillColorArgb ?? style.FillColorArgb,
+                FillPatternType = fillColorArgb == null ? style.FillPatternType : "solid",
+                FillPatternForegroundColorArgb = fillColorArgb ?? style.FillPatternForegroundColorArgb,
+                FillPatternBackgroundColorArgb = fillColorArgb ?? style.FillPatternBackgroundColorArgb,
+                FillGradientUnsupported = fillColorArgb == null && style.FillGradientUnsupported,
+                FillGradientStartColorArgb = fillColorArgb == null ? style.FillGradientStartColorArgb : null,
+                FillGradientEndColorArgb = fillColorArgb == null ? style.FillGradientEndColorArgb : null,
+                FillGradientDegree = fillColorArgb == null ? style.FillGradientDegree : null,
                 Border = style.Border,
                 HorizontalAlignment = style.HorizontalAlignment,
                 VerticalAlignment = style.VerticalAlignment,
@@ -445,6 +458,7 @@ namespace OfficeIMO.Excel {
             int lastRow,
             int lastColumn,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             IReadOnlyList<ExcelColumnSnapshot> columnDefinitions,
             IReadOnlyDictionary<int, ExcelVisualColumn> columnsByIndex,
             IReadOnlyDictionary<int, ExcelVisualRow> rowsByIndex,
@@ -456,7 +470,7 @@ namespace OfficeIMO.Excel {
 
             foreach (ExcelImage image in sheet.Images) {
                 bool absoluteAnchor = image.TryGetAbsoluteAnchorBounds(out int absoluteX, out int absoluteY, out int absoluteWidth, out int absoluteHeight);
-                if (!absoluteAnchor && !options.IncludeHidden && IsHiddenAnchorInRange(image.RowIndex, image.ColumnIndex, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions)) {
+                if (!absoluteAnchor && !options.IncludeHidden && IsHiddenAnchorInRange(image.RowIndex, image.ColumnIndex, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions)) {
                     diagnostics.Add(new OfficeImageExportDiagnostic(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.ImageAnchorHidden,
@@ -470,6 +484,7 @@ namespace OfficeIMO.Excel {
                     firstRow,
                     firstColumn,
                     rowDefinitions,
+                    defaultRowsHidden,
                     columnDefinitions,
                     columnsByIndex,
                     rowsByIndex,
@@ -542,6 +557,7 @@ namespace OfficeIMO.Excel {
             int lastRow,
             int lastColumn,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             IReadOnlyList<ExcelColumnSnapshot> columnDefinitions,
             IReadOnlyDictionary<int, ExcelVisualColumn> columnsByIndex,
             IReadOnlyDictionary<int, ExcelVisualRow> rowsByIndex,
@@ -562,7 +578,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 bool absoluteAnchor = chart.TryGetAbsoluteAnchorBounds(out int absoluteX, out int absoluteY, out int absoluteWidth, out int absoluteHeight);
-                if (!absoluteAnchor && !options.IncludeHidden && IsHiddenAnchorInRange(chartSnapshot.RowIndex, chartSnapshot.ColumnIndex, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, columnDefinitions)) {
+                if (!absoluteAnchor && !options.IncludeHidden && IsHiddenAnchorInRange(chartSnapshot.RowIndex, chartSnapshot.ColumnIndex, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions)) {
                     diagnostics.Add(new OfficeImageExportDiagnostic(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.ChartAnchorHidden,
@@ -576,6 +592,7 @@ namespace OfficeIMO.Excel {
                     firstRow,
                     firstColumn,
                     rowDefinitions,
+                    defaultRowsHidden,
                     columnDefinitions,
                     columnsByIndex,
                     rowsByIndex,
@@ -1249,6 +1266,7 @@ namespace OfficeIMO.Excel {
             int firstRow,
             int firstColumn,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             IReadOnlyList<ExcelColumnSnapshot> columnDefinitions,
             IReadOnlyDictionary<int, ExcelVisualColumn> columnsByIndex,
             IReadOnlyDictionary<int, ExcelVisualRow> rowsByIndex,
@@ -1275,9 +1293,9 @@ namespace OfficeIMO.Excel {
             }
 
             x = ResolveRelativeColumnOffset(firstColumn, columnIndex, offsetXPixels, columnDefinitions, options);
-            y = ResolveRelativeRowOffset(firstRow, rowIndex, offsetYPixels, rowDefinitions, options);
+            y = ResolveRelativeRowOffset(firstRow, rowIndex, offsetYPixels, rowDefinitions, defaultRowsHidden, options);
             width = ResolveImageWidth(options, firstColumn, columnDefinitions, columnIndex, offsetXPixels, widthPixels, toColumnIndex, toOffsetXPixels);
-            height = ResolveImageHeight(options, firstRow, rowDefinitions, rowIndex, offsetYPixels, heightPixels, toRowIndex, toOffsetYPixels);
+            height = ResolveImageHeight(options, firstRow, rowDefinitions, defaultRowsHidden, rowIndex, offsetYPixels, heightPixels, toRowIndex, toOffsetYPixels);
 
             double rangeWidth = ResolveVisualWidth(columnsByIndex);
             double rangeHeight = ResolveVisualHeight(rowsByIndex);
@@ -1359,15 +1377,16 @@ namespace OfficeIMO.Excel {
             int anchorRow,
             int offsetPixels,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             ExcelImageExportOptions options) {
             double y = 0D;
             if (anchorRow >= firstRow) {
                 for (int row = firstRow; row < anchorRow; row++) {
-                    y += ResolveVisibleRowHeight(row, rowDefinitions, options);
+                    y += ResolveVisibleRowHeight(row, rowDefinitions, defaultRowsHidden, options);
                 }
             } else {
                 for (int row = anchorRow; row < firstRow; row++) {
-                    y -= ResolveVisibleRowHeight(row, rowDefinitions, options);
+                    y -= ResolveVisibleRowHeight(row, rowDefinitions, defaultRowsHidden, options);
                 }
             }
 
@@ -1378,14 +1397,15 @@ namespace OfficeIMO.Excel {
             ExcelImageExportOptions options,
             int firstRow,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             int anchorRow,
             int offsetPixels,
             int heightPixels,
             int? toRowIndex,
             int toOffsetPixels) {
             if (toRowIndex.HasValue) {
-                double from = ResolveRelativeRowOffset(firstRow, anchorRow, offsetPixels, rowDefinitions, options);
-                double to = ResolveRelativeRowOffset(firstRow, toRowIndex.Value, toOffsetPixels, rowDefinitions, options);
+                double from = ResolveRelativeRowOffset(firstRow, anchorRow, offsetPixels, rowDefinitions, defaultRowsHidden, options);
+                double to = ResolveRelativeRowOffset(firstRow, toRowIndex.Value, toOffsetPixels, rowDefinitions, defaultRowsHidden, options);
                 if (to > from) {
                     return Math.Max(1D, to - from);
                 }
@@ -1403,9 +1423,9 @@ namespace OfficeIMO.Excel {
             return ResolveColumnWidth(definition, options);
         }
 
-        private static double ResolveVisibleRowHeight(int row, IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions, ExcelImageExportOptions options) {
+        private static double ResolveVisibleRowHeight(int row, IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions, bool defaultRowsHidden, ExcelImageExportOptions options) {
             rowDefinitions.TryGetValue(row, out ExcelRowSnapshot? definition);
-            if (definition?.Hidden == true && !options.IncludeHidden) {
+            if (IsHiddenRow(row, rowDefinitions, defaultRowsHidden) && !options.IncludeHidden) {
                 return 0D;
             }
 
@@ -1426,11 +1446,12 @@ namespace OfficeIMO.Excel {
             int lastRow,
             int lastColumn,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             IReadOnlyList<ExcelColumnSnapshot> columnDefinitions,
             List<OfficeImageExportDiagnostic> diagnostics) {
             int hiddenRows = 0;
             for (int row = firstRow; row <= lastRow; row++) {
-                if (rowDefinitions.TryGetValue(row, out ExcelRowSnapshot? definition) && definition.Hidden) {
+                if (IsHiddenRow(row, rowDefinitions, defaultRowsHidden)) {
                     hiddenRows++;
                 }
             }
@@ -1479,16 +1500,21 @@ namespace OfficeIMO.Excel {
             int lastRow,
             int lastColumn,
             IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions,
+            bool defaultRowsHidden,
             IReadOnlyList<ExcelColumnSnapshot> columnDefinitions) {
             return rowIndex >= firstRow &&
                 rowIndex <= lastRow &&
                 columnIndex >= firstColumn &&
                 columnIndex <= lastColumn &&
-                (IsHiddenRow(rowIndex, rowDefinitions) || IsHiddenColumn(columnIndex, columnDefinitions));
+                (IsHiddenRow(rowIndex, rowDefinitions, defaultRowsHidden) || IsHiddenColumn(columnIndex, columnDefinitions));
         }
 
-        private static bool IsHiddenRow(int rowIndex, IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions) {
-            return rowDefinitions.TryGetValue(rowIndex, out ExcelRowSnapshot? definition) && definition.Hidden;
+        private static bool IsHiddenRow(int rowIndex, IReadOnlyDictionary<int, ExcelRowSnapshot> rowDefinitions, bool defaultRowsHidden) {
+            if (rowDefinitions.TryGetValue(rowIndex, out ExcelRowSnapshot? definition)) {
+                return definition.Hidden;
+            }
+
+            return defaultRowsHidden;
         }
 
         private static bool IsHiddenColumn(int columnIndex, IReadOnlyList<ExcelColumnSnapshot> columnDefinitions) {

@@ -43,6 +43,32 @@ public sealed partial class CsvDocument
     }
 
     /// <summary>
+    /// Reads a CSV file in a single pass while reusing the row value buffer for unquoted rows.
+    /// </summary>
+    /// <param name="path">Source CSV path.</param>
+    /// <param name="rowAction">Action receiving the header and current row values. Row values must not be captured after the callback returns.</param>
+    /// <param name="options">Optional load settings.</param>
+    public static void ReadRowsReusable(string path, Action<IReadOnlyList<string>, IReadOnlyList<string>> rowAction, CsvLoadOptions? options = null)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("File path cannot be empty.", nameof(path));
+        }
+
+        if (rowAction == null)
+        {
+            throw new ArgumentNullException(nameof(rowAction));
+        }
+
+        options ??= new CsvLoadOptions();
+        var encoding = options.Encoding ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        var readerFactory = () => new StreamReader(path, encoding, detectEncodingFromByteOrderMarks: true, bufferSize: FileBufferSize);
+        var resolvedOptions = ResolveLoadOptions(readerFactory, options);
+        using var reader = readerFactory();
+        ReadRowsReusable(reader, rowAction, resolvedOptions);
+    }
+
+    /// <summary>
     /// Reads CSV data in a single pass and invokes an action for each data row.
     /// </summary>
     /// <param name="reader">Source text reader.</param>
@@ -70,42 +96,140 @@ public sealed partial class CsvDocument
             return;
         }
 
-        using var enumerator = CsvParser.Parse(reader, options).GetEnumerator();
-
+        var recordsToSkip = GetInitialRecordsToSkip(options);
         var explicitHeader = NormalizeExplicitHeader(options);
         if (explicitHeader is not null)
         {
-            while (enumerator.MoveNext())
+            ReadRecordsSkippingInitial(reader, options, recordsToSkip, record =>
             {
-                InvokeRowAction(rowAction, explicitHeader, enumerator.Current, options.ColumnCountMismatchPolicy);
-            }
+                InvokeRowAction(rowAction, explicitHeader, record, options.ColumnCountMismatchPolicy);
+            });
 
             return;
         }
 
-        IReadOnlyList<string> header;
+        IReadOnlyList<string>? header = null;
         if (options.HasHeaderRow)
         {
-            if (!TryReadHeader(enumerator, options, out header, out _))
+            CsvParser.ReadRecordsWithMetadata(reader, options, record =>
             {
-                return;
-            }
+                if (header is null)
+                {
+                    var isW3CFieldsHeader = TryGetW3CFieldsHeader(record.Values, options, out var w3cHeader);
+                    if (options.SkipCommentRowsBeforeHeader && IsCommentRecord(record, options) && !isW3CFieldsHeader)
+                    {
+                        return;
+                    }
+
+                    if (recordsToSkip > 0)
+                    {
+                        recordsToSkip--;
+                        return;
+                    }
+
+                    if (isW3CFieldsHeader)
+                    {
+                        header = w3cHeader;
+                        return;
+                    }
+
+                    header = NormalizeParsedHeader(record.Values, options);
+                    return;
+                }
+
+                InvokeRowAction(rowAction, header, record.Values, options.ColumnCountMismatchPolicy);
+            });
+
+            return;
         }
-        else
+
+        ReadRecordsSkippingInitial(reader, options, recordsToSkip, record =>
         {
-            if (!enumerator.MoveNext())
+            header ??= GenerateDefaultHeader(record.Length);
+            InvokeRowAction(rowAction, header, record, options.ColumnCountMismatchPolicy);
+        });
+    }
+
+    /// <summary>
+    /// Reads CSV data in a single pass while reusing the row value buffer for unquoted rows.
+    /// </summary>
+    /// <param name="reader">Source text reader.</param>
+    /// <param name="rowAction">Action receiving the header and current row values. Row values must not be captured after the callback returns.</param>
+    /// <param name="options">Optional load settings.</param>
+    public static void ReadRowsReusable(TextReader reader, Action<IReadOnlyList<string>, IReadOnlyList<string>> rowAction, CsvLoadOptions? options = null)
+    {
+        if (reader == null)
+        {
+            throw new ArgumentNullException(nameof(reader));
+        }
+
+        if (rowAction == null)
+        {
+            throw new ArgumentNullException(nameof(rowAction));
+        }
+
+        options ??= new CsvLoadOptions();
+        if (options.DetectDelimiter)
+        {
+            var text = reader.ReadToEnd();
+            var resolvedOptions = ResolveLoadOptions(() => new StringReader(text), options);
+            using var bufferedReader = new StringReader(text);
+            ReadRowsReusable(bufferedReader, rowAction, resolvedOptions);
+            return;
+        }
+
+        var recordsToSkip = GetInitialRecordsToSkip(options);
+        var explicitHeader = NormalizeExplicitHeader(options);
+        if (explicitHeader is not null)
+        {
+            ReadRecordsReusableSkippingInitial(reader, options, recordsToSkip, record =>
             {
-                return;
-            }
+                InvokeRowAction(rowAction, explicitHeader, record, options.ColumnCountMismatchPolicy);
+            });
 
-            header = GenerateDefaultHeader(enumerator.Current.Length);
-            InvokeRowAction(rowAction, header, enumerator.Current, options.ColumnCountMismatchPolicy);
+            return;
         }
 
-        while (enumerator.MoveNext())
+        IReadOnlyList<string>? header = null;
+        if (options.HasHeaderRow)
         {
-            InvokeRowAction(rowAction, header, enumerator.Current, options.ColumnCountMismatchPolicy);
+            CsvParser.ReadRecordsReusableWithMetadata(reader, options, record =>
+            {
+                if (header is null)
+                {
+                    var isW3CFieldsHeader = TryGetW3CFieldsHeader(record.Values, options, out var w3cHeader);
+                    if (options.SkipCommentRowsBeforeHeader && IsCommentRecord(record, options) && !isW3CFieldsHeader)
+                    {
+                        return;
+                    }
+
+                    if (recordsToSkip > 0)
+                    {
+                        recordsToSkip--;
+                        return;
+                    }
+
+                    if (isW3CFieldsHeader)
+                    {
+                        header = w3cHeader;
+                        return;
+                    }
+
+                    header = NormalizeParsedHeader(record.Values, options);
+                    return;
+                }
+
+                InvokeRowAction(rowAction, header, record.Values, options.ColumnCountMismatchPolicy);
+            });
+
+            return;
         }
+
+        ReadRecordsReusableSkippingInitial(reader, options, recordsToSkip, record =>
+        {
+            header ??= GenerateDefaultHeader(record.Count);
+            InvokeRowAction(rowAction, header, record, options.ColumnCountMismatchPolicy);
+        });
     }
 
     /// <summary>
@@ -169,6 +293,7 @@ public sealed partial class CsvDocument
     private static CsvDocument LoadInternal(Func<TextReader> readerFactory, CsvLoadOptions options, Encoding encoding)
     {
         options = ResolveLoadOptions(readerFactory, options);
+        var initialRecordsToSkip = GetInitialRecordsToSkip(options);
         var document = new CsvDocument(options.Mode, options.Delimiter, options.Culture, encoding, options.ColumnCountMismatchPolicy);
 
         var explicitHeader = NormalizeExplicitHeader(options);
@@ -178,21 +303,28 @@ public sealed partial class CsvDocument
             if (options.Mode == CsvLoadMode.InMemory)
             {
                 using var explicitHeaderReader = readerFactory();
+                var skipped = 0;
                 foreach (var record in CsvParser.Parse(explicitHeaderReader, options))
                 {
+                    if (skipped < initialRecordsToSkip)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
                     document.AddParsedRowInternal(record, options.ColumnCountMismatchPolicy);
                 }
             }
             else
             {
-                document._streamingSource = new CsvStreamingSource(readerFactory, options, skipRecordCount: 0);
+                document._streamingSource = new CsvStreamingSource(readerFactory, options, skipRecordCount: initialRecordsToSkip);
             }
 
             return document;
         }
 
         using var reader = readerFactory();
-        using var enumerator = CsvParser.Parse(reader, options).GetEnumerator();
+        using var enumerator = CsvParser.ParseWithMetadata(reader, options).GetEnumerator();
 
         if (options.HasHeaderRow)
         {
@@ -207,7 +339,7 @@ public sealed partial class CsvDocument
             {
                 while (enumerator.MoveNext())
                 {
-                    document.AddParsedRowInternal(enumerator.Current, options.ColumnCountMismatchPolicy);
+                    document.AddParsedRowInternal(enumerator.Current.Values, options.ColumnCountMismatchPolicy);
                 }
             }
             else
@@ -218,25 +350,31 @@ public sealed partial class CsvDocument
             return document;
         }
 
+        var skippedInitialRecords = 0;
+        while (skippedInitialRecords < initialRecordsToSkip && enumerator.MoveNext())
+        {
+            skippedInitialRecords++;
+        }
+
         if (!enumerator.MoveNext())
         {
             return document;
         }
 
         var firstRecord = enumerator.Current;
-        document.SetHeader(GenerateDefaultHeader(firstRecord.Length));
+        document.SetHeader(GenerateDefaultHeader(firstRecord.Values.Count));
 
         if (options.Mode == CsvLoadMode.InMemory)
         {
-            document.AddParsedRowInternal(firstRecord, options.ColumnCountMismatchPolicy);
+            document.AddParsedRowInternal(firstRecord.Values, options.ColumnCountMismatchPolicy);
             while (enumerator.MoveNext())
             {
-                document.AddParsedRowInternal(enumerator.Current, options.ColumnCountMismatchPolicy);
+                document.AddParsedRowInternal(enumerator.Current.Values, options.ColumnCountMismatchPolicy);
             }
         }
         else
         {
-            document._streamingSource = new CsvStreamingSource(readerFactory, options, skipRecordCount: 0);
+            document._streamingSource = new CsvStreamingSource(readerFactory, options, skipRecordCount: initialRecordsToSkip);
         }
 
         return document;
@@ -290,28 +428,37 @@ public sealed partial class CsvDocument
     }
 
     private static bool TryReadHeader(
-        IEnumerator<string[]> enumerator,
+        IEnumerator<CsvParser.CsvParsedRecord> enumerator,
         CsvLoadOptions options,
         out IReadOnlyList<string> header,
         out int consumedRecordCount)
     {
         consumedRecordCount = 0;
+        var initialRecordsToSkip = GetInitialRecordsToSkip(options);
         while (enumerator.MoveNext())
         {
             consumedRecordCount++;
             var record = enumerator.Current;
-            if (TryGetW3CFieldsHeader(record, options, out var w3cHeader))
+            var isW3CFieldsHeader = TryGetW3CFieldsHeader(record.Values, options, out var w3cHeader);
+
+            if (options.SkipCommentRowsBeforeHeader && IsCommentRecord(record, options) && !isW3CFieldsHeader)
+            {
+                continue;
+            }
+
+            if (initialRecordsToSkip > 0)
+            {
+                initialRecordsToSkip--;
+                continue;
+            }
+
+            if (isW3CFieldsHeader)
             {
                 header = w3cHeader;
                 return true;
             }
 
-            if (options.SkipCommentRowsBeforeHeader && IsCommentRecord(record, options))
-            {
-                continue;
-            }
-
-            header = NormalizeParsedHeader(record, options);
+            header = NormalizeParsedHeader(record.Values, options);
             return true;
         }
 
@@ -319,16 +466,16 @@ public sealed partial class CsvDocument
         return false;
     }
 
-    private static bool TryGetW3CFieldsHeader(string[] record, CsvLoadOptions options, out IReadOnlyList<string> header)
+    private static bool TryGetW3CFieldsHeader(IReadOnlyList<string> record, CsvLoadOptions options, out IReadOnlyList<string> header)
     {
         header = Array.Empty<string>();
-        if (!options.RecognizeW3CFieldsHeader || record.Length == 0)
+        if (!options.RecognizeW3CFieldsHeader || record.Count == 0)
         {
             return false;
         }
 
         const string prefix = "#Fields:";
-        if (record.Length == 1 && record[0].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        if (record.Count == 1 && record[0].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
         {
             var fields = record[0].Substring(prefix.Length)
                 .Trim()
@@ -340,17 +487,109 @@ public sealed partial class CsvDocument
             }
         }
 
-        if (string.Equals(record[0], prefix, StringComparison.OrdinalIgnoreCase) && record.Length > 1)
+        if (string.Equals(record[0], prefix, StringComparison.OrdinalIgnoreCase) && record.Count > 1)
         {
-            header = record.Skip(1).ToArray();
-            return true;
+            var fields = record.Skip(1).Where(field => field.Length > 0).ToArray();
+            if (fields.Length > 0)
+            {
+                header = fields;
+                return true;
+            }
         }
 
         return false;
     }
 
-    private static bool IsCommentRecord(string[] record, CsvLoadOptions options) =>
-        record.Length > 0 &&
-        record[0].Length > 0 &&
-        record[0][0] == options.CommentCharacter;
+    private static int GetInitialRecordsToSkip(CsvLoadOptions options)
+    {
+        if (options.SkipInitialRecords < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "SkipInitialRecords cannot be negative.");
+        }
+
+        return options.SkipInitialRecords;
+    }
+
+    private static void ReadRecordsSkippingInitial(TextReader reader, CsvLoadOptions options, int recordsToSkip, Action<string[]> recordAction)
+    {
+        if (recordsToSkip == 0)
+        {
+            CsvParser.ReadRecords(reader, options, recordAction);
+            return;
+        }
+
+        CsvParser.ReadRecords(reader, options, record =>
+        {
+            if (recordsToSkip > 0)
+            {
+                recordsToSkip--;
+                return;
+            }
+
+            recordAction(record);
+        });
+    }
+
+    private static void ReadRecordsReusableSkippingInitial(TextReader reader, CsvLoadOptions options, int recordsToSkip, Action<IReadOnlyList<string>> recordAction)
+    {
+        if (recordsToSkip == 0)
+        {
+            CsvParser.ReadRecordsReusable(reader, options, recordAction);
+            return;
+        }
+
+        CsvParser.ReadRecordsReusable(reader, options, record =>
+        {
+            if (recordsToSkip > 0)
+            {
+                recordsToSkip--;
+                return;
+            }
+
+            recordAction(record);
+        });
+    }
+
+    private static void ReadRecordsWithMetadataSkippingInitial(TextReader reader, CsvLoadOptions options, int recordsToSkip, Action<CsvParser.CsvParsedRecord> recordAction)
+    {
+        if (recordsToSkip == 0)
+        {
+            CsvParser.ReadRecordsWithMetadata(reader, options, recordAction);
+            return;
+        }
+
+        CsvParser.ReadRecordsWithMetadata(reader, options, record =>
+        {
+            if (recordsToSkip > 0)
+            {
+                recordsToSkip--;
+                return;
+            }
+
+            recordAction(record);
+        });
+    }
+
+    private static void ReadRecordsReusableWithMetadataSkippingInitial(TextReader reader, CsvLoadOptions options, int recordsToSkip, Action<CsvParser.CsvParsedRecord> recordAction)
+    {
+        if (recordsToSkip == 0)
+        {
+            CsvParser.ReadRecordsReusableWithMetadata(reader, options, recordAction);
+            return;
+        }
+
+        CsvParser.ReadRecordsReusableWithMetadata(reader, options, record =>
+        {
+            if (recordsToSkip > 0)
+            {
+                recordsToSkip--;
+                return;
+            }
+
+            recordAction(record);
+        });
+    }
+
+    private static bool IsCommentRecord(CsvParser.CsvParsedRecord record, CsvLoadOptions options) =>
+        record.StartsWithCommentCharacter;
 }

@@ -6,51 +6,130 @@ namespace OfficeIMO.CSV;
 
 internal static class CsvParser
 {
+    private readonly struct CsvLine
+    {
+        public CsvLine(string text, string separator)
+        {
+            Text = text;
+            Separator = separator;
+        }
+
+        public string Text { get; }
+
+        public string Separator { get; }
+    }
+
+    internal readonly struct CsvParsedRecord
+    {
+        public CsvParsedRecord(IReadOnlyList<string> values, bool startsWithCommentCharacter)
+        {
+            Values = values;
+            StartsWithCommentCharacter = startsWithCommentCharacter;
+        }
+
+        public IReadOnlyList<string> Values { get; }
+
+        public bool StartsWithCommentCharacter { get; }
+    }
+
     public static IEnumerable<string[]> Parse(TextReader reader, CsvLoadOptions options)
     {
         return ParseLineOrQuoted(reader, options);
     }
 
-    private static IEnumerable<string[]> ParseLineOrQuoted(TextReader reader, CsvLoadOptions options)
+    public static void ReadRecords(TextReader reader, CsvLoadOptions options, Action<string[]> recordAction)
+    {
+        if (recordAction == null)
+        {
+            throw new ArgumentNullException(nameof(recordAction));
+        }
+
+        ReadLineOrQuoted(reader, options, recordAction);
+    }
+
+    internal static IEnumerable<CsvParsedRecord> ParseWithMetadata(TextReader reader, CsvLoadOptions options)
+    {
+        return ParseLineOrQuotedWithMetadata(reader, options);
+    }
+
+    internal static void ReadRecordsWithMetadata(TextReader reader, CsvLoadOptions options, Action<CsvParsedRecord> recordAction)
+    {
+        if (recordAction == null)
+        {
+            throw new ArgumentNullException(nameof(recordAction));
+        }
+
+        foreach (var record in ParseLineOrQuotedWithMetadata(reader, options))
+        {
+            recordAction(record);
+        }
+    }
+
+    public static void ReadRecordsReusable(TextReader reader, CsvLoadOptions options, Action<IReadOnlyList<string>> recordAction)
+    {
+        if (recordAction == null)
+        {
+            throw new ArgumentNullException(nameof(recordAction));
+        }
+
+        ReadLineOrQuotedReusable(reader, options, recordAction);
+    }
+
+    internal static void ReadRecordsReusableWithMetadata(TextReader reader, CsvLoadOptions options, Action<CsvParsedRecord> recordAction)
+    {
+        if (recordAction == null)
+        {
+            throw new ArgumentNullException(nameof(recordAction));
+        }
+
+        ReadLineOrQuotedReusableWithMetadata(reader, options, recordAction);
+    }
+
+    private static void ReadLineOrQuoted(TextReader reader, CsvLoadOptions options, Action<string[]> recordAction)
     {
         var delimiter = options.Delimiter;
         var trim = options.TrimWhitespace;
         var allowEmpty = options.AllowEmptyLines;
         var lineNumber = 1;
+        var emittedRecordCount = 0;
+        var pendingLines = new Queue<CsvLine>();
 
-        while (reader.ReadLine() is { } line)
+        while (ReadLineWithSeparator(reader, pendingLines, out var lineSeparator) is { } line)
         {
-            if (ShouldSkipCommentLine(line, options))
+            var startsWithCommentCharacter = IsRawCommentLine(line, options);
+            if (TrySkipCommentRecordBeforeParsing(reader, pendingLines, startsWithCommentCharacter, line, lineSeparator, options, emittedRecordCount, ref lineNumber))
             {
                 lineNumber++;
                 continue;
             }
 
-            if (line.IndexOf('"') < 0)
+            if (TrySplitUnquotedRecord(line, delimiter, trim, out var record))
             {
-                var record = SplitUnquotedRecord(line, delimiter, trim);
-                if (ShouldEmitRecord(record, allowEmpty))
+                if (!ShouldSkipCommentRecord(startsWithCommentCharacter, line, options, emittedRecordCount) &&
+                    ShouldEmitRecord(record, allowEmpty))
                 {
-                    yield return record;
+                    recordAction(record);
+                    emittedRecordCount++;
                 }
 
                 lineNumber++;
                 continue;
             }
 
-            List<string> fields;
+            string[] fields;
             if (!TryParseQuotedRecord(line, delimiter, trim, out fields))
             {
                 var logicalRecord = new StringBuilder(line);
+                var pendingSeparator = lineSeparator;
                 while (true)
                 {
-                    var next = reader.ReadLine();
+                    var next = ReadLineWithSeparator(reader, pendingLines, out var nextSeparator);
                     if (next == null)
                     {
                         throw new CsvParseException("Unterminated quoted field.", lineNumber);
                     }
 
-                    logicalRecord.Append('\n');
+                    logicalRecord.Append(pendingSeparator);
                     logicalRecord.Append(next);
                     lineNumber++;
 
@@ -58,45 +137,242 @@ internal static class CsvParser
                     {
                         break;
                     }
+
+                    pendingSeparator = nextSeparator;
                 }
             }
 
             if (ShouldEmitRecord(fields, allowEmpty))
             {
-                yield return fields.ToArray();
+                if (!ShouldSkipCommentRecord(startsWithCommentCharacter, line, options, emittedRecordCount))
+                {
+                    recordAction(fields);
+                    emittedRecordCount++;
+                }
             }
 
             lineNumber++;
         }
     }
 
-    private static string[] SplitUnquotedRecord(string line, char delimiter, bool trim)
+    private static IEnumerable<string[]> ParseLineOrQuoted(TextReader reader, CsvLoadOptions options)
+    {
+        foreach (var record in ParseLineOrQuotedWithMetadata(reader, options))
+        {
+            if (record.Values is string[] fields)
+            {
+                yield return fields;
+            }
+        }
+    }
+
+    private static IEnumerable<CsvParsedRecord> ParseLineOrQuotedWithMetadata(TextReader reader, CsvLoadOptions options)
+    {
+        var delimiter = options.Delimiter;
+        var trim = options.TrimWhitespace;
+        var allowEmpty = options.AllowEmptyLines;
+        var lineNumber = 1;
+        var emittedRecordCount = 0;
+        var pendingLines = new Queue<CsvLine>();
+
+        while (ReadLineWithSeparator(reader, pendingLines, out var lineSeparator) is { } line)
+        {
+            var startsWithCommentCharacter = IsRawCommentLine(line, options);
+            if (TrySkipCommentRecordBeforeParsing(reader, pendingLines, startsWithCommentCharacter, line, lineSeparator, options, emittedRecordCount, ref lineNumber))
+            {
+                lineNumber++;
+                continue;
+            }
+
+            if (TrySplitUnquotedRecord(line, delimiter, trim, out var record))
+            {
+                if (!ShouldSkipCommentRecord(startsWithCommentCharacter, line, options, emittedRecordCount) &&
+                    ShouldEmitRecord(record, allowEmpty))
+                {
+                    yield return new CsvParsedRecord(record, startsWithCommentCharacter);
+                    emittedRecordCount++;
+                }
+
+                lineNumber++;
+                continue;
+            }
+
+            string[] fields;
+            if (!TryParseQuotedRecord(line, delimiter, trim, out fields))
+            {
+                var logicalRecord = new StringBuilder(line);
+                var pendingSeparator = lineSeparator;
+                while (true)
+                {
+                    var next = ReadLineWithSeparator(reader, pendingLines, out var nextSeparator);
+                    if (next == null)
+                    {
+                        throw new CsvParseException("Unterminated quoted field.", lineNumber);
+                    }
+
+                    logicalRecord.Append(pendingSeparator);
+                    logicalRecord.Append(next);
+                    lineNumber++;
+
+                    if (TryParseQuotedRecord(logicalRecord.ToString(), delimiter, trim, out fields))
+                    {
+                        break;
+                    }
+
+                    pendingSeparator = nextSeparator;
+                }
+            }
+
+            if (ShouldEmitRecord(fields, allowEmpty))
+            {
+                if (!ShouldSkipCommentRecord(startsWithCommentCharacter, line, options, emittedRecordCount))
+                {
+                    yield return new CsvParsedRecord(fields, startsWithCommentCharacter);
+                    emittedRecordCount++;
+                }
+            }
+
+            lineNumber++;
+        }
+    }
+
+    private static void ReadLineOrQuotedReusable(TextReader reader, CsvLoadOptions options, Action<IReadOnlyList<string>> recordAction)
+    {
+        ReadLineOrQuotedReusableWithMetadata(reader, options, record => recordAction(record.Values));
+    }
+
+    private static void ReadLineOrQuotedReusableWithMetadata(TextReader reader, CsvLoadOptions options, Action<CsvParsedRecord> recordAction)
+    {
+        var delimiter = options.Delimiter;
+        var trim = options.TrimWhitespace;
+        var allowEmpty = options.AllowEmptyLines;
+        var lineNumber = 1;
+        var reusableRecord = new List<string>(16);
+        var emittedRecordCount = 0;
+        var pendingLines = new Queue<CsvLine>();
+
+        while (ReadLineWithSeparator(reader, pendingLines, out var lineSeparator) is { } line)
+        {
+            var startsWithCommentCharacter = IsRawCommentLine(line, options);
+            if (TrySkipCommentRecordBeforeParsing(reader, pendingLines, startsWithCommentCharacter, line, lineSeparator, options, emittedRecordCount, ref lineNumber))
+            {
+                lineNumber++;
+                continue;
+            }
+
+            if (TrySplitUnquotedRecord(line, delimiter, trim, reusableRecord))
+            {
+                if (!ShouldSkipCommentRecord(startsWithCommentCharacter, line, options, emittedRecordCount) &&
+                    ShouldEmitRecord(reusableRecord, allowEmpty))
+                {
+                    recordAction(new CsvParsedRecord(reusableRecord, startsWithCommentCharacter));
+                    emittedRecordCount++;
+                }
+
+                lineNumber++;
+                continue;
+            }
+
+            string[] fields;
+            if (!TryParseQuotedRecord(line, delimiter, trim, out fields))
+            {
+                var logicalRecord = new StringBuilder(line);
+                var pendingSeparator = lineSeparator;
+                while (true)
+                {
+                    var next = ReadLineWithSeparator(reader, pendingLines, out var nextSeparator);
+                    if (next == null)
+                    {
+                        throw new CsvParseException("Unterminated quoted field.", lineNumber);
+                    }
+
+                    logicalRecord.Append(pendingSeparator);
+                    logicalRecord.Append(next);
+                    lineNumber++;
+
+                    if (TryParseQuotedRecord(logicalRecord.ToString(), delimiter, trim, out fields))
+                    {
+                        break;
+                    }
+
+                    pendingSeparator = nextSeparator;
+                }
+            }
+
+            if (ShouldEmitRecord(fields, allowEmpty))
+            {
+                if (!ShouldSkipCommentRecord(startsWithCommentCharacter, line, options, emittedRecordCount))
+                {
+                    recordAction(new CsvParsedRecord(fields, startsWithCommentCharacter));
+                    emittedRecordCount++;
+                }
+            }
+
+            lineNumber++;
+        }
+    }
+
+    private static bool TrySplitUnquotedRecord(string line, char delimiter, bool trim, out string[] fields)
     {
         var fieldCount = 1;
         for (var i = 0; i < line.Length; i++)
         {
-            if (line[i] == delimiter)
+            var value = line[i];
+            if (value == '"')
+            {
+                fields = Array.Empty<string>();
+                return false;
+            }
+
+            if (value == delimiter)
             {
                 fieldCount++;
             }
         }
 
-        var fields = new string[fieldCount];
+        fields = new string[fieldCount];
         var fieldIndex = 0;
         var start = 0;
-        while (true)
+        for (var i = 0; i < line.Length; i++)
         {
-            var index = line.IndexOf(delimiter, start);
-            if (index < 0)
+            if (line[i] != delimiter)
             {
-                fields[fieldIndex] = GetUnquotedField(line, start, line.Length - start, trim);
-                return fields;
+                continue;
             }
 
-            fields[fieldIndex] = GetUnquotedField(line, start, index - start, trim);
+            fields[fieldIndex] = GetUnquotedField(line, start, i - start, trim);
             fieldIndex++;
-            start = index + 1;
+            start = i + 1;
         }
+
+        fields[fieldIndex] = GetUnquotedField(line, start, line.Length - start, trim);
+        return true;
+    }
+
+    private static bool TrySplitUnquotedRecord(string line, char delimiter, bool trim, List<string> fields)
+    {
+        fields.Clear();
+        var start = 0;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var value = line[i];
+            if (value == '"')
+            {
+                fields.Clear();
+                return false;
+            }
+
+            if (value != delimiter)
+            {
+                continue;
+            }
+
+            fields.Add(GetUnquotedField(line, start, i - start, trim));
+            start = i + 1;
+        }
+
+        fields.Add(GetUnquotedField(line, start, line.Length - start, trim));
+        return true;
     }
 
     private static string GetUnquotedField(string line, int start, int length, bool trim)
@@ -130,17 +406,19 @@ internal static class CsvParser
         return line.Substring(start, end - start + 1);
     }
 
-    private static bool TryParseQuotedRecord(string text, char delimiter, bool trim, out List<string> fields)
+    private static bool TryParseQuotedRecord(string text, char delimiter, bool trim, out string[] fields)
     {
+        fields = Array.Empty<string>();
         if (text.Length > 0 && text[0] == '"' && TryParseStrictQuotedRecord(text, delimiter, trim, out fields))
         {
             return true;
         }
 
         var buffer = new StringBuilder();
-        fields = new List<string>(16);
+        var parsedFields = new List<string>(16);
         var inQuotes = false;
         var fieldWasQuoted = false;
+        var afterClosingQuote = false;
 
         for (var i = 0; i < text.Length; i++)
         {
@@ -158,6 +436,7 @@ internal static class CsvParser
                     else
                     {
                         inQuotes = false;
+                        afterClosingQuote = true;
                     }
                 }
                 else
@@ -170,6 +449,18 @@ internal static class CsvParser
 
             if (c == '"')
             {
+                if (afterClosingQuote)
+                {
+                    buffer.Append(c);
+                    afterClosingQuote = false;
+                    continue;
+                }
+
+                if (trim && IsWhitespaceOnly(buffer))
+                {
+                    buffer.Clear();
+                }
+
                 inQuotes = true;
                 fieldWasQuoted = true;
                 continue;
@@ -177,10 +468,17 @@ internal static class CsvParser
 
             if (c == delimiter)
             {
-                AddField(fields, buffer, trim, ref fieldWasQuoted);
+                AddField(parsedFields, buffer, trim, ref fieldWasQuoted);
+                afterClosingQuote = false;
                 continue;
             }
 
+            if (afterClosingQuote && char.IsWhiteSpace(c) && trim)
+            {
+                continue;
+            }
+
+            afterClosingQuote = false;
             buffer.Append(c);
         }
 
@@ -189,25 +487,50 @@ internal static class CsvParser
             return false;
         }
 
-        AddField(fields, buffer, trim, ref fieldWasQuoted);
+        AddField(parsedFields, buffer, trim, ref fieldWasQuoted);
+        fields = parsedFields.ToArray();
         return true;
     }
 
-    private static bool TryParseStrictQuotedRecord(string text, char delimiter, bool trim, out List<string> fields)
+    private static bool IsWhitespaceOnly(StringBuilder buffer)
     {
-        fields = new List<string>(16);
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            if (!char.IsWhiteSpace(buffer[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryParseStrictQuotedRecord(string text, char delimiter, bool trim, out string[] fields)
+    {
         if (text.Length == 0)
         {
-            fields.Add(string.Empty);
+            fields = new[] { string.Empty };
             return true;
         }
 
+        var fieldCount = 1;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == delimiter)
+            {
+                fieldCount++;
+            }
+        }
+
+        fields = new string[fieldCount];
+
         var index = 0;
+        var fieldIndex = 0;
         while (index < text.Length)
         {
             if (text[index] != '"')
             {
-                fields.Clear();
+                fields = Array.Empty<string>();
                 return false;
             }
 
@@ -220,147 +543,202 @@ internal static class CsvParser
 
             if (index >= text.Length)
             {
-                fields.Clear();
+                fields = Array.Empty<string>();
                 return false;
             }
 
             if (index + 1 < text.Length && text[index + 1] == '"')
             {
-                fields.Clear();
+                fields = Array.Empty<string>();
                 return false;
             }
 
             var value = text.Substring(start, index - start);
-            fields.Add(trim ? value.Trim() : value);
+            fields[fieldIndex++] = value;
             index++;
 
             if (index == text.Length)
             {
-                return true;
+                return fieldIndex == fields.Length;
             }
 
             if (text[index] != delimiter)
             {
-                fields.Clear();
+                fields = Array.Empty<string>();
                 return false;
             }
 
             index++;
             if (index == text.Length)
             {
-                fields.Clear();
+                fields = Array.Empty<string>();
                 return false;
             }
         }
 
-        return true;
+        return fieldIndex == fields.Length;
     }
 
-    private static IEnumerable<string[]> ParseCharacterByCharacter(TextReader reader, CsvLoadOptions options)
+    private static bool ShouldSkipCommentRecord(bool startsWithCommentCharacter, string firstLine, CsvLoadOptions options, int emittedRecordCount)
     {
-        var delimiter = options.Delimiter;
-        var trim = options.TrimWhitespace;
-        var allowEmpty = options.AllowEmptyLines;
-
-        var buffer = new StringBuilder();
-        var fields = new List<string>();
-        var lineNumber = 1;
-        var inQuotes = false;
-        var fieldWasQuoted = false;
-
-        while (true)
-        {
-            var ch = reader.Read();
-            var endOfFile = ch == -1;
-            if (endOfFile)
-            {
-                if (inQuotes)
-                {
-                    throw new CsvParseException("Unterminated quoted field.", lineNumber);
-                }
-
-                AddField(fields, buffer, trim, ref fieldWasQuoted);
-                if (ShouldEmitRecord(fields, allowEmpty))
-                {
-                    yield return fields.ToArray();
-                }
-
-                fields.Clear();
-                yield break;
-            }
-
-            var c = (char)ch;
-
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    var next = reader.Peek();
-                    if (next == '"')
-                    {
-                        reader.Read();
-                        buffer.Append('"');
-                    }
-                    else
-                    {
-                        inQuotes = false;
-                    }
-                }
-                else
-                {
-                    buffer.Append(c);
-                }
-
-                continue;
-            }
-
-            if (c == '"')
-            {
-                inQuotes = true;
-                fieldWasQuoted = true;
-                continue;
-            }
-
-            if (c == delimiter)
-            {
-                AddField(fields, buffer, trim, ref fieldWasQuoted);
-                continue;
-            }
-
-            if (c == '\n' || c == '\r')
-            {
-                if (c == '\r' && reader.Peek() == '\n')
-                {
-                    reader.Read();
-                }
-
-                AddField(fields, buffer, trim, ref fieldWasQuoted);
-                if (ShouldEmitRecord(fields, allowEmpty))
-                {
-                    yield return fields.ToArray();
-                }
-
-                fields.Clear();
-                lineNumber++;
-                continue;
-            }
-
-            buffer.Append(c);
-        }
-    }
-
-    private static bool ShouldSkipCommentLine(string line, CsvLoadOptions options)
-    {
-        if (!options.SkipCommentRows || line.Length == 0 || line[0] != options.CommentCharacter)
+        if (!options.SkipCommentRows || !startsWithCommentCharacter)
         {
             return false;
         }
 
-        return !IsW3CFieldsLine(line, options);
+        return !CanReadW3CFieldsHeader(options, emittedRecordCount) || !IsW3CFieldsLine(firstLine, options);
+    }
+
+    private static bool TrySkipCommentRecordBeforeParsing(TextReader reader, Queue<CsvLine> pendingLines, bool startsWithCommentCharacter, string firstLine, string firstLineSeparator, CsvLoadOptions options, int emittedRecordCount, ref int lineNumber)
+    {
+        if (!ShouldSkipCommentRecordBeforeParsing(startsWithCommentCharacter, firstLine, options, emittedRecordCount))
+        {
+            return false;
+        }
+
+        if (TryParseQuotedRecord(firstLine, options.Delimiter, options.TrimWhitespace, out _))
+        {
+            return true;
+        }
+
+        var logicalRecord = new StringBuilder(firstLine);
+        var pendingSeparator = firstLineSeparator;
+        var continuations = new List<CsvLine>();
+        while (true)
+        {
+            var next = ReadLineWithSeparator(reader, pendingLines, out var nextSeparator);
+            if (next == null)
+            {
+                EnqueueContinuations(pendingLines, continuations);
+                return true;
+            }
+
+            continuations.Add(new CsvLine(next, nextSeparator));
+            var candidate = string.Concat(logicalRecord.ToString(), pendingSeparator, next);
+            if (TryParseQuotedRecord(candidate, options.Delimiter, options.TrimWhitespace, out _))
+            {
+                lineNumber += continuations.Count;
+                return true;
+            }
+
+            if (!LooksLikeDelimitedRawComment(firstLine, options.Delimiter) && LooksLikeDelimitedRawComment(next, options.Delimiter))
+            {
+                EnqueueContinuations(pendingLines, continuations);
+                return true;
+            }
+
+            logicalRecord.Append(pendingSeparator);
+            logicalRecord.Append(next);
+            pendingSeparator = nextSeparator;
+        }
+    }
+
+    private static void EnqueueContinuations(Queue<CsvLine> pendingLines, List<CsvLine> continuations)
+    {
+        foreach (var continuation in continuations)
+        {
+            pendingLines.Enqueue(continuation);
+        }
+    }
+
+    private static bool LooksLikeDelimitedRawComment(string line, char delimiter) =>
+        line.IndexOf(delimiter) >= 0 ||
+        line.IndexOf(',') >= 0 ||
+        line.IndexOf(';') >= 0 ||
+        line.IndexOf('|') >= 0 ||
+        line.IndexOf('\t') >= 0;
+
+    private static bool ShouldSkipCommentRecordBeforeParsing(bool startsWithCommentCharacter, string firstLine, CsvLoadOptions options, int emittedRecordCount)
+    {
+        if (!startsWithCommentCharacter)
+        {
+            return false;
+        }
+
+        var canReadW3CFieldsHeader = CanReadW3CFieldsHeader(options, emittedRecordCount) && IsW3CFieldsLine(firstLine, options);
+        if (canReadW3CFieldsHeader)
+        {
+            return false;
+        }
+
+        return options.SkipCommentRows ||
+            (options.HasHeaderRow &&
+                options.Header is null &&
+                options.SkipCommentRowsBeforeHeader &&
+                emittedRecordCount <= GetParserInitialRecordsToSkip(options));
+    }
+
+    private static bool IsRawCommentLine(string line, CsvLoadOptions options) =>
+        line.Length > 0 && line[0] == options.CommentCharacter;
+
+    private static bool CanReadW3CFieldsHeader(CsvLoadOptions options, int emittedRecordCount) =>
+        emittedRecordCount <= GetParserInitialRecordsToSkip(options) &&
+        options.HasHeaderRow &&
+        options.Header is null &&
+        options.RecognizeW3CFieldsHeader;
+
+    private static int GetParserInitialRecordsToSkip(CsvLoadOptions options)
+    {
+        if (options.SkipInitialRecords < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "SkipInitialRecords cannot be negative.");
+        }
+
+        return options.SkipInitialRecords;
     }
 
     private static bool IsW3CFieldsLine(string line, CsvLoadOptions options) =>
         options.RecognizeW3CFieldsHeader && line.StartsWith("#Fields:", StringComparison.OrdinalIgnoreCase);
+
+    private static string? ReadLineWithSeparator(TextReader reader, out string separator)
+    {
+        separator = string.Empty;
+        var builder = new StringBuilder();
+        while (true)
+        {
+            var value = reader.Read();
+            if (value < 0)
+            {
+                return builder.Length == 0 ? null : builder.ToString();
+            }
+
+            var ch = (char)value;
+            if (ch == '\r')
+            {
+                if (reader.Peek() == '\n')
+                {
+                    reader.Read();
+                    separator = "\r\n";
+                }
+                else
+                {
+                    separator = "\r";
+                }
+
+                return builder.ToString();
+            }
+
+            if (ch == '\n')
+            {
+                separator = "\n";
+                return builder.ToString();
+            }
+
+            builder.Append(ch);
+        }
+    }
+
+    private static string? ReadLineWithSeparator(TextReader reader, Queue<CsvLine> pendingLines, out string separator)
+    {
+        if (pendingLines.Count > 0)
+        {
+            var pending = pendingLines.Dequeue();
+            separator = pending.Separator;
+            return pending.Text;
+        }
+
+        return ReadLineWithSeparator(reader, out separator);
+    }
 
     private static void AddField(List<string> fields, StringBuilder buffer, bool trim, ref bool fieldWasQuoted)
     {
@@ -377,29 +755,7 @@ internal static class CsvParser
 
     private static bool ShouldEmitRecord(IReadOnlyList<string> fields, bool allowEmpty)
     {
-        if (fields.Count == 0)
-        {
-            return allowEmpty;
-        }
-
-        if (!allowEmpty && AllFieldsEmpty(fields))
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    private static bool AllFieldsEmpty(IReadOnlyList<string> fields)
-    {
-        for (var i = 0; i < fields.Count; i++)
-        {
-            if (!string.IsNullOrEmpty(fields[i]))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return fields.Count != 0 &&
+            (allowEmpty || fields.Count != 1 || fields[0].Length != 0);
     }
 }
