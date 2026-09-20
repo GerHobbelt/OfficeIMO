@@ -34,20 +34,58 @@ public static class HtmlRenderDiagnosticCodes {
     public const string FontFormatUnsupported = "HtmlRenderFontFormatUnsupported";
     /// <summary>Flex layout used the documented normal-flow fallback.</summary>
     public const string FlexLayoutPending = "HtmlRenderFlexLayoutPending";
+    /// <summary>A flex property value used a documented deterministic fallback.</summary>
+    public const string FlexValueUnsupported = "HtmlRenderFlexValueUnsupported";
+    /// <summary>A float or clear property value used a documented deterministic fallback.</summary>
+    public const string FloatValueUnsupported = "HtmlRenderFloatValueUnsupported";
+    /// <summary>Multi-column generation exceeded the configured safety limit.</summary>
+    public const string MultiColumnLimitExceeded = "HtmlRenderMultiColumnLimitExceeded";
+    /// <summary>A multi-column property value used a documented deterministic fallback.</summary>
+    public const string MultiColumnValueUnsupported = "HtmlRenderMultiColumnValueUnsupported";
     /// <summary>Content without a safe page break was force-fragmented.</summary>
     public const string ForcedFragment = "HtmlRenderForcedFragment";
     /// <summary>Grid layout used the documented normal-flow fallback.</summary>
     public const string GridLayoutPending = "HtmlRenderGridLayoutPending";
+    /// <summary>A grid property value used a documented deterministic fallback.</summary>
+    public const string GridValueUnsupported = "HtmlRenderGridValueUnsupported";
+    /// <summary>Grid track expansion exceeded the configured safety limit.</summary>
+    public const string GridTrackLimitExceeded = "HtmlRenderGridTrackLimitExceeded";
     /// <summary>A generated-content expression was omitted because it could not be represented.</summary>
     public const string GeneratedContentUnsupported = "HtmlRenderGeneratedContentUnsupported";
     /// <summary>A CSS counter declaration was ignored because it could not be represented.</summary>
     public const string GeneratedCounterUnsupported = "HtmlRenderGeneratedCounterUnsupported";
-    /// <summary>An inline image used its alternative-text fallback.</summary>
-    public const string InlineImageFallback = "HtmlRenderInlineImageFallback";
-    /// <summary>A relative-position inset could not be resolved by the current length model.</summary>
+    /// <summary>A replaced-element sizing or object-placement value used a deterministic fallback.</summary>
+    public const string ReplacedElementValueUnsupported = "HtmlRenderReplacedElementValueUnsupported";
+    /// <summary>A positioned inset could not be resolved by the current length model.</summary>
     public const string PositionInsetUnsupported = "HtmlRenderPositionInsetUnsupported";
     /// <summary>A positioned layout mode used the documented normal-flow fallback.</summary>
     public const string PositioningModeUnsupported = "HtmlRenderPositioningModeUnsupported";
+    /// <summary>An automatic positioned inset could not use its hypothetical normal-flow anchor.</summary>
+    public const string PositionStaticAnchorFallback = "HtmlRenderPositionStaticAnchorFallback";
+    /// <summary>A scrollable overflow box was captured at its initial static scroll position.</summary>
+    public const string OverflowScrollSnapshot = "HtmlRenderOverflowScrollSnapshot";
+    /// <summary>An overflow property value used a documented visible fallback.</summary>
+    public const string OverflowValueUnsupported = "HtmlRenderOverflowValueUnsupported";
+    /// <summary>An overflow-clip-margin value used its initial padding-box zero fallback.</summary>
+    public const string OverflowClipMarginValueUnsupported = "HtmlRenderOverflowClipMarginValueUnsupported";
+    /// <summary>A CSS transform or transform-origin value used the identity fallback.</summary>
+    public const string TransformValueUnsupported = "HtmlRenderTransformValueUnsupported";
+    /// <summary>A CSS opacity value used the opaque fallback.</summary>
+    public const string OpacityValueUnsupported = "HtmlRenderOpacityValueUnsupported";
+    /// <summary>A non-atomic inline paint effect could not form an isolated group.</summary>
+    public const string InlinePaintEffectUnsupported = "HtmlRenderInlinePaintEffectUnsupported";
+    /// <summary>A CSS border radius contained invalid or unsupported syntax and used square-corner fallback.</summary>
+    public const string BorderRadiusValueUnsupported = "HtmlRenderBorderRadiusValueUnsupported";
+    /// <summary>A CSS box shadow contained invalid or unsupported syntax.</summary>
+    public const string BoxShadowValueUnsupported = "HtmlRenderBoxShadowValueUnsupported";
+    /// <summary>CSS box-shadow layers beyond the configured per-element limit were omitted.</summary>
+    public const string BoxShadowLayerLimit = "HtmlRenderBoxShadowLayerLimit";
+    /// <summary>A CSS border paint declaration used invalid or unsupported syntax.</summary>
+    public const string BorderPaintValueUnsupported = "HtmlRenderBorderPaintValueUnsupported";
+    /// <summary>A CSS outline paint declaration could not be represented by the current outline model.</summary>
+    public const string OutlinePaintValueUnsupported = "HtmlRenderOutlinePaintValueUnsupported";
+    /// <summary>A sticky-positioned element was captured at its stable static document position.</summary>
+    public const string PositionStickyStatic = "HtmlRenderPositionStickyStatic";
     /// <summary>A positioned element declared stacking behavior that is not active yet.</summary>
     public const string PositionZIndexPending = "HtmlRenderPositionZIndexPending";
     /// <summary>A complex page selector could not be applied per page.</summary>
@@ -62,6 +100,8 @@ public static class HtmlRenderDiagnosticCodes {
     public const string PageSizeUnsupported = "HtmlRenderPageSizeUnsupported";
     /// <summary>The dependency-free PNG backend could not decode a retained raster format.</summary>
     public const string RasterDecoderUnavailable = "HtmlRenderRasterDecoderUnavailable";
+    /// <summary>SVG content could not be represented by the bounded shared vector scene.</summary>
+    public const string SvgContentUnsupported = "HtmlRenderSvgContentUnsupported";
     /// <summary>A resource exceeded the configured per-resource byte limit.</summary>
     public const string ResourceByteLimitExceeded = "HtmlRenderResourceByteLimitExceeded";
     /// <summary>Resolved resources exceeded the operation-wide count limit.</summary>
@@ -88,6 +128,8 @@ public static class HtmlRenderDiagnosticCodes {
     public const string TableHeaderRepeatSuppressed = "HtmlRenderTableHeaderRepeatSuppressed";
     /// <summary>A repeated table footer was suppressed because it left no safe body-row break.</summary>
     public const string TableFooterRepeatSuppressed = "HtmlRenderTableFooterRepeatSuppressed";
+    /// <summary>A table formatting property used its documented fallback.</summary>
+    public const string TableValueUnsupported = "HtmlRenderTableValueUnsupported";
     /// <summary>Resolved resources exceeded the operation-wide byte budget.</summary>
     public const string TotalResourceByteLimitExceeded = "HtmlRenderTotalResourceByteLimitExceeded";
     /// <summary>A visual could not cross a forced page boundary safely.</summary>
@@ -109,13 +151,32 @@ public static class HtmlRenderDiagnosticCodes {
         FontFaceUnavailable,
         FontFormatUnsupported,
         FlexLayoutPending,
+        FlexValueUnsupported,
+        FloatValueUnsupported,
+        MultiColumnLimitExceeded,
+        MultiColumnValueUnsupported,
         ForcedFragment,
         GeneratedContentUnsupported,
         GeneratedCounterUnsupported,
         GridLayoutPending,
-        InlineImageFallback,
+        GridTrackLimitExceeded,
+        GridValueUnsupported,
+        ReplacedElementValueUnsupported,
+        OverflowClipMarginValueUnsupported,
+        OverflowScrollSnapshot,
+        OverflowValueUnsupported,
+        TransformValueUnsupported,
+        OpacityValueUnsupported,
+        InlinePaintEffectUnsupported,
+        BorderRadiusValueUnsupported,
+        BoxShadowLayerLimit,
+        BoxShadowValueUnsupported,
+        BorderPaintValueUnsupported,
+        OutlinePaintValueUnsupported,
         PositionInsetUnsupported,
         PositioningModeUnsupported,
+        PositionStaticAnchorFallback,
+        PositionStickyStatic,
         PositionZIndexPending,
         PageMarginContentUnsupported,
         PageMarginPositionUnsupported,
@@ -123,6 +184,7 @@ public static class HtmlRenderDiagnosticCodes {
         PageSelectorPending,
         PageSizeUnsupported,
         RasterDecoderUnavailable,
+        SvgContentUnsupported,
         ResourceByteLimitExceeded,
         ResourceCountLimitExceeded,
         ResourceContentTypeRejected,
@@ -136,6 +198,7 @@ public static class HtmlRenderDiagnosticCodes {
         StylesheetUrlResourcesPending,
         TableFooterRepeatSuppressed,
         TableHeaderRepeatSuppressed,
+        TableValueUnsupported,
         TotalResourceByteLimitExceeded,
         VisualFragmentUnsupported
     });

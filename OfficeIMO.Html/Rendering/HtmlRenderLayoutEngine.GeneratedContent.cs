@@ -29,7 +29,8 @@ internal sealed partial class HtmlRenderLayoutEngine {
             link,
             source,
             inheritedPaintOffsetX + offsetX,
-            inheritedPaintOffsetY + offsetY));
+            inheritedPaintOffsetY + offsetY,
+            element));
     }
 
     private void AddGeneratedContentBlock(
@@ -52,18 +53,19 @@ internal sealed partial class HtmlRenderLayoutEngine {
         string? link = string.Equals(element.TagName, "a", StringComparison.OrdinalIgnoreCase)
             ? ResolveSafeLink(element.GetAttribute("href"), element)
             : null;
-        var run = new HtmlInlineRun(ApplyTextTransform(content, style.TextTransform), style, link, source);
+        var run = new HtmlInlineRun(ApplyTextTransform(content, style.TextTransform), style, link, source, ownerElement: element);
         HtmlInlineLayout inline = LayoutInlineRuns(new[] { run }, contentWidth, style);
         double boxHeight = ResolveBoxHeight(inline.Height, style);
         double outerHeight = Math.Max(0.01D, style.MarginTop + boxHeight + style.MarginBottom);
         var visuals = new List<HtmlRenderVisual>();
         bool paintsBlockBox = style.Display == "block" || style.Display == "flow-root" || style.Display == "list-item";
         if (paintsBlockBox) AddGeneratedBoxPaint(visuals, style, style.MarginLeft, style.MarginTop, boxWidth, boxHeight, element, source);
-        double contentX = style.MarginLeft + style.BorderWidth + style.PaddingLeft;
-        double contentY = style.MarginTop + style.BorderWidth + style.PaddingTop;
+        double contentX = style.MarginLeft + style.BorderLeftWidth + style.PaddingLeft;
+        double contentY = style.MarginTop + style.BorderTopWidth + style.PaddingTop;
         foreach (HtmlRenderVisual visual in inline.Visuals) {
             visuals.Add(visual.Translate(contentX, contentY, visuals.Count));
         }
+        if (paintsBlockBox) AddGeneratedBoxOutlinePaint(visuals, style, style.MarginLeft, style.MarginTop, boxWidth, boxHeight, element, source);
 
         IEnumerable<double> breakOffsets = inline.BreakOffsets
             .Select(offset => contentY + offset)
@@ -93,13 +95,24 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double height,
         IElement element,
         string source) {
-        AddBoxBackground(visuals, style, x, y, width, height, style.BorderWidth, element, source, source);
-        if (style.BorderWidth <= 0D) return;
-        OfficeShape border = OfficeShape.Rectangle(width, height);
-        border.FillColor = null;
-        border.StrokeColor = style.BorderColor;
-        border.StrokeWidth = style.BorderWidth;
-        visuals.Add(new HtmlRenderShape(border, x, y, visuals.Count, source: source));
+        HtmlResolvedBorderRadii radii = ResolveBoxRadii(style, width, height, element, source);
+        AddOuterBoxShadows(visuals, style, x, y, width, height, radii, element, source);
+        AddBoxBackgroundCore(visuals, style, x, y, width, height, style.BorderInsets, radii, element, source, source);
+        AddInsetBoxShadows(visuals, style, x, y, width, height, radii, element, source);
+        AddBorderPaint(visuals, style, x, y, width, height, radii, element, source);
+    }
+
+    private void AddGeneratedBoxOutlinePaint(
+        ICollection<HtmlRenderVisual> visuals,
+        HtmlRenderBoxStyle style,
+        double x,
+        double y,
+        double width,
+        double height,
+        IElement element,
+        string source) {
+        HtmlResolvedBorderRadii radii = ResolveBoxRadii(style, width, height, element, source);
+        AddOutlinePaint(visuals, style, x, y, width, height, radii, element, source);
     }
 
     private static string DescribePseudoSource(IElement element, HtmlPseudoElementKind kind) =>

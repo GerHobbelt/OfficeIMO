@@ -1,3 +1,5 @@
+using AngleSharp.Dom;
+
 namespace OfficeIMO.Html;
 
 internal sealed class HtmlRenderFlowBlock {
@@ -19,7 +21,14 @@ internal sealed class HtmlRenderFlowBlock {
         IEnumerable<HtmlRenderVisual>? continuationVisuals = null,
         double continuationHeight = 0D,
         double continuationStartsAfter = 0D,
-        string? pageName = null) {
+        string? pageName = null,
+        int? stackingZIndex = null,
+        int stackingSourceOrder = 0,
+        bool hasCollapsibleMargins = false,
+        double collapsibleMarginTop = 0D,
+        double collapsibleMarginBottom = 0D,
+        IElement? ownerElement = null,
+        bool collapsesThrough = false) {
         Width = width;
         Height = height;
         Visuals = new List<HtmlRenderVisual>(visuals);
@@ -60,6 +69,13 @@ internal sealed class HtmlRenderFlowBlock {
         ContinuationGroups = repeatedGroups.AsReadOnly();
         TrailingGroups = new List<HtmlRenderTrailingGroup>(trailingGroups ?? Array.Empty<HtmlRenderTrailingGroup>()).AsReadOnly();
         PageName = pageName == null || string.IsNullOrWhiteSpace(pageName) ? null : pageName.Trim();
+        StackingZIndex = stackingZIndex;
+        StackingSourceOrder = stackingSourceOrder;
+        HasCollapsibleMargins = hasCollapsibleMargins;
+        CollapsibleMarginTop = collapsibleMarginTop;
+        CollapsibleMarginBottom = collapsibleMarginBottom;
+        OwnerElement = ownerElement;
+        CollapsesThrough = collapsesThrough;
     }
 
     internal double Width { get; }
@@ -74,6 +90,13 @@ internal sealed class HtmlRenderFlowBlock {
     internal IReadOnlyList<HtmlRenderContinuationGroup> ContinuationGroups { get; }
     internal IReadOnlyList<HtmlRenderTrailingGroup> TrailingGroups { get; }
     internal string? PageName { get; }
+    internal int? StackingZIndex { get; }
+    internal int StackingSourceOrder { get; }
+    internal bool HasCollapsibleMargins { get; }
+    internal double CollapsibleMarginTop { get; }
+    internal double CollapsibleMarginBottom { get; }
+    internal IElement? OwnerElement { get; }
+    internal bool CollapsesThrough { get; }
 
     internal HtmlRenderFlowBlock TranslatePaint(double offsetX, double offsetY) =>
         new HtmlRenderFlowBlock(
@@ -88,7 +111,130 @@ internal sealed class HtmlRenderFlowBlock {
             lineBreakGroups: LineBreakGroups,
             continuationGroups: ContinuationGroups.Select(group => group.TranslatePaint(offsetX, offsetY)),
             trailingGroups: TrailingGroups.Select(group => group.TranslatePaint(offsetX, offsetY)),
-            pageName: PageName);
+            pageName: PageName,
+            stackingZIndex: StackingZIndex,
+            stackingSourceOrder: StackingSourceOrder,
+            hasCollapsibleMargins: HasCollapsibleMargins,
+            collapsibleMarginTop: CollapsibleMarginTop,
+            collapsibleMarginBottom: CollapsibleMarginBottom,
+            ownerElement: OwnerElement,
+            collapsesThrough: CollapsesThrough);
+
+    internal HtmlRenderFlowBlock WithStacking(int zIndex, int sourceOrder) =>
+        new HtmlRenderFlowBlock(
+            Width,
+            Height,
+            Visuals,
+            BreakBefore,
+            BreakAfter,
+            AvoidBreakInside,
+            Source,
+            BreakOffsets,
+            lineBreakGroups: LineBreakGroups,
+            continuationGroups: ContinuationGroups,
+            trailingGroups: TrailingGroups,
+            pageName: PageName,
+            stackingZIndex: zIndex,
+            stackingSourceOrder: sourceOrder,
+            hasCollapsibleMargins: HasCollapsibleMargins,
+            collapsibleMarginTop: CollapsibleMarginTop,
+            collapsibleMarginBottom: CollapsibleMarginBottom,
+            ownerElement: OwnerElement,
+            collapsesThrough: CollapsesThrough);
+
+    internal HtmlRenderFlowBlock WithVisuals(IEnumerable<HtmlRenderVisual> visuals) =>
+        new HtmlRenderFlowBlock(
+            Width,
+            Height,
+            visuals,
+            BreakBefore,
+            BreakAfter,
+            AvoidBreakInside,
+            Source,
+            BreakOffsets,
+            lineBreakGroups: LineBreakGroups,
+            continuationGroups: ContinuationGroups,
+            trailingGroups: TrailingGroups,
+            pageName: PageName,
+            stackingZIndex: StackingZIndex,
+            stackingSourceOrder: StackingSourceOrder,
+            hasCollapsibleMargins: HasCollapsibleMargins,
+            collapsibleMarginTop: CollapsibleMarginTop,
+            collapsibleMarginBottom: CollapsibleMarginBottom,
+            ownerElement: OwnerElement,
+            collapsesThrough: CollapsesThrough);
+
+    internal HtmlRenderFlowBlock AdjustLeadingFlowSpace(double adjustment) {
+        if (Math.Abs(adjustment) <= 0.0001D) return this;
+        double adjustedHeight = Math.Max(0.01D, Height - adjustment);
+        return new HtmlRenderFlowBlock(
+            Width,
+            adjustedHeight,
+            Visuals.Select((visual, index) => visual.Translate(0D, -adjustment, index)),
+            BreakBefore,
+            BreakAfter,
+            AvoidBreakInside,
+            Source,
+            BreakOffsets.Select(offset => offset - adjustment),
+            lineBreakGroups: LineBreakGroups.Select(group => group.Translate(-adjustment)),
+            continuationGroups: ContinuationGroups.Select(group => group.Translate(0D, -adjustment)),
+            trailingGroups: TrailingGroups.Select(group => group.Translate(0D, -adjustment)),
+            pageName: PageName,
+            stackingZIndex: StackingZIndex,
+            stackingSourceOrder: StackingSourceOrder,
+            hasCollapsibleMargins: HasCollapsibleMargins,
+            collapsibleMarginTop: CollapsibleMarginTop,
+            collapsibleMarginBottom: CollapsibleMarginBottom,
+            ownerElement: OwnerElement,
+            collapsesThrough: CollapsesThrough);
+    }
+
+    internal HtmlRenderFlowBlock WithCollapsibleMargins(double top, double bottom, IElement ownerElement, bool collapsesThrough = false) =>
+        new HtmlRenderFlowBlock(
+            Width,
+            Height,
+            Visuals,
+            BreakBefore,
+            BreakAfter,
+            AvoidBreakInside,
+            Source,
+            BreakOffsets,
+            lineBreakGroups: LineBreakGroups,
+            continuationGroups: ContinuationGroups,
+            trailingGroups: TrailingGroups,
+            pageName: PageName,
+            stackingZIndex: StackingZIndex,
+            stackingSourceOrder: StackingSourceOrder,
+            hasCollapsibleMargins: true,
+            collapsibleMarginTop: top,
+            collapsibleMarginBottom: bottom,
+            ownerElement: ownerElement,
+            collapsesThrough: collapsesThrough);
+
+    internal HtmlRenderFlowBlock AdjustTrailingFlowSpace(double adjustment) {
+        if (Math.Abs(adjustment) <= 0.0001D) return this;
+        double adjustedHeight = Math.Max(0.01D, Height - adjustment);
+        return new HtmlRenderFlowBlock(
+            Width,
+            adjustedHeight,
+            Visuals,
+            BreakBefore,
+            BreakAfter,
+            AvoidBreakInside,
+            Source,
+            BreakOffsets.Where(offset => offset <= adjustedHeight + 0.0001D),
+            lineBreakGroups: LineBreakGroups,
+            continuationGroups: ContinuationGroups,
+            trailingGroups: TrailingGroups,
+            pageName: PageName,
+            stackingZIndex: StackingZIndex,
+            stackingSourceOrder: StackingSourceOrder,
+            hasCollapsibleMargins: HasCollapsibleMargins,
+            collapsibleMarginTop: CollapsibleMarginTop,
+            collapsibleMarginBottom: CollapsibleMarginBottom,
+            ownerElement: OwnerElement,
+            collapsesThrough: CollapsesThrough);
+    }
 }
 
 internal sealed class HtmlRenderContinuationGroup {
@@ -174,21 +320,76 @@ internal sealed class HtmlRenderLineBreakGroup {
 }
 
 internal sealed class HtmlInlineRun {
-    internal HtmlInlineRun(string text, HtmlRenderBoxStyle style, string? linkUri, string source, double paintOffsetX = 0D, double paintOffsetY = 0D) {
+    internal HtmlInlineRun(
+        string text,
+        HtmlRenderBoxStyle style,
+        string? linkUri,
+        string source,
+        double paintOffsetX = 0D,
+        double paintOffsetY = 0D,
+        IElement? ownerElement = null,
+        IElement? positionedMarkerElement = null) {
         Text = text;
         Style = style;
         LinkUri = linkUri;
         Source = source;
         PaintOffsetX = paintOffsetX;
         PaintOffsetY = paintOffsetY;
+        OwnerElement = ownerElement;
+        PositionedMarkerElement = positionedMarkerElement;
+    }
+
+    internal HtmlInlineRun(
+        HtmlRenderFlowBlock atomicBlock,
+        HtmlRenderBoxStyle style,
+        string? linkUri,
+        string source,
+        double paintOffsetX = 0D,
+        double paintOffsetY = 0D,
+        IElement? ownerElement = null,
+        bool isReplacedImage = false) {
+        AtomicBlock = atomicBlock;
+        Text = string.Empty;
+        Style = style;
+        LinkUri = linkUri;
+        Source = source;
+        PaintOffsetX = paintOffsetX;
+        PaintOffsetY = paintOffsetY;
+        OwnerElement = ownerElement;
+        IsReplacedImage = isReplacedImage;
+    }
+
+    internal HtmlInlineRun(
+        HtmlRenderFlowBlock floatingBlock,
+        HtmlRenderBoxStyle style,
+        string? linkUri,
+        string source,
+        string floatSide,
+        string clearSide,
+        IElement ownerElement) {
+        FloatingBlock = floatingBlock;
+        Text = string.Empty;
+        Style = style;
+        LinkUri = linkUri;
+        Source = source;
+        FloatSide = floatSide;
+        ClearSide = clearSide;
+        OwnerElement = ownerElement;
     }
 
     internal string Text { get; }
+    internal HtmlRenderFlowBlock? AtomicBlock { get; }
+    internal HtmlRenderFlowBlock? FloatingBlock { get; }
     internal HtmlRenderBoxStyle Style { get; }
     internal string? LinkUri { get; }
     internal string Source { get; }
     internal double PaintOffsetX { get; }
     internal double PaintOffsetY { get; }
+    internal IElement? OwnerElement { get; }
+    internal IElement? PositionedMarkerElement { get; }
+    internal bool IsReplacedImage { get; }
+    internal string FloatSide { get; } = "none";
+    internal string ClearSide { get; } = "none";
 }
 
 internal sealed class HtmlInlineLayout {

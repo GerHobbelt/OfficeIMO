@@ -54,16 +54,94 @@ internal static class HtmlPdfRenderedConverter {
 
     private static void AddPageVisuals(PdfCore.PdfPageCanvas canvas, HtmlRenderPage page, IReadOnlyDictionary<string, PdfCore.PdfStandardFont> webFonts) {
         foreach (HtmlRenderVisual visual in page.Visuals.OrderBy(item => item.PaintOrder)) {
-            if (visual is HtmlRenderShape shape) {
-                AddShape(canvas, shape);
-            } else if (visual is HtmlRenderText text) {
-                AddText(canvas, text, webFonts);
-            } else if (visual is HtmlRenderImage image) {
-                AddImage(canvas, image);
-            } else if (visual is HtmlRenderImagePattern imagePattern) {
-                AddImagePattern(canvas, imagePattern);
-            }
+            AddVisual(canvas, visual, webFonts, page.Width, page.Height);
         }
+    }
+
+    private static void AddVisual(
+        PdfCore.PdfPageCanvas canvas,
+        HtmlRenderVisual visual,
+        IReadOnlyDictionary<string, PdfCore.PdfStandardFont> webFonts,
+        double surfaceWidth,
+        double surfaceHeight) {
+        if (visual is HtmlRenderShape shape) {
+            AddShape(canvas, shape);
+        } else if (visual is HtmlRenderText text) {
+            AddText(canvas, text, webFonts);
+        } else if (visual is HtmlRenderImage image) {
+            AddImage(canvas, image);
+        } else if (visual is HtmlRenderDrawing drawing) {
+            AddDrawing(canvas, drawing, webFonts);
+        } else if (visual is HtmlRenderImagePattern imagePattern) {
+            AddImagePattern(canvas, imagePattern);
+        } else if (visual is HtmlRenderClipGroup group) {
+            AddClipGroup(canvas, group, webFonts, surfaceWidth, surfaceHeight);
+        } else if (visual is HtmlRenderPathClipGroup pathClipGroup) {
+            AddPathClipGroup(canvas, pathClipGroup, webFonts, surfaceWidth, surfaceHeight);
+        } else if (visual is HtmlRenderEffectGroup effectGroup) {
+            AddEffectGroup(canvas, effectGroup, webFonts, surfaceWidth, surfaceHeight);
+        }
+    }
+
+    private static void AddEffectGroup(
+        PdfCore.PdfPageCanvas canvas,
+        HtmlRenderEffectGroup group,
+        IReadOnlyDictionary<string, PdfCore.PdfStandardFont> webFonts,
+        double surfaceWidth,
+        double surfaceHeight) {
+        OfficeTransform transform = group.Transform;
+        var scaled = new OfficeTransform(
+            transform.M11,
+            transform.M12,
+            transform.M21,
+            transform.M22,
+            transform.OffsetX * PointsPerCssPixel,
+            transform.OffsetY * PointsPerCssPixel);
+        canvas.Effect(scaled, group.Opacity, nested => {
+            foreach (HtmlRenderVisual child in group.Visuals.OrderBy(item => item.PaintOrder)) {
+                AddVisual(nested, child, webFonts, surfaceWidth, surfaceHeight);
+            }
+        });
+    }
+
+    private static void AddClipGroup(
+        PdfCore.PdfPageCanvas canvas,
+        HtmlRenderClipGroup group,
+        IReadOnlyDictionary<string, PdfCore.PdfStandardFont> webFonts,
+        double surfaceWidth,
+        double surfaceHeight) {
+        double left = group.ClipHorizontal ? Math.Max(0D, group.ClipX) : 0D;
+        double top = group.ClipVertical ? Math.Max(0D, group.ClipY) : 0D;
+        double right = group.ClipHorizontal ? Math.Min(surfaceWidth, group.ClipX + group.ClipWidth) : surfaceWidth;
+        double bottom = group.ClipVertical ? Math.Min(surfaceHeight, group.ClipY + group.ClipHeight) : surfaceHeight;
+        if (right <= left + 0.0001D || bottom <= top + 0.0001D) return;
+        canvas.Clip(
+            left * PointsPerCssPixel,
+            top * PointsPerCssPixel,
+            (right - left) * PointsPerCssPixel,
+            (bottom - top) * PointsPerCssPixel,
+            clipped => {
+                foreach (HtmlRenderVisual child in group.Visuals.OrderBy(item => item.PaintOrder)) {
+                    AddVisual(clipped, child, webFonts, surfaceWidth, surfaceHeight);
+                }
+            });
+    }
+
+    private static void AddPathClipGroup(
+        PdfCore.PdfPageCanvas canvas,
+        HtmlRenderPathClipGroup group,
+        IReadOnlyDictionary<string, PdfCore.PdfStandardFont> webFonts,
+        double surfaceWidth,
+        double surfaceHeight) {
+        canvas.Clip(
+            group.ClipX * PointsPerCssPixel,
+            group.ClipY * PointsPerCssPixel,
+            group.ClipPath.Scale(PointsPerCssPixel, PointsPerCssPixel),
+            clipped => {
+                foreach (HtmlRenderVisual child in group.Visuals.OrderBy(item => item.PaintOrder)) {
+                    AddVisual(clipped, child, webFonts, surfaceWidth, surfaceHeight);
+                }
+            });
     }
 
     private static void AddShape(PdfCore.PdfPageCanvas canvas, HtmlRenderShape visual) {
@@ -127,6 +205,81 @@ internal static class HtmlPdfRenderedConverter {
             alternativeText: visual.AlternativeText);
     }
 
+    private static void AddDrawing(
+        PdfCore.PdfPageCanvas canvas,
+        HtmlRenderDrawing visual,
+        IReadOnlyDictionary<string, PdfCore.PdfStandardFont> webFonts) {
+        OfficeDrawing source = visual.Drawing;
+        double scaleX = visual.Width / source.Width;
+        double scaleY = visual.Height / source.Height;
+        double originX = visual.X * PointsPerCssPixel;
+        double originY = visual.Y * PointsPerCssPixel;
+        OfficeTransform drawingToPage = OfficeTransform.Scale(scaleX * PointsPerCssPixel, scaleY * PointsPerCssPixel)
+            .Then(OfficeTransform.Translate(originX, originY));
+        OfficeTransform pageToDrawing = drawingToPage.Invert();
+
+        void AddElements(PdfCore.PdfPageCanvas target, IReadOnlyList<OfficeDrawingElement> elements) {
+            var shapeBatch = new OfficeDrawing(source.Width, source.Height);
+            void FlushShapes() {
+                if (shapeBatch.Elements.Count == 0) return;
+                target.Drawing(
+                    shapeBatch,
+                    originX,
+                    originY,
+                    visual.Width * PointsPerCssPixel,
+                    visual.Height * PointsPerCssPixel,
+                    linkUri: visual.LinkUri,
+                    linkContents: visual.LinkUri == null ? null : visual.Source);
+                shapeBatch = new OfficeDrawing(source.Width, source.Height);
+            }
+
+            foreach (OfficeDrawingElement element in elements) {
+                if (element is OfficeDrawingShape shape) {
+                    shapeBatch.AddShape(shape.Shape, shape.X, shape.Y);
+                    continue;
+                }
+                if (element is OfficeDrawingEffectGroup effectGroup) {
+                    FlushShapes();
+                    OfficeTransform pageTransform = pageToDrawing
+                        .Then(effectGroup.Transform)
+                        .Then(drawingToPage);
+                    OfficeDrawing nestedDrawing = effectGroup.Drawing;
+                    target.Effect(pageTransform, effectGroup.Opacity, nested => AddElements(nested, nestedDrawing.Elements));
+                    continue;
+                }
+                if (element is not OfficeDrawingText text || text.Text.Length == 0) continue;
+                FlushShapes();
+                double fontSize = text.Font.Size * scaleY * PointsPerCssPixel;
+                double lineHeight = (text.LineHeight ?? text.Font.Size * 1.2D) * scaleY * PointsPerCssPixel;
+                PdfCore.PdfColor? color = text.Color.HasValue ? PdfCore.PdfColor.FromOfficeColorOrNull(text.Color.Value) : null;
+                var run = new PdfCore.TextRun(
+                    text.Text,
+                    bold: text.Font.IsBold,
+                    underline: text.Font.IsUnderline,
+                    color: color,
+                    italic: text.Font.IsItalic,
+                    strike: text.Font.IsStrikethrough,
+                    fontSize: fontSize,
+                    font: MapFont(text.Font.FamilyName, webFonts),
+                    linkUri: visual.LinkUri,
+                    linkContents: visual.LinkUri == null ? null : text.Text);
+                target.Text(
+                    new[] { run },
+                    (visual.X + text.X * scaleX) * PointsPerCssPixel,
+                    (visual.Y + text.Y * scaleY) * PointsPerCssPixel,
+                    text.Width * scaleX * PointsPerCssPixel,
+                    text.Height * scaleY * PointsPerCssPixel,
+                    color,
+                    MapAlignment(text.Alignment),
+                    fontSize,
+                    lineHeight);
+            }
+            FlushShapes();
+        }
+
+        AddElements(canvas, source.Elements);
+    }
+
     private static void AddImagePattern(PdfCore.PdfPageCanvas canvas, HtmlRenderImagePattern visual) {
         OfficeImagePatternLayout pattern = visual.Pattern.Scale(PointsPerCssPixel);
         OfficeImagePlacement area = pattern.Area;
@@ -175,7 +328,7 @@ internal static class HtmlPdfRenderedConverter {
 
         var orderedFamilies = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (HtmlRenderText text in rendered.Pages.SelectMany(page => page.Visuals).OfType<HtmlRenderText>()) {
+        foreach (HtmlRenderText text in rendered.Pages.SelectMany(page => EnumerateVisuals(page.Visuals)).OfType<HtmlRenderText>()) {
             foreach (string family in EnumerateFamilies(text.Font.FamilyName)) {
                 if (byFamily.ContainsKey(family) && seen.Add(family)) {
                     orderedFamilies.Add(family);
@@ -207,6 +360,17 @@ internal static class HtmlPdfRenderedConverter {
         }
 
         return mappings;
+    }
+
+    private static IEnumerable<HtmlRenderVisual> EnumerateVisuals(IEnumerable<HtmlRenderVisual> visuals) {
+        foreach (HtmlRenderVisual visual in visuals) {
+            yield return visual;
+            IEnumerable<HtmlRenderVisual>? children = visual is HtmlRenderClipGroup clipGroup
+                ? clipGroup.Visuals
+                : visual is HtmlRenderEffectGroup effectGroup ? effectGroup.Visuals : null;
+            if (children == null) continue;
+            foreach (HtmlRenderVisual child in EnumerateVisuals(children)) yield return child;
+        }
     }
 
     private static void RegisterFamily(

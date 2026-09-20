@@ -59,7 +59,212 @@ public static partial class HtmlComputedStyleEngine {
 
         string propertyName = normalized.Substring(0, separator).Trim();
         string value = normalized.Substring(separator + 1).Trim();
+        return IsSupportedSupportsConditionValue(propertyName, value);
+    }
+
+    private static bool IsSupportedSupportsConditionValue(string propertyName, string value) {
+        string normalized = value.Trim().Trim('\'', '"').ToLowerInvariant();
+        if (string.Equals(propertyName, "float", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "none", "left", "right", "inline-start", "inline-end");
+        }
+        if (string.Equals(propertyName, "clear", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "none", "left", "right", "both", "inline-start", "inline-end");
+        }
+        if (string.Equals(propertyName, "caption-side", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "top", "bottom");
+        }
+        if (string.Equals(propertyName, "table-layout", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "auto", "fixed");
+        }
+        if (string.Equals(propertyName, "border-collapse", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "separate", "collapse");
+        }
+        if (string.Equals(propertyName, "border-spacing", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssTableParser.TryParseBorderSpacing(normalized, 16D, 16D, out _, out _);
+        }
+        if (string.Equals(propertyName, "overflow", StringComparison.OrdinalIgnoreCase)) {
+            string[] values = normalized.Split(new[] { ' ', '\t', '\r', '\n', '\f' }, StringSplitOptions.RemoveEmptyEntries);
+            return values.Length >= 1 && values.Length <= 2
+                && values.All(item => IsKnownKeyword(item, "visible", "hidden", "clip", "auto", "scroll"));
+        }
+        if (string.Equals(propertyName, "overflow-x", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "overflow-y", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "visible", "hidden", "clip", "auto", "scroll");
+        }
+        if (string.Equals(propertyName, "overflow-clip-margin", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssOverflowClipMarginParser.TryParse(normalized, 16D, 16D, out _, out _);
+        }
+        if (string.Equals(propertyName, "column-count", StringComparison.OrdinalIgnoreCase)) {
+            return normalized == "auto" || int.TryParse(normalized, out int count) && count > 0;
+        }
+        if (string.Equals(propertyName, "column-fill", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "auto", "balance");
+        }
+        if (string.Equals(propertyName, "column-span", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "none", "all");
+        }
+        if (string.Equals(propertyName, "column-width", StringComparison.OrdinalIgnoreCase)) {
+            return normalized == "auto" || IsPositiveCssLength(normalized);
+        }
+        if (string.Equals(propertyName, "columns", StringComparison.OrdinalIgnoreCase)) {
+            IReadOnlyList<string> values = HtmlRenderCssValues.SplitWhitespace(normalized);
+            if (values.Count == 0 || values.Count > 2) return false;
+            bool hasCount = false;
+            bool hasWidth = false;
+            foreach (string item in values) {
+                if (item == "auto") continue;
+                if (!hasCount && int.TryParse(item, out int count) && count > 0) {
+                    hasCount = true;
+                    continue;
+                }
+                if (!hasWidth && IsPositiveCssLength(item)) {
+                    hasWidth = true;
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        }
+        if (string.Equals(propertyName, "column-rule-style", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "none", "hidden", "solid", "dashed", "dotted", "double");
+        }
+        if (string.Equals(propertyName, "column-rule-width", StringComparison.OrdinalIgnoreCase)) {
+            return IsKnownKeyword(normalized, "thin", "medium", "thick") || IsNonNegativeCssLength(normalized);
+        }
+        if (string.Equals(propertyName, "column-rule-color", StringComparison.OrdinalIgnoreCase)) {
+            return normalized == "currentcolor" || HtmlRenderCssValues.TryColor(normalized, out _);
+        }
+        if (string.Equals(propertyName, "column-rule", StringComparison.OrdinalIgnoreCase)) {
+            IReadOnlyList<string> values = HtmlRenderCssValues.SplitWhitespace(normalized);
+            if (values.Count == 0 || values.Count > 3) return false;
+            bool hasWidth = false;
+            bool hasStyle = false;
+            bool hasColor = false;
+            foreach (string item in values) {
+                if (!hasWidth && (IsKnownKeyword(item, "thin", "medium", "thick") || IsNonNegativeCssLength(item))) {
+                    hasWidth = true;
+                    continue;
+                }
+                if (!hasStyle && IsKnownKeyword(item, "none", "hidden", "solid", "dashed", "dotted", "double")) {
+                    hasStyle = true;
+                    continue;
+                }
+                if (!hasColor && (item == "currentcolor" || HtmlRenderCssValues.TryColor(item, out _))) {
+                    hasColor = true;
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        }
+        if (string.Equals(propertyName, "opacity", StringComparison.OrdinalIgnoreCase)) {
+            string number = normalized.EndsWith("%", StringComparison.Ordinal)
+                ? normalized.Substring(0, normalized.Length - 1)
+                : normalized;
+            return double.TryParse(number, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double opacity)
+                && !double.IsNaN(opacity)
+                && !double.IsInfinity(opacity);
+        }
+        if (string.Equals(propertyName, "object-fit", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssReplacedElementParser.IsSupportedObjectFitSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "object-position", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssReplacedElementParser.IsSupportedObjectPositionSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "aspect-ratio", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssReplacedElementParser.IsSupportedAspectRatioSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "transform", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssTransformParser.IsSupportedTransformSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "transform-origin", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssTransformParser.IsSupportedOriginSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-radius", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBorderRadiusParser.IsSupportedShorthandSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "box-shadow", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxShadowParser.IsSupportedSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedBorderSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-top", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-right", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-bottom", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-left", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedBorderSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-top-width", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-right-width", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-bottom-width", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-left-width", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedSideWidthSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-top-style", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-right-style", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-bottom-style", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-left-style", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedSideStyleSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-top-color", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-right-color", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-bottom-color", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-left-color", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedSideColorSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-width", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedWidthSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "outline-width", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedSideWidthSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-style", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedStyleSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "outline-style", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedSideStyleSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "border-color", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedColorSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "outline-color", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedSideColorSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "outline", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBoxStrokeParser.IsSupportedOutlineSyntax(normalized);
+        }
+        if (string.Equals(propertyName, "outline-offset", StringComparison.OrdinalIgnoreCase)) {
+            return !normalized.EndsWith("%", StringComparison.Ordinal)
+                && HtmlRenderCssValues.TryLength(normalized, 100D, 16D, 16D, out _);
+        }
+        if (string.Equals(propertyName, "border-top-left-radius", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-top-right-radius", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-bottom-right-radius", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "border-bottom-left-radius", StringComparison.OrdinalIgnoreCase)) {
+            return HtmlCssBorderRadiusParser.IsSupportedCornerSyntax(normalized);
+        }
         return IsSupportedDeclarationValue(propertyName, value);
+    }
+
+    private static bool IsPositiveCssLength(string value) {
+        int unitStart = 0;
+        while (unitStart < value.Length && (char.IsDigit(value[unitStart]) || value[unitStart] == '.' || value[unitStart] == '+' || value[unitStart] == '-')) unitStart++;
+        if (unitStart == 0 || unitStart == value.Length) return false;
+        if (!double.TryParse(value.Substring(0, unitStart), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double length)
+            || length <= 0D || double.IsNaN(length) || double.IsInfinity(length)) return false;
+        string unit = value.Substring(unitStart);
+        return IsKnownKeyword(unit, "px", "pt", "pc", "in", "cm", "mm", "q", "em", "rem");
+    }
+
+    private static bool IsNonNegativeCssLength(string value) {
+        if (value == "0") return true;
+        int unitStart = 0;
+        while (unitStart < value.Length && (char.IsDigit(value[unitStart]) || value[unitStart] == '.' || value[unitStart] == '+' || value[unitStart] == '-')) unitStart++;
+        if (unitStart == 0 || unitStart == value.Length) return false;
+        if (!double.TryParse(value.Substring(0, unitStart), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double length)
+            || length < 0D || double.IsNaN(length) || double.IsInfinity(length)) return false;
+        return IsKnownKeyword(value.Substring(unitStart), "px", "pt", "pc", "in", "cm", "mm", "q", "em", "rem");
     }
 
     private static bool IsSupportedDeclarationValue(string propertyName, string value) {

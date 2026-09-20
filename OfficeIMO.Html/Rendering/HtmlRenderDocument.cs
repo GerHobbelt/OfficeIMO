@@ -34,5 +34,18 @@ public sealed class HtmlRenderDocument {
     public OfficeFontFaceCollection Fonts => _fonts.Clone();
 
     /// <summary>Concatenated searchable text retained by the shared render model.</summary>
-    public string Text => string.Join("\n", _pages.SelectMany(page => page.Visuals).OfType<HtmlRenderText>().Select(text => text.Text));
+    public string Text => string.Join("\n", _pages.SelectMany(page => EnumerateVisuals(page.Visuals)).OfType<HtmlRenderText>().Select(text => text.Text));
+
+    private static IEnumerable<HtmlRenderVisual> EnumerateVisuals(IEnumerable<HtmlRenderVisual> visuals) {
+        foreach (HtmlRenderVisual visual in visuals) {
+            yield return visual;
+            IEnumerable<HtmlRenderVisual>? children = visual is HtmlRenderClipGroup clipGroup
+                ? clipGroup.Visuals
+                : visual is HtmlRenderPathClipGroup pathClipGroup
+                    ? pathClipGroup.Visuals
+                : visual is HtmlRenderEffectGroup effectGroup ? effectGroup.Visuals : null;
+            if (children == null) continue;
+            foreach (HtmlRenderVisual child in EnumerateVisuals(children)) yield return child;
+        }
+    }
 }

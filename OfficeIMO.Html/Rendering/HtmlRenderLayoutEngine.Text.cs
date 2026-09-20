@@ -7,6 +7,7 @@ namespace OfficeIMO.Html;
 internal sealed partial class HtmlRenderLayoutEngine {
     private HtmlInlineLayout LayoutInlineNodes(IEnumerable<INode> nodes, double width, HtmlRenderBoxStyle parentStyle, int depth, string? prefix, IElement? generatedContentOwner) {
         var runs = new List<HtmlInlineRun>();
+        IElement? formattingContainer = generatedContentOwner ?? nodes.FirstOrDefault()?.ParentElement;
         if (!string.IsNullOrEmpty(prefix)) {
             runs.Add(new HtmlInlineRun(prefix!, parentStyle, null, "list-marker"));
         }
@@ -24,7 +25,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             AddGeneratedInlineRun(generatedContentOwner, HtmlPseudoElementKind.After, width, containingHeight, parentStyle, null, 0D, 0D, runs);
         }
 
-        return LayoutInlineRuns(runs, width, parentStyle);
+        return LayoutInlineRuns(runs, width, parentStyle, formattingContainer);
     }
 
     private void CollectInlineRuns(
@@ -44,7 +45,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
         if (node is IText textNode) {
             if (textNode.Data.Length > 0) {
-                runs.Add(new HtmlInlineRun(ApplyTextTransform(textNode.Data, inheritedStyle.TextTransform), inheritedStyle, inheritedLink, inheritedStyle.SemanticRole, inheritedPaintOffsetX, inheritedPaintOffsetY));
+                runs.Add(new HtmlInlineRun(ApplyTextTransform(textNode.Data, inheritedStyle.TextTransform), inheritedStyle, inheritedLink, inheritedStyle.SemanticRole, inheritedPaintOffsetX, inheritedPaintOffsetY, textNode.ParentElement));
             }
 
             return;
@@ -53,26 +54,64 @@ internal sealed partial class HtmlRenderLayoutEngine {
         if (!(node is IElement element) || ShouldSkipElement(element)) return;
         string tag = element.TagName.ToLowerInvariant();
         if (tag == "br") {
-            runs.Add(new HtmlInlineRun("\u2028", inheritedStyle, inheritedLink, HtmlRenderStyleResolver.DescribeSource(element), inheritedPaintOffsetX, inheritedPaintOffsetY));
+            runs.Add(new HtmlInlineRun("\u2028", inheritedStyle, inheritedLink, HtmlRenderStyleResolver.DescribeSource(element), inheritedPaintOffsetX, inheritedPaintOffsetY, element));
             return;
         }
 
         HtmlRenderBoxStyle style = _styleResolver.Resolve(element, width, inheritedStyle);
+        _layoutStyles[element] = style.Clone();
         if (style.Display == "none") return;
-        ResolvePositionPaintOffset(style, width, containingHeight, HtmlRenderStyleResolver.DescribeSource(element), out double elementPaintOffsetX, out double elementPaintOffsetY);
-        double paintOffsetX = inheritedPaintOffsetX + elementPaintOffsetX;
-        double paintOffsetY = inheritedPaintOffsetY + elementPaintOffsetY;
+        ReportUnsupportedFloatValues(element, style);
+        ReportUnsupportedOverflowValues(element, style);
+        ReportUnsupportedMultiColumnValues(element, style);
         string? link = inheritedLink;
         if (tag == "a") {
             link = ResolveSafeLink(element.GetAttribute("href"), element);
         }
+        if ((style.Position == "relative" || style.Position == "sticky") && style.ZIndex != "auto") {
+            _inlineStackingElements.Add(element);
+        }
+        if (style.Position == "absolute" || style.Position == "fixed") {
+            RegisterOutOfFlowElement(element.ParentElement ?? element, element, style, inheritedStyle, depth);
+            runs.Add(new HtmlInlineRun(
+                string.Empty,
+                style,
+                null,
+                HtmlRenderStyleResolver.DescribeSource(element),
+                inheritedPaintOffsetX,
+                inheritedPaintOffsetY,
+                element.ParentElement,
+                element));
+            return;
+        }
+        if (style.FloatSide != "none") {
+            AddFloatingRun(element, width, inheritedStyle, depth, style, link, runs);
+            return;
+        }
+
+        if (tag != "img" && style.Display == "inline-block") {
+            AddInlineBlockRun(element, width, inheritedStyle, depth, style, link, inheritedPaintOffsetX, inheritedPaintOffsetY, runs);
+            return;
+        }
+        if (tag != "img" && style.Display == "inline-flex") {
+            AddInlineFlexRun(element, width, inheritedStyle, depth, style, link, inheritedPaintOffsetX, inheritedPaintOffsetY, runs);
+            return;
+        }
+        if (tag != "img" && style.Display == "inline-grid") {
+            AddInlineGridRun(element, width, inheritedStyle, depth, style, link, inheritedPaintOffsetX, inheritedPaintOffsetY, runs);
+            return;
+        }
+
+        ReportUnsupportedInlinePaintEffects(element, style);
+
+        ResolvePositionPaintOffset(style, width, containingHeight, HtmlRenderStyleResolver.DescribeSource(element), out double elementPaintOffsetX, out double elementPaintOffsetY);
+        double paintOffsetX = inheritedPaintOffsetX + elementPaintOffsetX;
+        double paintOffsetY = inheritedPaintOffsetY + elementPaintOffsetY;
 
         AddGeneratedInlineRun(element, HtmlPseudoElementKind.Before, width, containingHeight, style, link, paintOffsetX, paintOffsetY, runs);
 
         if (tag == "img") {
-            string alternativeText = element.GetAttribute("alt") ?? string.Empty;
-            if (alternativeText.Length > 0) runs.Add(new HtmlInlineRun(alternativeText, style, link, HtmlRenderStyleResolver.DescribeSource(element), paintOffsetX, paintOffsetY));
-            AddUnsupported(HtmlRenderDiagnosticCodes.InlineImageFallback, "An inline image was represented by its alternative text; block image layout is supported separately.", element);
+            AddInlineImageRun(element, style, link, paintOffsetX, paintOffsetY, runs);
             return;
         }
 
@@ -83,12 +122,33 @@ internal sealed partial class HtmlRenderLayoutEngine {
         AddGeneratedInlineRun(element, HtmlPseudoElementKind.After, width, containingHeight, style, link, paintOffsetX, paintOffsetY, runs);
     }
 
-    private HtmlInlineLayout LayoutInlineRuns(IReadOnlyList<HtmlInlineRun> runs, double width, HtmlRenderBoxStyle paragraphStyle) {
+    private HtmlInlineLayout LayoutInlineRuns(IReadOnlyList<HtmlInlineRun> runs, double width, HtmlRenderBoxStyle paragraphStyle, IElement? formattingContainer = null) {
         if (runs.Count == 0 || width <= 0D) return new HtmlInlineLayout(Array.Empty<HtmlRenderVisual>(), 0D);
+        if (runs.Any(run => run.FloatingBlock != null)) {
+            return LayoutInlineRunsWithFloats(runs, width, paragraphStyle, formattingContainer);
+        }
         var lines = new List<InlineLine>();
         var line = new InlineLine();
         bool previousWasCollapsibleSpace = false;
         foreach (HtmlInlineRun run in runs) {
+            if (run.PositionedMarkerElement != null) {
+                line.Add(new InlineSegment(string.Empty, 0D, run));
+                previousWasCollapsibleSpace = false;
+                continue;
+            }
+            if (run.AtomicBlock != null) {
+                previousWasCollapsibleSpace = false;
+                double atomicWidth = run.AtomicBlock.Width;
+                if (line.Segments.Count > 0 && line.Width + atomicWidth > width) {
+                    TrimTrailingWhitespace(line);
+                    lines.Add(line);
+                    line = new InlineLine();
+                }
+
+                line.Add(new InlineSegment(string.Empty, atomicWidth, run));
+                continue;
+            }
+
             foreach (string token in Tokenize(run.Text, paragraphStyle.PreserveWhitespace)) {
                 if (token == "\u2028" || paragraphStyle.PreserveWhitespace && (token == "\n" || token == "\r\n")) {
                     lines.Add(line);
@@ -125,49 +185,13 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
         TrimTrailingWhitespace(line);
         if (line.Segments.Count > 0 || lines.Count == 0) lines.Add(line);
-
-        var visuals = new List<HtmlRenderVisual>();
-        var breakOffsets = new List<double>();
-        double y = 0D;
-        foreach (InlineLine current in lines) {
-            double lineHeight = current.ResolveLineHeight(paragraphStyle.LineHeight);
-            double offsetX = ResolveLineOffset(paragraphStyle.Alignment, width, current.Width);
-            double x = offsetX;
-            foreach (InlineSegment segment in MergeAdjacentInlineSegments(current.Segments)) {
-                if (segment.Text.Length > 0 && segment.Width > 0D) {
-                    double frameTolerance = Math.Max(1D, segment.Run.Style.Font.Size * 0.35D);
-                    double frameWidth = Math.Min(Math.Max(0.01D, width - x), segment.Width + frameTolerance);
-                    HtmlRenderVisual visual = new HtmlRenderText(
-                        segment.Text,
-                        x,
-                        y,
-                        Math.Max(0.01D, frameWidth),
-                        Math.Max(0.01D, lineHeight),
-                        segment.Run.Style.Font,
-                        segment.Run.Style.Color,
-                        OfficeTextAlignment.Left,
-                        lineHeight,
-                        visuals.Count,
-                        segment.Run.LinkUri,
-                        segment.Run.Source,
-                        segment.Run.Style.SemanticRole);
-                    visuals.Add(visual.TranslatePaint(segment.Run.PaintOffsetX, segment.Run.PaintOffsetY, visuals.Count));
-                }
-
-                x += segment.Width;
-            }
-
-            y += lineHeight;
-            breakOffsets.Add(y);
-        }
-
-        return new HtmlInlineLayout(visuals, y, breakOffsets);
+        return RenderInlineLines(lines, width, paragraphStyle, formattingContainer);
     }
 
     private static IReadOnlyList<InlineSegment> MergeAdjacentInlineSegments(IReadOnlyList<InlineSegment> segments) {
         var merged = new List<InlineSegment>(segments.Count);
         foreach (InlineSegment segment in segments) {
-            if (merged.Count > 0 && ReferenceEquals(merged[merged.Count - 1].Run, segment.Run)) {
+            if (segment.Run.AtomicBlock == null && merged.Count > 0 && ReferenceEquals(merged[merged.Count - 1].Run, segment.Run)) {
                 InlineSegment previous = merged[merged.Count - 1];
                 merged[merged.Count - 1] = new InlineSegment(previous.Text + segment.Text, previous.Width + segment.Width, previous.Run);
             } else {
@@ -306,6 +330,17 @@ internal sealed partial class HtmlRenderLayoutEngine {
     private sealed class InlineLine {
         internal List<InlineSegment> Segments { get; } = new List<InlineSegment>();
         internal double Width { get; private set; }
+        internal bool HasExplicitPlacement { get; private set; }
+        internal double X { get; private set; }
+        internal double Y { get; private set; }
+        internal double AvailableWidth { get; private set; }
+
+        internal void Place(double x, double y, double availableWidth) {
+            HasExplicitPlacement = true;
+            X = Math.Max(0D, x);
+            Y = Math.Max(0D, y);
+            AvailableWidth = Math.Max(0.01D, availableWidth);
+        }
 
         internal void Add(InlineSegment segment) {
             Segments.Add(segment);
@@ -320,8 +355,35 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
         internal double ResolveLineHeight(double fallback) {
             double height = fallback;
-            for (int i = 0; i < Segments.Count; i++) height = Math.Max(height, Segments[i].Run.Style.LineHeight);
-            return Math.Max(0.01D, height);
+            for (int i = 0; i < Segments.Count; i++) {
+                height = Math.Max(height, Segments[i].Run.AtomicBlock?.Height ?? Segments[i].Run.Style.LineHeight);
+            }
+            if (!HasReplacedImage) return Math.Max(0.01D, height);
+
+            double ascent = 0D;
+            double descent = 0D;
+            for (int i = 0; i < Segments.Count; i++) {
+                HtmlInlineRun run = Segments[i].Run;
+                if (run.AtomicBlock != null) {
+                    ascent = Math.Max(ascent, run.AtomicBlock.Height);
+                } else {
+                    ascent = Math.Max(ascent, ResolveTextAscent(run.Style));
+                    descent = Math.Max(descent, Math.Max(0D, run.Style.LineHeight - ResolveTextAscent(run.Style)));
+                }
+            }
+            return Math.Max(0.01D, ascent + descent);
+        }
+
+        internal bool HasReplacedImage => Segments.Any(segment => segment.Run.IsReplacedImage);
+
+        internal double ResolveBaseline(double fallback) {
+            if (!HasReplacedImage) return ResolveLineHeight(fallback);
+            double ascent = 0D;
+            for (int i = 0; i < Segments.Count; i++) {
+                HtmlInlineRun run = Segments[i].Run;
+                ascent = Math.Max(ascent, run.AtomicBlock?.Height ?? ResolveTextAscent(run.Style));
+            }
+            return ascent;
         }
     }
 
@@ -335,5 +397,10 @@ internal sealed partial class HtmlRenderLayoutEngine {
         internal string Text { get; }
         internal double Width { get; }
         internal HtmlInlineRun Run { get; }
+    }
+
+    private static double ResolveTextAscent(HtmlRenderBoxStyle style) {
+        double leading = Math.Max(0D, style.LineHeight - style.Font.Size);
+        return Math.Min(style.LineHeight, leading / 2D + style.Font.Size * 0.8D);
     }
 }

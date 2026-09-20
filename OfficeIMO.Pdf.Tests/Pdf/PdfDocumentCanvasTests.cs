@@ -762,6 +762,44 @@ public class PdfDocumentCanvasTests {
     }
 
     [Fact]
+    public void CanvasClip_AcceptsRoundedSharedClipPath() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions {
+                PageWidth = 220,
+                PageHeight = 160,
+                CompressContentStreams = false
+            })
+            .Canvas(canvas => canvas.Clip(20, 20, OfficeClipPath.RoundedRectangle(100, 80, 10), clipped =>
+                clipped.Image(CreateMinimalRgbPng(), 20, 20, 100, 80)))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains(" c", raw, StringComparison.Ordinal);
+        Assert.Contains(" W n\n", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("20 60 100 80 re W", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CanvasClip_AcceptsFreeformSharedClipPath() {
+        OfficeClipPath triangle = OfficeClipPath.Path(
+            OfficePathCommand.MoveTo(0, 0),
+            OfficePathCommand.LineTo(100, 0),
+            OfficePathCommand.LineTo(50, 80),
+            OfficePathCommand.Close());
+        byte[] bytes = PdfDocument.Create(new PdfOptions {
+                PageWidth = 220,
+                PageHeight = 160,
+                CompressContentStreams = false
+            })
+            .Canvas(canvas => canvas.Clip(20, 20, triangle, clipped =>
+                clipped.Image(CreateMinimalRgbPng(), 20, 20, 100, 80)))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("20 140 m 120 140 l 70 60 l h W n", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("20 60 100 80 re W", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CanvasTable_SkipsVerticalGridDividersInsideMergedCells() {
         byte[] bytes = PdfDocument.Create(new PdfOptions {
                 PageWidth = 240,
@@ -945,6 +983,50 @@ public class PdfDocumentCanvasTests {
 
         Assert.Contains("100 0 0 100 -25 0 cm", raw, StringComparison.Ordinal);
         Assert.Contains("0.5 0 0.5 1 re", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CanvasEffect_WritesIsolatedFormAndTransformsSearchableLinkedText() {
+        const string uri = "https://evotec.xyz/canvas-effect";
+        PdfOptions options = new PdfOptions {
+            PageWidth = 140,
+            PageHeight = 100,
+            MarginLeft = 0,
+            MarginRight = 0,
+            MarginTop = 0,
+            MarginBottom = 0,
+            CompressContentStreams = false
+        };
+        byte[] flatBytes = PdfDocument.Create(options)
+            .Canvas(canvas => canvas.Text(new[] { TextRun.Link("EffectText", uri) }, 20, 20, 80, 20, fontSize: 10))
+            .ToBytes();
+        byte[] effectBytes = PdfDocument.Create(options)
+            .Canvas(canvas => canvas.Effect(
+                OfficeTransform.Translate(12D, 7D),
+                0.5D,
+                nested => nested.Text(new[] { TextRun.Link("EffectText", uri) }, 20, 20, 80, 20, fontSize: 10)))
+            .ToBytes();
+
+        PdfLinkAnnotation flatLink = Assert.Single(PdfInspector.Inspect(flatBytes).LinkAnnotations);
+        PdfLinkAnnotation effectLink = Assert.Single(PdfInspector.Inspect(effectBytes).LinkAnnotations);
+        string raw = Encoding.ASCII.GetString(effectBytes);
+        using var pdf = PdfPigDocument.Open(new MemoryStream(effectBytes));
+
+        Assert.Contains("EffectText", pdf.GetPage(1).Text, StringComparison.Ordinal);
+        Assert.Contains("/Group << /S /Transparency /I true /K false >>", raw, StringComparison.Ordinal);
+        Assert.Contains("1 0 0 1 12 -7 cm", raw, StringComparison.Ordinal);
+        AssertClose(flatLink.X1 + 12D, effectLink.X1);
+        AssertClose(flatLink.Y1 - 7D, effectLink.Y1);
+        AssertClose(flatLink.X2 + 12D, effectLink.X2);
+        AssertClose(flatLink.Y2 - 7D, effectLink.Y2);
+    }
+
+    [Fact]
+    public void CanvasEffect_RejectsInvalidOpacity() {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().Canvas(canvas =>
+            canvas.Effect(OfficeTransform.Identity, double.NaN, _ => { })));
+        Assert.Throws<ArgumentNullException>(() => PdfDocument.Create().Canvas(canvas =>
+            canvas.Effect(OfficeTransform.Identity, 1D, null!)));
     }
 
     [Fact]

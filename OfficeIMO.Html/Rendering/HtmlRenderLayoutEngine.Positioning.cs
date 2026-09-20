@@ -1,4 +1,5 @@
 using AngleSharp.Dom;
+using System.Globalization;
 
 namespace OfficeIMO.Html;
 
@@ -9,7 +10,15 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double containingWidth,
         double? containingHeight,
         IElement element) {
-        return ApplyPositioning(block, style, containingWidth, containingHeight, HtmlRenderStyleResolver.DescribeSource(element));
+        HtmlRenderFlowBlock effected = ApplyElementPaintEffects(block, style, containingWidth, element, out bool effectStackingContext);
+        string source = HtmlRenderStyleResolver.DescribeSource(element);
+        HtmlRenderFlowBlock positioned = ApplyPositioning(effected, style, containingWidth, containingHeight, source);
+        if (style.Position == "relative" || style.Position == "sticky") {
+            return positioned.WithStacking(ResolvePositionedZIndex(element, style), GetPositionedSourceOrder(element));
+        }
+        return effectStackingContext
+            ? positioned.WithStacking(0, GetPositionedSourceOrder(element))
+            : positioned;
     }
 
     private HtmlRenderFlowBlock ApplyPositioning(
@@ -34,6 +43,18 @@ internal sealed partial class HtmlRenderLayoutEngine {
         offsetX = 0D;
         offsetY = 0D;
         if (style.Position == "static") return;
+        if (style.Position == "sticky") {
+            if (_reportedStickySources.Add(source)) {
+                _diagnostics.Add(
+                    ComponentName,
+                    HtmlRenderDiagnosticCodes.PositionStickyStatic,
+                    "CSS sticky positioning was captured at its stable static document position.",
+                    HtmlDiagnosticSeverity.Info,
+                    source,
+                    "position=sticky");
+            }
+            return;
+        }
         if (style.Position != "relative") {
             _diagnostics.Add(
                 ComponentName,
@@ -47,15 +68,26 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
         offsetX = ResolvePositionAxis(style.Left, style.Right, containingWidth, style, source, "left", "right");
         offsetY = ResolvePositionAxis(style.Top, style.Bottom, containingHeight, style, source, "top", "bottom");
-        if (style.ZIndex != "auto") {
-            _diagnostics.Add(
-                ComponentName,
-                HtmlRenderDiagnosticCodes.PositionZIndexPending,
-                "CSS z-index is not yet active; the relatively positioned element retained source paint order.",
-                HtmlDiagnosticSeverity.Warning,
-                source,
-                "z-index=" + style.ZIndex);
-        }
+    }
+
+    private int ResolvePositionedZIndex(IElement element, HtmlRenderBoxStyle style) {
+        if (string.Equals(style.ZIndex, "auto", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (int.TryParse(style.ZIndex, NumberStyles.Integer, CultureInfo.InvariantCulture, out int zIndex)) return zIndex;
+        _diagnostics.Add(
+            ComponentName,
+            HtmlRenderDiagnosticCodes.PositionZIndexPending,
+            "A positioned z-index was not an integer and used the auto stacking level.",
+            HtmlDiagnosticSeverity.Warning,
+            HtmlRenderStyleResolver.DescribeSource(element),
+            "z-index=" + style.ZIndex);
+        return 0;
+    }
+
+    private int GetPositionedSourceOrder(IElement element) {
+        if (_positionedSourceOrdersByElement.TryGetValue(element, out int sourceOrder)) return sourceOrder;
+        sourceOrder = _positionedSourceOrder++;
+        _positionedSourceOrdersByElement[element] = sourceOrder;
+        return sourceOrder;
     }
 
     private double ResolvePositionAxis(
