@@ -6,7 +6,7 @@ namespace OfficeIMO.Drawing;
 /// <summary>
 /// Dependency-free raster renderer for <see cref="OfficeDrawing"/> scenes.
 /// </summary>
-public static class OfficeDrawingRasterRenderer {
+public static partial class OfficeDrawingRasterRenderer {
     /// <summary>
     /// Renders a drawing to an RGBA raster image.
     /// </summary>
@@ -22,7 +22,7 @@ public static class OfficeDrawingRasterRenderer {
         int width = Math.Max(1, (int)Math.Ceiling(drawing.Width * scale));
         int height = Math.Max(1, (int)Math.Ceiling(drawing.Height * scale));
         OfficeRasterImage image = new OfficeRasterImage(width, height, background);
-        OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
+        OfficeRasterCanvas canvas = new OfficeRasterCanvas(image, fonts: drawing.Fonts);
         RenderElements(canvas, drawing.Elements, scale);
 
         return image;
@@ -38,6 +38,8 @@ public static class OfficeDrawingRasterRenderer {
                 RenderRichText(canvas, richText, scale);
             } else if (element is OfficeDrawingImage drawingImage) {
                 RenderImage(canvas, drawingImage, scale);
+            } else if (element is OfficeDrawingImagePattern imagePattern) {
+                RenderImagePattern(canvas, imagePattern, scale);
             } else if (element is OfficeDrawingGroup drawingGroup) {
                 RenderGroup(canvas, drawingGroup, scale);
             }
@@ -355,7 +357,7 @@ public static class OfficeDrawingRasterRenderer {
     }
 
     private static void RenderImage(OfficeRasterCanvas canvas, OfficeDrawingImage drawingImage, double scale) {
-        if (OfficeRasterImageDecoder.TryDecode(drawingImage.Bytes, out OfficeRasterImage? image) && image != null) {
+        if (OfficeRasterImageDecoder.TryDecode(drawingImage.EncodedBytes, out OfficeRasterImage? image) && image != null) {
             if (drawingImage.Opacity < 1D) {
                 image = ApplyImageOpacity(image, drawingImage.Opacity);
             }

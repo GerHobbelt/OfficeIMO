@@ -3138,6 +3138,18 @@ public partial class DrawingTests {
     }
 
     [Fact]
+    public void OfficeTextMeasurerMeasuresUnicodeTextElementsWithoutDoubleCountingMarksOrSurrogates() {
+        var measurer = OfficeTextMeasurer.Create(OfficeFontInfo.Default);
+        OfficeTextMeasurementStyle style = measurer.CreateStyle(new OfficeFontInfo("Arial", 12));
+        string composed = "e\u0301";
+        string smile = char.ConvertFromUtf32(0x1F600);
+
+        Assert.Equal(measurer.MeasureWidth("e", style), measurer.MeasureWidth(composed, style), 6);
+        Assert.Equal(measurer.MeasureWidth("漢", style), measurer.MeasureWidth(smile, style), 6);
+        Assert.Equal(new[] { "A", composed, smile, "B" }, OfficeTextElements.Split("A" + composed + smile + "B"));
+    }
+
+    [Fact]
     public void OfficeTextMeasurerNormalizesFallbackFontInfo() {
         var measurer = OfficeTextMeasurer.Create(new OfficeFontInfo(null, 0));
 
@@ -3173,6 +3185,15 @@ public partial class DrawingTests {
     }
 
     [Fact]
+    public void OfficeTrueTypeFontMapsNonBmpScalarsThroughFormat12Cmap() {
+        byte[] fontData = CreateMinimalTrueTypeFont(CreateFormat12Cmap(0x1F600));
+        OfficeTrueTypeFont? font = OfficeTrueTypeFont.TryLoad(fontData);
+
+        Assert.NotNull(font);
+        Assert.Equal(500D, font!.Measure(char.ConvertFromUtf32(0x1F600), 1000D));
+    }
+
+    [Fact]
     public void OfficeTrueTypeFontReadsDefaultFontOutlinesWhenAvailable() {
         OfficeTrueTypeFont? font = OfficeTrueTypeFont.TryLoadDefault(out string? path);
         if (font == null) {
@@ -3199,6 +3220,39 @@ public partial class DrawingTests {
         Assert.True(font.Measure("OfficeIMO", 18) > 0);
     }
 
+    [Fact]
+    public void OfficeFontFaceCollectionScopesValidationMeasurementAndSvgEmbedding() {
+        byte[] fontData = CreateMinimalTrueTypeFont(CreateFormat12Cmap(0x1F600));
+        var fonts = new OfficeFontFaceCollection();
+
+        Assert.False(fonts.TryAdd("Broken", new byte[] { 1, 2, 3 }));
+        Assert.True(fonts.TryAdd("Scoped Demo", fontData));
+        Assert.Single(fonts.Faces);
+        Assert.NotSame(fontData, fonts.Faces[0].Data);
+
+        var canvas = new OfficeRasterCanvas(new OfficeRasterImage(16, 16), fonts: fonts);
+        Assert.Equal(500D, canvas.MeasureText("A", 1000D, "\"Scoped Demo\", sans-serif"));
+
+        var drawing = new OfficeDrawing(120D, 30D);
+        drawing.Fonts.AddRange(fonts);
+        drawing.AddText("Scoped", 0D, 0D, 120D, 30D, new OfficeFontInfo("Scoped Demo", 12D));
+        string svg = OfficeDrawingSvgExporter.ToSvg(drawing);
+
+        Assert.Contains("@font-face{font-family:\"Scoped Demo\"", svg, StringComparison.Ordinal);
+        Assert.Contains(Convert.ToBase64String(fontData), svg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeDrawingCarriesScopedFontsAcrossNestedDrawings() {
+        byte[] fontData = CreateMinimalTrueTypeFont(CreateFormat12Cmap(0x1F600));
+        var nested = new OfficeDrawing(20D, 20D).AddFont("Nested Demo", fontData, OfficeFontStyle.Bold);
+        var drawing = new OfficeDrawing(40D, 40D).AddDrawing(nested, 0D, 0D);
+
+        OfficeFontFace face = Assert.Single(drawing.Fonts.Faces);
+        Assert.Equal("Nested Demo", face.FamilyName);
+        Assert.Equal(OfficeFontStyle.Bold, face.Style);
+    }
+
     private static byte[] CreateTruncatedFormat12Cmap() {
         var data = new byte[28];
         WriteUInt16(data, 2, 1);
@@ -3208,6 +3262,21 @@ public partial class DrawingTests {
         WriteUInt16(data, 12, 12);
         WriteUInt32(data, 16, 16);
         WriteUInt32(data, 24, 2);
+        return data;
+    }
+
+    private static byte[] CreateFormat12Cmap(int scalar) {
+        var data = new byte[40];
+        WriteUInt16(data, 2, 1);
+        WriteUInt16(data, 4, 3);
+        WriteUInt16(data, 6, 10);
+        WriteUInt32(data, 8, 12);
+        WriteUInt16(data, 12, 12);
+        WriteUInt32(data, 16, 28);
+        WriteUInt32(data, 24, 1);
+        WriteUInt32(data, 28, (uint)scalar);
+        WriteUInt32(data, 32, (uint)scalar);
+        WriteUInt32(data, 36, 1);
         return data;
     }
 
