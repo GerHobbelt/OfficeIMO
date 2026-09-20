@@ -17,6 +17,21 @@ namespace OfficeIMO.Excel {
         public string? FilePath { get; internal set; }
 
         /// <summary>
+        /// Workbook date system used to interpret numeric date serials.
+        /// </summary>
+        public ExcelDateSystem DateSystem { get; internal set; } = ExcelDateSystem.NineteenHundred;
+
+        /// <summary>
+        /// Zero-based active worksheet index, when present.
+        /// </summary>
+        public int? ActiveWorksheetIndex { get; internal set; }
+
+        /// <summary>
+        /// Active worksheet name, when present.
+        /// </summary>
+        public string? ActiveWorksheetName { get; internal set; }
+
+        /// <summary>
         /// Worksheets in workbook order.
         /// </summary>
         public IReadOnlyList<ExcelWorksheetSnapshot> Worksheets => _worksheets;
@@ -25,6 +40,46 @@ namespace OfficeIMO.Excel {
         /// Workbook and sheet-local named ranges discovered during inspection.
         /// </summary>
         public IReadOnlyList<ExcelNamedRangeSnapshot> NamedRanges => _namedRanges;
+
+        /// <summary>
+        /// Number of package parts related to Excel slicers discovered during inspection.
+        /// </summary>
+        public int SlicerPartCount { get; internal set; }
+
+        /// <summary>
+        /// Number of package parts related to Excel timelines discovered during inspection.
+        /// </summary>
+        public int TimelinePartCount { get; internal set; }
+
+        /// <summary>
+        /// Number of package parts related to workbook connections discovered during inspection.
+        /// </summary>
+        public int ConnectionPartCount { get; internal set; }
+
+        /// <summary>
+        /// Number of package parts related to worksheet query tables discovered during inspection.
+        /// </summary>
+        public int QueryTablePartCount { get; internal set; }
+
+        /// <summary>
+        /// Whether slicer package parts were discovered.
+        /// </summary>
+        public bool HasSlicers => SlicerPartCount > 0;
+
+        /// <summary>
+        /// Whether timeline package parts were discovered.
+        /// </summary>
+        public bool HasTimelines => TimelinePartCount > 0;
+
+        /// <summary>
+        /// Whether workbook connection package parts were discovered.
+        /// </summary>
+        public bool HasConnections => ConnectionPartCount > 0;
+
+        /// <summary>
+        /// Whether worksheet query-table package parts were discovered.
+        /// </summary>
+        public bool HasQueryTables => QueryTablePartCount > 0;
 
         internal void AddWorksheet(ExcelWorksheetSnapshot worksheet) {
             if (worksheet == null) throw new ArgumentNullException(nameof(worksheet));
@@ -65,14 +120,49 @@ namespace OfficeIMO.Excel {
         public bool Hidden { get; internal set; }
 
         /// <summary>
+        /// Whether the worksheet is the workbook's active worksheet.
+        /// </summary>
+        public bool IsActive { get; internal set; }
+
+        /// <summary>
         /// Whether the worksheet is displayed right-to-left.
         /// </summary>
         public bool RightToLeft { get; internal set; }
 
         /// <summary>
+        /// Whether worksheet gridlines are visible.
+        /// </summary>
+        public bool ShowGridlines { get; internal set; } = true;
+
+        /// <summary>
+        /// Worksheet view mode, when present.
+        /// </summary>
+        public string? View { get; internal set; }
+
+        /// <summary>
+        /// Active worksheet zoom percentage, when present.
+        /// </summary>
+        public uint? ZoomScale { get; internal set; }
+
+        /// <summary>
+        /// Normal-view worksheet zoom percentage, when present.
+        /// </summary>
+        public uint? ZoomScaleNormal { get; internal set; }
+
+        /// <summary>
         /// Worksheet tab color in ARGB hexadecimal form, when present.
         /// </summary>
         public string? TabColorArgb { get; internal set; }
+
+        /// <summary>
+        /// Whether row summary controls appear below grouped rows, when specified.
+        /// </summary>
+        public bool? OutlineSummaryBelow { get; internal set; }
+
+        /// <summary>
+        /// Whether column summary controls appear to the right of grouped columns, when specified.
+        /// </summary>
+        public bool? OutlineSummaryRight { get; internal set; }
 
         /// <summary>
         /// Number of frozen rows detected on the worksheet.
@@ -355,6 +445,11 @@ namespace OfficeIMO.Excel {
     /// </summary>
     public sealed class ExcelThreadedCommentSnapshot {
         /// <summary>
+        /// Worksheet name that owns the threaded comment.
+        /// </summary>
+        public string SheetName { get; internal set; } = string.Empty;
+
+        /// <summary>
         /// Cell reference in A1 notation.
         /// </summary>
         public string CellReference { get; internal set; } = string.Empty;
@@ -453,6 +548,16 @@ namespace OfficeIMO.Excel {
         /// Whether the width was explicitly customized.
         /// </summary>
         public bool CustomWidth { get; internal set; }
+
+        /// <summary>
+        /// Excel outline level for grouped columns, when set.
+        /// </summary>
+        public byte? OutlineLevel { get; internal set; }
+
+        /// <summary>
+        /// Whether this column range carries Excel's collapsed outline marker.
+        /// </summary>
+        public bool Collapsed { get; internal set; }
     }
 
     /// <summary>
@@ -478,6 +583,16 @@ namespace OfficeIMO.Excel {
         /// Whether the height was explicitly customized.
         /// </summary>
         public bool CustomHeight { get; internal set; }
+
+        /// <summary>
+        /// Excel outline level for grouped rows, when set.
+        /// </summary>
+        public byte? OutlineLevel { get; internal set; }
+
+        /// <summary>
+        /// Whether this row carries Excel's collapsed outline marker.
+        /// </summary>
+        public bool Collapsed { get; internal set; }
     }
 
     /// <summary>
@@ -742,6 +857,17 @@ namespace OfficeIMO.Excel {
         public string? FontName { get; internal set; }
 
         /// <summary>
+        /// Font size in points, when specified by the resolved style.
+        /// </summary>
+        public double? FontSize { get; internal set; }
+
+        /// <summary>
+        /// Excel text rotation value from the resolved cell alignment, when specified.
+        /// Values 0-90 rotate text upward, 91-180 rotate text downward, and 255 represents stacked vertical text.
+        /// </summary>
+        public int? TextRotation { get; internal set; }
+
+        /// <summary>
         /// Font color in ARGB hexadecimal form, when directly resolvable.
         /// </summary>
         public string? FontColorArgb { get; internal set; }
@@ -750,6 +876,41 @@ namespace OfficeIMO.Excel {
         /// Fill color in ARGB hexadecimal form, when directly resolvable.
         /// </summary>
         public string? FillColorArgb { get; internal set; }
+
+        /// <summary>
+        /// Excel pattern fill type, when the resolved style uses a pattern fill.
+        /// </summary>
+        public string? FillPatternType { get; internal set; }
+
+        /// <summary>
+        /// Pattern foreground color in ARGB hexadecimal form, when directly resolvable.
+        /// </summary>
+        public string? FillPatternForegroundColorArgb { get; internal set; }
+
+        /// <summary>
+        /// Pattern background color in ARGB hexadecimal form, when directly resolvable.
+        /// </summary>
+        public string? FillPatternBackgroundColorArgb { get; internal set; }
+
+        /// <summary>
+        /// Whether the resolved style uses a gradient fill that image export cannot render exactly yet.
+        /// </summary>
+        public bool FillGradientUnsupported { get; internal set; }
+
+        /// <summary>
+        /// First simple gradient fill stop color in ARGB hexadecimal form, when directly resolvable.
+        /// </summary>
+        public string? FillGradientStartColorArgb { get; internal set; }
+
+        /// <summary>
+        /// Last simple gradient fill stop color in ARGB hexadecimal form, when directly resolvable.
+        /// </summary>
+        public string? FillGradientEndColorArgb { get; internal set; }
+
+        /// <summary>
+        /// Simple linear gradient angle in degrees, when directly resolvable.
+        /// </summary>
+        public double? FillGradientDegree { get; internal set; }
 
         /// <summary>
         /// Font color in RRGGBB hexadecimal form, when directly resolvable.
@@ -770,11 +931,21 @@ namespace OfficeIMO.Excel {
             Underline ||
             FontColorArgb != null ||
             FillColorArgb != null ||
+            FillPatternType != null ||
+            FillPatternForegroundColorArgb != null ||
+            FillPatternBackgroundColorArgb != null ||
+            FillGradientUnsupported ||
+            FillGradientStartColorArgb != null ||
+            FillGradientEndColorArgb != null ||
+            FillGradientDegree.HasValue ||
+            FontSize.HasValue ||
             NumberFormatId != 0U ||
             NumberFormatCode != null ||
             Border != null ||
             HorizontalAlignment != null ||
-            VerticalAlignment != null;
+            VerticalAlignment != null ||
+            TextRotation.HasValue ||
+            ShrinkToFit;
 
         /// <summary>
         /// Border metadata resolved for the cell style, when available.
@@ -795,6 +966,11 @@ namespace OfficeIMO.Excel {
         /// Whether wrap text is enabled.
         /// </summary>
         public bool WrapText { get; internal set; }
+
+        /// <summary>
+        /// Whether text should shrink horizontally to fit the rendered cell.
+        /// </summary>
+        public bool ShrinkToFit { get; internal set; }
 
         private static string? ToRgbHex(string? argb) {
             if (string.IsNullOrWhiteSpace(argb)) {

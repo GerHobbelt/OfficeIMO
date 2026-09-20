@@ -134,6 +134,14 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
+        /// Sets the font size in points.
+        /// </summary>
+        public ExcelCell SetFontSize(double fontSize) {
+            Sheet.CellFontSize(Row, Column, fontSize);
+            return this;
+        }
+
+        /// <summary>
         /// Sets the font color using a hex color value.
         /// </summary>
         public ExcelCell SetFontColor(string hexColor) {
@@ -142,10 +150,34 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
+        /// Sets or clears shrink-to-fit text alignment.
+        /// </summary>
+        public ExcelCell SetShrinkToFit(bool shrinkToFit = true) {
+            Sheet.CellShrinkToFit(Row, Column, shrinkToFit);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets Excel text rotation. Use 0-90 for upward rotation, 91-180 for downward rotation, or 255 for stacked vertical text.
+        /// </summary>
+        public ExcelCell SetTextRotation(int rotation) {
+            Sheet.CellTextRotation(Row, Column, rotation);
+            return this;
+        }
+
+        /// <summary>
         /// Sets the fill color using a hex color value.
         /// </summary>
         public ExcelCell SetFillColor(string hexColor) {
             Sheet.CellBackground(Row, Column, hexColor);
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a two-color linear gradient fill using hex color values.
+        /// </summary>
+        public ExcelCell SetGradientFill(string fromHexColor, string toHexColor, double degree = 0) {
+            Sheet.CellGradientBackground(Row, Column, fromHexColor, toHexColor, degree);
             return this;
         }
 
@@ -224,7 +256,7 @@ namespace OfficeIMO.Excel {
     /// <summary>
     /// Lightweight object model wrapper for an A1 range.
     /// </summary>
-    public sealed class ExcelRange {
+    public sealed partial class ExcelRange {
         internal ExcelRange(ExcelSheet sheet, string address) {
             Sheet = sheet ?? throw new ArgumentNullException(nameof(sheet));
             if (string.IsNullOrWhiteSpace(address)) throw new ArgumentNullException(nameof(address));
@@ -348,6 +380,14 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
+        /// Applies a two-color linear gradient fill to every cell in the range.
+        /// </summary>
+        public ExcelRange SetGradientFill(string fromHexColor, string toHexColor, double degree = 0) {
+            Sheet.FillRangeGradient(Address, fromHexColor, toHexColor, degree);
+            return this;
+        }
+
+        /// <summary>
         /// Applies a font color to every cell in the range.
         /// </summary>
         public ExcelRange SetFontColor(string hexColor) {
@@ -364,10 +404,34 @@ namespace OfficeIMO.Excel {
         }
 
         /// <summary>
+        /// Applies a font size in points to every cell in the range.
+        /// </summary>
+        public ExcelRange SetFontSize(double fontSize) {
+            ForEachCell((row, column) => Sheet.CellFontSize(row, column, fontSize));
+            return this;
+        }
+
+        /// <summary>
         /// Sets or clears bold font style for every cell in the range.
         /// </summary>
         public ExcelRange SetBold(bool bold = true) {
             ForEachCell((row, column) => Sheet.CellBold(row, column, bold));
+            return this;
+        }
+
+        /// <summary>
+        /// Sets or clears shrink-to-fit text alignment for every cell in the range.
+        /// </summary>
+        public ExcelRange SetShrinkToFit(bool shrinkToFit = true) {
+            ForEachCell((row, column) => Sheet.CellShrinkToFit(row, column, shrinkToFit));
+            return this;
+        }
+
+        /// <summary>
+        /// Sets Excel text rotation for every cell in the range.
+        /// </summary>
+        public ExcelRange SetTextRotation(int rotation) {
+            ForEachCell((row, column) => Sheet.CellTextRotation(row, column, rotation));
             return this;
         }
 
@@ -508,6 +572,14 @@ namespace OfficeIMO.Excel {
         public ExcelTable SortByColumn(int columnOffset, bool ascending = true) {
             AsRange().SortByColumn(columnOffset, ascending, hasHeader: true);
             return this;
+        }
+
+        /// <summary>
+        /// Resolves a data-column range in this table by its header text.
+        /// </summary>
+        public ExcelRange Column(string headerName, bool includeHeader = false, bool normalizeHeader = true) {
+            string range = Sheet.GetColumnRangeByHeader(headerName, NameOrRange, headerRow: 0, includeHeader, normalizeHeader);
+            return Sheet.Range(range);
         }
     }
 
