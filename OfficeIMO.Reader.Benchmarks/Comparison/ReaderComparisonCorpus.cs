@@ -9,6 +9,9 @@ using System.Text;
 namespace OfficeIMO.Reader.Benchmarks.Comparison;
 
 internal static class ReaderComparisonCorpus {
+    private static readonly DateTime FixedPackageTimestamp =
+        new DateTime(2026, 7, 15, 12, 0, 0, DateTimeKind.Utc);
+
     private const string TinyPngBase64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -38,21 +41,27 @@ internal static class ReaderComparisonCorpus {
             table.Rows[0].Cells[1].Paragraphs[0].Text = "Status";
             table.Rows[1].Cells[0].Paragraphs[0].Text = "Retention marker";
             table.Rows[1].Cells[1].Paragraphs[0].Text = "Ready";
+            document.BuiltinDocumentProperties.Created = FixedPackageTimestamp;
+            document.BuiltinDocumentProperties.Modified = FixedPackageTimestamp;
             document.Save();
         }
 
-        return Case("docx", "evidence-policy.docx", stream.ToArray(),
+        return Case("docx", "evidence-policy.docx", NormalizeOfficePackage(stream.ToArray()),
             Probe("heading", ReaderComparisonProbeKind.MarkdownHeading, "Evidence policy"),
-            Probe("link", ReaderComparisonProbeKind.MarkdownLink, "Open policy portal"),
+            Probe(
+                "link",
+                ReaderComparisonProbeKind.MarkdownLink,
+                "Open policy portal",
+                "https://example.com/policy"),
             Probe("footnote", ReaderComparisonProbeKind.ContainsText, "Footnote retention marker"),
             Probe("table-text", ReaderComparisonProbeKind.MarkdownTable, "Retention marker"),
             Probe("rich-table", ReaderComparisonProbeKind.RichTable),
             Probe("rich-link", ReaderComparisonProbeKind.RichLink),
-            Probe("heading-location", ReaderComparisonProbeKind.LocationHeading));
+            Probe("heading-location", ReaderComparisonProbeKind.LocationHeading, "Evidence policy"));
     }
 
     private static ReaderComparisonCase CreateExcel() {
-        string path = Path.Combine(Path.GetTempPath(), "officeimo-reader-comparison-" + Guid.NewGuid().ToString("N") + ".xlsx");
+        string path = Path.Combine(Path.GetTempPath(), "officeimo-reader-evidence-" + Guid.NewGuid().ToString("N") + ".xlsx");
         try {
             using (ExcelDocument document = ExcelDocument.Create(path)) {
                 ExcelSheet sheet = document.AddWorksheet("Evidence");
@@ -62,14 +71,16 @@ internal static class ReaderComparisonCorpus {
                 sheet.Cell(2, 1, "Spreadsheet retention marker");
                 sheet.Cell(2, 2, "Reader team");
                 sheet.Cell(2, 3, "Ready");
+                document.BuiltinDocumentProperties.Created = FixedPackageTimestamp;
+                document.BuiltinDocumentProperties.Modified = FixedPackageTimestamp;
                 document.Save();
             }
 
-            return Case("xlsx", "evidence-workbook.xlsx", File.ReadAllBytes(path),
+            return Case("xlsx", "evidence-workbook.xlsx", NormalizeOfficePackage(File.ReadAllBytes(path)),
                 Probe("table-text", ReaderComparisonProbeKind.ContainsText, "Spreadsheet retention marker"),
                 Probe("markdown-table", ReaderComparisonProbeKind.MarkdownTable, "Spreadsheet retention marker"),
                 Probe("rich-table", ReaderComparisonProbeKind.RichTable),
-                Probe("sheet-location", ReaderComparisonProbeKind.LocationSheet));
+                Probe("sheet-location", ReaderComparisonProbeKind.LocationSheet, "Evidence"));
         } finally {
             if (File.Exists(path)) File.Delete(path);
         }
@@ -90,16 +101,18 @@ internal static class ReaderComparisonCorpus {
             slide.AddPicture(image, OfficeIMO.PowerPoint.ImagePartType.Png);
             slide.Notes.Text = "Presenter notes retention marker";
             presentation.Save();
+            presentation.BuiltinDocumentProperties.Created = FixedPackageTimestamp;
+            presentation.BuiltinDocumentProperties.Modified = FixedPackageTimestamp;
         }
 
-        return Case("pptx", "evidence-deck.pptx", stream.ToArray(),
+        return Case("pptx", "evidence-deck.pptx", NormalizeOfficePackage(stream.ToArray()),
             Probe("title", ReaderComparisonProbeKind.ContainsText, "Quarterly evidence"),
             Probe("list", ReaderComparisonProbeKind.MarkdownListItem, "Presentation list marker"),
             Probe("table", ReaderComparisonProbeKind.MarkdownTable, "Presentation table marker"),
             Probe("notes", ReaderComparisonProbeKind.ContainsText, "Presenter notes retention marker"),
             Probe("rich-table", ReaderComparisonProbeKind.RichTable),
             Probe("rich-asset", ReaderComparisonProbeKind.RichAsset),
-            Probe("slide-location", ReaderComparisonProbeKind.LocationSlide));
+            Probe("slide-location", ReaderComparisonProbeKind.LocationSlide, expectedSlide: 1));
     }
 
     private static ReaderComparisonCase CreatePdf() {
@@ -113,7 +126,7 @@ internal static class ReaderComparisonCorpus {
         return Case("pdf", "evidence-report.pdf", document.ToBytes(),
             Probe("heading", ReaderComparisonProbeKind.MarkdownHeading, "PDF evidence heading"),
             Probe("page-two", ReaderComparisonProbeKind.ContainsText, "PDF second-page retention marker"),
-            Probe("page-location", ReaderComparisonProbeKind.LocationPage));
+            Probe("page-location", ReaderComparisonProbeKind.LocationPage, expectedPage: 2));
     }
 
     private static ReaderComparisonCase CreateHtml() {
@@ -130,8 +143,16 @@ internal static class ReaderComparisonCorpus {
             Probe("heading", ReaderComparisonProbeKind.MarkdownHeading, "HTML evidence heading"),
             Probe("list", ReaderComparisonProbeKind.MarkdownListItem, "HTML list retention marker"),
             Probe("table", ReaderComparisonProbeKind.MarkdownTable, "HTML table retention marker"),
-            Probe("link", ReaderComparisonProbeKind.MarkdownLink, "HTML link marker"),
-            Probe("image", ReaderComparisonProbeKind.MarkdownImage, "HTML image marker"),
+            Probe(
+                "link",
+                ReaderComparisonProbeKind.MarkdownLink,
+                "HTML link marker",
+                "https://example.com/html"),
+            Probe(
+                "image",
+                ReaderComparisonProbeKind.MarkdownImage,
+                "HTML image marker",
+                "data:image/png;base64,"),
             Probe("rich-table", ReaderComparisonProbeKind.RichTable),
             Probe("rich-link", ReaderComparisonProbeKind.RichLink));
     }
@@ -181,10 +202,17 @@ internal static class ReaderComparisonCorpus {
                 "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>" +
                 "</rootfiles></container>");
             WriteEntry(archive, "OEBPS/content.opf",
-                "<?xml version=\"1.0\"?><package version=\"3.0\" xmlns=\"http://www.idpf.org/2007/opf\">" +
-                "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>Evidence book</dc:title></metadata>" +
-                "<manifest><item id=\"chapter\" href=\"chapter.xhtml\" media-type=\"application/xhtml+xml\"/></manifest>" +
+                "<?xml version=\"1.0\"?><package version=\"3.0\" unique-identifier=\"book-id\" xmlns=\"http://www.idpf.org/2007/opf\">" +
+                "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">" +
+                "<dc:identifier id=\"book-id\">urn:uuid:3f454ae1-3bd5-4ea3-b9b4-8e9c43db295e</dc:identifier>" +
+                "<dc:title>Evidence book</dc:title><dc:language>en</dc:language></metadata>" +
+                "<manifest><item id=\"chapter\" href=\"chapter.xhtml\" media-type=\"application/xhtml+xml\"/>" +
+                "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/></manifest>" +
                 "<spine><itemref idref=\"chapter\"/></spine></package>");
+            WriteEntry(archive, "OEBPS/nav.xhtml",
+                "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\" " +
+                "xmlns:epub=\"http://www.idpf.org/2007/ops\"><head><title>Contents</title></head>" +
+                "<body><nav epub:type=\"toc\"><ol><li><a href=\"chapter.xhtml\">Evidence</a></li></ol></nav></body></html>");
             WriteEntry(archive, "OEBPS/chapter.xhtml",
                 "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body>" +
                 "<h1>EPUB evidence heading</h1><ul><li>EPUB list retention marker</li></ul>" +
@@ -194,7 +222,11 @@ internal static class ReaderComparisonCorpus {
         return Case("epub", "evidence-book.epub", stream.ToArray(),
             Probe("heading", ReaderComparisonProbeKind.MarkdownHeading, "EPUB evidence heading"),
             Probe("list", ReaderComparisonProbeKind.MarkdownListItem, "EPUB list retention marker"),
-            Probe("link", ReaderComparisonProbeKind.MarkdownLink, "EPUB link marker"),
+            Probe(
+                "link",
+                ReaderComparisonProbeKind.MarkdownLink,
+                "EPUB link marker",
+                "https://example.com/epub"),
             Probe("path-location", ReaderComparisonProbeKind.LocationPath, "OEBPS/chapter.xhtml"));
     }
 
@@ -210,8 +242,14 @@ internal static class ReaderComparisonCorpus {
         return Case("zip", "evidence-archive.zip", stream.ToArray(),
             Probe("heading", ReaderComparisonProbeKind.MarkdownHeading, "ZIP evidence heading"),
             Probe("list", ReaderComparisonProbeKind.MarkdownListItem, "ZIP list retention marker"),
-            Probe("link", ReaderComparisonProbeKind.MarkdownLink, "ZIP link marker"),
-            Probe("nested-path", ReaderComparisonProbeKind.LocationPath, "docs/evidence.md"));
+            Probe(
+                "link",
+                ReaderComparisonProbeKind.MarkdownLink,
+                "ZIP link marker",
+                "https://example.com/zip"),
+            Probe("nested-table", ReaderComparisonProbeKind.ContainsText, "ZIP nested table marker"),
+            Probe("nested-path", ReaderComparisonProbeKind.LocationPath, "docs/evidence.md"),
+            Probe("nested-table-path", ReaderComparisonProbeKind.LocationPath, "docs/data.csv"));
     }
 
     private static ReaderComparisonCase CreateMalformedPdf() => Case(
@@ -229,7 +267,21 @@ internal static class ReaderComparisonCorpus {
     private static ReaderComparisonProbe Probe(
         string id,
         ReaderComparisonProbeKind kind,
-        string marker = "") => new ReaderComparisonProbe(id, kind, marker);
+        string marker = "",
+        string expectedTarget = "",
+        int? expectedPage = null,
+        int? expectedSlide = null) => new ReaderComparisonProbe(
+            id,
+            kind,
+            marker,
+            expectedTarget,
+            expectedPage,
+            expectedSlide);
+
+    private static byte[] NormalizeOfficePackage(byte[] packageBytes) =>
+        ReaderComparisonPackageNormalizer.Normalize(
+            packageBytes,
+            new DateTimeOffset(FixedPackageTimestamp));
 
     private static void WriteEntry(
         ZipArchive archive,
@@ -237,6 +289,7 @@ internal static class ReaderComparisonCorpus {
         string content,
         CompressionLevel compressionLevel = CompressionLevel.Optimal) {
         ZipArchiveEntry entry = archive.CreateEntry(path, compressionLevel);
+        entry.LastWriteTime = new DateTimeOffset(FixedPackageTimestamp);
         using Stream entryStream = entry.Open();
         using var writer = new StreamWriter(entryStream, new UTF8Encoding(false));
         writer.Write(content);

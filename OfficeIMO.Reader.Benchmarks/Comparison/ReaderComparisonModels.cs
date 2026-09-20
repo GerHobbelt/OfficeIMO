@@ -19,15 +19,27 @@ internal enum ReaderComparisonProbeKind {
 }
 
 internal sealed class ReaderComparisonProbe {
-    public ReaderComparisonProbe(string id, ReaderComparisonProbeKind kind, string marker = "") {
+    public ReaderComparisonProbe(
+        string id,
+        ReaderComparisonProbeKind kind,
+        string marker = "",
+        string expectedTarget = "",
+        int? expectedPage = null,
+        int? expectedSlide = null) {
         Id = id;
         Kind = kind;
         Marker = marker;
+        ExpectedTarget = expectedTarget;
+        ExpectedPage = expectedPage;
+        ExpectedSlide = expectedSlide;
     }
 
     public string Id { get; }
     public ReaderComparisonProbeKind Kind { get; }
     public string Marker { get; }
+    public string ExpectedTarget { get; }
+    public int? ExpectedPage { get; }
+    public int? ExpectedSlide { get; }
 }
 
 internal sealed class ReaderComparisonCase {
@@ -85,6 +97,7 @@ internal sealed class ReaderComparisonCaseResult {
 
 internal sealed class ReaderComparisonToolResult {
     public string Tool { get; set; } = string.Empty;
+    public string ExecutionMode { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string? Error { get; set; }
     public IReadOnlyList<ReaderComparisonCaseResult> Cases { get; set; } = Array.Empty<ReaderComparisonCaseResult>();
