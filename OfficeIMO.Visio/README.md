@@ -23,6 +23,7 @@ var vsd = VisioDocument.Create("diagram.vsdx");
 vsd.AsFluent()
    .Info(i => i.Title("Demo").Author("You"))
    .Page("Page-1", p => p
+       .Title("Demo Flow")
        .Rect("start", 1, 1, 2, 1, "Start")
        .Diamond("decision", 4, 1.5, 2, 2, "Decision")
        .Ellipse("end", 7, 1.5, 2, 1, "End")
@@ -43,6 +44,7 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("flowchart.vsdx")
     .Flowchart("Property buying Flowchart", flow => flow
+        .Title()
         .Layout(VisioFlowchartLayout.TwoColumnContinuation)
         .RouteBranches(laneSpacing: 0.5)
         .Start("start", "Start with an agent\nyou trust")
@@ -54,14 +56,17 @@ VisioDocument.Create("flowchart.vsdx")
         .Decision("agreement", "Negotiate\n& Counteroffer:\nAgreement?")
         .Step("contract", "Accept the contract")
         .End("close", "Close on the\nproperty")
-        .Branch("agreement", "No", "market"))
+        .Branch("agreement", "No", "market")
+        .Callout("agreement", "retry-note", "Loop back if the offer is rejected", VisioSide.Right))
     .Save();
 ```
 
 The diagram builder creates normal Visio pages, semantic flowchart shapes,
 masters, side-glued connectors, labels, deterministic layouts, and routed
-branch/loop connectors. It is the first high-level authoring layer above the
-lower-level page/shape APIs.
+branch/loop connectors. Flowcharts can also add semantic callouts with leader
+connectors for complex branches or reviewer notes, either by exact coordinates
+or by placing notes beside a target node. It is the first high-level authoring
+layer above the lower-level page/shape APIs.
 
 ## Quick sample (block diagram builder)
 
@@ -71,6 +76,8 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("block-diagram.vsdx")
     .BlockDiagram("Block Diagram", diagram => diagram
+        .Title()
+        .Legend()
         .Region("processor", "Processor", 1, 2, 2, 2)
         .Block("input", "Input Device", 0, 2)
         .EmphasisBlock("memory", "Memory Unit", 1, 2)
@@ -80,13 +87,15 @@ VisioDocument.Create("block-diagram.vsdx")
         .Block("output", "Output Device", 3, 2)
         .DataFlow("input", "memory")
         .DataFlow("memory", "output")
-        .ControlFlow("control", "output", "Control Flow"))
+        .ControlFlow("control", "output", "Control Flow")
+        .Callout("memory", "memory-note", "Central shared state", VisioSide.Top))
     .Save();
 ```
 
 The block diagram builder creates grid-positioned blocks, light background
 regions, solid data-flow connectors, dashed control-flow connectors, labels,
-and master-backed Visio shapes.
+optional presentation titles/legends, semantic callouts, and master-backed
+Visio shapes. Callouts can be placed by coordinates or relative to a block side.
 
 ## Quick sample (dependency diagram builder)
 
@@ -96,6 +105,7 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("dependencies.vsdx")
     .DependencyDiagram("Service Dependencies", diagram => diagram
+        .Title()
         .Theme(VisioStyleTheme.Fluent())
         .External("users", "Users")
         .Component("web", "Web App")
@@ -105,7 +115,8 @@ VisioDocument.Create("dependencies.vsdx")
         .DependsOn("users", "web", "HTTPS")
         .DependsOn("web", "api")
         .ControlDependency("api", "policy", "Authorize")
-        .DataDependency("api", "database", "SQL"))
+        .DataDependency("api", "database", "SQL")
+        .Callout("policy", "policy-note", "Authorization gates access to data", 7.4, 5.3))
     .EnsureVisualQuality(new VisioDiagramQualityOptions {
         CheckConnectorShapeIntersections = false,
         CheckConnectorLabelShapeOverlaps = false
@@ -115,7 +126,8 @@ VisioDocument.Create("dependencies.vsdx")
 
 The dependency diagram builder creates deterministic layered DAG layouts from
 nodes and directed relationships. It automatically grows the page, places
-component/data/external/decision nodes, routes dependencies, and rejects cycles.
+component/data/external/decision nodes, routes dependencies, supports semantic
+callouts, and rejects cycles.
 
 ## Quick sample (architecture diagram builder)
 
@@ -125,6 +137,8 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("architecture.vsdx")
     .ArchitectureDiagram("Jenkins on Azure", diagram => diagram
+        .Title()
+        .Legend()
         .Theme(VisioStyleTheme.Technical())
         .Region("vnet", "Virtual Network", 1, 0, 4, 3)
         .Region("subnet", "Build Subnet", 1, 1, 4, 2)
@@ -138,13 +152,15 @@ VisioDocument.Create("architecture.vsdx")
         .DataFlow("users", "public-ip", "HTTPS")
         .DataFlow("public-ip", "jenkins", "route")
         .ControlFlow("jenkins", "agent", "scale")
-        .Dependency("jenkins", "vault", "secrets"))
+        .Dependency("jenkins", "vault", "secrets")
+        .Callout("jenkins", "scale-note", "Scale agents on demand", VisioSide.Right))
     .Save();
 ```
 
 The architecture builder creates dependency-free cloud/infrastructure diagrams
 with semantic components, background regions, routed data/control/dependency
-connectors, labels, and the reusable `Technical` theme.
+connectors, labels, coordinate or side-placed callouts, and the reusable
+`Technical` theme.
 
 ## Quick sample (network diagram builder)
 
@@ -154,6 +170,7 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("network.vsdx")
     .NetworkDiagram("Branch Network", network => network
+        .Title()
         .Theme(VisioStyleTheme.Technical())
         .Zone("perimeter", "Perimeter", 0, 0, 3, 1)
         .Zone("servers", "Server Zone", 3, 0, 3, 1)
@@ -171,12 +188,14 @@ VisioDocument.Create("network.vsdx")
         .Trunk("core", "app", "10Gb")
         .Ethernet("app", "db")
         .Ethernet("core", "pc2")
-        .Ethernet("pc2", "printer"))
+        .Ethernet("pc2", "printer")
+        .Callout("firewall", "edge-note", "Inspect and log inbound traffic", VisioSide.Top))
     .Save();
 ```
 
 The network builder creates dependency-free network maps with zones, typed
-devices, routed Ethernet/trunk/wireless/management links, and optional legends.
+devices, routed Ethernet/trunk/wireless/management links, coordinate or
+side-placed semantic callouts, and optional legends.
 
 ## Quick sample (network topology diagram builder)
 
@@ -186,6 +205,7 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("network-topology.vsdx")
     .NetworkTopologyDiagram("Branch Topology", topology => topology
+        .Title()
         .Root("internet", "Internet", VisioNetworkNodeKind.Internet)
         .Firewall("firewall", "Firewall")
         .Switch("core", "Core Switch")
@@ -203,14 +223,16 @@ VisioDocument.Create("network-topology.vsdx")
         .Ethernet("app", "db")
         .Ethernet("core", "finance")
         .Ethernet("core", "support")
-        .Ethernet("support", "printer"))
+        .Ethernet("support", "printer")
+        .Callout("firewall", "edge-note", "North-south inspection point", VisioSide.Top))
     .Save();
 ```
 
 The topology builder is the graph-first network API: users describe devices
 and links, then OfficeIMO derives deterministic layers, grows the page when
 needed, adds subnet/background zones around selected devices, routes links,
-and keeps mesh/cycle links valid.
+supports coordinate or side-placed semantic callouts, and keeps mesh/cycle
+links valid.
 
 ## Quick sample (swimlane diagram builder)
 
@@ -220,6 +242,7 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("swimlane.vsdx")
     .SwimlaneDiagram("Order Fulfillment", swim => swim
+        .Title()
         .Theme(VisioStyleTheme.Modern())
         .Lane("customer", "Customer")
         .Lane("sales", "Sales")
@@ -240,14 +263,16 @@ VisioDocument.Create("swimlane.vsdx")
         .Exception("approved", "revise", "no")
         .Handoff("approved", "pick", "yes")
         .Flow("pick", "invoice")
-        .Flow("invoice", "ship"))
+        .Flow("invoice", "ship")
+        .Callout("approved", "approval-note", "Escalate exceptions before fulfillment", 7.8, 5.9))
     .Save();
 ```
 
 The swimlane builder creates editable role lanes, phase headers, semantic
 activities, labeled flows, dashed exception paths, deterministic routing, and
 automatic stacking when more than one activity lands in the same lane/phase
-cell. It does not require Visio templates at runtime.
+cell. It supports semantic callouts for risk and exception notes, and does not
+require Visio templates at runtime.
 
 ## Quick sample (org chart builder)
 
@@ -257,6 +282,7 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("org-chart.vsdx")
     .OrgChartDiagram("Leadership", org => org
+        .Title()
         .Theme(VisioStyleTheme.Modern())
         .Root("ceo", "Marta Nowak", "Chief Executive Officer")
         .Assistant("ea", "Eli Green", "Executive Assistant", "ceo")
@@ -268,13 +294,14 @@ VisioDocument.Create("org-chart.vsdx")
         .Position("platform", "Nina Patel", "Platform Lead", "cto", "engineering")
         .Position("security", "Owen Brooks", "Security Lead", "cto", "engineering")
         .Vacancy("sre", "Open SRE Role", "coo", "operations")
-        .External("advisor", "Taylor Reed", "Advisor", "cfo"))
+        .External("advisor", "Taylor Reed", "Advisor", "cfo")
+        .Callout("cto", "cto-note", "Owns platform and security roadmap", 8.1, 5.9))
     .Save();
 ```
 
 The org chart builder creates editable hierarchy cards, assistant placements,
-team bands, vacancies, external roles, and routed reporting lines from semantic
-relationships.
+team bands, vacancies, external roles, routed reporting lines, and semantic
+callouts from business relationships.
 
 ## Reusable style themes
 
@@ -397,14 +424,19 @@ using OfficeIMO.Visio.Diagrams;
 
 VisioDocument.Create("roadmap.vsdx")
     .TimelineDiagram("Product Roadmap", timeline => timeline
+        .Title()
         .Theme(VisioStyleTheme.Modern())
         .Range(new DateTime(2026, 1, 1), new DateTime(2026, 6, 30))
         .Span("discovery", new DateTime(2026, 1, 8), new DateTime(2026, 2, 20), "Discovery")
         .Span("build", new DateTime(2026, 2, 21), new DateTime(2026, 5, 15), "Build", lane: 1)
         .Release("preview", new DateTime(2026, 5, 20), "Public preview", VisioTimelinePlacement.Below)
-        .Milestone("ga", new DateTime(2026, 6, 25), "GA"))
+        .Milestone("ga", new DateTime(2026, 6, 25), "GA")
+        .Callout("build", "build-note", "Implementation runway", 5.2, 5.7))
     .Save();
 ```
+
+Timeline callouts can target either milestone IDs or span IDs, so roadmap
+notes stay attached to the dated item they explain.
 
 ## Visual quality checks and gallery output
 
@@ -811,12 +843,18 @@ var note = page.AddCallout(api, "api-note", "Check retry policy", 7.5, 6,
         Height = 0.8,
         RouteOffset = 0.15
     });
+var autoNote = page.AddCallout(api, "sla-note", "Review SLA target",
+    VisioSide.Right, gap: 0.35);
 
 page.SelectCallouts()
     .LockPosition();
 
 doc.Save();
 ```
+
+Use the coordinate overload when you need exact placement, or the side-based
+overload when the callout should sit to the left, right, top, or bottom of the
+target shape without hand-calculating page coordinates.
 
 ## Text styling
 

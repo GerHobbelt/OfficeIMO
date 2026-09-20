@@ -69,12 +69,52 @@ namespace OfficeIMO.Visio.Diagrams {
             public string? Label { get; }
         }
 
+        private sealed class CalloutItem {
+            public CalloutItem(string targetId, string id, string text, double pinX, double pinY, VisioCalloutOptions options) {
+                TargetId = targetId;
+                Id = id;
+                Text = text;
+                PinX = pinX;
+                PinY = pinY;
+                Options = options;
+            }
+
+            public CalloutItem(string targetId, string id, string text, VisioSide placement, double gap, VisioCalloutOptions options) {
+                TargetId = targetId;
+                Id = id;
+                Text = text;
+                Placement = placement;
+                Gap = gap;
+                Options = options;
+                UsePlacement = true;
+            }
+
+            public string TargetId { get; }
+
+            public string Id { get; }
+
+            public string Text { get; }
+
+            public double PinX { get; }
+
+            public double PinY { get; }
+
+            public VisioSide Placement { get; }
+
+            public double Gap { get; }
+
+            public bool UsePlacement { get; }
+
+            public VisioCalloutOptions Options { get; }
+        }
+
         private readonly VisioDocument _document;
         private readonly string _pageName;
         private readonly List<NodeItem> _nodes = new();
         private readonly Dictionary<string, NodeItem> _nodesById = new(StringComparer.Ordinal);
         private readonly List<ZoneItem> _zones = new();
         private readonly List<LinkItem> _links = new();
+        private readonly List<CalloutItem> _callouts = new();
         private VisioStyleTheme _theme = VisioStyleTheme.Technical();
         private VisioMeasurementUnit _unit = VisioMeasurementUnit.Inches;
         private double _pageWidth = 14;
@@ -85,6 +125,10 @@ namespace OfficeIMO.Visio.Diagrams {
         private double _rowGap = 0.85;
         private double _nodeWidth = 1.45;
         private double _nodeHeight = 0.85;
+        private string? _titleText;
+        private string _titleId = "title";
+        private double _titleHeight = 0.45;
+        private double _titleGap = 0.35;
         private bool _built;
 
         internal VisioNetworkDiagramBuilder(VisioDocument document, string pageName) {
@@ -132,6 +176,22 @@ namespace OfficeIMO.Visio.Diagrams {
             ValidatePositive(height, nameof(height));
             _nodeWidth = width;
             _nodeHeight = height;
+            return this;
+        }
+
+        /// <summary>Adds a centered editable title above the generated network grid.</summary>
+        public VisioNetworkDiagramBuilder Title(string? text = null, string id = "title", double height = 0.45, double gap = 0.35) {
+            string normalizedId = RequireId(id, nameof(id), "Title id");
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A network item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidatePositive(height, nameof(height));
+            ValidateNonNegative(gap, nameof(gap));
+            _titleText = string.IsNullOrWhiteSpace(text) ? _pageName : text;
+            _titleId = normalizedId;
+            _titleHeight = height;
+            _titleGap = gap;
             return this;
         }
 
@@ -217,13 +277,67 @@ namespace OfficeIMO.Visio.Diagrams {
 
         /// <summary>Adds a link between two known network nodes.</summary>
         public VisioNetworkDiagramBuilder Link(string fromId, string toId, VisioNetworkLinkKind kind, string? label = null) {
-            EnsureKnownNode(fromId, nameof(fromId));
-            EnsureKnownNode(toId, nameof(toId));
+            string normalizedFromId = RequireId(fromId, nameof(fromId), "From node id");
+            string normalizedToId = RequireId(toId, nameof(toId), "To node id");
+            EnsureKnownNode(normalizedFromId, nameof(fromId));
+            EnsureKnownNode(normalizedToId, nameof(toId));
             if (!Enum.IsDefined(typeof(VisioNetworkLinkKind), kind)) {
                 throw new ArgumentOutOfRangeException(nameof(kind));
             }
 
-            _links.Add(new LinkItem(fromId, toId, kind, label));
+            _links.Add(new LinkItem(normalizedFromId, normalizedToId, kind, label));
+            return this;
+        }
+
+        /// <summary>Adds a semantic callout connected to a known network node using a generated callout id.</summary>
+        public VisioNetworkDiagramBuilder Callout(string targetId, string text, double pinX, double pinY, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            EnsureKnownNode(normalizedTargetId, nameof(targetId));
+            return Callout(normalizedTargetId, CreateCalloutId(normalizedTargetId), text, pinX, pinY, configure);
+        }
+
+        /// <summary>Adds a semantic callout connected to a known network node.</summary>
+        public VisioNetworkDiagramBuilder Callout(string targetId, string id, string text, double pinX, double pinY, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            string normalizedId = RequireId(id, nameof(id), "Callout id");
+            EnsureKnownNode(normalizedTargetId, nameof(targetId));
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A network item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidateFinite(pinX, nameof(pinX));
+            ValidateFinite(pinY, nameof(pinY));
+            VisioCalloutOptions options = CreateCalloutOptions();
+            configure?.Invoke(options);
+            ValidatePositive(options.Width, nameof(options.Width));
+            ValidatePositive(options.Height, nameof(options.Height));
+            _callouts.Add(new CalloutItem(normalizedTargetId, normalizedId, text ?? string.Empty, pinX, pinY, options));
+            return this;
+        }
+
+        /// <summary>Adds a semantic callout placed beside a known network node using a generated callout id.</summary>
+        public VisioNetworkDiagramBuilder Callout(string targetId, string text, VisioSide placement, double gap = 0.35D, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            EnsureKnownNode(normalizedTargetId, nameof(targetId));
+            return Callout(normalizedTargetId, CreateCalloutId(normalizedTargetId), text, placement, gap, configure);
+        }
+
+        /// <summary>Adds a semantic callout placed beside a known network node.</summary>
+        public VisioNetworkDiagramBuilder Callout(string targetId, string id, string text, VisioSide placement, double gap = 0.35D, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            string normalizedId = RequireId(id, nameof(id), "Callout id");
+            EnsureKnownNode(normalizedTargetId, nameof(targetId));
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A network item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidatePlacement(placement, nameof(placement));
+            ValidateNonNegative(gap, nameof(gap));
+            VisioCalloutOptions options = CreateCalloutOptions();
+            configure?.Invoke(options);
+            ValidatePositive(options.Width, nameof(options.Width));
+            ValidatePositive(options.Height, nameof(options.Height));
+            _callouts.Add(new CalloutItem(normalizedTargetId, normalizedId, text ?? string.Empty, placement, gap, options));
             return this;
         }
 
@@ -242,8 +356,30 @@ namespace OfficeIMO.Visio.Diagrams {
             AddZones(page);
             AddNodes(page);
             AddLinks(page);
+            AddCallouts(page);
+            AddTitle(page);
             _document.RequestRecalcOnOpen();
             return page;
+        }
+
+        private void AddTitle(VisioPage page) {
+            if (string.IsNullOrWhiteSpace(_titleText)) {
+                return;
+            }
+
+            double y = _pageHeight - _topMargin - (_titleHeight / 2D);
+            VisioShape title = page.AddTextBox(_titleId, _pageWidth / 2D, y, Math.Max(1D, _pageWidth - 1.6D), _titleHeight, _titleText, _unit);
+            title.TextStyle = CreateTitleTextStyle();
+        }
+
+        private VisioTextStyle CreateTitleTextStyle() {
+            VisioTextStyle style = _theme.Emphasis.TextStyle?.Clone() ?? new VisioTextStyle();
+            style.FontFamily = string.IsNullOrWhiteSpace(style.FontFamily) ? "Aptos Display" : style.FontFamily;
+            style.Size = Math.Max(style.Size ?? 0D, 20D);
+            style.Bold = true;
+            style.HorizontalAlignment = VisioTextHorizontalAlignment.Center;
+            style.VerticalAlignment = VisioTextVerticalAlignment.Middle;
+            return style;
         }
 
         private void AddZones(VisioPage page) {
@@ -298,6 +434,32 @@ namespace OfficeIMO.Visio.Diagrams {
             }
         }
 
+        private void AddCallouts(VisioPage page) {
+            foreach (CalloutItem callout in _callouts) {
+                NodeItem target = _nodesById[callout.TargetId];
+                if (target.Shape == null) {
+                    throw new InvalidOperationException("Nodes must be placed before callouts are created.");
+                }
+
+                if (callout.UsePlacement) {
+                    page.AddCallout(target.Shape, callout.Id, callout.Text, callout.Placement, callout.Gap, callout.Options);
+                } else {
+                    page.AddCallout(target.Shape, callout.Id, callout.Text, callout.PinX, callout.PinY, callout.Options);
+                }
+            }
+        }
+
+        private VisioCalloutOptions CreateCalloutOptions() {
+            return new VisioCalloutOptions {
+                ShapeStyle = _theme.Container.Clone(),
+                LeaderStyle = new VisioConnectorStyle(_theme.Connector.LineColor, Math.Max(0.012D, _theme.Connector.LineWeight), 2, EndArrow.None) {
+                    Kind = ConnectorKind.RightAngle,
+                    TextStyle = _theme.Connector.TextStyle?.Clone()
+                },
+                RouteOffset = 0.08D
+            };
+        }
+
         private double GridX(int column, int span) {
             double left = _leftMargin + column * (_nodeWidth + _columnGap);
             double width = span * _nodeWidth + (span - 1) * _columnGap;
@@ -305,18 +467,17 @@ namespace OfficeIMO.Visio.Diagrams {
         }
 
         private double GridY(int row, int span) {
-            double top = _pageHeight - _topMargin - row * (_nodeHeight + _rowGap);
+            double top = _pageHeight - _topMargin - HeaderHeight - row * (_nodeHeight + _rowGap);
             double height = span * _nodeHeight + (span - 1) * _rowGap;
             return top - height / 2D;
         }
 
-        private void EnsureKnownNode(string id, string parameterName) {
-            if (string.IsNullOrWhiteSpace(id)) {
-                throw new ArgumentException("Network node id cannot be null or whitespace.", parameterName);
-            }
+        private double HeaderHeight => string.IsNullOrWhiteSpace(_titleText) ? 0D : _titleHeight + _titleGap;
 
-            if (!_nodesById.ContainsKey(id)) {
-                throw new ArgumentException($"Unknown network node id '{id}'.", parameterName);
+        private void EnsureKnownNode(string id, string parameterName) {
+            string normalizedId = RequireId(id, parameterName, "Network node id");
+            if (!_nodesById.ContainsKey(normalizedId)) {
+                throw new ArgumentException($"Unknown network node id '{normalizedId}'.", parameterName);
             }
         }
 
@@ -325,10 +486,14 @@ namespace OfficeIMO.Visio.Diagrams {
                 throw new ArgumentException(label + " cannot be null or whitespace.", parameterName);
             }
 
-            return id;
+            return id.Trim();
         }
 
         private bool IsIdInUse(string id) {
+            if (!string.IsNullOrWhiteSpace(_titleText) && string.Equals(_titleId, id, StringComparison.Ordinal)) {
+                return true;
+            }
+
             if (_nodesById.ContainsKey(id)) {
                 return true;
             }
@@ -339,12 +504,38 @@ namespace OfficeIMO.Visio.Diagrams {
                 }
             }
 
+            foreach (CalloutItem callout in _callouts) {
+                if (string.Equals(callout.Id, id, StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+
             return false;
+        }
+
+        private string CreateCalloutId(string targetId) {
+            string id = targetId + "-callout";
+            if (!IsIdInUse(id)) {
+                return id;
+            }
+
+            int index = 2;
+            while (IsIdInUse(id + "-" + index)) {
+                index++;
+            }
+
+            return id + "-" + index;
         }
 
         private static void ValidateGridPosition(int column, int row) {
             if (column < 0) throw new ArgumentOutOfRangeException(nameof(column), "Column must be zero or greater.");
             if (row < 0) throw new ArgumentOutOfRangeException(nameof(row), "Row must be zero or greater.");
+        }
+
+        private static void ValidateFinite(double value, string parameterName) {
+            if (double.IsNaN(value) || double.IsInfinity(value)) {
+                throw new ArgumentOutOfRangeException(parameterName, "Value must be a finite number.");
+            }
         }
 
         private static void ValidatePositive(double value, string parameterName) {
@@ -356,6 +547,12 @@ namespace OfficeIMO.Visio.Diagrams {
         private static void ValidateNonNegative(double value, string parameterName) {
             if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) {
                 throw new ArgumentOutOfRangeException(parameterName, "Value must be a finite non-negative number.");
+            }
+        }
+
+        private static void ValidatePlacement(VisioSide placement, string parameterName) {
+            if (placement == VisioSide.Auto || !Enum.IsDefined(typeof(VisioSide), placement)) {
+                throw new ArgumentOutOfRangeException(parameterName, "Placement must be Left, Right, Bottom, or Top.");
             }
         }
 

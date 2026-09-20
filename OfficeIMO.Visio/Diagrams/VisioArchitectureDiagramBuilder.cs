@@ -68,12 +68,52 @@ namespace OfficeIMO.Visio.Diagrams {
             public string? Label { get; }
         }
 
+        private sealed class CalloutItem {
+            public CalloutItem(string targetId, string id, string text, double pinX, double pinY, VisioCalloutOptions options) {
+                TargetId = targetId;
+                Id = id;
+                Text = text;
+                PinX = pinX;
+                PinY = pinY;
+                Options = options;
+            }
+
+            public CalloutItem(string targetId, string id, string text, VisioSide placement, double gap, VisioCalloutOptions options) {
+                TargetId = targetId;
+                Id = id;
+                Text = text;
+                Placement = placement;
+                Gap = gap;
+                Options = options;
+                UsePlacement = true;
+            }
+
+            public string TargetId { get; }
+
+            public string Id { get; }
+
+            public string Text { get; }
+
+            public double PinX { get; }
+
+            public double PinY { get; }
+
+            public VisioSide Placement { get; }
+
+            public double Gap { get; }
+
+            public bool UsePlacement { get; }
+
+            public VisioCalloutOptions Options { get; }
+        }
+
         private readonly VisioDocument _document;
         private readonly string _pageName;
         private readonly List<ComponentItem> _components = new();
         private readonly Dictionary<string, ComponentItem> _componentsById = new(StringComparer.Ordinal);
         private readonly List<RegionItem> _regions = new();
         private readonly List<LinkItem> _links = new();
+        private readonly List<CalloutItem> _callouts = new();
         private VisioStyleTheme _theme = VisioStyleTheme.Technical();
         private VisioMeasurementUnit _unit = VisioMeasurementUnit.Inches;
         private double _pageWidth = 14;
@@ -84,6 +124,15 @@ namespace OfficeIMO.Visio.Diagrams {
         private double _rowGap = 0.75;
         private double _componentWidth = 1.75;
         private double _componentHeight = 0.95;
+        private string? _titleText;
+        private string _titleId = "title";
+        private double _titleHeight = 0.45;
+        private double _titleGap = 0.35;
+        private bool _showLegend;
+        private string _dataFlowLegendLabel = "Data Flow";
+        private string _controlFlowLegendLabel = "Control Flow";
+        private double _legendHeight = 0.28;
+        private double _legendGap = 0.35;
         private bool _built;
 
         internal VisioArchitectureDiagramBuilder(VisioDocument document, string pageName) {
@@ -131,6 +180,30 @@ namespace OfficeIMO.Visio.Diagrams {
             ValidatePositive(height, nameof(height));
             _componentWidth = width;
             _componentHeight = height;
+            return this;
+        }
+
+        /// <summary>Adds a centered editable title above the generated architecture diagram.</summary>
+        public VisioArchitectureDiagramBuilder Title(string? text = null, string id = "title", double height = 0.45, double gap = 0.35) {
+            string normalizedId = RequireId(id, nameof(id), "Title id");
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A diagram item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidatePositive(height, nameof(height));
+            ValidateNonNegative(gap, nameof(gap));
+            _titleText = string.IsNullOrWhiteSpace(text) ? _pageName : text;
+            _titleId = normalizedId;
+            _titleHeight = height;
+            _titleGap = gap;
+            return this;
+        }
+
+        /// <summary>Adds a compact data/control flow legend above the generated architecture grid.</summary>
+        public VisioArchitectureDiagramBuilder Legend(bool enabled = true, string dataFlowLabel = "Data Flow", string controlFlowLabel = "Control Flow") {
+            _showLegend = enabled;
+            _dataFlowLegendLabel = string.IsNullOrWhiteSpace(dataFlowLabel) ? "Data Flow" : dataFlowLabel;
+            _controlFlowLegendLabel = string.IsNullOrWhiteSpace(controlFlowLabel) ? "Control Flow" : controlFlowLabel;
             return this;
         }
 
@@ -226,6 +299,58 @@ namespace OfficeIMO.Visio.Diagrams {
             return this;
         }
 
+        /// <summary>Adds a semantic callout connected to a known component using a generated callout id.</summary>
+        public VisioArchitectureDiagramBuilder Callout(string targetId, string text, double pinX, double pinY, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            EnsureKnownComponent(normalizedTargetId, nameof(targetId));
+            return Callout(normalizedTargetId, CreateCalloutId(normalizedTargetId), text, pinX, pinY, configure);
+        }
+
+        /// <summary>Adds a semantic callout connected to a known component.</summary>
+        public VisioArchitectureDiagramBuilder Callout(string targetId, string id, string text, double pinX, double pinY, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            string normalizedId = RequireId(id, nameof(id), "Callout id");
+            EnsureKnownComponent(normalizedTargetId, nameof(targetId));
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A diagram item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidateFinite(pinX, nameof(pinX));
+            ValidateFinite(pinY, nameof(pinY));
+            VisioCalloutOptions options = CreateCalloutOptions();
+            configure?.Invoke(options);
+            ValidatePositive(options.Width, nameof(options.Width));
+            ValidatePositive(options.Height, nameof(options.Height));
+            _callouts.Add(new CalloutItem(normalizedTargetId, normalizedId, text ?? string.Empty, pinX, pinY, options));
+            return this;
+        }
+
+        /// <summary>Adds a semantic callout placed beside a known component using a generated callout id.</summary>
+        public VisioArchitectureDiagramBuilder Callout(string targetId, string text, VisioSide placement, double gap = 0.35D, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            EnsureKnownComponent(normalizedTargetId, nameof(targetId));
+            return Callout(normalizedTargetId, CreateCalloutId(normalizedTargetId), text, placement, gap, configure);
+        }
+
+        /// <summary>Adds a semantic callout placed beside a known component.</summary>
+        public VisioArchitectureDiagramBuilder Callout(string targetId, string id, string text, VisioSide placement, double gap = 0.35D, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            string normalizedId = RequireId(id, nameof(id), "Callout id");
+            EnsureKnownComponent(normalizedTargetId, nameof(targetId));
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A diagram item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidatePlacement(placement, nameof(placement));
+            ValidateNonNegative(gap, nameof(gap));
+            VisioCalloutOptions options = CreateCalloutOptions();
+            configure?.Invoke(options);
+            ValidatePositive(options.Width, nameof(options.Width));
+            ValidatePositive(options.Height, nameof(options.Height));
+            _callouts.Add(new CalloutItem(normalizedTargetId, normalizedId, text ?? string.Empty, placement, gap, options));
+            return this;
+        }
+
         internal VisioPage Build() {
             if (_built) {
                 throw new InvalidOperationException("This architecture diagram builder has already produced a page.");
@@ -241,8 +366,58 @@ namespace OfficeIMO.Visio.Diagrams {
             AddRegions(page);
             AddComponents(page);
             AddLinks(page);
+            AddCallouts(page);
+            AddAdornments(page);
             _document.RequestRecalcOnOpen();
             return page;
+        }
+
+        private void AddAdornments(VisioPage page) {
+            if (!string.IsNullOrWhiteSpace(_titleText)) {
+                double titleY = _pageHeight - _topMargin - (_titleHeight / 2D);
+                double width = Math.Max(1D, _pageWidth - 1.6D);
+                VisioShape title = page.AddTextBox(_titleId, _pageWidth / 2D, titleY, width, _titleHeight, _titleText, _unit);
+                title.TextStyle = CreateTitleTextStyle();
+            }
+
+            if (_showLegend) {
+                double titleOffset = string.IsNullOrWhiteSpace(_titleText) ? 0D : _titleHeight + _titleGap;
+                double legendY = _pageHeight - _topMargin - titleOffset - (_legendHeight / 2D);
+                AddLegendItem(page, Math.Max(0.8D, _leftMargin), legendY, _dataFlowLegendLabel, _theme.DataConnector);
+                AddLegendItem(page, Math.Max(0.8D, _pageWidth - 3.35D), legendY, _controlFlowLegendLabel, _theme.ControlConnector);
+            }
+        }
+
+        private VisioTextStyle CreateTitleTextStyle() {
+            VisioTextStyle style = _theme.Container.TextStyle?.Clone() ?? new VisioTextStyle();
+            style.FontFamily = string.IsNullOrWhiteSpace(style.FontFamily) ? "Aptos Display" : style.FontFamily;
+            style.Size = Math.Max(style.Size ?? 0D, 20D);
+            style.Bold = true;
+            style.HorizontalAlignment = VisioTextHorizontalAlignment.Center;
+            style.VerticalAlignment = VisioTextVerticalAlignment.Middle;
+            return style;
+        }
+
+        private void AddLegendItem(VisioPage page, double x, double y, string label, VisioConnectorStyle connectorStyle) {
+            VisioShape sample = page.AddRectangle(x + 0.32D, y, 0.64D, 0.08D, string.Empty, _unit);
+            sample.NameU = "Rectangle";
+            sample.FillPattern = 0;
+            sample.LineColor = connectorStyle.LineColor;
+            sample.LinePattern = connectorStyle.LinePattern;
+            sample.LineWeight = Math.Max(0.018D, connectorStyle.LineWeight);
+            sample.SetUserCell(VisioSemanticUserCells.Kind, VisioSemanticUserCells.DiagramAdornmentKind, "STR", prompt: "OfficeIMO semantic kind");
+
+            VisioShape text = page.AddTextBox(x + 1.55D, y, 1.65D, _legendHeight, label, _unit);
+            text.TextStyle = CreateLegendTextStyle(connectorStyle);
+        }
+
+        private VisioTextStyle CreateLegendTextStyle(VisioConnectorStyle connectorStyle) {
+            VisioTextStyle style = connectorStyle.TextStyle?.Clone() ?? _theme.DataConnector.TextStyle?.Clone() ?? new VisioTextStyle();
+            style.FontFamily = string.IsNullOrWhiteSpace(style.FontFamily) ? "Aptos" : style.FontFamily;
+            style.Size = Math.Max(style.Size ?? 0D, 9D);
+            style.HorizontalAlignment = VisioTextHorizontalAlignment.Left;
+            style.VerticalAlignment = VisioTextVerticalAlignment.Middle;
+            return style;
         }
 
         private void AddRegions(VisioPage page) {
@@ -292,6 +467,32 @@ namespace OfficeIMO.Visio.Diagrams {
 
                 routeIndex++;
             }
+        }
+
+        private void AddCallouts(VisioPage page) {
+            foreach (CalloutItem callout in _callouts) {
+                ComponentItem target = _componentsById[callout.TargetId];
+                if (target.Shape == null) {
+                    throw new InvalidOperationException("Components must be placed before callouts are created.");
+                }
+
+                if (callout.UsePlacement) {
+                    page.AddCallout(target.Shape, callout.Id, callout.Text, callout.Placement, callout.Gap, callout.Options);
+                } else {
+                    page.AddCallout(target.Shape, callout.Id, callout.Text, callout.PinX, callout.PinY, callout.Options);
+                }
+            }
+        }
+
+        private VisioCalloutOptions CreateCalloutOptions() {
+            return new VisioCalloutOptions {
+                ShapeStyle = _theme.Container.Clone(),
+                LeaderStyle = new VisioConnectorStyle(_theme.Connector.LineColor, Math.Max(0.012D, _theme.Connector.LineWeight), 2, EndArrow.None) {
+                    Kind = ConnectorKind.RightAngle,
+                    TextStyle = _theme.Connector.TextStyle?.Clone()
+                },
+                RouteOffset = 0.08D
+            };
         }
 
         private void GetComponentShape(VisioArchitectureShapeKind kind, out string masterNameU, out double width, out double height) {
@@ -362,9 +563,24 @@ namespace OfficeIMO.Visio.Diagrams {
         }
 
         private double GridY(int row, int span) {
-            double top = _pageHeight - _topMargin - row * (_componentHeight + _rowGap);
+            double top = _pageHeight - _topMargin - HeaderHeight - row * (_componentHeight + _rowGap);
             double height = span * _componentHeight + (span - 1) * _rowGap;
             return top - height / 2D;
+        }
+
+        private double HeaderHeight {
+            get {
+                double height = 0D;
+                if (!string.IsNullOrWhiteSpace(_titleText)) {
+                    height += _titleHeight + _titleGap;
+                }
+
+                if (_showLegend) {
+                    height += _legendHeight + _legendGap;
+                }
+
+                return height;
+            }
         }
 
         private void EnsureKnownComponent(string id, string parameterName) {
@@ -386,6 +602,10 @@ namespace OfficeIMO.Visio.Diagrams {
         }
 
         private bool IsIdInUse(string id) {
+            if (!string.IsNullOrWhiteSpace(_titleText) && string.Equals(_titleId, id, StringComparison.Ordinal)) {
+                return true;
+            }
+
             if (_componentsById.ContainsKey(id)) {
                 return true;
             }
@@ -396,7 +616,27 @@ namespace OfficeIMO.Visio.Diagrams {
                 }
             }
 
+            foreach (CalloutItem callout in _callouts) {
+                if (string.Equals(callout.Id, id, StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+
             return false;
+        }
+
+        private string CreateCalloutId(string targetId) {
+            string id = targetId + "-callout";
+            if (!IsIdInUse(id)) {
+                return id;
+            }
+
+            int index = 2;
+            while (IsIdInUse(id + "-" + index)) {
+                index++;
+            }
+
+            return id + "-" + index;
         }
 
         private static void ValidateGridPosition(int column, int row) {
@@ -413,6 +653,18 @@ namespace OfficeIMO.Visio.Diagrams {
         private static void ValidateNonNegative(double value, string parameterName) {
             if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) {
                 throw new ArgumentOutOfRangeException(parameterName, "Value must be a finite non-negative number.");
+            }
+        }
+
+        private static void ValidateFinite(double value, string parameterName) {
+            if (double.IsNaN(value) || double.IsInfinity(value)) {
+                throw new ArgumentOutOfRangeException(parameterName, "Value must be a finite number.");
+            }
+        }
+
+        private static void ValidatePlacement(VisioSide placement, string parameterName) {
+            if (placement == VisioSide.Auto || !Enum.IsDefined(typeof(VisioSide), placement)) {
+                throw new ArgumentOutOfRangeException(parameterName, "Placement must be Left, Right, Bottom, or Top.");
             }
         }
 

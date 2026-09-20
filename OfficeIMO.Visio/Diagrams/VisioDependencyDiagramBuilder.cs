@@ -44,11 +44,35 @@ namespace OfficeIMO.Visio.Diagrams {
             public string? Label { get; }
         }
 
+        private sealed class CalloutItem {
+            public CalloutItem(string targetId, string id, string text, double pinX, double pinY, VisioCalloutOptions options) {
+                TargetId = targetId;
+                Id = id;
+                Text = text;
+                PinX = pinX;
+                PinY = pinY;
+                Options = options;
+            }
+
+            public string TargetId { get; }
+
+            public string Id { get; }
+
+            public string Text { get; }
+
+            public double PinX { get; }
+
+            public double PinY { get; }
+
+            public VisioCalloutOptions Options { get; }
+        }
+
         private readonly VisioDocument _document;
         private readonly string _pageName;
         private readonly List<NodeItem> _nodes = new();
         private readonly Dictionary<string, NodeItem> _nodesById = new(StringComparer.Ordinal);
         private readonly List<DependencyItem> _dependencies = new();
+        private readonly List<CalloutItem> _callouts = new();
         private VisioStyleTheme _theme = VisioStyleTheme.Technical();
         private VisioMeasurementUnit _unit = VisioMeasurementUnit.Inches;
         private double _pageWidth = 11;
@@ -61,6 +85,10 @@ namespace OfficeIMO.Visio.Diagrams {
         private double _nodeHeight = 0.85;
         private double _columnGap = 1.15;
         private double _rowGap = 0.55;
+        private string? _titleText;
+        private string _titleId = "title";
+        private double _titleHeight = 0.45;
+        private double _titleGap = 0.35;
         private bool _fitPageToGraph = true;
         private bool _built;
 
@@ -122,6 +150,22 @@ namespace OfficeIMO.Visio.Diagrams {
             return this;
         }
 
+        /// <summary>Adds a centered editable title above the automatically placed dependency graph.</summary>
+        public VisioDependencyDiagramBuilder Title(string? text = null, string id = "title", double height = 0.45, double gap = 0.35) {
+            string normalizedId = RequireId(id, nameof(id), "Title id");
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A dependency diagram item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidatePositive(height, nameof(height));
+            ValidateNonNegative(gap, nameof(gap));
+            _titleText = string.IsNullOrWhiteSpace(text) ? _pageName : text;
+            _titleId = normalizedId;
+            _titleHeight = height;
+            _titleGap = gap;
+            return this;
+        }
+
         /// <summary>Adds a component node.</summary>
         public VisioDependencyDiagramBuilder Component(string id, string text) => Node(id, text, VisioDependencyNodeKind.Component);
 
@@ -137,8 +181,8 @@ namespace OfficeIMO.Visio.Diagrams {
         /// <summary>Adds a dependency node.</summary>
         public VisioDependencyDiagramBuilder Node(string id, string text, VisioDependencyNodeKind kind = VisioDependencyNodeKind.Component) {
             string normalizedId = RequireId(id, nameof(id), "Node id");
-            if (_nodesById.ContainsKey(normalizedId)) {
-                throw new ArgumentException($"A dependency node with id '{normalizedId}' already exists.", nameof(id));
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A dependency diagram item with id '{normalizedId}' already exists.", nameof(id));
             }
 
             if (!Enum.IsDefined(typeof(VisioDependencyNodeKind), kind)) {
@@ -165,13 +209,41 @@ namespace OfficeIMO.Visio.Diagrams {
 
         /// <summary>Adds a dependency connector between two known nodes.</summary>
         public VisioDependencyDiagramBuilder Dependency(string fromId, string toId, VisioDependencyConnectorKind kind, string? label = null) {
-            EnsureKnownNode(fromId, nameof(fromId));
-            EnsureKnownNode(toId, nameof(toId));
+            string normalizedFromId = RequireId(fromId, nameof(fromId), "Node id");
+            string normalizedToId = RequireId(toId, nameof(toId), "Node id");
+            EnsureKnownNode(normalizedFromId, nameof(fromId));
+            EnsureKnownNode(normalizedToId, nameof(toId));
             if (!Enum.IsDefined(typeof(VisioDependencyConnectorKind), kind)) {
                 throw new ArgumentOutOfRangeException(nameof(kind));
             }
 
-            _dependencies.Add(new DependencyItem(fromId, toId, kind, label));
+            _dependencies.Add(new DependencyItem(normalizedFromId, normalizedToId, kind, label));
+            return this;
+        }
+
+        /// <summary>Adds a semantic callout connected to a known dependency node using a generated callout id.</summary>
+        public VisioDependencyDiagramBuilder Callout(string targetId, string text, double pinX, double pinY, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            EnsureKnownNode(normalizedTargetId, nameof(targetId));
+            return Callout(normalizedTargetId, CreateCalloutId(normalizedTargetId), text, pinX, pinY, configure);
+        }
+
+        /// <summary>Adds a semantic callout connected to a known dependency node.</summary>
+        public VisioDependencyDiagramBuilder Callout(string targetId, string id, string text, double pinX, double pinY, Action<VisioCalloutOptions>? configure = null) {
+            string normalizedTargetId = RequireId(targetId, nameof(targetId), "Callout target id");
+            string normalizedId = RequireId(id, nameof(id), "Callout id");
+            EnsureKnownNode(normalizedTargetId, nameof(targetId));
+            if (IsIdInUse(normalizedId)) {
+                throw new ArgumentException($"A dependency diagram item with id '{normalizedId}' already exists.", nameof(id));
+            }
+
+            ValidateFinite(pinX, nameof(pinX));
+            ValidateFinite(pinY, nameof(pinY));
+            VisioCalloutOptions options = CreateCalloutOptions();
+            configure?.Invoke(options);
+            ValidatePositive(options.Width, nameof(options.Width));
+            ValidatePositive(options.Height, nameof(options.Height));
+            _callouts.Add(new CalloutItem(normalizedTargetId, normalizedId, text ?? string.Empty, pinX, pinY, options));
             return this;
         }
 
@@ -192,6 +264,8 @@ namespace OfficeIMO.Visio.Diagrams {
             page.Grid(visible: false, snap: true);
             AddNodes(page);
             AddDependencies(page);
+            AddCallouts(page);
+            AddTitle(page);
             _document.RequestRecalcOnOpen();
             return page;
         }
@@ -240,9 +314,29 @@ namespace OfficeIMO.Visio.Diagrams {
             int layerCount = _nodes.Max(node => node.Layer) + 1;
             int rowCount = _nodes.GroupBy(node => node.Layer).Max(group => group.Count());
             double requiredWidth = _leftMargin + _rightMargin + (layerCount * _nodeWidth) + Math.Max(0, layerCount - 1) * _columnGap;
-            double requiredHeight = _topMargin + _bottomMargin + (rowCount * _nodeHeight) + Math.Max(0, rowCount - 1) * _rowGap;
+            double requiredHeight = _topMargin + _bottomMargin + HeaderHeight + (rowCount * _nodeHeight) + Math.Max(0, rowCount - 1) * _rowGap;
             _pageWidth = Math.Max(_pageWidth, requiredWidth);
             _pageHeight = Math.Max(_pageHeight, requiredHeight);
+        }
+
+        private void AddTitle(VisioPage page) {
+            if (string.IsNullOrWhiteSpace(_titleText)) {
+                return;
+            }
+
+            double y = _pageHeight - _topMargin - (_titleHeight / 2D);
+            VisioShape title = page.AddTextBox(_titleId, _pageWidth / 2D, y, Math.Max(1D, _pageWidth - _leftMargin - _rightMargin), _titleHeight, _titleText, _unit);
+            title.TextStyle = CreateTitleTextStyle();
+        }
+
+        private VisioTextStyle CreateTitleTextStyle() {
+            VisioTextStyle style = _theme.Emphasis.TextStyle?.Clone() ?? new VisioTextStyle();
+            style.FontFamily = string.IsNullOrWhiteSpace(style.FontFamily) ? "Aptos Display" : style.FontFamily;
+            style.Size = Math.Max(style.Size ?? 0D, 20D);
+            style.Bold = true;
+            style.HorizontalAlignment = VisioTextHorizontalAlignment.Center;
+            style.VerticalAlignment = VisioTextVerticalAlignment.Middle;
+            return style;
         }
 
         private void AddNodes(VisioPage page) {
@@ -281,6 +375,28 @@ namespace OfficeIMO.Visio.Diagrams {
             }
         }
 
+        private void AddCallouts(VisioPage page) {
+            foreach (CalloutItem callout in _callouts) {
+                NodeItem target = _nodesById[callout.TargetId];
+                if (target.Shape == null) {
+                    throw new InvalidOperationException("Nodes must be placed before callouts are created.");
+                }
+
+                page.AddCallout(target.Shape, callout.Id, callout.Text, callout.PinX, callout.PinY, callout.Options);
+            }
+        }
+
+        private VisioCalloutOptions CreateCalloutOptions() {
+            return new VisioCalloutOptions {
+                ShapeStyle = _theme.Container.Clone(),
+                LeaderStyle = new VisioConnectorStyle(_theme.Connector.LineColor, Math.Max(0.012D, _theme.Connector.LineWeight), 2, EndArrow.None) {
+                    Kind = ConnectorKind.RightAngle,
+                    TextStyle = _theme.Connector.TextStyle?.Clone()
+                },
+                RouteOffset = 0.08D
+            };
+        }
+
         private double XForLayer(int layer) {
             return _leftMargin + (_nodeWidth / 2D) + layer * (_nodeWidth + _columnGap);
         }
@@ -288,10 +404,13 @@ namespace OfficeIMO.Visio.Diagrams {
         private double YForRow(int layer, int row) {
             int rowCount = _nodes.Count(node => node.Layer == layer);
             double contentHeight = rowCount * _nodeHeight + Math.Max(0, rowCount - 1) * _rowGap;
-            double top = _pageHeight - _topMargin;
-            double layerTop = top - Math.Max(0D, ((_pageHeight - _topMargin - _bottomMargin) - contentHeight) / 2D);
+            double top = _pageHeight - _topMargin - HeaderHeight;
+            double availableHeight = _pageHeight - _topMargin - _bottomMargin - HeaderHeight;
+            double layerTop = top - Math.Max(0D, (availableHeight - contentHeight) / 2D);
             return layerTop - (_nodeHeight / 2D) - row * (_nodeHeight + _rowGap);
         }
+
+        private double HeaderHeight => string.IsNullOrWhiteSpace(_titleText) ? 0D : _titleHeight + _titleGap;
 
         private void GetNodeShape(VisioDependencyNodeKind kind, out string masterNameU, out double width, out double height) {
             width = _nodeWidth;
@@ -359,12 +478,50 @@ namespace OfficeIMO.Visio.Diagrams {
             }
         }
 
+        private bool IsIdInUse(string id) {
+            if (!string.IsNullOrWhiteSpace(_titleText) && string.Equals(_titleId, id, StringComparison.Ordinal)) {
+                return true;
+            }
+
+            if (_nodesById.ContainsKey(id)) {
+                return true;
+            }
+
+            foreach (CalloutItem callout in _callouts) {
+                if (string.Equals(callout.Id, id, StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private string CreateCalloutId(string targetId) {
+            string id = targetId + "-callout";
+            if (!IsIdInUse(id)) {
+                return id;
+            }
+
+            int index = 2;
+            while (IsIdInUse(id + "-" + index)) {
+                index++;
+            }
+
+            return id + "-" + index;
+        }
+
         private static string RequireId(string id, string parameterName, string label) {
             if (string.IsNullOrWhiteSpace(id)) {
                 throw new ArgumentException(label + " cannot be null or whitespace.", parameterName);
             }
 
             return id.Trim();
+        }
+
+        private static void ValidateFinite(double value, string parameterName) {
+            if (double.IsNaN(value) || double.IsInfinity(value)) {
+                throw new ArgumentOutOfRangeException(parameterName, "Value must be finite.");
+            }
         }
 
         private static void ValidatePositive(double value, string parameterName) {
