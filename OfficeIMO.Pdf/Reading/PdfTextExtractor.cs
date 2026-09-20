@@ -1072,14 +1072,14 @@ public static class PdfTextExtractor {
                     break;
                 case "'":
                     if (inText && args.Count >= 1) {
-                        RequestSpace();
+                        AppendLineBreak();
                         AppendTextRun(ToText(args[args.Count - 1]));
                     }
                     args.Clear();
                     break;
                 case "\"":
                     if (inText && args.Count >= 3) {
-                        RequestSpace();
+                        AppendLineBreak();
                         AppendTextRun(ToText(args[args.Count - 1]));
                     }
                     args.Clear();
@@ -1439,7 +1439,7 @@ public static class PdfTextExtractor {
             int close = FindCloseParen(obj, valueStart);
             if (close < 0) return null;
             string raw = obj.Substring(valueStart + 1, close - valueStart - 1);
-            return UnescapePdfLiteral(raw);
+            return PdfTextString.DecodeLiteral(raw);
         }
 
         if (obj[valueStart] == '<' && (valueStart + 1 >= obj.Length || obj[valueStart + 1] != '<')) {
@@ -1656,48 +1656,7 @@ public static class PdfTextExtractor {
     }
 
     private static string DecodeMetadataHexString(string raw) {
-        if (string.IsNullOrWhiteSpace(raw)) {
-            return string.Empty;
-        }
-
-        var bytes = DecodeHexBytes(raw);
-        if (bytes.Length >= 2) {
-            if (bytes[0] == 0xFE && bytes[1] == 0xFF) {
-                return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
-            }
-
-            if (bytes[0] == 0xFF && bytes[1] == 0xFE) {
-                return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
-            }
-        }
-
-        return PdfWinAnsiEncoding.Decode(bytes);
-    }
-
-    private static byte[] DecodeHexBytes(string s) {
-        var hex = new StringBuilder(s.Length);
-        for (int i = 0; i < s.Length; i++) {
-            char ch = s[i];
-            if (!char.IsWhiteSpace(ch)) hex.Append(ch);
-        }
-
-        if (hex.Length % 2 == 1) hex.Append('0');
-
-        var bytes = new byte[hex.Length / 2];
-        for (int i = 0; i < bytes.Length; i++) {
-            int hi = HexNibble(hex[i * 2]);
-            int lo = HexNibble(hex[i * 2 + 1]);
-            bytes[i] = (byte)((hi << 4) | lo);
-        }
-
-        return bytes;
-
-        static int HexNibble(char c) {
-            if (c >= '0' && c <= '9') return c - '0';
-            if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-            if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-            throw new FormatException($"Invalid hex character '{c}'.");
-        }
+        return PdfTextString.DecodeHex(raw);
     }
 
     private static List<PdfDictionary> CollectPages(Dictionary<int, PdfIndirectObject> objects, string? trailerRaw) {

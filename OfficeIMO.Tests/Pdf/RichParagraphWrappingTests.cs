@@ -195,12 +195,17 @@ namespace OfficeIMO.Tests.Pdf {
             var invalidLeaderException = Assert.Throws<ArgumentException>(() =>
                 new TextRun("Alpha", tabLeader: PdfTabLeaderStyle.Dots));
 
-            Assert.Contains("Tab leaders can only be applied to explicit tab runs.", invalidLeaderException.Message, StringComparison.Ordinal);
+            Assert.Contains("Tab leaders and alignment can only be applied to explicit tab runs.", invalidLeaderException.Message, StringComparison.Ordinal);
 
             var invalidEnumException = Assert.Throws<ArgumentException>(() =>
                 TextRun.Tab((PdfTabLeaderStyle)99));
 
-            Assert.Contains("PDF tab leader style must be None or Dots.", invalidEnumException.Message, StringComparison.Ordinal);
+            Assert.Contains("PDF tab leader style must be None, Dots, Hyphens, or Underscores.", invalidEnumException.Message, StringComparison.Ordinal);
+
+            var invalidAlignmentException = Assert.Throws<ArgumentException>(() =>
+                TextRun.Tab(alignment: (PdfTabAlignment)99));
+
+            Assert.Contains("PDF tab alignment must be Left, Center, Right, or DecimalSeparator.", invalidAlignmentException.Message, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -452,6 +457,96 @@ namespace OfficeIMO.Tests.Pdf {
             Assert.Equal(PdfTabLeaderStyle.Dots, ExtractLeadingTabLeader(line[1]));
         }
 
+        [Theory]
+        [InlineData(PdfTabLeaderStyle.Hyphens)]
+        [InlineData(PdfTabLeaderStyle.Underscores)]
+        public void WrapRichRuns_CarriesNonDotLeaderFromExplicitTabRun(PdfTabLeaderStyle leaderStyle) {
+            var result = InvokeWrapRichRuns(new[] {
+                new TextRun("A"),
+                TextRun.Tab(leaderStyle),
+                new TextRun("B")
+            }, 200, 12, PdfStandardFont.Helvetica, tabStopWidth: 72);
+
+            var line = Assert.Single(ExtractLines(result));
+            Assert.Equal(new[] { "A", "B" }, line.ConvertAll(ExtractText).ToArray());
+            Assert.False(ExtractLeadingSpace(line[0]));
+            Assert.True(ExtractLeadingSpace(line[1]));
+            Assert.False(ExtractLeadingSpaceIsExpandable(line[1]));
+            Assert.Equal(leaderStyle, ExtractLeadingTabLeader(line[1]));
+        }
+
+        [Fact]
+        public void WrapRichRuns_RightAlignedTabsAccountForFollowingTokenWidth() {
+            var shortResult = InvokeWrapRichRuns(new[] {
+                new TextRun("A"),
+                TextRun.Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.Right),
+                new TextRun("12")
+            }, 200, 12, PdfStandardFont.Helvetica, tabStopWidth: 72);
+            var longResult = InvokeWrapRichRuns(new[] {
+                new TextRun("A"),
+                TextRun.Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.Right),
+                new TextRun("12345")
+            }, 200, 12, PdfStandardFont.Helvetica, tabStopWidth: 72);
+
+            var shortLine = Assert.Single(ExtractLines(shortResult));
+            var longLine = Assert.Single(ExtractLines(longResult));
+            double shortAdvance = ExtractLeadingAdvance(shortLine[1]);
+            double longAdvance = ExtractLeadingAdvance(longLine[1]);
+            double shortWidth = InvokePrivateFontMethod<double>("EstimateSimpleTextWidth", "12", PdfStandardFont.Helvetica, 12.0);
+            double longWidth = InvokePrivateFontMethod<double>("EstimateSimpleTextWidth", "12345", PdfStandardFont.Helvetica, 12.0);
+
+            Assert.True(longAdvance < shortAdvance, "Expected wider right-aligned tab text to consume less leading advance.");
+            Assert.Equal(shortAdvance + shortWidth, longAdvance + longWidth, 1);
+        }
+
+        [Fact]
+        public void WrapRichRuns_CenterAlignedTabsCenterFollowingTokenOnStop() {
+            var shortResult = InvokeWrapRichRuns(new[] {
+                new TextRun("A"),
+                TextRun.Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.Center),
+                new TextRun("AB")
+            }, 200, 12, PdfStandardFont.Helvetica, tabStopWidth: 72);
+            var longResult = InvokeWrapRichRuns(new[] {
+                new TextRun("A"),
+                TextRun.Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.Center),
+                new TextRun("ABCDE")
+            }, 200, 12, PdfStandardFont.Helvetica, tabStopWidth: 72);
+
+            var shortLine = Assert.Single(ExtractLines(shortResult));
+            var longLine = Assert.Single(ExtractLines(longResult));
+            double shortAdvance = ExtractLeadingAdvance(shortLine[1]);
+            double longAdvance = ExtractLeadingAdvance(longLine[1]);
+            double shortWidth = InvokePrivateFontMethod<double>("EstimateSimpleTextWidth", "AB", PdfStandardFont.Helvetica, 12.0);
+            double longWidth = InvokePrivateFontMethod<double>("EstimateSimpleTextWidth", "ABCDE", PdfStandardFont.Helvetica, 12.0);
+
+            Assert.True(longAdvance < shortAdvance, "Expected wider center-aligned tab text to consume less leading advance.");
+            Assert.Equal(shortAdvance + shortWidth / 2D, longAdvance + longWidth / 2D, 1);
+        }
+
+        [Fact]
+        public void WrapRichRuns_DecimalAlignedTabsAlignDecimalSeparator() {
+            var shortResult = InvokeWrapRichRuns(new[] {
+                new TextRun("A"),
+                TextRun.Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.DecimalSeparator),
+                new TextRun("12.30")
+            }, 200, 12, PdfStandardFont.Helvetica, tabStopWidth: 72);
+            var longResult = InvokeWrapRichRuns(new[] {
+                new TextRun("A"),
+                TextRun.Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.DecimalSeparator),
+                new TextRun("1234.50")
+            }, 200, 12, PdfStandardFont.Helvetica, tabStopWidth: 72);
+
+            var shortLine = Assert.Single(ExtractLines(shortResult));
+            var longLine = Assert.Single(ExtractLines(longResult));
+            double shortAdvance = ExtractLeadingAdvance(shortLine[1]);
+            double longAdvance = ExtractLeadingAdvance(longLine[1]);
+            double shortPrefixWidth = InvokePrivateFontMethod<double>("EstimateSimpleTextWidth", "12", PdfStandardFont.Helvetica, 12.0);
+            double longPrefixWidth = InvokePrivateFontMethod<double>("EstimateSimpleTextWidth", "1234", PdfStandardFont.Helvetica, 12.0);
+
+            Assert.True(longAdvance < shortAdvance, "Expected wider decimal prefix text to consume less leading advance.");
+            Assert.Equal(shortAdvance + shortPrefixWidth, longAdvance + longPrefixWidth, 1);
+        }
+
         [Fact]
         public void ParagraphTabs_RenderAsVisibleDefaultTabStopGap() {
             byte[] bytes = PdfDoc.Create(new PdfOptions {
@@ -535,6 +630,164 @@ namespace OfficeIMO.Tests.Pdf {
             }));
             var leader = Assert.Single(structuredPage.LeaderRows);
             Assert.Equal(new[] { "Revenue", "12" }, leader);
+        }
+
+        [Theory]
+        [InlineData(PdfTabLeaderStyle.Hyphens, "-")]
+        [InlineData(PdfTabLeaderStyle.Underscores, "_")]
+        public void ParagraphTabs_RenderNonDotLeaders(PdfTabLeaderStyle leaderStyle, string expectedGlyph) {
+            byte[] bytes = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 180,
+                    MarginLeft = 36,
+                    MarginRight = 36,
+                    MarginTop = 36,
+                    MarginBottom = 36,
+                    DefaultFontSize = 12,
+                    DefaultParagraphStyle = new PdfParagraphStyle {
+                        DefaultTabStopWidth = 216,
+                        SpacingAfter = 0
+                    }
+                })
+                .Paragraph(p => p.Text("Status").Tab(leaderStyle).Text("Ready"))
+                .ToBytes();
+
+            using var pdf = UglyToad.PdfPig.PdfDocument.Open(new MemoryStream(bytes));
+            var glyphCount = pdf.GetPage(1).Letters.Count(letter => letter.Value == expectedGlyph);
+
+            Assert.True(glyphCount >= 3, $"Expected {leaderStyle} tab leaders to render with '{expectedGlyph}' glyphs. Glyph count: {glyphCount}.");
+        }
+
+        [Fact]
+        public void ParagraphTabs_RightAlignedDotLeadersAlignValueEnds() {
+            byte[] bytes = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 200,
+                    MarginLeft = 36,
+                    MarginRight = 36,
+                    MarginTop = 36,
+                    MarginBottom = 36,
+                    DefaultFontSize = 12,
+                    DefaultParagraphStyle = new PdfParagraphStyle {
+                        DefaultTabStopWidth = 216,
+                        SpacingAfter = 0
+                    }
+                })
+                .Paragraph(p => p.Text("A").Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.Right).Text("12"))
+                .Paragraph(p => p.Text("Longer").Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.Right).Text("12345"))
+                .ToBytes();
+
+            using var pdf = UglyToad.PdfPig.PdfDocument.Open(new MemoryStream(bytes));
+            var page = pdf.GetPage(1);
+            var digitEnds = page.Letters
+                .Where(letter => char.IsDigit(letter.Value[0]))
+                .GroupBy(letter => Math.Round(letter.StartBaseLine.Y, 1))
+                .OrderByDescending(group => group.Key)
+                .Select(group => group.Max(letter => letter.EndBaseLine.X))
+                .ToArray();
+
+            Assert.Equal(2, digitEnds.Length);
+            Assert.InRange(Math.Abs(digitEnds[0] - digitEnds[1]), 0, 1.5);
+        }
+
+        [Fact]
+        public void ParagraphTabs_DecimalAlignedDotLeadersAlignDecimalSeparators() {
+            byte[] bytes = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 200,
+                    MarginLeft = 36,
+                    MarginRight = 36,
+                    MarginTop = 36,
+                    MarginBottom = 36,
+                    DefaultFontSize = 12,
+                    DefaultParagraphStyle = new PdfParagraphStyle {
+                        DefaultTabStopWidth = 216,
+                        SpacingAfter = 0
+                    }
+                })
+                .Paragraph(p => p.Text("Tax").Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.DecimalSeparator).Text("8.50"))
+                .Paragraph(p => p.Text("Total").Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.DecimalSeparator).Text("12845.75"))
+                .ToBytes();
+
+            using var pdf = UglyToad.PdfPig.PdfDocument.Open(new MemoryStream(bytes));
+            var page = pdf.GetPage(1);
+            var decimalStarts = page.Letters
+                .GroupBy(letter => Math.Round(letter.StartBaseLine.Y, 1))
+                .OrderByDescending(group => group.Key)
+                .Select(group => {
+                    var ordered = group.OrderBy(letter => letter.StartBaseLine.X).ToList();
+                    for (int i = 1; i < ordered.Count - 1; i++) {
+                        if (ordered[i].Value == "." &&
+                            char.IsDigit(ordered[i - 1].Value[0]) &&
+                            char.IsDigit(ordered[i + 1].Value[0])) {
+                            return ordered[i].StartBaseLine.X;
+                        }
+                    }
+
+                    throw new InvalidOperationException("Could not find a decimal separator surrounded by digits.");
+                })
+                .ToArray();
+
+            Assert.Equal(2, decimalStarts.Length);
+            Assert.InRange(Math.Abs(decimalStarts[0] - decimalStarts[1]), 0, 1.5);
+        }
+
+        [Fact]
+        public void ParagraphTabs_DotLeaderReadbackPreservesDecimalValues() {
+            byte[] bytes = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 220,
+                    MarginLeft = 36,
+                    MarginRight = 36,
+                    MarginTop = 36,
+                    MarginBottom = 36,
+                    DefaultFontSize = 12,
+                    DefaultParagraphStyle = new PdfParagraphStyle {
+                        DefaultTabStopWidth = 216,
+                        SpacingAfter = 0
+                    }
+                })
+                .Paragraph(p => p.Text("Tax").Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.DecimalSeparator).Text("8.50"))
+                .Paragraph(p => p.Text("Total").Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.DecimalSeparator).Text("1450.75"))
+                .Paragraph(p => p.Text("Discount").Tab(PdfTabLeaderStyle.Dots, PdfTabAlignment.Right).Text("$1,234.50"))
+                .ToBytes();
+
+            var structuredPage = Assert.Single(PdfTextExtractor.ExtractStructuredByPage(bytes, new PdfTextLayoutOptions {
+                ForceSingleColumn = true
+            }));
+
+            Assert.Contains(structuredPage.LeaderRows, row => row.Length >= 2 && row[0] == "Tax" && row[1] == "8.50");
+            Assert.Contains(structuredPage.LeaderRows, row => row.Length >= 2 && row[0] == "Total" && row[1] == "1450.75");
+            Assert.Contains(structuredPage.LeaderRows, row => row.Length >= 2 && row[0] == "Discount" && row[1] == "$1,234.50");
+        }
+
+        [Fact]
+        public void ParagraphTabs_NonDotLeaderReadbackPreservesNumericValues() {
+            byte[] bytes = PdfDoc.Create(new PdfOptions {
+                    PageWidth = 360,
+                    PageHeight = 220,
+                    MarginLeft = 36,
+                    MarginRight = 36,
+                    MarginTop = 36,
+                    MarginBottom = 36,
+                    DefaultFontSize = 12,
+                    DefaultParagraphStyle = new PdfParagraphStyle {
+                        DefaultTabStopWidth = 216,
+                        SpacingAfter = 0
+                    }
+                })
+                .Paragraph(p => p.Text("Milestone").Tab(PdfTabLeaderStyle.Hyphens, PdfTabAlignment.Right).Text("Q4"))
+                .Paragraph(p => p.Text("Signature count").Tab(PdfTabLeaderStyle.Underscores, PdfTabAlignment.Right).Text("12"))
+                .Paragraph(p => p.Text("Balance").Tab(PdfTabLeaderStyle.Hyphens, PdfTabAlignment.DecimalSeparator).Text("$1,234.50"))
+                .ToBytes();
+
+            var structuredPage = Assert.Single(PdfTextExtractor.ExtractStructuredByPage(bytes, new PdfTextLayoutOptions {
+                ForceSingleColumn = true
+            }));
+
+            Assert.Contains(structuredPage.LeaderRows, row => row.Length >= 2 && row[0] == "Milestone" && row[1] == "Q4");
+            Assert.Contains(structuredPage.LeaderRows, row => row.Length >= 2 && row[0] == "Signature count" && row[1] == "12");
+            Assert.Contains(structuredPage.LeaderRows, row => row.Length >= 2 && row[0] == "Balance" && row[1] == "$1,234.50");
         }
 
         [Fact]

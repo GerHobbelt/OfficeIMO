@@ -801,6 +801,183 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Heading_UsesConfiguredSpacingBeforeAndAfter() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 260,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        var defaultStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 0,
+            SpacingAfter = 0
+        };
+        var spacedStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 12,
+            SpacingAfter = 18
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("BeforeMarker"), style: new PdfParagraphStyle { SpacingAfter = 0 })
+            .H2("HeadingMarker", style: defaultStyle)
+            .Paragraph(p => p.Text("AfterMarker"))
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("BeforeMarker"), style: new PdfParagraphStyle { SpacingAfter = 0 })
+            .H2("HeadingMarker", style: spacedStyle)
+            .Paragraph(p => p.Text("AfterMarker"))
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+        var defaultPage = defaultPdf.GetPage(1);
+        var spacedPage = spacedPdf.GetPage(1);
+
+        double defaultHeadingY = FindWordStartY(defaultPage, "HeadingMarker");
+        double spacedHeadingY = FindWordStartY(spacedPage, "HeadingMarker");
+        double defaultAfterY = FindWordStartY(defaultPage, "AfterMarker");
+        double spacedAfterY = FindWordStartY(spacedPage, "AfterMarker");
+
+        Assert.True(defaultHeadingY - spacedHeadingY >= 10, $"Expected heading spacing before to move heading text down. Default y: {defaultHeadingY:0.##}, spaced y: {spacedHeadingY:0.##}.");
+        Assert.True(defaultAfterY - spacedAfterY >= 28, $"Expected heading spacing before and after to move following content down. Default y: {defaultAfterY:0.##}, spaced y: {spacedAfterY:0.##}.");
+    }
+
+    [Fact]
+    public void Heading_SuppressesSpacingBeforeAtPageTop() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        var defaultStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 0,
+            SpacingAfter = 0
+        };
+        var spacedStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 28,
+            SpacingAfter = 0
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .H2("TopHeadingMarker", style: defaultStyle)
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .H2("TopHeadingMarker", style: spacedStyle)
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), "TopHeadingMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "TopHeadingMarker");
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Fact]
+    public void RowColumnHeading_SuppressesSpacingBeforeAtColumnTop() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+        var defaultStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 0,
+            SpacingAfter = 0
+        };
+        var spacedStyle = new PdfHeadingStyle {
+            FontSize = 12,
+            LineHeight = 1,
+            SpacingBefore = 28,
+            SpacingAfter = 0
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .Compose(document => document.Page(page => page.Content(content => content.Row(row => row.Column(100, column => column
+                .H2("ColumnHeadingMarker", style: defaultStyle))))))
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .Compose(document => document.Page(page => page.Content(content => content.Row(row => row.Column(100, column => column
+                .H2("ColumnHeadingMarker", style: spacedStyle))))))
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), "ColumnHeadingMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "ColumnHeadingMarker");
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Theory]
+    [InlineData("bullet-list", "ListTopMarker")]
+    [InlineData("numbered-list", "ListTopMarker")]
+    [InlineData("panel", "PanelTopMarker")]
+    [InlineData("horizontal-rule", "AfterFixedMarker")]
+    [InlineData("image", "AfterFixedMarker")]
+    [InlineData("shape", "AfterFixedMarker")]
+    [InlineData("drawing", "AfterFixedMarker")]
+    [InlineData("row", "RowTopMarker")]
+    public void FlowBlock_SuppressesSpacingBeforeAtPageTop(string blockKind, string marker) {
+        byte[] defaultBytes = CreateTopLevelFlowSpacingBeforeProbe(blockKind, 0);
+        byte[] spacedBytes = CreateTopLevelFlowSpacingBeforeProbe(blockKind, 28);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), marker);
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), marker);
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Theory]
+    [InlineData("bullet-list", "ColumnListMarker")]
+    [InlineData("numbered-list", "ColumnListMarker")]
+    [InlineData("panel", "ColumnPanelMarker")]
+    [InlineData("horizontal-rule", "ColumnAfterFixedMarker")]
+    [InlineData("image", "ColumnAfterFixedMarker")]
+    [InlineData("shape", "ColumnAfterFixedMarker")]
+    [InlineData("drawing", "ColumnAfterFixedMarker")]
+    public void RowColumnFlowBlock_SuppressesSpacingBeforeAtColumnTop(string blockKind, string marker) {
+        byte[] defaultBytes = CreateColumnFlowSpacingBeforeProbe(blockKind, 0);
+        byte[] spacedBytes = CreateColumnFlowSpacingBeforeProbe(blockKind, 28);
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), marker);
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), marker);
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Fact]
     public void PdfDoc_DefaultPanelStyleAppliesToFollowingPanelsAndSnapshotsInput() {
         var style = new PanelStyle {
             Background = PdfColor.FromRgb(240, 248, 255),
@@ -880,7 +1057,7 @@ public class PdfDocVisualQualityTests {
         using var pdf = PdfDocument.Open(new MemoryStream(bytes));
         var page = pdf.GetPage(1);
         string rawPdf = Encoding.ASCII.GetString(bytes);
-        double ruleBottomY = 180 - 20 - 3 - 2;
+        double ruleBottomY = 180 - 20 - 2;
         double paragraphTopY = FindWordStartY(page, "AfterDefaultRule") + fontSize * 0.74;
         double clearance = ruleBottomY - paragraphTopY;
 
@@ -2676,6 +2853,72 @@ public class PdfDocVisualQualityTests {
     }
 
     [Fact]
+    public void Paragraph_SuppressesSpacingBeforeAtPageTop() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("TopMarker"))
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .Paragraph(p => p.Text("TopMarker"), style: new PdfParagraphStyle {
+                SpacingBefore = 28,
+                SpacingAfter = 0
+            })
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), "TopMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "TopMarker");
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Fact]
+    public void Paragraph_SuppressesSpacingBeforeAtRowColumnTop() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .Compose(document => document.Page(page => page.Content(content => content.Row(row => row.Column(100, column => column
+                .Paragraph(p => p.Text("ColumnTopMarker")))))))
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .Compose(document => document.Page(page => page.Content(content => content.Row(row => row.Column(100, column => column
+                .Paragraph(p => p.Text("ColumnTopMarker"), style: new PdfParagraphStyle {
+                    SpacingBefore = 28,
+                    SpacingAfter = 0
+                }))))))
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), "ColumnTopMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "ColumnTopMarker");
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Fact]
     public void Spacer_AddsInvisibleVerticalSpaceWithoutExtractedText() {
         var options = new PdfOptions {
             PageWidth = 320,
@@ -4300,7 +4543,7 @@ public class PdfDocVisualQualityTests {
 
         Assert.Contains("0.102 0.2 0.302 RG", content);
         Assert.Contains("3 w", content);
-        Assert.Contains("20 154.5 m 220 154.5 l S", content);
+        Assert.Contains("20 158.5 m 220 158.5 l S", content);
     }
 
     [Fact]
@@ -4327,7 +4570,7 @@ public class PdfDocVisualQualityTests {
         using var pdf = PdfDocument.Open(new MemoryStream(bytes));
         var page = pdf.GetPage(1);
 
-        double ruleBottomY = 180 - 20 - 4 - 3;
+        double ruleBottomY = 180 - 20 - 3;
         double paragraphTopY = FindWordStartY(page, "Guarded") + fontSize * 0.74;
         double clearance = ruleBottomY - paragraphTopY;
 
@@ -4363,7 +4606,7 @@ public class PdfDocVisualQualityTests {
         using var pdf = PdfDocument.Open(new MemoryStream(bytes));
         var page = pdf.GetPage(1);
 
-        double ruleBottomY = 180 - 20 - 4 - 3;
+        double ruleBottomY = 180 - 20 - 3;
         double paragraphTopY = FindWordStartY(page, "Guarded") + fontSize * 0.74;
         double clearance = ruleBottomY - paragraphTopY;
 
@@ -5507,7 +5750,7 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("0.8 0.702 0.6 rg", content);
         Assert.Contains("0.102 0.2 0.302 RG", content);
         Assert.Contains("2.5 w", content);
-        Assert.Contains("70 120 100 36 re B", content);
+        Assert.Contains("70 124 100 36 re B", content);
     }
 
     [Fact]
@@ -5725,10 +5968,10 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("0.8 0.702 0.6 rg", content);
         Assert.Contains("0.102 0.2 0.302 RG", content);
         Assert.Contains("2 w", content);
-        Assert.Contains("78 120 m", content);
-        Assert.Contains("162 120 l", content);
-        Assert.Contains("166.418 120 170 123.582 170 128 c", content);
-        Assert.Contains("70 123.582 73.582 120 78 120 c h B", content);
+        Assert.Contains("78 124 m", content);
+        Assert.Contains("162 124 l", content);
+        Assert.Contains("166.418 124 170 127.582 170 132 c", content);
+        Assert.Contains("70 127.582 73.582 124 78 124 c h B", content);
     }
 
     [Fact]
@@ -5759,7 +6002,7 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("0.2 0.4 0.6 RG", content);
         Assert.Contains("2 w", content);
         Assert.Contains("[6 3] 0 d", content);
-        Assert.Contains("70 156 m 170 116 l S", content);
+        Assert.Contains("70 160 m 170 120 l S", content);
     }
 
     [Fact]
@@ -5792,7 +6035,7 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("3 w", content);
         Assert.Contains("2 J", content);
         Assert.Contains("2 j", content);
-        Assert.Contains("70 156 m 170 156 l S", content);
+        Assert.Contains("70 160 m 170 160 l S", content);
     }
 
     [Fact]
@@ -6065,9 +6308,9 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("2 w", content);
         Assert.Contains("1 J", content);
         Assert.Contains("[2 3] 0 d", content);
-        Assert.Contains("160 136 m", content);
-        Assert.Contains("160 147.046 142.091 156 120 156 c", content);
-        Assert.Contains("142.091 116 160 124.954 160 136 c B", content);
+        Assert.Contains("160 140 m", content);
+        Assert.Contains("160 151.046 142.091 160 120 160 c", content);
+        Assert.Contains("142.091 120 160 128.954 160 140 c B", content);
     }
 
     [Fact]
@@ -6096,9 +6339,9 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("0.961 0.961 0.961 rg", content);
         Assert.Contains("0.275 0.51 0.706 RG", content);
         Assert.Contains("1.5 w", content);
-        Assert.Contains("80 116 m", content);
-        Assert.Contains("120 156 l", content);
-        Assert.Contains("160 116 l", content);
+        Assert.Contains("80 120 m", content);
+        Assert.Contains("120 160 l", content);
+        Assert.Contains("160 120 l", content);
         Assert.Contains("h B", content);
     }
 
@@ -6128,7 +6371,7 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("0.275 0.51 0.706 RG", content);
         Assert.Contains("2 w", content);
         Assert.Contains("1 j", content);
-        Assert.Contains("80 116 m", content);
+        Assert.Contains("80 120 m", content);
         Assert.Contains("h S", content);
     }
 
@@ -6158,8 +6401,8 @@ public class PdfDocVisualQualityTests {
         Assert.Contains("0.961 0.961 0.961 rg", content);
         Assert.Contains("0.275 0.51 0.706 RG", content);
         Assert.Contains("1.5 w", content);
-        Assert.Contains("80 116 m", content);
-        Assert.Contains("100 156 140 156 160 116 c", content);
+        Assert.Contains("80 120 m", content);
+        Assert.Contains("100 160 140 160 160 120 c", content);
         Assert.Contains("h", content);
         Assert.Contains("B", content);
     }
@@ -6195,13 +6438,13 @@ public class PdfDocVisualQualityTests {
         string content = Encoding.ASCII.GetString(bytes);
 
         Assert.Contains("0.961 0.961 0.961 rg", content);
-        Assert.Contains("60 96 120 60 re f", content);
+        Assert.Contains("60 100 120 60 re f", content);
         Assert.Contains("0.275 0.51 0.706 rg", content);
         Assert.Contains("0 0 0 RG", content);
         Assert.Contains("1.25 w", content);
-        Assert.Contains("80 111 m", content);
-        Assert.Contains("120 141 l", content);
-        Assert.Contains("160 111 l", content);
+        Assert.Contains("80 115 m", content);
+        Assert.Contains("120 145 l", content);
+        Assert.Contains("160 115 l", content);
         Assert.Contains("h B", content);
     }
 
@@ -7566,14 +7809,21 @@ public class PdfDocVisualQualityTests {
     [Fact]
     public void TableStyles_ExposeWordLikeGenericPresetsWithoutSemanticAlignment() {
         var tableGrid = TableStyles.TableGrid();
+        var tableGridLight = TableStyles.TableGridLight();
         var plainTable = TableStyles.PlainTable1();
         var gridTable = TableStyles.GridTable1Light();
         var listTable = TableStyles.ListTable1Light();
 
-        Assert.Equal(PdfColor.FromRgb(191, 191, 191), tableGrid.BorderColor);
+        Assert.Equal(PdfColor.Black, tableGrid.BorderColor);
         Assert.Equal(0.5, tableGrid.BorderWidth);
         Assert.Null(tableGrid.HeaderFill);
         Assert.Null(tableGrid.RowStripeFill);
+
+        Assert.Equal(PdfColor.FromRgb(191, 191, 191), tableGridLight.BorderColor);
+        Assert.Equal(0.5, tableGridLight.BorderWidth);
+        Assert.Null(tableGridLight.HeaderFill);
+        Assert.Null(tableGridLight.RowStripeFill);
+        Assert.NotEqual(tableGrid.BorderColor, tableGridLight.BorderColor);
 
         Assert.Null(plainTable.BorderColor);
         Assert.Equal(0, plainTable.BorderWidth);
@@ -7593,6 +7843,7 @@ public class PdfDocVisualQualityTests {
         Assert.Equal(PdfColor.FromRgb(224, 224, 224), listTable.RowSeparatorColor);
 
         Assert.False(tableGrid.RightAlignNumeric);
+        Assert.False(tableGridLight.RightAlignNumeric);
         Assert.False(plainTable.RightAlignNumeric);
         Assert.False(gridTable.RightAlignNumeric);
         Assert.False(listTable.RightAlignNumeric);
@@ -7605,25 +7856,64 @@ public class PdfDocVisualQualityTests {
     [Fact]
     public void TableStyles_ResolveSupportedWordStyleNamesToFreshPdfStyles() {
         Assert.Equal(new[] {
+            "TableNormal",
             "TableGrid",
+            "TableGridLight",
             "PlainTable1",
             "GridTable1Light",
-            "ListTable1Light"
+            "GridTable1LightAccent1",
+            "GridTable1LightAccent2",
+            "GridTable1LightAccent3",
+            "GridTable1LightAccent4",
+            "GridTable1LightAccent5",
+            "GridTable1LightAccent6",
+            "ListTable1Light",
+            "ListTable1LightAccent1",
+            "ListTable1LightAccent2",
+            "ListTable1LightAccent3",
+            "ListTable1LightAccent4",
+            "ListTable1LightAccent5",
+            "ListTable1LightAccent6",
+            "GridTableLight",
+            "GridTable1Light-Accent1",
+            "GridTable1Light-Accent2",
+            "GridTable1Light-Accent3",
+            "GridTable1Light-Accent4",
+            "GridTable1Light-Accent5",
+            "GridTable1Light-Accent6",
+            "ListTable1Light-Accent1",
+            "ListTable1Light-Accent2",
+            "ListTable1Light-Accent3",
+            "ListTable1Light-Accent4",
+            "ListTable1Light-Accent5",
+            "ListTable1Light-Accent6"
         }, TableStyles.SupportedWordStyleNames);
 
+        PdfTableStyle tableNormal = TableStyles.FromWordTableStyle("Table Normal");
         PdfTableStyle tableGrid = TableStyles.FromWordTableStyle("Table Grid");
+        PdfTableStyle tableGridLight = TableStyles.FromWordTableStyle("Grid Table Light");
         PdfTableStyle plainTable = TableStyles.FromWordTableStyle("plain_table_1");
         bool resolvedGridLight = TableStyles.TryFromWordTableStyle("grid-table-1-light", out PdfTableStyle? gridLight);
+        PdfTableStyle gridLightAccent = TableStyles.FromWordTableStyle("GridTable1Light-Accent2");
         PdfTableStyle listTable = TableStyles.FromWordTableStyle(" list table 1 light ");
+        PdfTableStyle listTableAccent = TableStyles.FromWordTableStyle("ListTable1LightAccent5");
 
-        Assert.Equal(PdfColor.FromRgb(191, 191, 191), tableGrid.BorderColor);
+        Assert.Null(tableNormal.BorderColor);
+        Assert.Equal(PdfColor.Black, tableGrid.BorderColor);
+        Assert.Equal(PdfColor.FromRgb(191, 191, 191), tableGridLight.BorderColor);
+        Assert.Null(tableGridLight.HeaderSeparatorColor);
         Assert.Null(plainTable.BorderColor);
         Assert.True(resolvedGridLight);
         Assert.NotNull(gridLight);
         Assert.Equal(PdfColor.FromRgb(217, 217, 217), gridLight!.BorderColor);
         Assert.Equal(PdfColor.FromRgb(127, 127, 127), gridLight.FooterSeparatorColor);
+        Assert.Equal(PdfColor.FromRgb(247, 202, 172), gridLightAccent.BorderColor);
+        Assert.Equal(PdfColor.FromRgb(244, 176, 131), gridLightAccent.HeaderSeparatorColor);
         Assert.Equal(PdfColor.FromRgb(224, 224, 224), listTable.RowSeparatorColor);
         Assert.Equal(PdfColor.Black, listTable.FooterSeparatorColor);
+        Assert.Equal(PdfColor.FromRgb(222, 234, 246), listTableAccent.RowStripeFill);
+        Assert.Equal(PdfColor.FromRgb(224, 224, 224), listTableAccent.RowSeparatorColor);
+        Assert.Equal(PdfColor.FromRgb(156, 194, 229), listTableAccent.HeaderSeparatorColor);
 
         PdfTableStyle independentListTable = TableStyles.FromWordTableStyle("ListTable1Light");
         listTable.CellPaddingX = 20;
@@ -7635,10 +7925,90 @@ public class PdfDocVisualQualityTests {
         var exception = Assert.Throws<ArgumentException>(() => TableStyles.FromWordTableStyle("GridTable7Colorful"));
         Assert.Equal("styleName", exception.ParamName);
         Assert.Contains("Unsupported Word table style 'GridTable7Colorful'.", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Supported styles: TableGrid, PlainTable1, GridTable1Light, ListTable1Light", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Supported styles: TableNormal, TableGrid, TableGridLight, PlainTable1, GridTable1Light", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("GridTable1Light-Accent6", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ListTable1Light-Accent6", exception.Message, StringComparison.Ordinal);
 
         Assert.Throws<ArgumentNullException>(() => TableStyles.FromWordTableStyle(null!));
         Assert.Throws<ArgumentNullException>(() => TableStyles.TryFromWordTableStyle(null!, out _));
+    }
+
+    [Fact]
+    public void TableStyles_ExposeCanonicalWordStyleNamesWithoutAliasSpellings() {
+        Assert.Contains("TableNormal", TableStyles.CanonicalWordStyleNames);
+        Assert.Contains("TableGridLight", TableStyles.CanonicalWordStyleNames);
+        Assert.Contains("GridTable1LightAccent6", TableStyles.CanonicalWordStyleNames);
+        Assert.Contains("ListTable1LightAccent6", TableStyles.CanonicalWordStyleNames);
+        Assert.DoesNotContain("GridTable1Light-Accent1", TableStyles.CanonicalWordStyleNames);
+        Assert.DoesNotContain("ListTable1Light-Accent1", TableStyles.CanonicalWordStyleNames);
+        Assert.DoesNotContain("GridTableLight", TableStyles.CanonicalWordStyleNames);
+
+        Assert.Contains("GridTableLight", TableStyles.SupportedWordStyleNames);
+        Assert.Contains("GridTable1Light-Accent1", TableStyles.SupportedWordStyleNames);
+        Assert.Contains("ListTable1Light-Accent1", TableStyles.SupportedWordStyleNames);
+        Assert.Equal(TableStyles.CanonicalWordStyleNames.Count, TableStyles.CanonicalWordStyleNames.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Theory]
+    [InlineData("Table Normal", "TableNormal")]
+    [InlineData("table-grid", "TableGrid")]
+    [InlineData("Grid Table Light", "TableGridLight")]
+    [InlineData("table_grid_light", "TableGridLight")]
+    [InlineData("plain_table_1", "PlainTable1")]
+    [InlineData("grid-table-1-light", "GridTable1Light")]
+    [InlineData("GridTable1Light-Accent2", "GridTable1LightAccent2")]
+    [InlineData("grid table 1 light accent 6", "GridTable1LightAccent6")]
+    [InlineData("ListTable1Light-Accent5", "ListTable1LightAccent5")]
+    [InlineData(" list table 1 light accent 3 ", "ListTable1LightAccent3")]
+    public void TableStyles_NormalizeSupportedWordStyleNamesToCanonicalNames(string input, string expectedCanonicalName) {
+        Assert.True(TableStyles.TryGetCanonicalWordStyleName(input, out string? canonicalName));
+        Assert.Equal(expectedCanonicalName, canonicalName);
+        Assert.Equal(expectedCanonicalName, TableStyles.GetCanonicalWordStyleName(input));
+    }
+
+    [Fact]
+    public void TableStyles_CanonicalWordStyleNameRejectsUnsupportedInputs() {
+        Assert.False(TableStyles.TryGetCanonicalWordStyleName("GridTable7Colorful", out string? missingStyle));
+        Assert.Null(missingStyle);
+
+        var exception = Assert.Throws<ArgumentException>(() => TableStyles.GetCanonicalWordStyleName("GridTable7Colorful"));
+        Assert.Equal("styleName", exception.ParamName);
+        Assert.Contains("Unsupported Word table style 'GridTable7Colorful'.", exception.Message, StringComparison.Ordinal);
+
+        Assert.Throws<ArgumentNullException>(() => TableStyles.GetCanonicalWordStyleName(null!));
+        Assert.Throws<ArgumentNullException>(() => TableStyles.TryGetCanonicalWordStyleName(null!, out _));
+    }
+
+    [Theory]
+    [InlineData(1, 180, 198, 231, 142, 170, 219, 217, 226, 243)]
+    [InlineData(2, 247, 202, 172, 244, 176, 131, 251, 228, 213)]
+    [InlineData(3, 219, 219, 219, 201, 201, 201, 237, 237, 237)]
+    [InlineData(4, 255, 229, 153, 255, 217, 102, 255, 242, 204)]
+    [InlineData(5, 189, 214, 238, 156, 194, 229, 222, 234, 246)]
+    [InlineData(6, 197, 224, 179, 168, 208, 141, 226, 239, 217)]
+    public void TableStyles_ResolveWordAccentVariantsWithDefaultThemeColors(
+        int accent,
+        int lightR,
+        int lightG,
+        int lightB,
+        int strongR,
+        int strongG,
+        int strongB,
+        int paleR,
+        int paleG,
+        int paleB) {
+        PdfTableStyle grid = TableStyles.FromWordTableStyle("GridTable1Light-Accent" + accent.ToString(CultureInfo.InvariantCulture));
+        PdfTableStyle list = TableStyles.FromWordTableStyle("ListTable1LightAccent" + accent.ToString(CultureInfo.InvariantCulture));
+
+        PdfColor ExpectedRgb(int r, int g, int b) => PdfColor.FromRgb((byte)r, (byte)g, (byte)b);
+
+        Assert.Equal(ExpectedRgb(lightR, lightG, lightB), grid.BorderColor);
+        Assert.Equal(ExpectedRgb(strongR, strongG, strongB), grid.HeaderSeparatorColor);
+        Assert.Equal(ExpectedRgb(strongR, strongG, strongB), grid.FooterSeparatorColor);
+
+        Assert.Equal(ExpectedRgb(paleR, paleG, paleB), list.RowStripeFill);
+        Assert.Equal(ExpectedRgb(strongR, strongG, strongB), list.HeaderSeparatorColor);
+        Assert.Equal(ExpectedRgb(strongR, strongG, strongB), list.FooterSeparatorColor);
     }
 
     [Fact]
@@ -7747,6 +8117,88 @@ public class PdfDocVisualQualityTests {
 
         Assert.True(defaultTableY - spacedTableY >= 10, $"Expected table spacing before to move table content down. Default y: {defaultTableY:0.##}, spaced y: {spacedTableY:0.##}.");
         Assert.True(defaultAfterY - spacedAfterY >= 28, $"Expected table spacing before and after to move following content down. Default y: {defaultAfterY:0.##}, spaced y: {spacedAfterY:0.##}.");
+    }
+
+    [Fact]
+    public void Table_SuppressesSpacingBeforeAtPageTop() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9
+        };
+        var defaultStyle = TableStyles.Minimal();
+        defaultStyle.HeaderRowCount = 0;
+        var spacedStyle = TableStyles.Minimal();
+        spacedStyle.HeaderRowCount = 0;
+        spacedStyle.SpacingBefore = 28;
+        spacedStyle.SpacingAfter = 0;
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .Table(new[] {
+                new[] { "TopTableMarker", "Ready" },
+                new[] { "Beta", "Ready" }
+            }, style: defaultStyle)
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .Table(new[] {
+                new[] { "TopTableMarker", "Ready" },
+                new[] { "Beta", "Ready" }
+            }, style: spacedStyle)
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), "TopTableMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "TopTableMarker");
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
+    }
+
+    [Fact]
+    public void RowColumnTable_SuppressesSpacingBeforeAtColumnTop() {
+        var options = new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 9
+        };
+        var defaultStyle = TableStyles.Minimal();
+        defaultStyle.HeaderRowCount = 0;
+        var spacedStyle = TableStyles.Minimal();
+        spacedStyle.HeaderRowCount = 0;
+        spacedStyle.SpacingBefore = 28;
+        spacedStyle.SpacingAfter = 0;
+        string[][] rows = {
+            new[] { "ColumnTableMarker", "Ready" },
+            new[] { "Beta", "Ready" }
+        };
+
+        byte[] defaultBytes = PdfDoc.Create(options)
+            .Compose(document => document.Page(page => page.Content(content => content.Row(row => row.Column(100, column => column
+                .Table(rows, style: defaultStyle))))))
+            .ToBytes();
+        byte[] spacedBytes = PdfDoc.Create(options)
+            .Compose(document => document.Page(page => page.Content(content => content.Row(row => row.Column(100, column => column
+                .Table(rows, style: spacedStyle))))))
+            .ToBytes();
+
+        using var defaultPdf = PdfDocument.Open(new MemoryStream(defaultBytes));
+        using var spacedPdf = PdfDocument.Open(new MemoryStream(spacedBytes));
+
+        double defaultTopY = FindWordStartY(defaultPdf.GetPage(1), "ColumnTableMarker");
+        double spacedTopY = FindWordStartY(spacedPdf.GetPage(1), "ColumnTableMarker");
+
+        Assert.InRange(Math.Abs(defaultTopY - spacedTopY), 0, 1.5);
     }
 
     [Fact]
@@ -11322,6 +11774,104 @@ public class PdfDocVisualQualityTests {
         return PdfDoc.Create(options)
             .Paragraph(p => p.Text("IndentedMarker alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau."), style: style)
             .ToBytes();
+    }
+
+    private static byte[] CreateTopLevelFlowSpacingBeforeProbe(string blockKind, double spacingBefore) {
+        var options = CreateFlowSpacingProbeOptions();
+        var paragraphStyle = new PdfParagraphStyle { SpacingBefore = 0, SpacingAfter = 0 };
+        var doc = PdfDoc.Create(options);
+
+        switch (blockKind) {
+            case "bullet-list":
+                doc.Bullets(new[] { "ListTopMarker" }, style: new PdfListStyle { SpacingBefore = spacingBefore, SpacingAfter = 0, ItemSpacing = 0 });
+                break;
+            case "numbered-list":
+                doc.Numbered(new[] { "ListTopMarker" }, style: new PdfListStyle { SpacingBefore = spacingBefore, SpacingAfter = 0, ItemSpacing = 0 });
+                break;
+            case "panel":
+                doc.PanelParagraph(p => p.Text("PanelTopMarker"), new PanelStyle { SpacingBefore = spacingBefore, SpacingAfter = 0, PaddingX = 4, PaddingY = 4 });
+                break;
+            case "horizontal-rule":
+                doc.HR(style: new PdfHorizontalRuleStyle { Thickness = 2, SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("AfterFixedMarker"), style: paragraphStyle);
+                break;
+            case "image":
+                doc.Image(CreateMinimalRgbPng(), 24, 12, style: new PdfImageStyle { SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("AfterFixedMarker"), style: paragraphStyle);
+                break;
+            case "shape":
+                doc.Shape(OfficeShape.Rectangle(24, 12), style: new PdfDrawingStyle { SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("AfterFixedMarker"), style: paragraphStyle);
+                break;
+            case "drawing":
+                doc.Drawing(new OfficeDrawing(24, 12).AddShape(OfficeShape.Rectangle(24, 12), 0, 0), style: new PdfDrawingStyle { SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("AfterFixedMarker"), style: paragraphStyle);
+                break;
+            case "row":
+                doc.Compose(document => document.Page(page => page.Content(content => content.Row(row => row
+                    .Style(new PdfRowStyle { SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Column(100, column => column.Paragraph(p => p.Text("RowTopMarker"), style: paragraphStyle))))));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(blockKind), blockKind, "Unknown flow block kind.");
+        }
+
+        return doc.ToBytes();
+    }
+
+    private static byte[] CreateColumnFlowSpacingBeforeProbe(string blockKind, double spacingBefore) {
+        var options = CreateFlowSpacingProbeOptions();
+        return PdfDoc.Create(options)
+            .Compose(document => document.Page(page => page.Content(content => content.Row(row => row
+                .Column(100, column => AddColumnFlowSpacingBeforeProbe(column, blockKind, spacingBefore))))))
+            .ToBytes();
+    }
+
+    private static void AddColumnFlowSpacingBeforeProbe(PdfRowColumnCompose column, string blockKind, double spacingBefore) {
+        var paragraphStyle = new PdfParagraphStyle { SpacingBefore = 0, SpacingAfter = 0 };
+
+        switch (blockKind) {
+            case "bullet-list":
+                column.Bullets(new[] { "ColumnListMarker" }, style: new PdfListStyle { SpacingBefore = spacingBefore, SpacingAfter = 0, ItemSpacing = 0 });
+                break;
+            case "numbered-list":
+                column.Numbered(new[] { "ColumnListMarker" }, style: new PdfListStyle { SpacingBefore = spacingBefore, SpacingAfter = 0, ItemSpacing = 0 });
+                break;
+            case "panel":
+                column.PanelParagraph(p => p.Text("ColumnPanelMarker"), new PanelStyle { SpacingBefore = spacingBefore, SpacingAfter = 0, PaddingX = 4, PaddingY = 4 });
+                break;
+            case "horizontal-rule":
+                column.HR(style: new PdfHorizontalRuleStyle { Thickness = 2, SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("ColumnAfterFixedMarker"), style: paragraphStyle);
+                break;
+            case "image":
+                column.Image(CreateMinimalRgbPng(), 24, 12, style: new PdfImageStyle { SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("ColumnAfterFixedMarker"), style: paragraphStyle);
+                break;
+            case "shape":
+                column.Shape(OfficeShape.Rectangle(24, 12), style: new PdfDrawingStyle { SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("ColumnAfterFixedMarker"), style: paragraphStyle);
+                break;
+            case "drawing":
+                column.Drawing(new OfficeDrawing(24, 12).AddShape(OfficeShape.Rectangle(24, 12), 0, 0), style: new PdfDrawingStyle { SpacingBefore = spacingBefore, SpacingAfter = 0 })
+                    .Paragraph(p => p.Text("ColumnAfterFixedMarker"), style: paragraphStyle);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(blockKind), blockKind, "Unknown flow block kind.");
+        }
+    }
+
+    private static PdfOptions CreateFlowSpacingProbeOptions() {
+        return new PdfOptions {
+            PageWidth = 320,
+            PageHeight = 220,
+            MarginLeft = 30,
+            MarginRight = 30,
+            MarginTop = 30,
+            MarginBottom = 30,
+            DefaultFont = PdfStandardFont.Helvetica,
+            DefaultFontSize = 10
+        };
     }
 
     private static OfficeDrawing CreateKeepWithNextDrawingScene() {

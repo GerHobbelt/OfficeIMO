@@ -111,8 +111,20 @@ internal static class Guard {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void TabLeaderStyle(PdfTabLeaderStyle value, string paramName) {
         if (value != PdfTabLeaderStyle.None &&
-            value != PdfTabLeaderStyle.Dots) {
-            throw new System.ArgumentException("PDF tab leader style must be None or Dots.", paramName);
+            value != PdfTabLeaderStyle.Dots &&
+            value != PdfTabLeaderStyle.Hyphens &&
+            value != PdfTabLeaderStyle.Underscores) {
+            throw new System.ArgumentException("PDF tab leader style must be None, Dots, Hyphens, or Underscores.", paramName);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void TabAlignment(PdfTabAlignment value, string paramName) {
+        if (value != PdfTabAlignment.Left &&
+            value != PdfTabAlignment.Center &&
+            value != PdfTabAlignment.Right &&
+            value != PdfTabAlignment.DecimalSeparator) {
+            throw new System.ArgumentException("PDF tab alignment must be Left, Center, Right, or DecimalSeparator.", paramName);
         }
     }
 

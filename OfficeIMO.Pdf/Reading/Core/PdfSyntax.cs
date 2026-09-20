@@ -2052,7 +2052,7 @@ internal static class PdfSyntax {
             // literal string
             int end = s.LastIndexOf(')');
             string inner = end > 1 ? s.Substring(1, end - 1) : s.Substring(1);
-            return new PdfStringObj(Unescape(inner));
+            return new PdfStringObj(PdfTextString.DecodeLiteral(inner));
         }
         if (s.Length > 0 && s[0] == '<' && (s.Length == 1 || s[1] != '<')) {
             int end = s.IndexOf('>');
@@ -2124,7 +2124,7 @@ internal static class PdfSyntax {
             return (arr, j - i);
         }
         if (tok.Length > 0 && tok[0] == '/') return (new PdfName(DecodeName(tok.Substring(1))), 0);
-        if (tok.Length > 0 && tok[0] == '(') return (new PdfStringObj(Unescape(tok.Substring(1, tok.Length - 2))), 0);
+        if (tok.Length > 0 && tok[0] == '(') return (new PdfStringObj(PdfTextString.DecodeLiteral(tok.Substring(1, tok.Length - 2))), 0);
         if (tok.Length > 1 && tok[0] == '<' && tok[tok.Length - 1] == '>' && (tok.Length == 2 || tok[1] != '<')) {
             return (new PdfStringObj(DecodeHexString(tok.Substring(1, tok.Length - 2))), 0);
         }
@@ -2213,8 +2213,6 @@ internal static class PdfSyntax {
         return false;
     }
 
-    private static string Unescape(string s) => PdfTextExtractor.UnescapePdfLiteral(s);
-
     internal static string DecodeName(string raw) {
         if (string.IsNullOrEmpty(raw) || raw.IndexOf('#') < 0) {
             return raw;
@@ -2236,44 +2234,7 @@ internal static class PdfSyntax {
     }
 
     private static string DecodeHexString(string raw) {
-        var bytes = DecodeHexBytes(raw);
-        if (bytes.Length >= 2) {
-            if (bytes[0] == 0xFE && bytes[1] == 0xFF) {
-                return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
-            }
-
-            if (bytes[0] == 0xFF && bytes[1] == 0xFE) {
-                return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
-            }
-        }
-
-        return PdfWinAnsiEncoding.Decode(bytes);
-    }
-
-    private static byte[] DecodeHexBytes(string raw) {
-        var hex = new StringBuilder(raw.Length);
-        for (int i = 0; i < raw.Length; i++) {
-            char ch = raw[i];
-            if (!char.IsWhiteSpace(ch)) hex.Append(ch);
-        }
-
-        if ((hex.Length & 1) == 1) hex.Append('0');
-
-        var bytes = new byte[hex.Length / 2];
-        for (int i = 0; i < bytes.Length; i++) {
-            int hi = HexNibble(hex[i * 2]);
-            int lo = HexNibble(hex[i * 2 + 1]);
-            bytes[i] = (byte)((hi << 4) | lo);
-        }
-
-        return bytes;
-    }
-
-    private static int HexNibble(char c) {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-        if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-        throw new FormatException($"Invalid hex character '{c}'.");
+        return PdfTextString.DecodeHex(raw);
     }
 
     private static bool TryHexNibble(char c, out int value) {
