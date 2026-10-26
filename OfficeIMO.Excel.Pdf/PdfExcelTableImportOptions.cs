@@ -1,10 +1,21 @@
 using System.Globalization;
+using System.Threading;
 
 namespace OfficeIMO.Excel.Pdf {
     /// <summary>
     /// Options for extracting logical PDF tables into an Excel workbook.
     /// </summary>
 public sealed class PdfExcelTableImportOptions {
+        /// <summary>Cancellation observed at table, row, and column-analysis boundaries.</summary>
+        public CancellationToken CancellationToken { get; set; }
+
+        /// <summary>
+        /// Canonical semantic-read settings used when importing an opened <see cref="OfficeIMO.Pdf.PdfDocument"/>.
+        /// Null uses <see cref="OfficeIMO.Pdf.PdfReadOptions.Default"/>. This setting is ignored when the source is already
+        /// an <see cref="OfficeIMO.Pdf.PdfDocumentReadResult"/>.
+        /// </summary>
+        public OfficeIMO.Pdf.PdfReadOptions? ReadOptions { get; set; }
+
         /// <summary>
         /// Maximum body rows to import per detected table. Values less than or equal to zero import all rows.
         /// </summary>
@@ -85,5 +96,8 @@ public sealed class PdfExcelTableImportOptions {
         /// Worksheet name used when no tables are detected, keeping the produced workbook valid.
         /// </summary>
         public string EmptyWorkbookSheetName { get; set; } = "PDF Tables";
+
+        internal PdfExcelTableImportOptions CloneForConversion() =>
+            (PdfExcelTableImportOptions)MemberwiseClone();
     }
 }

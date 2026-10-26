@@ -1,3 +1,5 @@
+using System.Threading;
+
 namespace OfficeIMO.Pdf;
 
 /// <summary>
@@ -24,18 +26,21 @@ public static partial class PdfRewritePreservation {
         byte[] originalPdf,
         byte[] rewrittenPdf,
         PdfRewritePreservationOptions? options,
-        PdfReadOptions? originalReadOptions,
-        PdfReadOptions? rewrittenReadOptions) {
+        PdfLoadOptions? originalReadOptions,
+        PdfLoadOptions? rewrittenReadOptions,
+        CancellationToken cancellationToken = default) {
         Guard.NotNull(originalPdf, nameof(originalPdf));
         Guard.NotNull(rewrittenPdf, nameof(rewrittenPdf));
+        cancellationToken.ThrowIfCancellationRequested();
 
         options ??= new PdfRewritePreservationOptions();
-        PdfReadOptions? effectiveOriginalReadOptions = options.OriginalReadOptions ?? originalReadOptions;
-        PdfReadOptions? effectiveRewrittenReadOptions = options.RewrittenReadOptions ?? rewrittenReadOptions;
-        PdfDocumentInfo original = InspectReportInput(originalPdf, effectiveOriginalReadOptions, "original");
-        PdfDocumentInfo rewritten = InspectReportInput(rewrittenPdf, effectiveRewrittenReadOptions, "rewritten");
+        PdfLoadOptions? effectiveOriginalReadOptions = options.OriginalReadOptions ?? originalReadOptions;
+        PdfLoadOptions? effectiveRewrittenReadOptions = options.RewrittenReadOptions ?? rewrittenReadOptions;
+        PdfDocumentInfo original = InspectReportInput(originalPdf, effectiveOriginalReadOptions, "original", cancellationToken);
+        PdfDocumentInfo rewritten = InspectReportInput(rewrittenPdf, effectiveRewrittenReadOptions, "rewritten", cancellationToken);
         var issues = new List<PdfRewritePreservationIssue>();
 
+        cancellationToken.ThrowIfCancellationRequested();
         CompareCounts(issues, "PageCount", original.PageCount, rewritten.PageCount, options.PreservePageCount);
         ComparePageGeometry(issues, original, rewritten, options);
         CompareMetadata(issues, original.Metadata, rewritten.Metadata, options);
@@ -58,18 +63,25 @@ public static partial class PdfRewritePreservation {
         CompareXmpMetadata(issues, original.XmpMetadata, rewritten.XmpMetadata, options);
         CompareOptionalContent(issues, original.OptionalContent, rewritten.OptionalContent, options);
         CompareTaggedContent(issues, original.TaggedContent, rewritten.TaggedContent, options);
+        cancellationToken.ThrowIfCancellationRequested();
         CompareSourceStructure(issues, original, rewritten, options);
         CompareSecurityState(issues, original.Security, rewritten.Security, options);
         CompareCatalogViewSettings(issues, original, rewritten, options);
-        CompareTextMarkers(issues, rewrittenPdf, options.RequiredTextMarkers, effectiveRewrittenReadOptions);
+        CompareTextMarkers(issues, rewrittenPdf, options.RequiredTextMarkers, effectiveRewrittenReadOptions, cancellationToken);
 
+        cancellationToken.ThrowIfCancellationRequested();
         return new PdfRewritePreservationReport(original, rewritten, issues.AsReadOnly());
     }
 
-    private static PdfDocumentInfo InspectReportInput(byte[] pdf, PdfReadOptions? readOptions, string inputName) {
-        PdfReadDocument document = PdfReadDocument.Open(pdf, readOptions);
+    private static PdfDocumentInfo InspectReportInput(
+        byte[] pdf,
+        PdfLoadOptions? readOptions,
+        string inputName,
+        CancellationToken cancellationToken) {
+        PdfReadDocument document = PdfReadDocument.Open(pdf, readOptions, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         document.DemandContentExtraction(inputName + " rewrite-preservation report");
-        return PdfInspector.Inspect(pdf, document);
+        return PdfInspector.Inspect(pdf, document, cancellationToken);
     }
 
     /// <summary>
@@ -92,9 +104,32 @@ public static partial class PdfRewritePreservation {
         byte[] originalPdf,
         byte[] rewrittenPdf,
         PdfRewritePreservationOptions? options,
-        PdfReadOptions? originalReadOptions,
-        PdfReadOptions? rewrittenReadOptions) {
-        PdfRewritePreservationReport report = Assess(originalPdf, rewrittenPdf, options, originalReadOptions, rewrittenReadOptions);
+        CancellationToken cancellationToken) {
+        PdfRewritePreservationReport report = Assess(
+            originalPdf,
+            rewrittenPdf,
+            options,
+            originalReadOptions: null,
+            rewrittenReadOptions: null,
+            cancellationToken: cancellationToken);
+        report.ThrowIfFailed();
+        return report;
+    }
+
+    internal static PdfRewritePreservationReport AssertPreserved(
+        byte[] originalPdf,
+        byte[] rewrittenPdf,
+        PdfRewritePreservationOptions? options,
+        PdfLoadOptions? originalReadOptions,
+        PdfLoadOptions? rewrittenReadOptions,
+        CancellationToken cancellationToken = default) {
+        PdfRewritePreservationReport report = Assess(
+            originalPdf,
+            rewrittenPdf,
+            options,
+            originalReadOptions,
+            rewrittenReadOptions,
+            cancellationToken);
         report.ThrowIfFailed();
         return report;
     }
@@ -204,6 +239,7 @@ public static partial class PdfRewritePreservation {
             CompareNullableInt(issues, prefix + ".DestinationOutputProfileSizeBytes", before.DestinationOutputProfileSizeBytes, after.DestinationOutputProfileSizeBytes);
             CompareNullableInt(issues, prefix + ".DestinationOutputProfileDeclaredSizeBytes", before.DestinationOutputProfileDeclaredSizeBytes, after.DestinationOutputProfileDeclaredSizeBytes);
             CompareString(issues, prefix + ".DestinationOutputProfileColorSpace", before.DestinationOutputProfileColorSpace, after.DestinationOutputProfileColorSpace);
+            CompareString(issues, prefix + ".DestinationOutputProfileDeviceClass", before.DestinationOutputProfileDeviceClass, after.DestinationOutputProfileDeviceClass);
             CompareNullableBoolean(issues, prefix + ".DestinationOutputProfileHasIccSignature", before.DestinationOutputProfileHasIccSignature, after.DestinationOutputProfileHasIccSignature);
         }
     }
@@ -493,17 +529,19 @@ public static partial class PdfRewritePreservation {
         List<PdfRewritePreservationIssue> issues,
         byte[] rewrittenPdf,
         IEnumerable<string> requiredTextMarkers,
-        PdfReadOptions? readOptions) {
+        PdfLoadOptions? readOptions,
+        CancellationToken cancellationToken) {
         string text = string.Empty;
         bool loaded = false;
 
         foreach (string marker in requiredTextMarkers) {
+            cancellationToken.ThrowIfCancellationRequested();
             if (string.IsNullOrEmpty(marker)) {
                 continue;
             }
 
             if (!loaded) {
-                text = PdfReadDocument.Open(rewrittenPdf, readOptions).ExtractText();
+                text = PdfReadDocument.Open(rewrittenPdf, readOptions, cancellationToken).ExtractText(cancellationToken);
                 loaded = true;
             }
 

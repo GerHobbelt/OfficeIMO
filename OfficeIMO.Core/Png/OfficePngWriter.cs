@@ -23,7 +23,7 @@ public enum OfficePngCompression {
 /// <summary>
 /// Dependency-free PNG encoder for RGBA raster images.
 /// </summary>
-public static class OfficePngWriter {
+public static partial class OfficePngWriter {
     private static readonly byte[] PngSignature = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
     /// <summary>
@@ -34,7 +34,18 @@ public static class OfficePngWriter {
             throw new ArgumentNullException(nameof(image));
         }
 
-        return EncodeRgba(image.Width, image.Height, image.GetPixels(), compression);
+        return EncodeRgba(image.Width, image.Height, image.PixelBuffer, compression);
+    }
+
+    /// <summary>Encodes an RGBA image as PNG bytes with cooperative cancellation between scanlines.</summary>
+    public static byte[] Encode(
+        OfficeRasterImage image,
+        System.Threading.CancellationToken cancellationToken,
+        OfficePngCompression compression = OfficePngCompression.Optimal) {
+        if (image == null) throw new ArgumentNullException(nameof(image));
+        using var output = new MemoryStream();
+        EncodeTo(image, output, cancellationToken, compression);
+        return output.ToArray();
     }
 
     /// <summary>Encodes an RGBA image with explicit compression and physical-resolution metadata.</summary>
@@ -43,7 +54,7 @@ public static class OfficePngWriter {
         if (options == null) throw new ArgumentNullException(nameof(options));
         ValidateDpi(options.DpiX, nameof(options.DpiX));
         ValidateDpi(options.DpiY, nameof(options.DpiY));
-        return EncodeRgba(image.Width, image.Height, image.GetPixels(), options);
+        return EncodeRgba(image.Width, image.Height, image.PixelBuffer, options);
     }
 
     /// <summary>
@@ -66,17 +77,18 @@ public static class OfficePngWriter {
             throw new ArgumentException("RGBA buffer length does not match image dimensions.", nameof(rgba));
         }
 
-        byte[] scanlines = new byte[height * (1 + width * 4)];
-        int source = 0;
-        int target = 0;
-        for (int y = 0; y < height; y++) {
-            scanlines[target++] = 0;
-            Buffer.BlockCopy(rgba, source, scanlines, target, width * 4);
-            source += width * 4;
-            target += width * 4;
+        byte[] compressed;
+        switch (compression) {
+            case OfficePngCompression.Optimal:
+                compressed = DeflateRgbaScanlines(width, height, rgba);
+                break;
+            case OfficePngCompression.Stored:
+                compressed = DeflateZlibStored(CreateRgbaScanlines(width, height, rgba, adaptiveFiltering: false));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(compression));
         }
-
-        return EncodeScanlines(width, height, 8, 6, scanlines, compression);
+        return CreateFromCompressedScanlines(width, height, 8, 6, compressed);
     }
 
     /// <summary>Encodes raw RGBA pixels with explicit compression and physical-resolution metadata.</summary>
@@ -86,20 +98,25 @@ public static class OfficePngWriter {
         ValidateDpi(options.DpiY, nameof(options.DpiY));
         ValidateRgba(width, height, rgba);
 
-        byte[] scanlines = CreateRgbaScanlines(width, height, rgba);
-        byte[] compressed = options.Compression switch {
-            OfficePngCompression.Optimal => DeflateZlib(scanlines),
-            OfficePngCompression.Stored => DeflateZlibStored(scanlines),
-            _ => throw new ArgumentOutOfRangeException(nameof(options.Compression))
-        };
+        byte[] compressed;
+        switch (options.Compression) {
+            case OfficePngCompression.Optimal:
+                compressed = DeflateRgbaScanlines(width, height, rgba);
+                break;
+            case OfficePngCompression.Stored:
+                compressed = DeflateZlibStored(CreateRgbaScanlines(width, height, rgba, adaptiveFiltering: false));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(options.Compression));
+        }
         return CreateFromCompressedScanlines(
             width,
             height,
             8,
             6,
             compressed,
-            options.DpiX,
-            options.DpiY);
+            options.WritePhysicalResolution ? options.DpiX : (double?)null,
+            options.WritePhysicalResolution ? options.DpiY : (double?)null);
     }
 
     /// <summary>
@@ -178,17 +195,84 @@ public static class OfficePngWriter {
         }
     }
 
-    private static byte[] CreateRgbaScanlines(int width, int height, byte[] rgba) {
-        byte[] scanlines = new byte[height * (1 + width * 4)];
-        int source = 0;
-        int target = 0;
+    private static byte[] CreateRgbaScanlines(int width, int height, byte[] rgba, bool adaptiveFiltering) {
+        int stride = checked(width * 4);
+        byte[] scanlines = new byte[checked(height * (1 + stride))];
+        if (!adaptiveFiltering) {
+            int source = 0;
+            int target = 0;
+            for (int y = 0; y < height; y++) {
+                scanlines[target++] = 0;
+                Buffer.BlockCopy(rgba, source, scanlines, target, stride);
+                source += stride;
+                target += stride;
+            }
+            return scanlines;
+        }
+
+        byte[] candidate = new byte[stride];
         for (int y = 0; y < height; y++) {
-            scanlines[target++] = 0;
-            Buffer.BlockCopy(rgba, source, scanlines, target, width * 4);
-            source += width * 4;
-            target += width * 4;
+            int rowOffset = y * stride;
+            int previousRowOffset = rowOffset - stride;
+            int target = y * (stride + 1);
+            if (y == 0) {
+                scanlines[target] = 1;
+                FilterFirstRowSub(rgba, rowOffset, stride, scanlines, target + 1);
+                continue;
+            }
+
+            long upScore = FilterUp(rgba, rowOffset, previousRowOffset, stride, scanlines, target + 1);
+            long paethScore = FilterPaeth(rgba, rowOffset, previousRowOffset, stride, candidate);
+            if (paethScore < upScore) {
+                scanlines[target] = 4;
+                Buffer.BlockCopy(candidate, 0, scanlines, target + 1, stride);
+            } else {
+                scanlines[target] = 2;
+            }
         }
         return scanlines;
+    }
+
+    private static void FilterFirstRowSub(byte[] rgba, int rowOffset, int stride, byte[] destination, int destinationOffset) {
+        for (int index = 0; index < 4 && index < stride; index++) {
+            destination[destinationOffset + index] = rgba[rowOffset + index];
+        }
+        for (int index = 4; index < stride; index++) {
+            destination[destinationOffset + index] = unchecked((byte)(rgba[rowOffset + index] - rgba[rowOffset + index - 4]));
+        }
+    }
+
+    private static long FilterUp(byte[] rgba, int rowOffset, int previousRowOffset, int stride, byte[] destination, int destinationOffset) {
+        long score = 0L;
+        for (int index = 0; index < stride; index++) {
+            byte filtered = unchecked((byte)(rgba[rowOffset + index] - rgba[previousRowOffset + index]));
+            destination[destinationOffset + index] = filtered;
+            score += Math.Abs((int)(sbyte)filtered);
+        }
+        return score;
+    }
+
+    private static long FilterPaeth(byte[] rgba, int rowOffset, int previousRowOffset, int stride, byte[] destination) {
+        long score = 0L;
+        for (int index = 0; index < stride; index++) {
+            int left = index >= 4 ? rgba[rowOffset + index - 4] : 0;
+            int above = rgba[previousRowOffset + index];
+            int upperLeft = index >= 4 ? rgba[previousRowOffset + index - 4] : 0;
+            byte filtered = unchecked((byte)(rgba[rowOffset + index] - PaethPredictor(left, above, upperLeft)));
+            destination[index] = filtered;
+            score += Math.Abs((int)(sbyte)filtered);
+        }
+        return score;
+    }
+
+    private static int PaethPredictor(int left, int above, int upperLeft) {
+        int prediction = left + above - upperLeft;
+        int distanceLeft = Math.Abs(prediction - left);
+        int distanceAbove = Math.Abs(prediction - above);
+        int distanceUpperLeft = Math.Abs(prediction - upperLeft);
+        return distanceLeft <= distanceAbove && distanceLeft <= distanceUpperLeft
+            ? left
+            : distanceAbove <= distanceUpperLeft ? above : upperLeft;
     }
 
     private static byte[] BuildPhysicalResolution(double dpiX, double dpiY) {
@@ -207,11 +291,11 @@ public static class OfficePngWriter {
         if (dpi < OfficeRasterImageEncoder.PngMinimumDpi ||
             double.IsNaN(dpi) ||
             double.IsInfinity(dpi) ||
-            dpi > uint.MaxValue * 0.0254D) {
+            dpi > OfficeRasterImageEncoder.PngMaximumDpi) {
             throw new ArgumentOutOfRangeException(
                 paramName,
                 "PNG DPI must be finite and between 0.0127 and " +
-                (uint.MaxValue * 0.0254D).ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                OfficeRasterImageEncoder.PngMaximumDpi.ToString(System.Globalization.CultureInfo.InvariantCulture) +
                 ".");
         }
     }
@@ -295,6 +379,54 @@ public static class OfficePngWriter {
         return stream.ToArray();
     }
 
+    private static byte[] DeflateRgbaScanlines(int width, int height, byte[] rgba) {
+        int stride = checked(width * 4);
+        var filteredRow = new byte[checked(stride + 1)];
+        var paethCandidate = new byte[stride];
+        var compressionBatch = new byte[Math.Max(filteredRow.Length, 64 * 1024)];
+        int batchLength = 0;
+        uint adlerA = 1;
+        uint adlerB = 0;
+        using MemoryStream stream = new MemoryStream();
+        stream.WriteByte(0x78);
+        stream.WriteByte(0x9C);
+        using (var deflate = new DeflateStream(stream, CompressionLevel.Optimal, leaveOpen: true)) {
+            for (int y = 0; y < height; y++) {
+                int rowOffset = y * stride;
+                if (y == 0) {
+                    filteredRow[0] = 1;
+                    FilterFirstRowSub(rgba, rowOffset, stride, filteredRow, 1);
+                } else {
+                    int previousRowOffset = rowOffset - stride;
+                    long upScore = FilterUp(rgba, rowOffset, previousRowOffset, stride, filteredRow, 1);
+                    long paethScore = FilterPaeth(rgba, rowOffset, previousRowOffset, stride, paethCandidate);
+                    if (paethScore < upScore) {
+                        filteredRow[0] = 4;
+                        Buffer.BlockCopy(paethCandidate, 0, filteredRow, 1, stride);
+                    } else {
+                        filteredRow[0] = 2;
+                    }
+                }
+
+                if (filteredRow.Length > compressionBatch.Length - batchLength) {
+                    deflate.Write(compressionBatch, 0, batchLength);
+                    batchLength = 0;
+                }
+                Buffer.BlockCopy(filteredRow, 0, compressionBatch, batchLength, filteredRow.Length);
+                batchLength += filteredRow.Length;
+                UpdateAdler32(filteredRow, 0, filteredRow.Length, ref adlerA, ref adlerB);
+            }
+            if (batchLength > 0) deflate.Write(compressionBatch, 0, batchLength);
+        }
+
+        uint adler = (adlerB << 16) | adlerA;
+        stream.WriteByte((byte)((adler >> 24) & 0xFF));
+        stream.WriteByte((byte)((adler >> 16) & 0xFF));
+        stream.WriteByte((byte)((adler >> 8) & 0xFF));
+        stream.WriteByte((byte)(adler & 0xFF));
+        return stream.ToArray();
+    }
+
     private static byte[] DeflateZlibStored(byte[] data) {
         using MemoryStream stream = new MemoryStream();
         stream.WriteByte(0x78);
@@ -323,15 +455,27 @@ public static class OfficePngWriter {
     }
 
     private static uint Adler32(byte[] data) {
-        const uint mod = 65521;
         uint a = 1;
         uint b = 0;
-        for (int i = 0; i < data.Length; i++) {
-            a = (a + data[i]) % mod;
-            b = (b + a) % mod;
-        }
-
+        UpdateAdler32(data, 0, data.Length, ref a, ref b);
         return (b << 16) | a;
+    }
+
+    private static void UpdateAdler32(byte[] data, int offset, int count, ref uint a, ref uint b) {
+        const uint mod = 65521;
+        const int maximumChunk = 5552;
+        int remaining = count;
+        while (remaining > 0) {
+            int chunk = Math.Min(maximumChunk, remaining);
+            int end = offset + chunk;
+            while (offset < end) {
+                a += data[offset++];
+                b += a;
+            }
+            a %= mod;
+            b %= mod;
+            remaining -= chunk;
+        }
     }
 
     private static void WriteChunk(Stream stream, string type, byte[] data) {
@@ -349,25 +493,9 @@ public static class OfficePngWriter {
     }
 
     private static uint Crc32(byte[] type, byte[] data) {
-        uint crc = 0xFFFFFFFF;
-        for (int i = 0; i < type.Length; i++) {
-            crc = UpdateCrc(crc, type[i]);
-        }
-
-        for (int i = 0; i < data.Length; i++) {
-            crc = UpdateCrc(crc, data[i]);
-        }
-
-        return crc ^ 0xFFFFFFFF;
-    }
-
-    private static uint UpdateCrc(uint crc, byte value) {
-        crc ^= value;
-        for (int i = 0; i < 8; i++) {
-            crc = (crc & 1) != 0 ? 0xEDB88320 ^ (crc >> 1) : crc >> 1;
-        }
-
-        return crc;
+        uint crc = OfficePngCrc32.Append(OfficePngCrc32.Begin(), type, 0, type.Length);
+        crc = OfficePngCrc32.Append(crc, data, 0, data.Length);
+        return OfficePngCrc32.Complete(crc);
     }
 
     private static void WriteBigEndianInt32(byte[] bytes, int offset, int value) {

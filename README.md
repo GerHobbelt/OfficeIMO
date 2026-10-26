@@ -10,11 +10,11 @@
 
 OfficeIMO is a family of COM-free .NET libraries for creating, reading, editing, converting, and exporting Office and document formats. It runs in services, desktop applications, build agents, containers, and automation hosts without Microsoft Office, Excel, PowerPoint, Visio, or LibreOffice automation.
 
-This is not one facade over a collection of unrelated document libraries. OfficeIMO owns its OneNote, PDF, Markdown, RTF, OpenDocument, AsciiDoc, LaTeX, CSV, EPUB, ZIP, drawing, legacy Word `.doc`, legacy Excel `.xls`, and legacy PowerPoint `.ppt`/`.pot`/`.pps` implementations. Word, Excel, and PowerPoint use the Open XML SDK for package mechanics; HTML uses AngleSharp for DOM and CSS parsing. Converters compose the same first-party object models used by the native packages and return diagnostics when a target format cannot carry everything from the source.
+This is not one facade over a collection of unrelated document libraries. OfficeIMO owns its OneNote, PDF, Markdown, RTF, OpenDocument, AsciiDoc, LaTeX, OPML, DocBook, CSV, EPUB, ZIP, drawing, Apple iWork source, legacy Word `.doc`, legacy Excel `.xls`, and legacy PowerPoint `.ppt`/`.pot`/`.pps` implementations. Word, Excel, and PowerPoint use the Open XML SDK for package mechanics; HTML uses AngleSharp for DOM and CSS parsing. Converters compose the same first-party object models used by the native packages and return diagnostics when a target format cannot carry everything from the source.
 
-The current source line is `3.1.x`; the latest NuGet release is `3.0.3`. Applications should keep OfficeIMO packages on the same coordinated version. The 3.1 source API keeps CSV and Excel behavior package-owned, uses one document lifecycle vocabulary, and keeps converters explicit about fidelity and diagnostics.
+Applications should keep OfficeIMO packages on the same coordinated version. Converters compose package-owned document models and expose result-bearing APIs when callers need fidelity diagnostics.
 
-Upgrading an existing application? Most `OfficeIMO.Word` users can begin with the [short Word-first 3.1 path](MIGRATION.md#start-here-most-officeimoword-applications); the full [OfficeIMO migration guide](MIGRATION.md) covers package, API, and behavior changes across every format. Release history and downloadable artifacts are published through [GitHub Releases](https://github.com/EvotecIT/OfficeIMO/releases).
+Upgrading an existing application? The [OfficeIMO migration guide](MIGRATION.md) covers package, API, and behavior changes across every format. Release history and downloadable artifacts are published through [GitHub Releases](https://github.com/EvotecIT/OfficeIMO/releases).
 
 If OfficeIMO saves you time, please consider supporting the work through [GitHub Sponsors](https://github.com/sponsors/PrzemyslawKlys) or [PayPal](https://paypal.me/PrzemyslawKlys). PowerShell users should start with [PSWriteOffice](https://github.com/EvotecIT/PSWriteOffice).
 
@@ -39,7 +39,8 @@ OfficeIMO keeps document engines first-party and optional integrations isolated.
 
 | Package family | Direct external runtime dependency | What OfficeIMO owns |
 | --- | --- | --- |
-| Drawing, OneNote, Markdown, RTF, OpenDocument, AsciiDoc, LaTeX, CSV, EPUB, ZIP | No third-party document engine | Parsing, object models, writing, rendering primitives, safety limits, and diagnostics |
+| Drawing, OneNote, Markdown, RTF, OpenDocument, AsciiDoc, LaTeX, OPML, DocBook, CSV, EPUB, ZIP | No third-party document engine | Parsing, object models, writing, rendering primitives, safety limits, and diagnostics |
+| Apple iWork source reading | No third-party document engine | Bounded package, Snappy/IWA, protobuf-envelope, record-preservation, and Pages/Numbers/Keynote projection layers |
 | Word, Excel, PowerPoint | [Open XML SDK](https://github.com/dotnet/Open-XML-SDK) | Fluent/editable object models, lifecycle, validation, conversions, managed image export, and first-party `.doc`/`.xls`/`.ppt` support |
 | HTML | [AngleSharp](https://github.com/AngleSharp/AngleSharp) and AngleSharp.Css | Resource policy, media filtering, layout scene, and PNG/JPEG/TIFF/SVG/WebP output; opt-in bridges add RTF, MHTML, email-image, and PDF workflows |
 | PDF | No third-party PDF or cryptographic dependency | PDF parsing/writing/rendering, password security, signature structure, preservation policy, limits, and diagnostics |
@@ -57,15 +58,16 @@ OfficeIMO keeps document engines first-party and optional integrations isolated.
 
 | Surface | Current repository coverage |
 | --- | ---: |
-| Coordinated `3.2.x` source packages | 94 |
-| Documented package, tool, and example projects below | 101 |
-| Native format, foundation, and shared-service packages | 26 |
+| Coordinated source packages | 101 |
+| Documented package, tool, and example projects below | 108 |
+| Native format, foundation, and shared-service packages | 29 |
 | Conversion and cloud bridge packages | 36 |
-| Unified Reader packages | 27 |
+| Unified Reader packages | 29 |
 | Markdown renderer and OfficeIMO Markup surfaces | 10 |
 | Runnable example projects | 1 |
 | Modern Office authoring/editing | `.docx`, `.xlsx`, `.pptx`, `.vsdx`, `.vstx`, `.vssx`, `.vsdm`, `.vstm`, `.vssm` |
 | First-party legacy binary support | Word 97–2003 `.doc`, Excel BIFF8 `.xls`, PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` |
+| First-party Apple iWork source support | Modern IWA-based `.pages`, `.numbers`, and `.key` read/inspect plus editable or visual-fallback projection; no iWork authoring |
 | First-party offline OneNote support | Desktop/FSSHTTP `.one`, `.onetoc2`, `.onepkg` |
 | Managed PNG/JPEG/TIFF/WebP/SVG document export | Drawing; Word, Excel, PowerPoint, HTML, OneNote, Visio, and PDF; HTML-backed email and EPUB; ODT/ODS/ODP through their Office adapters |
 
@@ -93,8 +95,36 @@ Every checked item below is implemented today. Detailed behavior, examples, and 
 - [x] Dependency-free TIFF output with uncompressed, PackBits, or Deflate strips and deterministic lossless WebP encoding with common raster export options
 - [x] Shared SVG primitive writing and scalable drawing export
 - [x] Single and batch image-export builders with dimensions, source metadata, and diagnostics
+- [x] Reproducible, output-validated identification, decode, encode, resize, and placement-optimization benchmarks with opt-in library comparisons isolated from runtime packages
 
 _Dependency footprint:_ zero third-party runtime dependencies.
+
+#### [OfficeIMO.IWork](OfficeIMO.IWork/README.md)
+
+- [x] Bounded ZIP, directory-bundle, nested `Index.zip`, Snappy-framed IWA, ArchiveInfo, MessageInfo, and protobuf-envelope reading
+- [x] Application detection, producer build history, raster/PDF preview discovery, defensive package-entry access, and preservation of primary and auxiliary IWA payloads
+- [x] Extended semantic projections: rich Pages content/layout/images/tables; sparse typed Numbers cells/formulas/merges/table metadata; and positioned Keynote rich text/images/tables/notes
+- [x] Opt-in `OfficeIMO.Word.IWork`, `OfficeIMO.Excel.IWork`, and `OfficeIMO.PowerPoint.IWork` adapters with editable reconstruction versus visual fallback reports
+- [x] Independently sourced corpus evidence across Pages 14.1/14.5, Numbers 11.1–15.1 histories, and Keynote 8.1/14.5/15.2.1
+- [x] Explicit read-only boundary: unsupported payloads remain inspectable, while Pages, Numbers, and Keynote authoring is intentionally absent
+
+_Dependency footprint:_ only `OfficeIMO.Core`; the package and IWA readers are first-party implementations. Word, Excel, and PowerPoint remain independent unless an iWork adapter is installed explicitly.
+
+#### [OfficeIMO.Data.Arrow](OfficeIMO.Data.Arrow/README.md)
+
+- [x] Bounded synchronous and asynchronous Apache Arrow record batches from any forward-only `DbDataReader`
+- [x] Native Boolean, numeric, decimal, temporal, GUID, binary, and text arrays with explicit unsupported-type policy
+- [x] Shared adapter for OfficeIMO Excel, CSV, and ordinary ADO.NET providers without adding Arrow to their runtime graphs
+
+_Dependency footprint:_ `OfficeIMO.Core` and Apache.Arrow; Excel and CSV remain independently usable.
+
+#### [OfficeIMO.Data.Generators](OfficeIMO.Data.Generators/README.md)
+
+- [x] Compile-time `RowMapper<T>` configuration shared by Excel, CSV, and other `DbDataReader` sources
+- [x] Primary column names, aliases, inherited writable properties, and build diagnostics for unsupported model shapes
+- [x] Reflection-free generated mapping validated in a NativeAOT consumer
+
+_Dependency footprint:_ build-time Roslyn analyzer only; no generator assembly is deployed with the application.
 
 #### [OfficeIMO.Drawing.HarfBuzz](OfficeIMO.Drawing.HarfBuzz/README.md)
 
@@ -140,7 +170,7 @@ _Dependency footprint:_ ChartForgeX and the OfficeIMO Word, Excel, PowerPoint, P
 - [x] Macro add/extract/remove, document protection, encrypted packages, digital-signature inspection, cleanup, repair, and feature preflight
 - [x] Managed document export to PNG, JPEG, TIFF, lossless WebP, and SVG; opt-in conversion packages add PDF, HTML, Markdown, RTF, ODT, and Google Docs
 
-_Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy `.doc` support and image export are OfficeIMO implementations.
+_Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy `.doc` support and image export are OfficeIMO implementations. Apple Pages import is opt-in through `OfficeIMO.Word.IWork`.
 
 #### [OfficeIMO.Excel](OfficeIMO.Excel/README.md)
 
@@ -165,7 +195,7 @@ _Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy `.doc` suppor
 - [x] Workbook, worksheet, and range export to PNG, JPEG, TIFF, lossless WebP, and SVG; adapters add PDF, HTML, ODS, and Google Sheets
 - [x] Reproducible read, write, edit, package-size, and feature-rich cross-library benchmark suites with output validation and platform provenance
 
-_Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy `.xls` support and image export are OfficeIMO implementations.
+_Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy `.xls` support and image export are OfficeIMO implementations. Apple Numbers import is opt-in through `OfficeIMO.Excel.IWork`.
 
 #### [OfficeIMO.PowerPoint](OfficeIMO.PowerPoint/README.md)
 
@@ -184,7 +214,7 @@ _Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy `.xls` suppor
 - [x] Encrypted presentation save/load and read-only, stream-backed, detached-load, and explicit-persistence lifecycles
 - [x] Slide export to PNG, JPEG, TIFF, lossless WebP, and SVG plus presentation-wide image export; adapters add PDF, HTML, and ODP
 
-_Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy binary support, composition, editing, charting, and managed image export are OfficeIMO implementations.
+_Dependency footprint:_ Open XML SDK plus `OfficeIMO.Core`; legacy binary support, composition, editing, charting, and managed image export are OfficeIMO implementations. Apple Keynote import is opt-in through `OfficeIMO.PowerPoint.IWork`.
 
 #### [OfficeIMO.Visio](OfficeIMO.Visio/README.md)
 
@@ -352,6 +382,32 @@ _Dependency footprint:_ only `OfficeIMO.Core`; no Asciidoctor process or parser 
 
 _Dependency footprint:_ only `OfficeIMO.Core`; no TeX runtime, compiler, or parser dependency.
 
+#### [OfficeIMO.Bibliography](OfficeIMO.Bibliography/README.md)
+
+- [x] Format-neutral citation keys, item kinds, contributors, dates, identifiers, publication fields, keywords, notes, and ordered native extensions
+- [x] Source-preserving read, edit, deterministic write, and reopen workflows for BibTeX/BibLaTeX, CSL JSON, RIS, NBIB/MEDLINE, and EndNote XML
+- [x] Exact unchanged text and loaded-byte output, plus safe same-format unknown-field preservation after edits
+- [x] Cross-format conversion reports with strict rejection of approximated or omitted data
+- [x] Bounded file, stream, text, sync, and async APIs with cancellation and inert XML/TeX handling
+
+_Dependency footprint:_ `System.Text.Json` and `System.Text.Encoding.CodePages` on compatibility targets; no dependency on another OfficeIMO package, Word, Open XML, TeX, EndNote, rendering, or network clients.
+
+#### [OfficeIMO.Opml](OfficeIMO.Opml/README.md)
+
+- [x] OPML 1.0/2.0 create, read, edit, validate, convert, and deterministic write
+- [x] Nested outlines, subscription attributes, qualified extension attributes, and exact unchanged-source output
+- [x] Explicit size, character, depth, outline, and attribute limits with DTD processing disabled
+
+_Dependency footprint:_ only `OfficeIMO.Core`; no external parser or runtime dependency.
+
+#### [OfficeIMO.DocBook](OfficeIMO.DocBook/README.md)
+
+- [x] DocBook 4.5 and 5.2 article/book creation, bounded reading, editing, validation, conversion, and writing
+- [x] Typed common structures for metadata, sections, lists, tables, code, links, notes, media, and indexes
+- [x] Lossless extension preservation and exact schema identifiers without claiming exhaustive vocabulary validation
+
+_Dependency footprint:_ only `OfficeIMO.Core`; external schemas are identified but not downloaded at runtime.
+
 #### [OfficeIMO.CSV](OfficeIMO.CSV/README.md)
 
 - [x] First-class headers/rows document model with file, stream, text, in-memory, and forward-only streaming lifecycles
@@ -490,6 +546,14 @@ _Dependency footprint:_ only OfficeIMO ADF and Markdown plus platform HTTP and `
 
 _Dependency footprint:_ OfficeIMO Word, HTML, and Drawing plus the Open XML SDK already used by Word; no separate conversion engine.
 
+#### [Additional legacy word formats in OfficeIMO.Word](OfficeIMO.Word/README.md#import-additional-legacy-word-processing-formats)
+
+- [x] Read-only bounded adapters for WordPerfect, WordStar, Ami Pro, Lotus Word Pro, Microsoft Works/Write, and selected Word for DOS profiles
+- [x] Structured or salvage quality, explicit loss reports, inert active content, and normal editable `WordDocument` output
+- [x] DOCX and plain-text output directly, with ODT, HTML, Markdown, and PDF through the existing Word converter packages
+
+_Dependency footprint:_ included in `OfficeIMO.Word`; no separate package, native office application, process execution, or third-party parser runtime.
+
 #### [OfficeIMO.Word.Markdown](OfficeIMO.Word.Markdown/README.md)
 
 - [x] Word to GitHub-friendly Markdown with headings, lists, tasks, tables, images, links, code, and footnotes
@@ -538,6 +602,14 @@ _Dependency footprint:_ OfficeIMO Word and GoogleWorkspace plus `System.Text.Jso
 - [x] Canonical CSV parsing, schema, compression, and writing options with no duplicate parser
 
 _Dependency footprint:_ only OfficeIMO Excel and CSV packages.
+
+#### [Additional legacy spreadsheet formats in OfficeIMO.Excel](OfficeIMO.Excel/README.md#import-additional-legacy-spreadsheet-formats)
+
+- [x] Read-only bounded adapters for Lotus 1-2-3, Quattro Pro, Multiplan, and selected Microsoft Works spreadsheet profiles
+- [x] Structured WK record recovery plus explicit salvage, cached-formula, name, chart-metadata, and loss reporting
+- [x] XLSX output through the normal workbook, with ODS, CSV, HTML, and PDF through the existing Excel converter packages
+
+_Dependency footprint:_ included in `OfficeIMO.Excel`; no separate package, and macros, embedded objects, and external connections stay inert.
 
 #### [OfficeIMO.Excel.Html](OfficeIMO.Excel.Html/README.md)
 
@@ -633,7 +705,7 @@ _Dependency footprint:_ Excel, Excel OpenDocument, PDF, and native OpenDocument 
 - [x] Visual-page reconstruction by default, with explicit editable-table mode
 - [x] Combined OpenDocument feature mapping and PDF conversion diagnostics
 
-_Dependency footprint:_ PowerPoint, PowerPoint OpenDocument, PDF, and native OpenDocument only; no Word or Excel stack. The 3.1 package graph has no all-formats umbrella or bridge-specific Core package.
+_Dependency footprint:_ PowerPoint, PowerPoint OpenDocument, PDF, and native OpenDocument only; no Word or Excel stack. The current package graph has no all-formats umbrella or bridge-specific Core package.
 
 #### [OfficeIMO.Markdown.Html](OfficeIMO.Markdown.Html/README.md)
 
@@ -785,6 +857,13 @@ _Dependency footprint:_ only OfficeIMO.Reader.Core, AsciiDoc, and AsciiDoc.Markd
 
 _Dependency footprint:_ only OfficeIMO.Reader.Core and CSV.
 
+#### [OfficeIMO.Reader.DocBook](OfficeIMO.Reader.DocBook/README.md)
+
+- [x] Dedicated `.dbk` and `.docbook` registration while generic `.xml` remains with Reader.Xml
+- [x] Bounded common-structure chunks with section paths and profile warnings
+
+_Dependency footprint:_ only OfficeIMO.Reader.Core and DocBook.
+
 #### [OfficeIMO.Reader.Email](OfficeIMO.Reader.Email/README.md)
 
 - [x] One adapter package for EML, MSG/OFT, TNEF, Mbox/MBX, iCalendar, vCard, PST/OST/OLM/EMLX, mailbox directories, and OAB
@@ -798,13 +877,15 @@ _Dependency footprint:_ `OfficeIMO.Reader.Core`, `OfficeIMO.Email`, `OfficeIMO.M
 #### [OfficeIMO.Reader.Word](OfficeIMO.Reader.Word/README.md)
 
 - [x] DOCX/DOCM and legacy DOC extraction through the owning Word engine
+- [x] Optional legacy-word handler over the owning `OfficeIMO.Word` importer, without duplicating parsing or conversion
 - [x] Rich headings, tables, images, metadata, diagnostics, and password-aware detection
 
-_Dependency footprint:_ `OfficeIMO.Reader.Core` and `OfficeIMO.Word`.
+_Dependency footprint:_ `OfficeIMO.Reader.Core`, `OfficeIMO.Word`, and `OfficeIMO.Core`.
 
 #### [OfficeIMO.Reader.Excel](OfficeIMO.Reader.Excel/README.md)
 
 - [x] XLSX/XLSM/XLSB and legacy XLS extraction through the owning Excel engine
+- [x] Optional legacy-spreadsheet handler over the owning `OfficeIMO.Excel` importer, without duplicating parsing or conversion
 - [x] Rich workbook, table, image, metadata, diagnostic, and password-aware projection
 
 _Dependency footprint:_ `OfficeIMO.Reader.Core`, `OfficeIMO.Excel`, and `OfficeIMO.Core`.
@@ -871,6 +952,13 @@ _Dependency footprint:_ only `OfficeIMO.Reader.Core`, LaTeX, and LaTeX.Markdown.
 
 _Dependency footprint:_ only `OfficeIMO.Reader.Core`; JSON comes from Reader's established runtime graph.
 
+#### [OfficeIMO.Reader.Opml](OfficeIMO.Reader.Opml/README.md)
+
+- [x] `.opml` registration with one or more bounded chunks per nested outline
+- [x] Stable IDs, hierarchy paths, and OPML validation warnings
+
+_Dependency footprint:_ only OfficeIMO.Reader.Core and OPML.
+
 #### [OfficeIMO.Reader.OneNote](OfficeIMO.Reader.OneNote/README.md)
 
 - [x] Offline `.one`, `.onetoc2`, and `.onepkg` path/stream ingestion with async, non-seekable, cancellation, and input-limit behavior
@@ -889,6 +977,14 @@ _Dependency footprint:_ only `OfficeIMO.Reader.Core`, OneNote, and OneNote.Markd
 
 _Dependency footprint:_ only `OfficeIMO.Reader.Core` and OpenDocument; no LibreOffice runtime.
 
+#### [OfficeIMO.Reader.Ocr](OfficeIMO.Reader.Ocr/README.md)
+
+- [x] One-call image recognition and searchable-PDF creation with a reusable session API
+- [x] Installed Tesseract discovery with explicit runtime and language evidence
+- [x] Checksum-pinned provisioning for 28 typed OCR languages plus orientation data in a versioned user cache
+
+_Dependency footprint:_ `OfficeIMO.Reader.Ocr.Tesseract` and `OfficeIMO.Reader.Pdf`; the native OCR executable remains external.
+
 #### [OfficeIMO.Reader.Ocr.Process](OfficeIMO.Reader.Ocr.Process/README.md)
 
 - [x] Versioned JSON request/response protocol for caller-configured OCR executables
@@ -900,10 +996,11 @@ _Dependency footprint:_ `OfficeIMO.Reader.Core` and `System.Text.Json`; the OCR 
 #### [OfficeIMO.Reader.Ocr.Tesseract](OfficeIMO.Reader.Ocr.Tesseract/README.md)
 
 - [x] Optional `IOfficeOcrEngine` for an installed Tesseract CLI
-- [x] Language discovery, version discovery, page-segmentation options, and TSV parsing
+- [x] Runtime, language, and version discovery; page-segmentation options; and TSV parsing
+- [x] Optional immutable, length- and SHA-256-verified `tessdata_fast` provisioning for the curated catalog
 - [x] Word/line spans with bounds, normalized confidence, timeouts, and structured failures
 
-_Dependency footprint:_ `OfficeIMO.Reader.Ocr.Process` plus an external Tesseract installation; no bundled native binaries or language data.
+_Dependency footprint:_ `OfficeIMO.Reader.Ocr.Process` plus an external Tesseract installation; no bundled native binaries or default language payloads.
 
 #### [OfficeIMO.Reader.Pdf](OfficeIMO.Reader.Pdf/README.md)
 
@@ -1098,37 +1195,37 @@ Fixed-layout PDF import is necessarily semantic rather than visually lossless. R
 
 ## Install
 
-Install only the native packages and adapters an application needs. The commands below use the current `3.0.3` NuGet release.
+Install only the native packages and adapters an application needs. Unversioned `dotnet add package` commands select the current stable NuGet release.
 
 ```powershell
-dotnet add package OfficeIMO.Word --version 3.0.3
-dotnet add package OfficeIMO.Word.Pdf --version 3.0.3
+dotnet add package OfficeIMO.Word
+dotnet add package OfficeIMO.Word.Pdf
 
-dotnet add package OfficeIMO.Excel --version 3.0.3
-dotnet add package OfficeIMO.Excel.Html --version 3.0.3
-dotnet add package OfficeIMO.Excel.Pdf --version 3.0.3
+dotnet add package OfficeIMO.Excel
+dotnet add package OfficeIMO.Excel.Html
+dotnet add package OfficeIMO.Excel.Pdf
 
-dotnet add package OfficeIMO.Epub --version 3.0.3
-dotnet add package OfficeIMO.Epub.Image --version 3.0.3
+dotnet add package OfficeIMO.Epub
+dotnet add package OfficeIMO.Epub.Image
 
-dotnet add package OfficeIMO.Adf --version 3.0.3
-dotnet add package OfficeIMO.Confluence --version 3.0.3
+dotnet add package OfficeIMO.Adf
+dotnet add package OfficeIMO.Confluence
 
-dotnet add package OfficeIMO.Reader.Pdf --version 3.0.3
+dotnet add package OfficeIMO.Reader.Pdf
 
 # Add every Reader adapter only when a broad ingestion host genuinely needs all formats.
-dotnet add package OfficeIMO.Reader.All --version 3.0.3
+dotnet add package OfficeIMO.Reader.All
 
-dotnet add package OfficeIMO.OneNote --version 3.0.3
-dotnet add package OfficeIMO.OneNote.Markdown --version 3.0.3
-dotnet add package OfficeIMO.OneNote.Html --version 3.0.3
-dotnet add package OfficeIMO.OneNote.Pdf --version 3.0.3
-dotnet add package OfficeIMO.Reader.OneNote --version 3.0.3
+dotnet add package OfficeIMO.OneNote
+dotnet add package OfficeIMO.OneNote.Markdown
+dotnet add package OfficeIMO.OneNote.Html
+dotnet add package OfficeIMO.OneNote.Pdf
+dotnet add package OfficeIMO.Reader.OneNote
 ```
 
-Keep OfficeIMO package references in one application on the same published version. The repository source is already on the coordinated `3.1.x` line.
+Keep OfficeIMO package references in one application on the same published version.
 
-The unified `OfficeIMO.Tool` CLI documented in this repository is the `3.1.x` source-tree surface, not part of the published `3.0.3` package block above. In this checkout, run it directly with `dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- <command>`.
+Install the unified CLI with `dotnet tool install --global OfficeIMO.Tool`. See the [OfficeIMO.Tool guide](OfficeIMO.Tool/README.md) for global and repository-local installation, common commands, and contributor usage.
 
 ## Common workflows
 
@@ -1215,18 +1312,21 @@ foreach (var warning in result.Warnings) {
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument source = PdfDocument.Open("packet.pdf");
-string firstPageText = source.Read.Text("1");
+PdfDocument source = PdfDocument.Load("packet.pdf");
+PdfDocumentReadResult firstPage = source.Read(new PdfReadOptions {
+    PageSelection = PdfPageSelection.Parse("1")
+});
+string firstPageText = string.Join('\n', firstPage.Pages[0].TextBlocks.Select(block => block.Text));
 source.Pages.Extract("1-3").Save("packet-summary.pdf");
 
-PdfDocument.Open("packet.pdf")
+PdfDocument.Load("packet.pdf")
     .MergeWith("appendix.pdf")
     .Pages.Delete("2")
     .Stamp.Text("Reviewed")
     .Save("packet-final.pdf");
 
 PdfAnalysisReport health = PdfDocument
-    .Open("packet-final.pdf")
+    .Load("packet-final.pdf")
     .Analyze();
 
 Console.WriteLine($"Readable: {health.CanRead}; rewrite safe: {health.CanRewrite}");
@@ -1288,6 +1388,7 @@ Most shipping libraries target `netstandard2.0`, `net8.0`, and `net10.0`. Many a
 - [OfficeIMO roadmap](Docs/ROADMAP.md)
 - [Examples](OfficeIMO.Examples/README.md)
 - [Image export capability matrix](Docs/officeimo.image-export-capability-matrix.md)
+- [Text formatting support matrix](Docs/officeimo.text-formatting-support-matrix.md)
 - [PDF current state](Docs/officeimo.pdf.current-state.md)
 - [PDF conversion support matrix](Docs/officeimo.pdf-conversion-support-matrix.md)
 - [HTML renderer support matrix](Docs/officeimo.html-support-matrix.md)

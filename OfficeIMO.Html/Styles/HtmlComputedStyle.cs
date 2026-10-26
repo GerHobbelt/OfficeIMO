@@ -22,8 +22,33 @@ public sealed class HtmlComputedStyle {
         _specifiedProperties = new HashSet<string>(specifiedProperties ?? Array.Empty<string>(), HtmlCssPropertyNameComparer.Instance);
     }
 
+    private HtmlComputedStyle(
+        Dictionary<string, string> properties,
+        HashSet<string> inheritedProperties,
+        HashSet<string> resetProperties,
+        HashSet<string> specifiedProperties) {
+        _properties = properties;
+        _readOnlyProperties = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(_properties);
+        _inheritedProperties = inheritedProperties;
+        _resetProperties = resetProperties;
+        _specifiedProperties = specifiedProperties;
+    }
+
+    internal static HtmlComputedStyle FromOwnedCollections(
+        Dictionary<string, string> properties,
+        HashSet<string> inheritedProperties,
+        HashSet<string> resetProperties,
+        HashSet<string> specifiedProperties) =>
+        new HtmlComputedStyle(properties, inheritedProperties, resetProperties, specifiedProperties);
+
     /// <summary>All computed properties known to the lightweight style engine.</summary>
     public IReadOnlyDictionary<string, string> Properties => _readOnlyProperties;
+
+    /// <summary>
+    /// Gets the resolved effective font size in points after relative units, percentages,
+    /// and CSS font-size keywords have been evaluated against their inherited context.
+    /// </summary>
+    public double? ResolvedFontSizePoints { get; internal set; }
 
     /// <summary>Gets a computed property value or an empty string when no value is known.</summary>
     public string GetValue(string propertyName) {

@@ -15,18 +15,30 @@ internal static class PdfPageDictionaryBuilder {
         IReadOnlyList<int> annotationIds,
         int? structParents = null,
         bool useStructureTabOrder = false,
-        IReadOnlyList<(string Name, int Id)>? properties = null) {
+        IReadOnlyList<(string Name, int Id)>? properties = null,
+        PdfPrintProductionPageBoxes? printProductionPageBoxes = null) {
         ValidatePositiveFinite(pageWidth, nameof(pageWidth));
         ValidatePositiveFinite(pageHeight, nameof(pageHeight));
+        string serializedPageWidth = FormatNumber(pageWidth);
+        string serializedPageHeight = FormatNumber(pageHeight);
+        ValidateSerializedBox("MediaBox", "0", "0", serializedPageWidth, serializedPageHeight);
 
         var sb = new StringBuilder();
         sb.Append("<< /Type /Page /Parent ")
             .Append(PdfSyntaxEscaper.IndirectReference(parentPagesId))
             .Append(" /MediaBox [0 0 ")
-            .Append(FormatWholeNumber(pageWidth))
+            .Append(serializedPageWidth)
             .Append(' ')
-            .Append(FormatWholeNumber(pageHeight))
-            .Append("] /Resources <<");
+            .Append(serializedPageHeight)
+            .Append(']');
+
+        if (printProductionPageBoxes != null) {
+            PdfResolvedPrintProductionPageBoxes boxes = printProductionPageBoxes.Resolve(pageWidth, pageHeight);
+            AppendBox(sb, "TrimBox", boxes.TrimLeft, boxes.TrimBottom, boxes.TrimRight, boxes.TrimTop);
+            AppendBox(sb, "BleedBox", boxes.BleedLeft, boxes.BleedBottom, boxes.BleedRight, boxes.BleedTop);
+        }
+
+        sb.Append(" /Resources <<");
 
         AppendResourcePart(sb, "Font", fontResources);
         AppendResourcePart(sb, "XObject", xObjects);
@@ -107,8 +119,37 @@ internal static class PdfPageDictionaryBuilder {
         sb.Append('/').Append(PdfSyntaxEscaper.Name(name));
     }
 
-    private static string FormatWholeNumber(double value) =>
-        value.ToString("0", CultureInfo.InvariantCulture);
+    private static void AppendBox(StringBuilder sb, string name, double left, double bottom, double right, double top) {
+        string serializedLeft = FormatNumber(left);
+        string serializedBottom = FormatNumber(bottom);
+        string serializedRight = FormatNumber(right);
+        string serializedTop = FormatNumber(top);
+        ValidateSerializedBox(name, serializedLeft, serializedBottom, serializedRight, serializedTop);
+        sb.Append(" /").Append(name).Append(" [")
+            .Append(serializedLeft).Append(' ')
+            .Append(serializedBottom).Append(' ')
+            .Append(serializedRight).Append(' ')
+            .Append(serializedTop).Append(']');
+    }
+
+    private static string FormatNumber(double value) =>
+        value.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private static void ValidateSerializedBox(
+        string name,
+        string left,
+        string bottom,
+        string right,
+        string top) {
+        double serializedLeft = double.Parse(left, CultureInfo.InvariantCulture);
+        double serializedBottom = double.Parse(bottom, CultureInfo.InvariantCulture);
+        double serializedRight = double.Parse(right, CultureInfo.InvariantCulture);
+        double serializedTop = double.Parse(top, CultureInfo.InvariantCulture);
+        if (serializedRight <= serializedLeft || serializedTop <= serializedBottom) {
+            throw new InvalidOperationException(
+                "PDF " + name + " coordinates must retain positive width and height after serialization.");
+        }
+    }
 
     private static void ValidatePositiveFinite(double value, string paramName) {
         if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0) {

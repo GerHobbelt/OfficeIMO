@@ -36,7 +36,7 @@ internal static partial class PdfAnnotationEditor {
     public static PdfAnnotationEditResult RemoveAnnotations(byte[] pdf, PdfAnnotationRemovalOptions? options = null) => RemoveAnnotations(pdf, options, readOptions: null);
 
     /// <summary>Removes annotations using explicit read limits or credentials and returns rewritten PDF bytes.</summary>
-    public static PdfAnnotationEditResult RemoveAnnotations(byte[] pdf, PdfAnnotationRemovalOptions? options, PdfReadOptions? readOptions) {
+    public static PdfAnnotationEditResult RemoveAnnotations(byte[] pdf, PdfAnnotationRemovalOptions? options, PdfLoadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
 
         PdfAnnotationRemovalOptions effectiveOptions = options ?? new PdfAnnotationRemovalOptions();
@@ -131,7 +131,15 @@ internal static partial class PdfAnnotationEditor {
     public static PdfAnnotationEditResult UpdateAnnotation(byte[] pdf, int objectNumber, PdfAnnotationUpdateOptions options) => UpdateAnnotation(pdf, objectNumber, options, readOptions: null);
 
     /// <summary>Updates one indirect annotation using explicit read limits or credentials.</summary>
-    public static PdfAnnotationEditResult UpdateAnnotation(byte[] pdf, int objectNumber, PdfAnnotationUpdateOptions options, PdfReadOptions? readOptions) {
+    public static PdfAnnotationEditResult UpdateAnnotation(byte[] pdf, int objectNumber, PdfAnnotationUpdateOptions options, PdfLoadOptions? readOptions) =>
+        UpdateAnnotation(pdf, objectNumber, options, mutationPlan: null, readOptions);
+
+    private static PdfAnnotationEditResult UpdateAnnotation(
+        byte[] pdf,
+        int objectNumber,
+        PdfAnnotationUpdateOptions options,
+        PdfMutationPlan? mutationPlan,
+        PdfLoadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
         Guard.NotNull(options, nameof(options));
         if (objectNumber <= 0) {
@@ -139,7 +147,7 @@ internal static partial class PdfAnnotationEditor {
         }
 
         ValidateUpdateOptions(options);
-        PdfMutationPlan mutationPlan = PdfMutationPlanner.Require(
+        mutationPlan ??= PdfMutationPlanner.Require(
             pdf,
             PdfMutationOperation.ModifyAnnotations,
             readOptions,
@@ -148,7 +156,10 @@ internal static partial class PdfAnnotationEditor {
             if (!options.AllowResidualDataInAppendOnly) {
                 throw new NotSupportedException("Append-only annotation updates retain replaced annotation data in prior revisions. Use a permitted full rewrite for sanitization or explicitly allow residual data.");
             }
-            return UpdateAnnotationIncrementally(pdf, objectNumber, options, mutationPlan, readOptions);
+            PdfAnnotationEditResult incremental = UpdateAnnotationIncrementally(pdf, objectNumber, options, mutationPlan, readOptions);
+            byte[] incrementalBytes = incremental.Bytes;
+            ValidateUpdatedAnnotation(incrementalBytes, objectNumber, options, incremental.OutputReadOptions);
+            return incremental;
         }
 
         var (objects, trailerRaw) = PdfSyntax.ParseObjects(pdf, readOptions);
@@ -165,15 +176,38 @@ internal static partial class PdfAnnotationEditor {
 
         IReadOnlyList<int> changedObjects = ApplyUpdates(objects, annotation, options);
         PdfObjectGraphPruner.PruneUnreachableObjects(objects, catalogObjectNumber);
-        byte[] rewritten = RewriteAllObjects(objects, catalogObjectNumber, PdfReadDocument.Open(pdf, readOptions).UncheckedMetadata, pdf);
-        return CreateFullRewriteResult(pdf, rewritten, 1, mutationPlan, annotationsChanged: false, readOptions: readOptions);
+        byte[] rewritten = RewriteAllObjects(objects, catalogObjectNumber, PdfReadDocument.Open(pdf, readOptions).UncheckedMetadata, pdf, out IReadOnlyDictionary<int, int> numberMap);
+        PdfGeneratedOutputGrowth generatedGrowth = BuildGeneratedOutputGrowth(
+            objects,
+            new[] { objectNumber }.Concat(changedObjects));
+        PdfLoadOptions rewrittenReadOptions = PdfLoadOptions.ForGeneratedOutput(readOptions, pdf, rewritten, generatedGrowth);
+        ValidateUpdatedAnnotation(rewritten, numberMap[objectNumber], options, rewrittenReadOptions);
+        return CreateFullRewriteResult(pdf, rewritten, 1, mutationPlan, annotationsChanged: false, readOptions: readOptions, rewrittenReadOptions: rewrittenReadOptions);
     }
+
+    private static PdfMutationPlan RequireAnnotationMutation(
+        byte[] pdf,
+        PdfLoadOptions? readOptions,
+        PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic) =>
+        PdfMutationPlanner.Require(
+            pdf,
+            PdfMutationOperation.ModifyAnnotations,
+            readOptions,
+            executionPreference: executionPreference);
+
+    private static PdfDocumentInfo GetAnnotationMutationDocumentInfo(PdfMutationPlan mutationPlan) =>
+        mutationPlan.Preflight.UncheckedDocumentInfo
+        ?? throw new InvalidOperationException("PDF annotation metadata could not be read for the authorized mutation.");
+
+    private static PdfDocumentInfo ReadAnnotationMetadata(byte[] pdf, PdfLoadOptions? readOptions) =>
+        PdfInspector.Preflight(pdf, readOptions).UncheckedDocumentInfo
+        ?? throw new InvalidOperationException("PDF annotation metadata could not be read.");
 
     /// <summary>Removes annotations from a PDF file and writes the result to another file.</summary>
     public static PdfAnnotationEditResult RemoveAnnotations(string inputPath, string outputPath, PdfAnnotationRemovalOptions? options = null) => RemoveAnnotations(inputPath, outputPath, options, readOptions: null);
 
     /// <summary>Removes annotations from a PDF file using explicit read limits or credentials and writes the result to another file.</summary>
-    public static PdfAnnotationEditResult RemoveAnnotations(string inputPath, string outputPath, PdfAnnotationRemovalOptions? options, PdfReadOptions? readOptions) {
+    public static PdfAnnotationEditResult RemoveAnnotations(string inputPath, string outputPath, PdfAnnotationRemovalOptions? options, PdfLoadOptions? readOptions) {
         Guard.NotNullOrWhiteSpace(inputPath, nameof(inputPath));
         string fullOutputPath = ValidateOutputPath(outputPath);
         PdfAnnotationEditResult result = RemoveAnnotations(File.ReadAllBytes(inputPath), options, readOptions);
@@ -185,7 +219,7 @@ internal static partial class PdfAnnotationEditor {
     public static PdfAnnotationEditResult UpdateAnnotation(string inputPath, string outputPath, int objectNumber, PdfAnnotationUpdateOptions options) => UpdateAnnotation(inputPath, outputPath, objectNumber, options, readOptions: null);
 
     /// <summary>Updates one annotation in a PDF file using explicit read limits or credentials and writes the result to another file.</summary>
-    public static PdfAnnotationEditResult UpdateAnnotation(string inputPath, string outputPath, int objectNumber, PdfAnnotationUpdateOptions options, PdfReadOptions? readOptions) {
+    public static PdfAnnotationEditResult UpdateAnnotation(string inputPath, string outputPath, int objectNumber, PdfAnnotationUpdateOptions options, PdfLoadOptions? readOptions) {
         Guard.NotNullOrWhiteSpace(inputPath, nameof(inputPath));
         string fullOutputPath = ValidateOutputPath(outputPath);
         PdfAnnotationEditResult result = UpdateAnnotation(File.ReadAllBytes(inputPath), objectNumber, options, readOptions);
@@ -257,6 +291,10 @@ internal static partial class PdfAnnotationEditor {
     }
 
     private static System.Collections.ObjectModel.ReadOnlyCollection<int> ApplyUpdates(Dictionary<int, PdfIndirectObject> objects, PdfDictionary annotation, PdfAnnotationUpdateOptions options) {
+        if (options.ReviewState.HasValue &&
+            !string.Equals(TryReadName(objects, annotation, "Subtype"), "Text", StringComparison.Ordinal)) {
+            throw new NotSupportedException("PDF review states are supported only for Text annotations.");
+        }
         var changedObjects = new List<int>();
         bool invalidateAppearance = false;
         if (options.Contents is not null) {
@@ -287,9 +325,13 @@ internal static partial class PdfAnnotationEditor {
         }
 
         if (options.Rectangle is not null) { annotation.Items["Rect"] = CreateNumberArray(options.Rectangle); invalidateAppearance = true; }
+        if (options.RectangleDifferences is not null) { annotation.Items["RD"] = CreateNumberArray(options.RectangleDifferences); invalidateAppearance = true; }
         if (options.QuadPoints is not null) { annotation.Items["QuadPoints"] = CreateNumberArray(options.QuadPoints); invalidateAppearance = true; }
         if (options.Vertices is not null) { annotation.Items["Vertices"] = CreateNumberArray(options.Vertices); invalidateAppearance = true; }
         if (options.Line is not null) { annotation.Items["L"] = CreateNumberArray(options.Line); invalidateAppearance = true; }
+        if (options.LineLeaderLength.HasValue) { annotation.Items["LL"] = new PdfNumber(options.LineLeaderLength.Value); invalidateAppearance = true; }
+        if (options.LineLeaderExtension.HasValue) { annotation.Items["LLE"] = new PdfNumber(options.LineLeaderExtension.Value); invalidateAppearance = true; }
+        if (options.LineCaptionOffset is not null) { annotation.Items["CO"] = CreateNumberArray(options.LineCaptionOffset); invalidateAppearance = true; }
         if (options.InkPaths is not null) {
             var paths = new PdfArray(); foreach (IReadOnlyList<double> path in options.InkPaths) paths.Items.Add(CreateNumberArray(path)); annotation.Items["InkList"] = paths; invalidateAppearance = true;
         }
@@ -304,6 +346,13 @@ internal static partial class PdfAnnotationEditor {
             annotation.Items["IRT"] = new PdfReference(replyTarget, target.Generation);
         }
         if (options.ReplyType is not null) annotation.Items["RT"] = new PdfName(options.ReplyType);
+        if (options.ReviewState.HasValue) {
+            (string state, string stateModel) = GetReviewStateNames(options.ReviewState.Value);
+            annotation.Items["State"] = new PdfName(state);
+            annotation.Items["StateModel"] = new PdfName(stateModel);
+        }
+        if (options.Subject is not null) annotation.Items["Subj"] = new PdfStringObj(options.Subject, useTextStringEncoding: true);
+        if (options.Intent is not null) annotation.Items["IT"] = new PdfName(options.Intent);
         if (options.PopupOpen.HasValue || options.PopupRectangle is not null) {
             PdfDictionary popup = ResolvePopup(objects, annotation, out int? popupObjectNumber);
             if (options.PopupOpen.HasValue) popup.Items["Open"] = new PdfBoolean(options.PopupOpen.Value);
@@ -313,7 +362,7 @@ internal static partial class PdfAnnotationEditor {
 
         if (options.RegenerateAppearance) {
             changedObjects.Add(PdfAnnotationFlattener.RegenerateNormalAppearance(objects, annotation));
-        } else if (invalidateAppearance) {
+        } else if (invalidateAppearance && !options.PreserveAppearance) {
             annotation.Items.Remove("AP");
         }
         return changedObjects.AsReadOnly();
@@ -383,17 +432,29 @@ internal static partial class PdfAnnotationEditor {
         }
         if (options.InReplyToObjectNumber.HasValue && options.InReplyToObjectNumber.Value <= 0) throw new ArgumentOutOfRangeException(nameof(options), "Reply parent object number must be positive.");
         if (options.ReplyType is not null && options.ReplyType != "R" && options.ReplyType != "Group") throw new ArgumentException("Reply type must be R or Group.", nameof(options));
-        ValidatePdfName(options.LineStartEnding, nameof(options.LineStartEnding)); ValidatePdfName(options.LineEndEnding, nameof(options.LineEndEnding));
+        if (options.ReviewState.HasValue) _ = GetReviewStateNames(options.ReviewState.Value);
+        ValidatePdfName(options.LineStartEnding, nameof(options.LineStartEnding)); ValidatePdfName(options.LineEndEnding, nameof(options.LineEndEnding)); ValidatePdfName(options.Intent, nameof(options.Intent));
 
         if (options.Contents is null &&
             options.Title is null &&
             options.Name is null &&
             !options.Flags.HasValue &&
             options.Color is null &&
-            !options.RemoveActions && options.Rectangle is null && options.QuadPoints is null && options.Vertices is null && options.Line is null && options.InkPaths is null && options.LineStartEnding is null && options.LineEndEnding is null && !options.InReplyToObjectNumber.HasValue && options.ReplyType is null && !options.PopupOpen.HasValue && options.PopupRectangle is null && !options.RegenerateAppearance) {
+            !options.RemoveActions && options.Rectangle is null && options.QuadPoints is null && options.Vertices is null && options.Line is null && options.InkPaths is null && options.LineStartEnding is null && options.LineEndEnding is null && !options.InReplyToObjectNumber.HasValue && options.ReplyType is null && !options.ReviewState.HasValue && options.Subject is null && options.Intent is null && !options.PopupOpen.HasValue && options.PopupRectangle is null && !options.RegenerateAppearance) {
             throw new ArgumentException("At least one annotation update option must be provided.", nameof(options));
         }
     }
+
+    private static (string State, string StateModel) GetReviewStateNames(PdfAnnotationReviewState state) => state switch {
+        PdfAnnotationReviewState.None => ("None", "Review"),
+        PdfAnnotationReviewState.Accepted => ("Accepted", "Review"),
+        PdfAnnotationReviewState.Rejected => ("Rejected", "Review"),
+        PdfAnnotationReviewState.Cancelled => ("Cancelled", "Review"),
+        PdfAnnotationReviewState.Completed => ("Completed", "Review"),
+        PdfAnnotationReviewState.Marked => ("Marked", "Marked"),
+        PdfAnnotationReviewState.Unmarked => ("Unmarked", "Marked"),
+        _ => throw new ArgumentOutOfRangeException(nameof(state), "Unknown annotation review state.")
+    };
 
     private static void ValidateCoordinateArray(IReadOnlyList<double>? values, int minimum, int exact, string name) { if (values is null) return; if ((exact > 0 && values.Count != exact) || (exact == 0 && (values.Count < minimum || values.Count % 2 != 0))) throw new ArgumentException("Annotation coordinate array has an invalid length.", name); foreach (double value in values) if (double.IsNaN(value) || double.IsInfinity(value)) throw new ArgumentException("Annotation coordinates must be finite.", name); }
     private static void ValidatePdfName(string? value, string name) { if (value is null) return; Guard.NotNullOrWhiteSpace(value, name); if (value.Any(char.IsWhiteSpace)) throw new ArgumentException("PDF name values cannot contain whitespace.", name); }
@@ -539,7 +600,15 @@ internal static partial class PdfAnnotationEditor {
         return 0;
     }
 
-    private static byte[] RewriteAllObjects(Dictionary<int, PdfIndirectObject> objects, int catalogObjectNumber, PdfMetadata metadata, byte[] sourcePdf) {
+    private static byte[] RewriteAllObjects(Dictionary<int, PdfIndirectObject> objects, int catalogObjectNumber, PdfMetadata metadata, byte[] sourcePdf) =>
+        RewriteAllObjects(objects, catalogObjectNumber, metadata, sourcePdf, out _);
+
+    private static byte[] RewriteAllObjects(
+        Dictionary<int, PdfIndirectObject> objects,
+        int catalogObjectNumber,
+        PdfMetadata metadata,
+        byte[] sourcePdf,
+        out IReadOnlyDictionary<int, int> rewrittenObjectNumbers) {
         int[] sourceIds = objects.Keys.OrderBy(static id => id).ToArray();
         var numberMap = new Dictionary<int, int>(sourceIds.Length);
         for (int i = 0; i < sourceIds.Length; i++) {
@@ -556,6 +625,7 @@ internal static partial class PdfAnnotationEditor {
         rewritten.Add(PdfPageExtractor.WrapObject(infoId, PdfEncoding.Latin1GetBytes(PdfPageExtractor.BuildInfoDictionary(metadata))));
 
         PdfFileVersion fileVersion = PdfFileAssembler.ParseHeaderVersionOrDefault(PdfSyntax.GetHeaderVersion(sourcePdf));
+        rewrittenObjectNumbers = numberMap;
         return PdfPageExtractor.Assemble(rewritten, numberMap[catalogObjectNumber], infoId, fileVersion);
     }
 

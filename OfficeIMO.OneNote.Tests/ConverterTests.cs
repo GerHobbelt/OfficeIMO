@@ -57,6 +57,22 @@ public sealed class ConverterTests {
     }
 
     [Fact]
+    public void SemanticHtmlRendersSectionsAtMaximumSectionGroupDepth() {
+        var notebook = new OneNoteNotebook { Name = "Depth" };
+        var group = new OneNoteSectionGroup { Name = "Allowed group" };
+        group.Sections.Add(SectionWithPage("Deep section", "Deep page"));
+        notebook.SectionGroups.Add(group);
+
+        string html = notebook.ToHtmlDocument(new OneNoteMarkdownOptions {
+            MaxSectionGroupDepth = 1
+        });
+
+        Assert.Contains("Allowed group", html, StringComparison.Ordinal);
+        Assert.Contains("Deep section", html, StringComparison.Ordinal);
+        Assert.Contains("Deep page", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProjectionProducesReusableMarkdownDocumentAndUtf8Bytes() {
         OneNoteSection section = CreateNotebook().SectionGroups[0].Sections[0];
 
@@ -274,7 +290,7 @@ public sealed class ConverterTests {
         byte[] bytes = result.Value.ToBytes();
         using var stream = new MemoryStream();
         await section.SaveAsVisualPdfAsync(stream, options);
-        OfficeIMO.Pdf.PdfDocumentInfo info = OfficeIMO.Pdf.PdfDocument.Open(bytes).Read.DocumentInfo();
+        OfficeIMO.Pdf.PdfDocumentInfo info = OfficeIMO.Pdf.PdfDocument.Load(bytes).Inspect();
 
         Assert.DoesNotContain(
             result.Warnings,
@@ -303,10 +319,10 @@ public sealed class ConverterTests {
 
         Assert.Throws<PdfPasswordRequiredException>(() => PdfReadDocument.Open(bytes));
         Assert.Throws<PdfInvalidPasswordException>(() =>
-            PdfReadDocument.Open(bytes, new PdfReadOptions { Password = "wrong" }));
+            PdfReadDocument.Open(bytes, new PdfLoadOptions { Password = "wrong" }));
         Assert.Single(PdfReadDocument.Open(
             bytes,
-            new PdfReadOptions { Password = "open" }).Pages);
+            new PdfLoadOptions { Password = "open" }).Pages);
     }
 
     [Fact]
@@ -330,7 +346,7 @@ public sealed class ConverterTests {
     }
 
     private static string GetFirstPageContentStreamDictionary(byte[] pdf) {
-        string raw = Encoding.Latin1.GetString(pdf);
+        string raw = Encoding.GetEncoding(28591).GetString(pdf);
         System.Text.RegularExpressions.Match contents = System.Text.RegularExpressions.Regex.Match(
             raw,
             @"/Contents\s+(\d+)\s+0\s+R",

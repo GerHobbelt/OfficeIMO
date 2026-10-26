@@ -1,6 +1,7 @@
 using OfficeIMO.Word;
 using OfficeIMO.Word.Pdf;
 using OfficeIMO.Pdf;
+using OfficeIMO.Drawing;
 using OfficeIMO.TestAssets;
 using DocumentFormat.OpenXml.Wordprocessing;
 using System;
@@ -969,7 +970,8 @@ namespace OfficeIMO.Tests {
                 new StyleRunProperties(
                     new Bold(),
                     new Italic(),
-                    new Underline { Val = UnderlineValues.Single },
+                    new Underline { Val = UnderlineValues.Wave },
+                    new DoubleStrike(),
                     new Color { Val = "C00000" },
                     new Highlight { Val = HighlightColorValues.Yellow },
                     new FontSize { Val = "28" }))
@@ -987,6 +989,7 @@ namespace OfficeIMO.Tests {
             directOverride._run.RunProperties.Bold = new Bold { Val = false };
             directOverride._run.RunProperties.Italic = new Italic { Val = false };
             directOverride._run.RunProperties.Underline = new Underline { Val = UnderlineValues.None };
+            directOverride._run.RunProperties.DoubleStrike = new DoubleStrike { Val = false };
             directOverride._run.RunProperties.Color = new Color { Val = "0000FF" };
             directOverride._run.RunProperties.FontSize = new FontSize { Val = "20" };
 
@@ -999,12 +1002,16 @@ namespace OfficeIMO.Tests {
             Assert.True(run.Bold);
             Assert.True(run.Italic);
             Assert.True(run.Underline);
+            Assert.Equal(OfficeTextDecorationStyle.Wavy, run.UnderlineStyle);
+            Assert.Equal(OfficeTextDecorationStyle.Double, run.StrikeStyle);
             Assert.Equal(PdfColor.FromRgb(192, 0, 0), run.Color);
             Assert.Equal(PdfColor.FromRgb(255, 255, 0), run.BackgroundColor);
             Assert.Equal(14D, run.FontSize);
             Assert.False(overrideRun.Bold);
             Assert.False(overrideRun.Italic);
             Assert.False(overrideRun.Underline);
+            Assert.Equal(OfficeTextDecorationStyle.None, overrideRun.UnderlineStyle);
+            Assert.Equal(OfficeTextDecorationStyle.None, overrideRun.StrikeStyle);
             Assert.Equal(PdfColor.FromRgb(0, 0, 255), overrideRun.Color);
             Assert.Equal(10D, overrideRun.FontSize);
         }
@@ -1964,6 +1971,36 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void SaveAsPdf_OfficeIMOEngine_Preserves_Negative_Paragraph_Indents() {
+            string docPath = Path.Combine(_directoryWithFiles, "PdfNativeNegativeParagraphIndents.docx");
+            string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeNegativeParagraphIndents.pdf");
+
+            using (WordDocument document = WordDocument.Create(docPath)) {
+                WordParagraph normal = document.AddParagraph("NormalIndentMarker alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau");
+                normal.LineSpacingAfterPoints = 0;
+                WordParagraph extended = document.AddParagraph("NegativeIndentMarker alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau");
+                extended.IndentationBeforePoints = -18;
+                extended.IndentationAfterPoints = -30;
+                extended.LineSpacingAfterPoints = 0;
+
+                document.Save();
+                document.SaveAsPdf(pdfPath, new WordPdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(300, 320),
+                    Margins = PageMargins.Uniform(30)
+                });
+            }
+
+            using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
+            var page = pdf.GetPage(1);
+            double normalX = FindWordStartX(page, "NormalIndentMarker");
+            double negativeX = FindWordStartX(page, "NegativeIndentMarker");
+
+            Assert.True(normalX - negativeX >= 17D, $"Expected the negative Word indent to extend text into the left margin. Normal x: {normalX:0.##}; negative x: {negativeX:0.##}.");
+            Assert.Contains("NegativeIndentMarker", page.Text, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void SaveAsPdf_OfficeIMOEngine_Renders_Paragraph_Hanging_Indent_Without_Left_Indent() {
             string docPath = Path.Combine(_directoryWithFiles, "PdfNativeHangingIndentNoLeft.docx");
             string pdfPath = Path.Combine(_directoryWithFiles, "PdfNativeHangingIndentNoLeft.pdf");
@@ -1973,12 +2010,28 @@ namespace OfficeIMO.Tests {
                 paragraph.IndentationHangingPoints = 36;
 
                 document.Save();
-                document.SaveAsPdf(pdfPath);
+                document.SaveAsPdf(pdfPath, new WordPdfSaveOptions {
+                    IncludePageNumbers = false,
+                    PageSize = new OfficeIMO.Pdf.PageSize(260, 260),
+                    Margins = PageMargins.Uniform(36)
+                });
             }
 
             Assert.True(File.Exists(pdfPath));
             using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
-            Assert.Contains("HangingOnly", pdf.GetPage(1).Text);
+            var page = pdf.GetPage(1);
+            Assert.Contains("HangingOnly", page.Text);
+
+            var lineLefts = page
+                .GetWords()
+                .GroupBy(word => Math.Round(word.BoundingBox.Bottom, 1))
+                .OrderByDescending(group => group.Key)
+                .Take(2)
+                .Select(group => group.Min(word => word.BoundingBox.Left))
+                .ToList();
+
+            Assert.Equal(2, lineLefts.Count);
+            Assert.True(lineLefts[1] > lineLefts[0] + 30D, $"Expected a hanging indent without a left indent to preserve the authored first-line margin extension. First line x: {lineLefts[0]:0.##}; second line x: {lineLefts[1]:0.##}.");
         }
 
         [Fact]

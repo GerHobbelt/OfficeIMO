@@ -37,7 +37,7 @@ public sealed partial class PdfReadPage {
         var glyphPrimitives = new List<(PdfPageVisualPrimitive Primitive, PdfPageDrawingEffect Effect)>();
         var glyphImages = new List<(PdfImagePlacement Placement, PdfExtractedImage Image, PdfPageDrawingEffect Effect)>();
         var glyphGroups = new List<(OfficeDrawing Drawing, OfficeTransform Transform, double PaintOrder, PdfContentOrderKey? ContentOrderKey, PdfPageDrawingEffect Effect)>();
-        var extractedImageCache = new Dictionary<(int ObjectNumber, int DirectStreamIdentity, string ResourceName, OfficeColor MaskColor, PdfDictionary? ResourceContext), PdfExtractedImage>();
+        var extractedImageCache = new Dictionary<(int ObjectNumber, int DirectStreamIdentity, string ResourceName, OfficeColor MaskColor, PdfDictionary? ResourceContext, OfficeIccRenderingIntent RenderingIntent), PdfExtractedImage>();
         Type3SoftMaskValidationContext softMaskValidation =
             type3GlyphBudget.GetOrCreateSoftMaskValidationContext(
                 this,
@@ -94,6 +94,7 @@ public sealed partial class PdfReadPage {
                         initialStrokeOpacity: glyph.StrokeOpacity,
                         initialStrokeWidth: glyph.StrokeWidth,
                         initialStrokeDashStyle: glyph.StrokeDashStyle,
+                        initialStrokeDashPattern: glyph.StrokeDashPattern,
                         initialStrokeLineCap: glyph.StrokeLineCap,
                         initialStrokeLineJoin: glyph.StrokeLineJoin,
                         contentNestingDepth: contentNestingDepth,
@@ -255,7 +256,7 @@ public sealed partial class PdfReadPage {
 
                 if (localImagePlacements.Count > 0) {
                     var pendingPlacements = new List<PdfImagePlacement>();
-                    var pendingKeys = new HashSet<(int ObjectNumber, int DirectStreamIdentity, string ResourceName, OfficeColor MaskColor, PdfDictionary? ResourceContext)>();
+                    var pendingKeys = new HashSet<(int ObjectNumber, int DirectStreamIdentity, string ResourceName, OfficeColor MaskColor, PdfDictionary? ResourceContext, OfficeIccRenderingIntent RenderingIntent)>();
                     for (int imageIndex = 0; imageIndex < localImagePlacements.Count; imageIndex++) {
                         PdfImagePlacement placement = localImagePlacements[imageIndex];
                         if (placement.ClipPath is PdfPageClipPath { IsExact: false }) return false;
@@ -1095,8 +1096,8 @@ public sealed partial class PdfReadPage {
         exception is not PdfReadLimitException &&
         (exception is IOException || exception is InvalidDataException || exception is NotSupportedException);
 
-    private static (int ObjectNumber, int DirectStreamIdentity, string ResourceName, OfficeColor MaskColor, PdfDictionary? ResourceContext) GetType3ImageCacheKey(PdfImagePlacement placement) =>
-        (placement.ObjectNumber, placement.DirectStreamIdentity, placement.ResourceName, placement.ImageMaskColor, placement.EffectiveResources ?? placement.InlineImageResources);
+    private static (int ObjectNumber, int DirectStreamIdentity, string ResourceName, OfficeColor MaskColor, PdfDictionary? ResourceContext, OfficeIccRenderingIntent RenderingIntent) GetType3ImageCacheKey(PdfImagePlacement placement) =>
+        (placement.ObjectNumber, placement.DirectStreamIdentity, placement.ResourceName, placement.ImageMaskColor, placement.EffectiveResources ?? placement.InlineImageResources, placement.RenderingIntent);
 
     private static bool TryPublishType3GlyphContent(
         List<(PdfPageVisualPrimitive Primitive, PdfPageDrawingEffect Effect)> localPrimitives,
@@ -1320,6 +1321,7 @@ public sealed partial class PdfReadPage {
                 initialStrokeOpacity: programState.StrokeOpacity,
                 initialStrokeWidth: programState.StrokeWidth,
                 initialStrokeDashStyle: programState.StrokeDashStyle,
+                initialStrokeDashPattern: programState.StrokeDashPattern,
                 initialStrokeLineCap: programState.StrokeLineCap,
                 initialStrokeLineJoin: programState.StrokeLineJoin,
                 maxOperations: _limits.MaxContentOperations,
@@ -1365,6 +1367,7 @@ public sealed partial class PdfReadPage {
                          initialStrokeOpacity: programState.StrokeOpacity,
                          initialStrokeWidth: programState.StrokeWidth,
                          initialStrokeDashStyle: programState.StrokeDashStyle,
+                         initialStrokeDashPattern: programState.StrokeDashPattern,
                          initialStrokeLineCap: programState.StrokeLineCap,
                          initialStrokeLineJoin: programState.StrokeLineJoin,
                          maxOperations: _limits.MaxContentOperations,

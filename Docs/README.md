@@ -12,7 +12,9 @@ Use this index to find package guides, cross-package contracts, generated eviden
 - [Website guide](officeimo.website.md) — local build and publication workflow.
 - [Website search and answer-engine operations](officeimo.website-seo-geo-operations.md) — publication and discovery checks.
 - [CI and test strategy](officeimo.ci-test-strategy.md) — test ownership and validation lanes.
+- [Real-world and PDF quality corpus evidence](officeimo.real-world-corpus-evidence.md) — bounded external discovery, strict provenance-bound PDF scorecards, deterministic sampling, isolation, and interpretation limits.
 - [Excel benchmark notes](officeimo.excel.benchmark-notes.md) — reproducible comparison-suite execution and provenance.
+- [Image engine benchmarks](../OfficeIMO.Drawing.Benchmarks/README.md) — validated identification, decode, encode, resize, and placement-optimization workloads, with isolated opt-in library comparisons.
 
 ## Current product contracts
 
@@ -20,6 +22,7 @@ The package README is the primary usage guide for its public API. These reposito
 
 - [Provenance support matrix](officeimo.provenance-support-matrix.md) — exact carrier, package-owner, removal, verification, and resource-limit contracts.
 - [Content safety support matrix](officeimo.content-safety-support-matrix.md) — concealed-content, Unicode, cleanup, and format-specific ingestion-security boundaries.
+- [Text formatting support matrix](officeimo.text-formatting-support-matrix.md) — native font, decoration, script, casing, rendering, and compatibility contracts across formats.
 
 ### Office formats and interoperability
 
@@ -32,6 +35,7 @@ The package README is the primary usage guide for its public API. These reposito
 - [Excel large-workbook guidance](officeimo.excel.large-workbook-guidance.md)
 - [Excel remote loading](officeimo.excel.remote-loading.md)
 - [Legacy Excel XLS compatibility](officeimo.excel.legacy-xls-compatibility.md)
+- [Apple iWork source-reader support](officeimo.iwork-support-matrix.md)
 - [Reader package family](officeimo.reader.md)
 - [Google Workspace package family](../OfficeIMO.GoogleWorkspace/README.md)
 - [OpenDocument package family](../OfficeIMO.OpenDocument/README.md)
@@ -49,6 +53,7 @@ The package README is the primary usage guide for its public API. These reposito
 - [Email performance evidence](officeimo.email-performance.md)
 - [AsciiDoc support](officeimo.asciidoc-support-matrix.md)
 - [LaTeX support](officeimo.latex-support-matrix.md)
+- [Bibliography support](officeimo.bibliography-support-matrix.md)
 - [Markdown compatibility](officeimo.markdown.compatibility-matrix.md)
 - [Markdown extension authoring](officeimo.markdown.extension-authoring.md)
 - [Markdown lossless round-trip design](officeimo.markdown.lossless-roundtrip-design.md)

@@ -124,16 +124,17 @@ internal static class TextContentParser {
         public bool HasActualText { get; }
         public bool IsArtifact { get; }
         public bool IsHidden { get; }
-        public bool HasMcid { get; }
+        public int? Mcid { get; }
+        public bool HasMcid => Mcid.HasValue;
         public bool IsOptionalContent { get; }
         public bool ActualTextEmitted { get; set; }
 
-        public MarkedContentState(ActualTextValue? actualText, bool isArtifact, bool isHidden, bool hasMcid = false, bool isOptionalContent = false) {
+        public MarkedContentState(ActualTextValue? actualText, bool isArtifact, bool isHidden, int? mcid = null, bool isOptionalContent = false) {
             _actualText = actualText;
             HasActualText = actualText.HasValue;
             IsArtifact = isArtifact;
             IsHidden = isHidden;
-            HasMcid = hasMcid;
+            Mcid = mcid;
             IsOptionalContent = isOptionalContent;
         }
 
@@ -262,7 +263,7 @@ internal static class TextContentParser {
         System.Func<string, byte[], double> sumWidth1000ForFont,
         bool adjustKerningFromTJ = true,
         System.Func<string, byte[]?>? actualTextForProperty = null,
-        System.Func<string, bool>? hasMcidForProperty = null,
+        System.Func<string, int?>? mcidForProperty = null,
         IReadOnlyDictionary<string, PdfPageGraphicsStateResource>? graphicsStates = null,
         IReadOnlyDictionary<string, PdfPageColorSpace>? colorSpaces = null,
         System.Func<string, string?>? baseFontForResource = null,
@@ -298,7 +299,10 @@ internal static class TextContentParser {
         PdfPaintColorSelection? initialStrokeColorSelection = null,
         PdfOutputIntentColorTransform? outputIntentColorTransform = null,
         Func<string, int>? inlineImageComponentCount = null,
-        Func<PdfArray, int>? inlineImageArrayComponentCount = null) {
+        Func<PdfArray, int>? inlineImageArrayComponentCount = null,
+        int? contentStreamObjectNumber = null,
+        Func<int, int?>? contentStreamObjectNumberAtOffset = null,
+        Action? cancellationCheck = null) {
 #if NET8_0_OR_GREATER
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxActualTextCharacters);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedTextCharacters);
@@ -368,19 +372,25 @@ internal static class TextContentParser {
         int pendingLineBreaks = 0;
         bool emittedTextInTextObject = false;
         PdfContentOrderKey? currentContentOrderKey = null;
+        PdfContentOrderKey? currentTextObjectOrderKey = null;
         int textObjectFirstSpanIndex = 0;
         PersistentGraphicsStateFlags textObjectPersistentState = PersistentGraphicsStateFlags.None;
         bool textObjectHasCollateralVisual = false;
         var pendingPersistentTextStates = new List<PendingPersistentTextState>();
         var sbOutGlobal = new StringBuilder();
         var markedContentStack = new Stack<MarkedContentState>();
+        int? currentContentStreamObjectNumber = contentStreamObjectNumber;
         PdfContentStreamInterpreter.Interpret(content, maxOperations, operation => {
+            cancellationCheck?.Invoke();
+            currentContentStreamObjectNumber = contentStreamObjectNumberAtOffset?.Invoke(operation.OperatorOffset)
+                ?? contentStreamObjectNumber;
             args.Clear();
             args.AddRange(operation.Operands);
             double paintOrder = GetPaintOrder(operation.OperatorOffset);
             currentContentOrderKey = contentOrderPrefix?.Append(operation.OperatorOffset + contentOrderOffset);
             string op = operation.Name;
             if (string.Equals(op, "BT", StringComparison.Ordinal)) {
+                currentTextObjectOrderKey = currentContentOrderKey;
                 textObjectFirstSpanIndex = spans.Count;
                 textObjectPersistentState = PersistentGraphicsStateFlags.None;
                 textObjectHasCollateralVisual = false;
@@ -680,7 +690,7 @@ internal static class TextContentParser {
                         IsArtifactTag(args.Count > 1 ? args[args.Count - 2] : null),
                         operation.HasInvalidOperands ||
                         IsHiddenOptionalContent(args.Count > 1 ? args[args.Count - 2] : null, args.Count > 0 ? args[args.Count - 1] : null),
-                        HasMcid(args.Count > 0 ? args[args.Count - 1] : null),
+                        GetMcid(args.Count > 0 ? args[args.Count - 1] : null),
                         IsOptionalContentTag(args.Count > 1 ? args[args.Count - 2] : null)));
                     args.Clear();
                     break;
@@ -986,7 +996,17 @@ internal static class TextContentParser {
                     canRestamp && visibleGlyphsMatchLogicalText,
                     restampFontSize,
                     paintedText,
-                    Math.Abs(charSpacing) <= 0.000001D && Math.Abs(wordSpacing) <= 0.000001D));
+                    Math.Abs(charSpacing) <= 0.000001D && Math.Abs(wordSpacing) <= 0.000001D,
+                    GetActiveMcid(),
+                    currentContentStreamObjectNumber,
+                    currentTextObjectOrderKey,
+                    Matrix2D.Multiply(ctm, textMatrix),
+                    string.Join(",", new[] {
+                        fillColor.R.ToString(CultureInfo.InvariantCulture), fillColor.G.ToString(CultureInfo.InvariantCulture), fillColor.B.ToString(CultureInfo.InvariantCulture), fillColor.A.ToString(CultureInfo.InvariantCulture),
+                        strokeColor.R.ToString(CultureInfo.InvariantCulture), strokeColor.G.ToString(CultureInfo.InvariantCulture), strokeColor.B.ToString(CultureInfo.InvariantCulture), strokeColor.A.ToString(CultureInfo.InvariantCulture),
+                        fillOpacity?.ToString("R", CultureInfo.InvariantCulture) ?? "null", strokeOpacity?.ToString("R", CultureInfo.InvariantCulture) ?? "null",
+                        ((int)blendMode).ToString(CultureInfo.InvariantCulture), hasSoftMask ? "1" : "0", hasUnsupportedEffect ? "1" : "0"
+                    })));
                 sbOutGlobal.Append(normalizedText);
                 emittedTextInTextObject = true;
                 pendingLineBreaks = 0;
@@ -1058,9 +1078,15 @@ internal static class TextContentParser {
             return false;
         }
 
-        bool HasMcid(object? propertyObject) {
-            if (propertyObject is string propertyName) return hasMcidForProperty?.Invoke(propertyName) == true;
-            return propertyObject is PdfContentDictionary dictionary && dictionary.Items.ContainsKey("MCID");
+        int? GetActiveMcid() {
+            foreach (var state in markedContentStack) if (state.Mcid.HasValue) return state.Mcid;
+            return null;
+        }
+
+        int? GetMcid(object? propertyObject) {
+            if (propertyObject is string propertyName) return mcidForProperty?.Invoke(propertyName);
+            if (propertyObject is not PdfContentDictionary dictionary || !dictionary.Items.TryGetValue("MCID", out object? value)) return null;
+            return TryGetMcid(value);
         }
 
         static bool IsOptionalContentTag(object? tag) =>
@@ -1272,7 +1298,7 @@ internal static class TextContentParser {
         int initialTextRenderingMode = 0,
         PdfPageClipPath? initialClipPath = null,
         bool initialUnsupportedEffect = false,
-        System.Func<string, bool>? hasMcidForProperty = null,
+        System.Func<string, int?>? mcidForProperty = null,
         int maxOperations = PdfReadLimits.DefaultMaxContentOperations,
         int maxNestingDepth = PdfReadLimits.DefaultMaxContentNestingDepth,
         int maxOperands = PdfReadLimits.DefaultMaxContentOperands,
@@ -1282,7 +1308,8 @@ internal static class TextContentParser {
         PdfPaintColorSelection? initialStrokeColorSelection = null,
         PdfOutputIntentColorTransform? outputIntentColorTransform = null,
         Func<string, int>? inlineImageComponentCount = null,
-        Func<PdfArray, int>? inlineImageArrayComponentCount = null) {
+        Func<PdfArray, int>? inlineImageArrayComponentCount = null,
+        Action? cancellationCheck = null) {
         textClippingBudget ??= new PdfTextClippingBudget();
         var invocations = new List<FormInvocation>();
         Matrix2D ctm = Matrix2D.Identity;
@@ -1328,6 +1355,7 @@ internal static class TextContentParser {
         var args = new List<object>(8);
 
         PdfContentStreamInterpreter.Interpret(content, maxOperations, operation => {
+            cancellationCheck?.Invoke();
             args.Clear();
             args.AddRange(operation.Operands);
             double paintOrder = GetPaintOrder(operation.OperatorOffset);
@@ -1617,7 +1645,7 @@ internal static class TextContentParser {
                     unsupportedRestampContentStack.Push(
                         operation.HasInvalidOperands ||
                         IsOptionalContentTag(args.Count > 1 ? args[args.Count - 2] : null) ||
-                        HasMcid(args.Count > 0 ? args[args.Count - 1] : null));
+                        GetMcid(args.Count > 0 ? args[args.Count - 1] : null).HasValue);
                     args.Clear();
                     break;
                 case "BMC":
@@ -1658,9 +1686,10 @@ internal static class TextContentParser {
             return false;
         }
 
-        bool HasMcid(object? propertyObject) {
-            if (propertyObject is string propertyName) return hasMcidForProperty?.Invoke(propertyName) == true;
-            return propertyObject is PdfContentDictionary dictionary && dictionary.Items.ContainsKey("MCID");
+        int? GetMcid(object? propertyObject) {
+            if (propertyObject is string propertyName) return mcidForProperty?.Invoke(propertyName);
+            if (propertyObject is not PdfContentDictionary dictionary || !dictionary.Items.TryGetValue("MCID", out object? value)) return null;
+            return TryGetMcid(value);
         }
 
         static bool IsOptionalContentTag(object? tag) =>
@@ -1757,5 +1786,18 @@ internal static class TextContentParser {
 
         static double ToDouble(object o) => o is double d ? d : 0.0;
         static string ToName(object o) => o as string ?? string.Empty;
+    }
+
+    private static int? TryGetMcid(object? value) {
+        switch (value) {
+            case int integer when integer >= 0:
+                return integer;
+            case long integer when integer >= 0 && integer <= int.MaxValue:
+                return (int)integer;
+            case double number when number >= 0D && number <= int.MaxValue && Math.Truncate(number) == number:
+                return (int)number;
+            default:
+                return null;
+        }
     }
 }

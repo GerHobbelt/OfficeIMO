@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using PdfCore = OfficeIMO.Pdf;
 
 namespace OfficeIMO.Word.Pdf {
@@ -11,6 +12,16 @@ namespace OfficeIMO.Word.Pdf {
     /// placeholders, but it is not a pixel-perfect fixed-layout PDF to DOCX renderer.
     /// </remarks>
     public sealed class PdfWordImportOptions {
+        /// <summary>Cancellation observed at page and import-item boundaries.</summary>
+        public CancellationToken CancellationToken { get; set; }
+
+        /// <summary>
+        /// Canonical semantic-read settings used when importing an opened <see cref="PdfCore.PdfDocument"/>.
+        /// Null uses <see cref="PdfCore.PdfReadOptions.Default"/>. This setting is ignored when the source is already a
+        /// <see cref="PdfCore.PdfDocumentReadResult"/>.
+        /// </summary>
+        public PdfCore.PdfReadOptions? ReadOptions { get; set; }
+
         /// <summary>Whether PDF Info dictionary metadata should be copied into Word built-in properties.</summary>
         public bool IncludeMetadata { get; set; } = true;
 
@@ -107,6 +118,8 @@ namespace OfficeIMO.Word.Pdf {
 
         /// <summary>Creates a reusable copy of this option set.</summary>
         public PdfWordImportOptions Clone() => new PdfWordImportOptions {
+            CancellationToken = CancellationToken,
+            ReadOptions = ReadOptions,
             IncludeMetadata = IncludeMetadata,
             PreservePageBreaks = PreservePageBreaks,
             IncludeEmptyPages = IncludeEmptyPages,

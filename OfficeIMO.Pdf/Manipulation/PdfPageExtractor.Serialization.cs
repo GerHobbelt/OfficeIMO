@@ -1,8 +1,34 @@
 using System.Globalization;
 
+using System.Threading;
+
 namespace OfficeIMO.Pdf;
 
 internal static partial class PdfPageExtractor {
+    internal static PdfDictionary BuildPageDictionaryForSizeCheck(PdfDictionary dictionary, int sourceId, SerializationContext context) {
+        var result = new PdfDictionary();
+        context.PageOverrides.TryGetValue(sourceId, out var pageOverrides);
+        foreach (var entry in dictionary.Items) {
+            if (string.Equals(entry.Key, "Parent", StringComparison.Ordinal) ||
+                pageOverrides is not null && pageOverrides.ContainsKey(entry.Key)) {
+                continue;
+            }
+            result.Items[entry.Key] = entry.Value;
+        }
+
+        if (!result.Items.ContainsKey("Type")) result.Items["Type"] = new PdfName("Page");
+        if (context.MaterializedPageValues.TryGetValue(sourceId, out var inherited)) {
+            foreach (var entry in inherited) {
+                if (pageOverrides is not null && pageOverrides.ContainsKey(entry.Key)) continue;
+                if (!result.Items.ContainsKey(entry.Key)) result.Items[entry.Key] = entry.Value;
+            }
+        }
+        if (pageOverrides is not null) {
+            foreach (var entry in pageOverrides) result.Items[entry.Key] = entry.Value;
+        }
+        return result;
+    }
+
     internal static byte[] SerializePageDictionary(PdfDictionary dictionary, int sourceId, SerializationContext context) {
         var sb = new StringBuilder();
         sb.Append("<< ");
@@ -68,7 +94,7 @@ internal static partial class PdfPageExtractor {
 
     internal static void EnsureSerializedObjectWithinLimit(PdfObject value, SerializationContext context, long maximumBytes) {
         if (maximumBytes < 0 || CountSerializedObjectBytes(value, context, maximumBytes) > maximumBytes) {
-            throw new InvalidDataException("The rewritten PDF exceeds the configured expanded container limit.");
+            throw PdfOutputLimitErrors.Create("The rewritten PDF exceeds the configured expanded container limit.");
         }
     }
 
@@ -78,12 +104,12 @@ internal static partial class PdfPageExtractor {
         int objectNumber,
         long maximumBytes) {
         if (maximumBytes < 0) {
-            throw new InvalidDataException("The rewritten PDF exceeds the configured expanded container limit.");
+            throw PdfOutputLimitErrors.Create("The rewritten PDF exceeds the configured expanded container limit.");
         }
         long total = CountSerializedObjectBytes(value, context, maximumBytes);
         total = AddCounted(total, objectNumber.ToString(CultureInfo.InvariantCulture).Length + 14L, maximumBytes);
         if (maximumBytes < 0 || total > maximumBytes) {
-            throw new InvalidDataException("The rewritten PDF exceeds the configured expanded container limit.");
+            throw PdfOutputLimitErrors.Create("The rewritten PDF exceeds the configured expanded container limit.");
         }
     }
 
@@ -329,8 +355,13 @@ internal static partial class PdfPageExtractor {
         return PdfObjectBytes.WrapIndirectObject(objectNumber, body);
     }
     
-    internal static byte[] Assemble(List<byte[]> objects, int catalogId, int infoId, PdfFileVersion fileVersion = PdfFileVersion.Pdf14) {
-        return PdfFileAssembler.Assemble(objects, catalogId, infoId, fileVersion);
+    internal static byte[] Assemble(
+        List<byte[]> objects,
+        int catalogId,
+        int infoId,
+        PdfFileVersion fileVersion = PdfFileVersion.Pdf14,
+        CancellationToken cancellationToken = default) {
+        return PdfFileAssembler.Assemble(objects, catalogId, infoId, fileVersion, cancellationToken: cancellationToken);
     }
 
     internal static PdfFileVersion GetSourceFileVersion(byte[] pdf) {

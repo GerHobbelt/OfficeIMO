@@ -2,11 +2,53 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
+using OfficeIMO.Drawing;
 using Xunit;
 
 namespace OfficeIMO.OpenDocument.Tests;
 
 public class OpenDocumentOdsTests {
+    [Fact]
+    public void StringCellsUseElementContentAsTheCanonicalValue() {
+        OdsDocument document = OdsDocument.Create();
+        OdsCell cell = document.AddSheet("Data").Cell(0, 0);
+        cell.SetString("OfficeIMO  value\twith\na line");
+
+        XElement rawCell = document.Package.GetXml("content.xml")
+            .Descendants(OdfNamespaces.Table + "table-cell").Single();
+        Assert.Equal("string", (string?)rawCell.Attribute(OdfNamespaces.Office + "value-type"));
+        Assert.Null(rawCell.Attribute(OdfNamespaces.Office + "string-value"));
+
+        OdsCellValue reopened = OdsDocument.Load(new MemoryStream(document.ToBytes()))
+            .Sheets.Single().GetValue(0, 0);
+        Assert.Equal("OfficeIMO  value\twith\na line", reopened.LexicalValue);
+        Assert.Equal("OfficeIMO  value\twith\na line", reopened.DisplayText);
+    }
+
+    [Fact]
+    public void SequentialDenseEdits_Allow_Backfill_And_ContinueAppending() {
+        OdsDocument document = OdsDocument.Create();
+        OdsSheet sheet = document.AddSheet("Data");
+        for (var row = 0; row < 50; row++) {
+            for (var column = 0; column < 8; column++) {
+                sheet.Cell(row, column).SetString($"R{row}C{column}");
+            }
+        }
+
+        sheet.Cell(25, 3).SetString("Backfilled");
+        sheet.Cell(50, 0).SetString("Appended");
+
+        Assert.Equal(new OdsUsedRange(0, 0, 50, 7), sheet.UsedRange);
+        Assert.Equal("R49C7", sheet.GetValue(49, 7).DisplayText);
+        Assert.Equal("Backfilled", sheet.GetValue(25, 3).DisplayText);
+        Assert.Equal("Appended", sheet.GetValue(50, 0).DisplayText);
+
+        OdsSheet reopened = OdsDocument.Load(new MemoryStream(document.ToBytes())).Sheets.Single();
+        Assert.Equal("R49C7", reopened.GetValue(49, 7).DisplayText);
+        Assert.Equal("Backfilled", reopened.GetValue(25, 3).DisplayText);
+        Assert.Equal("Appended", reopened.GetValue(50, 0).DisplayText);
+    }
+
     [Fact]
     public void CellAnnotationsPreserveTextAuthorDateAndIdentity() {
         OdsDocument document = OdsDocument.Create();
@@ -52,6 +94,45 @@ public class OpenDocumentOdsTests {
             .Descendants(OdfNamespaces.Table + "table-cell").Single();
         Assert.Equal(new[] { OdfNamespaces.Office + "annotation", OdfNamespaces.Text + "p" },
             rawCell.Elements().Select(element => element.Name));
+    }
+
+    [Fact]
+    public void CellTextCaseChangesOnlyDirectDisplayParagraphs() {
+        OdsDocument document = OdsDocument.Create();
+        OdsCell cell = document.AddSheet("Data").Cell(0, 0);
+        cell.SetString("first sentence.");
+        cell.AddAnnotation("Do NOT change this note", "Alice Example");
+
+        XElement rawCell = document.Package.GetXml("content.xml")
+            .Descendants(OdfNamespaces.Table + "table-cell").Single();
+        rawCell.Add(new XElement(OdfNamespaces.Text + "p", "second sentence."));
+        rawCell.SetAttributeValue(OdfNamespaces.Office + "string-value", "first sentence.\nsecond sentence.");
+
+        Assert.True(cell.TransformTextCase(OfficeTextCase.SentenceCase));
+
+        Assert.Equal("First sentence.\nSecond sentence.", cell.Text);
+        Assert.Equal("First sentence.\nSecond sentence.", (string?)rawCell.Attribute(OdfNamespaces.Office + "string-value"));
+        Assert.Equal("Do NOT change this note", cell.Annotation!.Text);
+        Assert.Equal("Alice Example", cell.Annotation.Creator);
+    }
+
+    [Fact]
+    public void CellTextCaseTransformsStoredOnlyStringValueWithoutMaterializingDisplayParagraphs() {
+        OdsDocument document = OdsDocument.Create();
+        OdsCell cell = document.AddSheet("Data").Cell(0, 0);
+        cell.SetString("stored only");
+        XElement rawCell = document.Package.GetXml("content.xml")
+            .Descendants(OdfNamespaces.Table + "table-cell").Single();
+        rawCell.SetAttributeValue(OdfNamespaces.Office + "string-value", "stored only");
+        rawCell.Elements(OdfNamespaces.Text + "p").Remove();
+
+        Assert.True(cell.TransformTextCase(OfficeTextCase.Uppercase));
+
+        Assert.Equal("STORED ONLY", (string?)rawCell.Attribute(OdfNamespaces.Office + "string-value"));
+        Assert.Empty(rawCell.Elements(OdfNamespaces.Text + "p"));
+        OdsCell reopened = OdsDocument.Load(new MemoryStream(document.ToBytes())).Sheets.Single().Cell(0, 0);
+        Assert.Equal("STORED ONLY", reopened.Value.LexicalValue);
+        Assert.Equal("STORED ONLY", reopened.Value.ToString());
     }
 
     [Fact]

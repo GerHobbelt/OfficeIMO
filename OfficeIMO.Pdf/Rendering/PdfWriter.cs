@@ -5,8 +5,23 @@ using OfficeIMO.Drawing;
 namespace OfficeIMO.Pdf;
 
 internal static partial class PdfWriter {
-    public static byte[] Write(PdfDocument doc, IEnumerable<IPdfBlock> blocks, PdfOptions opts, string? title, string? author, string? subject, string? keywords) =>
-        WriteCore(doc, blocks, opts, title, author, subject, keywords, outputStream: null, out _, out _, out _, out _)!;
+    public static byte[] Write(PdfDocument doc, IEnumerable<IPdfBlock> blocks, PdfOptions opts, string? title, string? author, string? subject, string? keywords) {
+        return Write(doc, blocks, opts, title, author, subject, keywords, System.Threading.CancellationToken.None);
+    }
+
+    internal static byte[] Write(
+        PdfDocument doc,
+        IEnumerable<IPdfBlock> blocks,
+        PdfOptions opts,
+        string? title,
+        string? author,
+        string? subject,
+        string? keywords,
+        System.Threading.CancellationToken cancellationToken) {
+        byte[] bytes = WriteCore(doc, blocks, opts, title, author, subject, keywords, outputStream: null, cancellationToken, out _, out _, out _, out _)!;
+        PdfComplianceValidator.ValidateGeneratedArtifact(opts, bytes, cancellationToken);
+        return bytes;
+    }
 
     internal static (byte[] Bytes, PdfGeneratedDocumentComplianceEvidence ComplianceEvidence) WriteComplianceArtifact(
         PdfDocument doc,
@@ -25,15 +40,17 @@ internal static partial class PdfWriter {
             subject,
             keywords,
             outputStream: null,
+            System.Threading.CancellationToken.None,
             out _,
             out PdfGeneratedDocumentComplianceEvidence complianceEvidence,
             out _,
             out _)!;
+        PdfComplianceValidator.ValidateGeneratedArtifact(opts, bytes);
         return (bytes, complianceEvidence);
     }
 
     public static long Write(Stream destination, PdfDocument doc, IEnumerable<IPdfBlock> blocks, PdfOptions opts, string? title, string? author, string? subject, string? keywords) {
-        return Write(destination, doc, blocks, opts, title, author, subject, keywords, out _, out _);
+        return Write(destination, doc, blocks, opts, title, author, subject, keywords, System.Threading.CancellationToken.None, out _, out _);
     }
 
     internal static long Write(
@@ -45,10 +62,31 @@ internal static partial class PdfWriter {
         string? author,
         string? subject,
         string? keywords,
+        System.Threading.CancellationToken cancellationToken,
         out int pageCount,
         out PdfSerializationReport serializationReport) {
         Guard.NotNull(destination, nameof(destination));
-        WriteCore(doc, blocks, opts, title, author, subject, keywords, destination, out long bytesWritten, out _, out pageCount, out serializationReport);
+        if (PdfComplianceValidator.RequiresExactArtifactValidation(opts)) {
+            byte[] exactArtifact = WriteCore(
+                doc,
+                blocks,
+                opts,
+                title,
+                author,
+                subject,
+                keywords,
+                outputStream: null,
+                cancellationToken,
+                out _,
+                out _,
+                out pageCount,
+                out serializationReport)!;
+            PdfComplianceValidator.ValidateGeneratedArtifact(opts, exactArtifact, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            destination.Write(exactArtifact, 0, exactArtifact.Length);
+            return exactArtifact.LongLength;
+        }
+        WriteCore(doc, blocks, opts, title, author, subject, keywords, destination, cancellationToken, out long bytesWritten, out _, out pageCount, out serializationReport);
         return bytesWritten;
     }
 
@@ -61,18 +99,22 @@ internal static partial class PdfWriter {
         string? subject,
         string? keywords,
         Stream? outputStream,
+        System.Threading.CancellationToken cancellationToken,
         out long bytesWritten,
         out PdfGeneratedDocumentComplianceEvidence complianceEvidence,
         out int pageCount,
         out PdfSerializationReport serializationReport) {
+        cancellationToken.ThrowIfCancellationRequested();
+        opts.Validate();
         PdfComplianceValidator.ValidateGenerationOptions(opts);
         opts.ResetEmbeddedFontProgramUsage();
 
         // Layout blocks into pages and create per-page content streams.
         using var generatedSectionLayout = doc.BeginGeneratedSectionLayout();
-        using var layout = LayoutBlocks(blocks, opts);
+        using var layout = LayoutBlocks(blocks, opts, cancellationToken);
         pageCount = layout.Pages.Count;
         foreach (LayoutResult.Page page in layout.Pages) {
+            cancellationToken.ThrowIfCancellationRequested();
             CoalescePositionedRadioButtonFields(page.FormFields);
         }
         ValidateNamedDestinationLinks(layout.Pages);
@@ -98,7 +140,7 @@ internal static partial class PdfWriter {
                 forwardBuffer = new MemoryStream();
                 outputStream = forwardBuffer;
             }
-            forwardOnlyObjects = new PdfForwardOnlyObjectStore(outputStream, opts.FileVersion);
+            forwardOnlyObjects = new PdfForwardOnlyObjectStore(outputStream, opts.FileVersion, cancellationToken);
         }
         using IPdfObjectStore objects = (IPdfObjectStore?)forwardOnlyObjects
             ?? new PdfObjectStore(opts.ObjectBufferMemoryLimitBytes);
@@ -116,6 +158,7 @@ internal static partial class PdfWriter {
         var shapingContexts = new List<(PdfTextShapingMode Mode, IOfficeTextShapingProvider? Provider, string? Language)>();
         var namedFontObjectIds = new Dictionary<PdfOptions, Dictionary<PdfNamedFontFace, int>>();
         var formHelveticaFontIds = new Dictionary<PdfOptions, int>();
+        var printColorTransforms = new Dictionary<PdfOptions, PdfPrintColorTransform?>();
         var pendingFontObjects = new List<(int ObjectId, PdfStandardFont Font, PdfOptions Options)>();
         var pendingFontOptions = new Dictionary<int, List<PdfOptions>>();
         var pendingNamedFontObjects = new List<(int ObjectId, PdfNamedFontFace Font, PdfOptions Options)>();
@@ -136,6 +179,15 @@ internal static partial class PdfWriter {
                 fontOptions.TextShapingProviderSnapshot,
                 fontOptions.Language));
             return shapingContexts.Count;
+        }
+
+        PdfPrintColorTransform? GetPrintColorTransform(PdfOptions colorOptions) {
+            if (!printColorTransforms.TryGetValue(colorOptions, out PdfPrintColorTransform? transform)) {
+                transform = PdfPrintColorTransform.Create(colorOptions);
+                printColorTransforms[colorOptions] = transform;
+            }
+
+            return transform;
         }
 
         int EnsureFont(PdfStandardFont font, PdfOptions fontOptions) {
@@ -337,6 +389,7 @@ internal static partial class PdfWriter {
             : AddObject(objects, PdfOptionalContentDictionaryBuilder.BuildProperties(layerDefinitions, optionalContentGroupIds));
 
         for (int pageIndex = 0; pageIndex < layout.Pages.Count; pageIndex++) {
+            cancellationToken.ThrowIfCancellationRequested();
             var page = layout.Pages[pageIndex];
             // Make a resources dict that references the fonts we declared
             var pageOpts = page.Options ?? opts;
@@ -486,6 +539,9 @@ internal static partial class PdfWriter {
 
             var shadings = new List<(string Name, int Id)>();
             if (page.Shadings.Count > 0) {
+                PdfPrintColorTransform? shadingColorTransform = pageOpts.ConvertVectorColorsToPdfXPrintCondition
+                    ? GetPrintColorTransform(pageOpts)
+                    : null;
                 foreach (var shading in page.Shadings) {
                     string shadingObject = shading.IsRadial
                         ? PdfVisualResourceDictionaryBuilder.BuildRadialShadingObject(
@@ -495,13 +551,15 @@ internal static partial class PdfWriter {
                             shading.X1,
                             shading.Y1,
                             shading.R1,
-                            shading.Stops)
+                            shading.Stops,
+                            shadingColorTransform)
                         : PdfVisualResourceDictionaryBuilder.BuildAxialShadingObject(
                             shading.X0,
                             shading.Y0,
                             shading.X1,
                             shading.Y1,
-                            shading.Stops);
+                            shading.Stops,
+                            shadingColorTransform);
                     int shadingId = AddObject(objects, shadingObject);
                     shadings.Add(("/" + shading.Name, shadingId));
                 }
@@ -523,10 +581,27 @@ internal static partial class PdfWriter {
             if (page.Images.Count > 0) {
                 var pageImageResourceNames = new Dictionary<int, string>();
                 for (int i = 0; i < page.Images.Count; i++) {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var img = page.Images[i];
                     ApplyPlacementAwareImageOptimization(img, opts, optimizedImageCache);
                     if (!TryBuildImageStream(img, out var imageStream, out string? unsupportedReason)) {
                         throw new NotSupportedException(unsupportedReason ?? "Image format is not supported.");
+                    }
+
+                    PdfPrintColorTransform? imageColorTransform = pageOpts.ConvertRasterImagesToPdfXPrintCondition
+                        ? GetPrintColorTransform(pageOpts)
+                        : null;
+                    if (imageColorTransform != null) {
+                        if (!TryConvertImageStreamToCmyk(
+                                img.Data,
+                                imageStream,
+                                imageColorTransform,
+                                pageOpts.FlattenRasterTransparencyForPdfX,
+                                pageOpts.PdfXTransparencyBackground,
+                                cancellationToken,
+                                out string? conversionReason)) {
+                            throw new NotSupportedException(conversionReason ?? "Raster image could not be converted to the configured PDF/X CMYK print condition.");
+                        }
                     }
 
                     int imgId = EnsureImageXObject(imageStream);
@@ -543,9 +618,16 @@ internal static partial class PdfWriter {
 
             if (page.EffectGroups.Count > 0) {
                 for (int effectIndex = 0; effectIndex < page.EffectGroups.Count; effectIndex++) {
+                    cancellationToken.ThrowIfCancellationRequested();
                     PageEffectGroup effect = page.EffectGroups[effectIndex];
                     string effectContent = ReplaceInlineImageDrawTokens(layout.ReadContent(effect.Content), page.Images);
                     effectContent = ReplaceInlineEffectGroupTokens(effectContent, page.EffectGroups, effectIndex);
+                    PdfPrintColorTransform? effectColorTransform = pageOpts.ConvertVectorColorsToPdfXPrintCondition
+                        ? GetPrintColorTransform(pageOpts)
+                        : null;
+                    if (effectColorTransform != null) {
+                        effectContent = effectColorTransform.NormalizeGeneratedContent(effectContent, cancellationToken);
+                    }
                     effect.MarkedContentIds.Clear();
                     effect.MarkedContentIds.AddRange(ExtractMarkedContentIds(effectContent));
                     if (markInfo && effect.MarkedContentIds.Count > 0 && !effect.StructParentIndex.HasValue) {
@@ -599,6 +681,9 @@ internal static partial class PdfWriter {
                 string footer = BuildFooter(pageOpts, headerFooterVariantPageNumber, headerFooterPageNumber, headerFooterTotalPages, totalPages, pageOpts.FooterFont, footerFontAlias!, pageFontResources, pageNamedFontResources);
                 contentStr += WrapArtifactContent(footer, markInfo);
             }
+            PdfPrintColorTransform? pageColorTransform = pageOpts.ConvertVectorColorsToPdfXPrintCondition
+                ? GetPrintColorTransform(pageOpts)
+                : null;
             bool flattenVisualAnnotations = opts.FlattenVisualAnnotations;
             if (flattenVisualAnnotations) {
                 contentStr += BuildFlattenedVisualAnnotationContent(
@@ -608,7 +693,13 @@ internal static partial class PdfWriter {
                     xobjects,
                     EnsureFont,
                     EnsureFormHelveticaFont,
-                    markInfo);
+                    markInfo,
+                    pageColorTransform,
+                    cancellationToken);
+            }
+
+            if (pageColorTransform != null) {
+                contentStr = pageColorTransform.NormalizeGeneratedContent(contentStr, cancellationToken);
             }
 
             byte[] contentBytes = Encoding.ASCII.GetBytes(contentStr);
@@ -912,7 +1003,8 @@ internal static partial class PdfWriter {
                     properties: page.Layers
                         .Distinct()
                         .Select(definition => ("/" + definition.ResourceName, optionalContentGroupIds[definition]))
-                        .ToList()));
+                        .ToList(),
+                    printProductionPageBoxes: pageOpts.PrintProductionPageBoxesSnapshot));
             pageIds.Add(pageId);
         }
 
@@ -937,9 +1029,11 @@ internal static partial class PdfWriter {
         int metadataId = 0;
         PdfAIdentification? pdfAIdentification = opts.PdfAIdentificationSnapshot;
         PdfUaIdentification? pdfUaIdentification = opts.PdfUaIdentificationSnapshot;
+        PdfXIdentification? pdfXIdentification = opts.PdfXIdentificationSnapshot;
+        PdfXProductionMetadata? pdfXProductionMetadata = opts.PdfXProductionMetadataSnapshot;
         PdfElectronicInvoiceMetadata? electronicInvoiceMetadata = opts.ElectronicInvoiceMetadataSnapshot;
-        if (opts.IncludeXmpMetadata || pdfAIdentification != null || pdfUaIdentification != null || electronicInvoiceMetadata != null) {
-            byte[] xmpMetadata = PdfXmpMetadataBuilder.Build(title, author, subject, keywords, pdfAIdentification, pdfUaIdentification, electronicInvoiceMetadata);
+        if (opts.IncludeXmpMetadata || pdfAIdentification != null || pdfUaIdentification != null || electronicInvoiceMetadata != null || pdfXIdentification != null || pdfXProductionMetadata != null) {
+            byte[] xmpMetadata = PdfXmpMetadataBuilder.Build(title, author, subject, keywords, pdfAIdentification, pdfUaIdentification, electronicInvoiceMetadata, pdfXIdentification, pdfXProductionMetadata, opts.TrappingStatus);
             metadataId = AddStreamObject(
                 objects,
                 "<< /Type /Metadata /Subtype /XML /Length " + xmpMetadata.Length.ToString(CultureInfo.InvariantCulture) + " >>",
@@ -1043,7 +1137,7 @@ internal static partial class PdfWriter {
             portfolioId,
             optionalContentPropertiesId));
 
-        infoId = AddObject(objects, PdfInfoDictionaryBuilder.Build(title, author, subject, keywords));
+        infoId = AddObject(objects, PdfInfoDictionaryBuilder.Build(title, author, subject, keywords, opts.TrappingStatus, pdfXIdentification, pdfXProductionMetadata));
         MaterializePendingFontObjects();
 
         PdfFileVersion effectiveFileVersion = requiresPdf16FileVersion
@@ -1086,6 +1180,7 @@ internal static partial class PdfWriter {
                 opts.EncryptionSnapshot,
                 opts.ObjectBufferMemoryLimitBytes,
                 trailerIdEntry: null,
+                cancellationToken,
                 out PdfFileAssemblyBufferEvidence bufferEvidence);
             serializationReport = CreateSerializationReport(layout, bufferEvidence, opts, pageCount, bytesWritten, finalArtifactBuffered: false);
             return null;
@@ -1098,6 +1193,7 @@ internal static partial class PdfWriter {
             effectiveFileVersion,
             opts.EncryptionSnapshot,
             opts.ObjectBufferMemoryLimitBytes,
+            cancellationToken,
             out PdfFileAssemblyBufferEvidence inMemoryBufferEvidence);
         bytesWritten = bytes.LongLength;
         serializationReport = CreateSerializationReport(layout, inMemoryBufferEvidence, opts, pageCount, bytesWritten, finalArtifactBuffered: true);

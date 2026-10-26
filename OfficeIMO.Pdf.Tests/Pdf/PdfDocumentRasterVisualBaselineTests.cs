@@ -115,7 +115,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
         Assert.Contains(info.Outlines[0].Children, outline => outline.Title == "Native proof areas" && outline.Level == 2);
         Assert.Contains(info.Outlines[0].Children, outline => outline.Title == "Native evidence table" && outline.Level == 2);
 
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(bytes, new PdfTextLayoutOptions {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(bytes, new PdfTextLayoutOptions {
             ForceSingleColumn = true
         });
         Assert.Contains(logical.Headings, heading => heading.Text == "Native Word PDF Visual Gate");
@@ -151,7 +151,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
         string rawPdf = Encoding.ASCII.GetString(bytes);
         Assert.Contains("0.918 0.957 1 rg", rawPdf, StringComparison.Ordinal);
 
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(bytes, new PdfTextLayoutOptions {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(bytes, new PdfTextLayoutOptions {
             ForceSingleColumn = true
         });
         Assert.NotEmpty(logical.GetLinksByDestinationName("officeimo-heading-daily-word-layout-gate"));
@@ -190,7 +190,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
         Assert.Contains(info.Outlines, outline => outline.Title == "Details");
         Assert.Contains(info.LinkUris, uri => uri == "https://officeimo.net/excel-pdf");
 
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(bytes, new PdfTextLayoutOptions {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(bytes, new PdfTextLayoutOptions {
             ForceSingleColumn = true
         });
         Assert.Contains(logical.NamedDestinations, destination => destination.Name.Contains("summary", StringComparison.OrdinalIgnoreCase));
@@ -341,6 +341,32 @@ public partial class PdfDocumentRasterVisualBaselineTests {
         Assert.Equal(255, comparison.MaxChannelDelta);
         Assert.True(comparison.DiffPng.Length > 0);
         Assert.Equal(2, VisualBaselineTestSupport.DecodePng(comparison.DiffPng, "PDF diff PNG is not a supported PNG file.").Width);
+    }
+
+    [Fact]
+    public void RasterComparisonNormalizesSinglePixelPageRoundingDifferences() {
+        byte[] expected = VisualBaselineTestSupport.CreateRgbPng(
+            2,
+            1,
+            new byte[] { 255, 255, 255, 255, 255, 255 });
+        byte[] actual = VisualBaselineTestSupport.CreateRgbPng(
+            1,
+            1,
+            new byte[] { 255, 255, 255 });
+
+        VisualRasterComparison comparison = CompareRasterImages(expected, actual);
+
+        Assert.True(comparison.Passed);
+        Assert.Equal(0, comparison.DifferentPixels);
+
+        byte[] visiblyDifferent = VisualBaselineTestSupport.CreateRgbPng(
+            1,
+            1,
+            new byte[] { 0, 0, 0 });
+        VisualRasterComparison perceptualFailure = CompareRasterImages(expected, visiblyDifferent);
+
+        Assert.False(perceptualFailure.Passed);
+        Assert.True(perceptualFailure.MeanAbsoluteError > perceptualFailure.MaximumMeanAbsoluteError);
     }
 
 

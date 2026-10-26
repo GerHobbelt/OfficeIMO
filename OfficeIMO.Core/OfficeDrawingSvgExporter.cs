@@ -54,9 +54,19 @@ public static partial class OfficeDrawingSvgExporter {
         sb.Append("<defs><style type=\"text/css\">");
         foreach (OfficeFontFace face in fonts.Faces) {
             cancellationToken.ThrowIfCancellationRequested();
-            AppendEmbeddedFontFace(sb, face, face.ResourceFamilyName, includeUnicodeRange: false);
+            AppendEmbeddedFontFace(
+                sb,
+                face,
+                face.ResourceFamilyName,
+                includeUnicodeRange: false,
+                cancellationToken);
             if (!string.Equals(face.ResourceFamilyName, face.FamilyName, StringComparison.Ordinal)) {
-                AppendEmbeddedFontFace(sb, face, face.FamilyName, includeUnicodeRange: true);
+                AppendEmbeddedFontFace(
+                    sb,
+                    face,
+                    face.FamilyName,
+                    includeUnicodeRange: true,
+                    cancellationToken);
             }
         }
 
@@ -67,12 +77,15 @@ public static partial class OfficeDrawingSvgExporter {
         StringBuilder sb,
         OfficeFontFace face,
         string familyName,
-        bool includeUnicodeRange) {
+        bool includeUnicodeRange,
+        System.Threading.CancellationToken cancellationToken) {
+        byte[] fontData = face.DataSnapshot;
+        EnsureBase64PayloadFits(sb, fontData.LongLength);
         sb.Append("@font-face{font-family:\"")
             .Append(EscapeCssString(familyName))
-            .Append("\";src:url(data:font/ttf;base64,")
-            .Append(Convert.ToBase64String(face.DataSnapshot))
-            .Append(") format(\"truetype\");font-weight:")
+            .Append("\";src:url(data:font/ttf;base64,");
+        OfficeSvgImageRenderer.AppendBase64(sb, fontData, cancellationToken);
+        sb.Append(") format(\"truetype\");font-weight:")
             .Append((face.Style & OfficeFontStyle.Bold) == OfficeFontStyle.Bold ? "700" : "400")
             .Append(";font-style:")
             .Append((face.Style & OfficeFontStyle.Italic) == OfficeFontStyle.Italic ? "italic" : "normal");
@@ -89,6 +102,14 @@ public static partial class OfficeDrawingSvgExporter {
             }
         }
         sb.Append(";}");
+    }
+
+    private static void EnsureBase64PayloadFits(StringBuilder builder, long payloadBytes) {
+        long base64Characters = checked(((payloadBytes + 2L) / 3L) * 4L);
+        long remainingCharacters = builder.MaxCapacity - (long)builder.Length;
+        if (base64Characters > remainingCharacters) {
+            throw new ArgumentOutOfRangeException(nameof(payloadBytes), "The encoded SVG exceeds its configured character ceiling.");
+        }
     }
 
     private static string EscapeCssString(string value) {
@@ -159,7 +180,7 @@ public static partial class OfficeDrawingSvgExporter {
                     AppendImage(sb, drawingImage, imageClipPathId, imageCodec, cancellationToken, nearestNeighborRectangleBudget);
                     break;
                 case OfficeDrawingImagePattern imagePattern:
-                    AppendImagePattern(sb, imagePattern, imageCodec, idPrefix, ref clipPathId);
+                    AppendImagePattern(sb, imagePattern, imageCodec, idPrefix, ref clipPathId, cancellationToken);
                     break;
                 case OfficeDrawingTilingPattern tilingPattern:
                     AppendTilingPattern(sb, tilingPattern, imageCodec, idPrefix, ref gradientId, ref clipPathId, cancellationToken, tilingExpansionBudget, nearestNeighborRectangleBudget);
@@ -374,15 +395,28 @@ public static partial class OfficeDrawingSvgExporter {
         string dataUri = string.Empty;
         OfficeRasterImage? nearestNeighborRaster = null;
         if (drawingImage.Interpolate) {
-            if (!OfficeSvgImageRenderer.TryCreateDataUri(drawingImage.ContentType, bytes, null, imageCodec, out dataUri)) {
+            if (!OfficeSvgImageRenderer.TryCreateDataUri(
+                    drawingImage.ContentType,
+                    bytes,
+                    null,
+                    imageCodec,
+                    sb.MaxCapacity - sb.Length,
+                    cancellationToken,
+                    out dataUri)) {
                 return;
             }
-        } else if (!OfficeRasterImageDecoder.TryDecode(bytes, out nearestNeighborRaster) || nearestNeighborRaster == null) {
+        } else if (!OfficeRasterImageDecoder.TryDecode(
+                       bytes,
+                       new OfficeRasterDecodeOptions { CancellationToken = cancellationToken },
+                       out nearestNeighborRaster,
+                       out _) || nearestNeighborRaster == null) {
+            cancellationToken.ThrowIfCancellationRequested();
             if (imageCodec == null ||
                 !imageCodec.TryDecode((byte[])bytes.Clone(), drawingImage.ContentType, out nearestNeighborRaster) ||
                 nearestNeighborRaster == null) {
                 throw new InvalidOperationException("SVG export cannot preserve nearest-neighbor sampling for an undecodable image.");
             }
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         if (drawingImage.Opacity < 1D) {
@@ -519,9 +553,10 @@ public static partial class OfficeDrawingSvgExporter {
             x += contentWidth;
         }
 
-        double fontSize = text.Font.Size > 0 ? text.Font.Size : 10D;
-        double y = contentY + fontSize;
-        double lineHeight = text.LineHeight ?? fontSize * 1.2D;
+        double sourceFontSize = text.Font.Size > 0 ? text.Font.Size : 10D;
+        double fontSize = sourceFontSize * text.BaselineScale;
+        double y = contentY + sourceFontSize + text.BaselineOffset;
+        double lineHeight = text.LineHeight ?? sourceFontSize * 1.2D;
         if (text.TextAdvanceWidth.HasValue) {
             sb.AppendSvgPositionedTextElement(
                 text.Text,
@@ -539,7 +574,10 @@ public static partial class OfficeDrawingSvgExporter {
                 useFrameTransform ? 0D : text.RotationCenterX,
                 useFrameTransform ? 0D : text.RotationCenterY,
                 (text.Font.Style & OfficeFontStyle.Strikethrough) == OfficeFontStyle.Strikethrough,
-                text.TextAdvanceWidth.Value);
+                text.TextAdvanceWidth.Value,
+                text.UnderlineStyle,
+                text.StrikethroughStyle,
+                OfficeTextBaseline.Normal);
         } else {
             sb.AppendSvgTextElement(
                 text.Text,
@@ -556,7 +594,10 @@ public static partial class OfficeDrawingSvgExporter {
                 useFrameTransform ? 0D : text.RotationDegrees,
                 useFrameTransform ? 0D : text.RotationCenterX,
                 useFrameTransform ? 0D : text.RotationCenterY,
-                (text.Font.Style & OfficeFontStyle.Strikethrough) == OfficeFontStyle.Strikethrough);
+                (text.Font.Style & OfficeFontStyle.Strikethrough) == OfficeFontStyle.Strikethrough,
+                text.UnderlineStyle,
+                text.StrikethroughStyle,
+                OfficeTextBaseline.Normal);
         }
 
         if (useFrameTransform) {
@@ -565,7 +606,9 @@ public static partial class OfficeDrawingSvgExporter {
     }
 
     private static void AppendTextBlock(StringBuilder sb, OfficeDrawingText text, bool useFrameTransform = false) {
-        double fontSize = text.Font.Size > 0 ? text.Font.Size : 10D;
+        double sourceFontSize = text.Font.Size > 0 ? text.Font.Size : 10D;
+        double fontSize = sourceFontSize * text.BaselineScale;
+        double baselineOffset = text.BaselineOffset;
         double lineHeightFactor = text.LineHeight.HasValue && text.LineHeight.Value > 0D
             ? Math.Max(1D, text.LineHeight.Value / fontSize)
             : 1.2D;
@@ -615,10 +658,10 @@ public static partial class OfficeDrawingSvgExporter {
                 wrap: text.WrapText,
                 shrinkToFit: text.ShrinkToFit,
                 paragraphIndent: text.ParagraphIndent);
-        sb.AppendSvgTextBlock(
+        sb.AppendSvgStyledTextBlock(
             layout,
             contentX,
-            contentY,
+            contentY + baselineOffset,
             contentWidth,
             contentHeight,
             text.Color ?? OfficeColor.Black,
@@ -631,7 +674,11 @@ public static partial class OfficeDrawingSvgExporter {
             useFrameTransform ? 0D : text.RotationDegrees,
             useFrameTransform ? 0D : text.RotationCenterX,
             useFrameTransform ? 0D : text.RotationCenterY,
-            strikethrough: (text.Font.Style & OfficeFontStyle.Strikethrough) == OfficeFontStyle.Strikethrough);
+            centerLineInLineHeight: true,
+            strikethrough: (text.Font.Style & OfficeFontStyle.Strikethrough) == OfficeFontStyle.Strikethrough,
+            underlineStyle: text.UnderlineStyle,
+            strikethroughStyle: text.StrikethroughStyle,
+            baseline: OfficeTextBaseline.Normal);
     }
 
     private static void AppendRichText(StringBuilder sb, OfficeDrawingRichText text) {

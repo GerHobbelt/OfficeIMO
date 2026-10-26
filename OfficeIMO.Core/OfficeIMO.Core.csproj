@@ -4,7 +4,7 @@
     <Description>Shared zero-dependency document, security, drawing, color, image, and font primitives for OfficeIMO projects.</Description>
     <AssemblyName>OfficeIMO.Core</AssemblyName>
     <AssemblyTitle>OfficeIMO.Core</AssemblyTitle>
-    <VersionPrefix>3.2.5</VersionPrefix>
+    <VersionPrefix>3.3.0</VersionPrefix>
     <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
     <TargetFrameworks Condition=" '$([MSBuild]::IsOsPlatform(`Windows`))' ">$(TargetFrameworks);net472</TargetFrameworks>
     <GeneratePackageOnBuild>False</GeneratePackageOnBuild>
@@ -30,8 +30,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="OfficeIMO.Html" />
+    <InternalsVisibleTo Include="OfficeIMO.Html.Pdf" />
     <InternalsVisibleTo Include="OfficeIMO.Html.Rtf" />
     <InternalsVisibleTo Include="OfficeIMO.CSV" />
+    <InternalsVisibleTo Include="OfficeIMO.Data.Arrow" />
     <InternalsVisibleTo Include="OfficeIMO.Excel" />
     <InternalsVisibleTo Include="OfficeIMO.PowerPoint" />
     <InternalsVisibleTo Include="OfficeIMO.Pdf" />
@@ -43,6 +45,15 @@
     <InternalsVisibleTo Include="OfficeIMO.Security.Tests" />
     <InternalsVisibleTo Include="OfficeIMO.Provenance.C2pa" />
     <InternalsVisibleTo Include="OfficeIMO.Word.Tests" />
+    <InternalsVisibleTo Include="OfficeIMO.Tool" />
+    <InternalsVisibleTo Include="OfficeIMO.Workflows" />
+    <InternalsVisibleTo Include="OfficeIMO.RealWorldCorpus.Tool" />
+    <InternalsVisibleTo Include="OfficeIMO.GoogleWorkspace.Drive" />
+    <InternalsVisibleTo Include="OfficeIMO.IWork" />
+    <InternalsVisibleTo Include="OfficeIMO.IWork.Tests" />
+    <InternalsVisibleTo Include="OfficeIMO.Opml" />
+    <InternalsVisibleTo Include="OfficeIMO.DocBook" />
+    <InternalsVisibleTo Include="OfficeIMO.Reader.Opml" />
     <Compile Include="..\OfficeIMO.SharedSource\Compound\*.cs" Link="Internal\Compound\%(Filename)%(Extension)" />
     <None Include="..\Assets\OfficeIMO.png">
       <Pack>True</Pack>
@@ -51,6 +62,10 @@
     <None Include="README.md">
       <Pack>True</Pack>
       <PackagePath>README.md</PackagePath>
+    </None>
+    <None Include="THIRD-PARTY-NOTICES.md">
+      <Pack>True</Pack>
+      <PackagePath>THIRD-PARTY-NOTICES.md</PackagePath>
     </None>
   </ItemGroup>
 

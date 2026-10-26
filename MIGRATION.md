@@ -7,7 +7,186 @@ This guide contains version-to-version changes that require application code, pa
 - Use support matrices for current coverage and limits.
 - Use this guide when an upgrade no longer compiles or changes an existing workflow.
 
-OfficeIMO 3.2 is a coordinated package-ownership cleanup. Upgrade every OfficeIMO package in an application to the same `3.2.x` version and perform a clean restore after changing versions.
+OfficeIMO 3.3 contains intentional PDF API cleanup and moves Apple iWork destination projections into opt-in adapter packages. Upgrade every OfficeIMO package in an application to the same `3.3.x` version and perform a clean restore after changing versions.
+
+Before restoring 3.3, remove any `PackageReference` or `ProjectReference` to `OfficeIMO.Word.Legacy` or `OfficeIMO.Excel.Legacy`. Their public namespaces and types now ship from `OfficeIMO.Word` and `OfficeIMO.Excel`; there are no separate 3.3 legacy packages. Do not retain an earlier preview package alongside the 3.3 main package because the duplicate fully qualified types can cause `CS0433` compile errors.
+
+## OfficeIMO 3.3: opt-in Apple iWork adapters
+
+`OfficeIMO.Word`, `OfficeIMO.Excel`, and `OfficeIMO.PowerPoint` no longer depend on `OfficeIMO.IWork`. Applications that import Apple Pages, Numbers, or Keynote files must reference the matching adapter package explicitly:
+
+| Source | Add package | Replace with source-first conversion |
+| --- | --- | --- |
+| Pages | `OfficeIMO.Word.IWork` | `IWorkSourceDocument.Open(...).ToWordDocument[Result](...)` |
+| Numbers | `OfficeIMO.Excel.IWork` | `IWorkSourceDocument.Open(...).ToExcelDocument[Result](...)` |
+| Keynote | `OfficeIMO.PowerPoint.IWork` | `IWorkSourceDocument.Open(...).ToPowerPointPresentation[Result](...)` |
+
+Reading and conversion now have separate options. Keep package and projection limits in `IWorkReadOptions`; move `IWorkReadOptions.ImportMode` to `IWorkConversionOptions.Mode`, whose enum is `IWorkConversionMode`. The destination result types are `PagesToWordResult`, `NumbersToExcelResult`, and `KeynoteToPowerPointResult`, and the shared report is `IWorkConversionReport`. They use the common conversion vocabulary: `Value`, `Report`, `HasLoss`, `RequireValue()`, and `RequireNoLoss()`. Static path and stream conveniences remain available as `ConvertPagesToWord*`, `ConvertNumbersToExcel*`, and `ConvertKeynoteToPowerPoint*`.
+
+Applications that only use Word, Excel, or PowerPoint need no iWork package and no code change.
+
+## OfficeIMO 3.3: one PDF load and semantic read contract
+
+The PDF lifecycle now uses `PdfDocument.Load(...)` for existing bytes, files, and
+streams. `PdfDocument.Read(...)` is the only semantic reconstruction entry point
+and returns `PdfDocumentReadResult`. The old `PdfDocument.Open(...)`, public
+`PdfDocument.Reader`, `pdf.Read.*`, `PdfLogicalDocument`, and public static
+logical-document loaders were removed rather than retained as parallel APIs.
+
+```csharp
+// OfficeIMO 3.2
+PdfDocument pdf = PdfDocument.Open("input.pdf");
+PdfLogicalDocument logical = pdf.Read.Logical();
+
+// OfficeIMO 3.3
+PdfDocument pdf = PdfDocument.Load("input.pdf");
+PdfDocumentReadResult result = pdf.Read();
+
+foreach (PdfLogicalPage page in result.Pages) {
+    foreach (PdfLogicalParagraph paragraph in page.Paragraphs) {
+        Console.WriteLine(paragraph.Text);
+    }
+
+    foreach (PdfLogicalTable table in page.Tables) {
+        Console.WriteLine($"Page {page.PageNumber}: {table.Rows.Count} rows");
+    }
+}
+```
+
+`PdfReadOptions` now controls semantic reconstruction. All parser, security,
+credential, artifact-text, source-buffering, and low-level operation options that
+used the old `PdfReadOptions` type moved to `PdfLoadOptions`. Supply those options
+to `Load(...)`, or omit an operation-level options argument to reuse the loaded
+document's settings. The default semantic profile
+is `PdfReadProfile.Structured`. `PdfReadProfile.Fast` omits optional
+document-wide enrichment but returns the same `PdfDocumentReadResult`; it is not
+a second logical model.
+
+Semantic reads are bounded by default. `PdfUnderstandingPipelineOptions` allows
+up to 1,000 selected pages, 10,000,000 page work units, and 10,000,000
+document-wide work units, with additional per-page run, character, word, line,
+and region ceilings. A document that previously completed through
+`pdf.Read.Logical()` can now throw `PdfReadLimitException` when one of these
+ceilings is exceeded. Increase only the required pipeline limit for trusted,
+intentionally larger inputs.
+
+| OfficeIMO 3.2 | OfficeIMO 3.3 |
+| --- | --- |
+| `PdfDocument.Open(...)` | `PdfDocument.Load(...)` |
+| `PdfDocument.OpenAsync(pathOrStream, ..., cancellationToken)` | `PdfDocument.LoadAsync(pathOrStream, loadOptions, cancellationToken)`; parser, limit, credential, and buffering settings belong in `PdfLoadOptions` |
+| parser/security `PdfReadOptions` | `PdfLoadOptions` passed to `Load(...)` |
+| `PdfUnderstandingPipelineOptions.Advanced(layout)` | `PdfUnderstandingPipelineOptions.Structured()` for stages, with `layout` assigned to `PdfReadOptions.LayoutOptions` |
+| `PdfUnderstandingPipelineOptions.Layout` | `PdfReadOptions.LayoutOptions` |
+| `pdf.Read.Logical()` or `PdfLogicalDocument.Load(...)` | `pdf.Read(...)` |
+| selected `pdf.Read.Logical(selection, ...)` | `pdf.Read(new PdfReadOptions { PageSelection = selection, LayoutOptions = layoutOptions ?? new PdfTextLayoutOptions() })` |
+| `pdf.Read.TryLogical(...)` | Check `pdf.Preflight().Can(PdfPreflightCapability.ReadLogicalObjects)`, then call `pdf.Read(readOptions)` inside the application's exception or result boundary |
+| `PdfLogicalDocument` | `PdfDocumentReadResult` |
+| `pdf.Read.Text()` | `pdf.Read().Text`; this is canonical semantic text rather than the former direct extraction surface |
+| selected `pdf.Read.Text(...)` | `pdf.Read(new PdfReadOptions { PageSelection = selection }).Text` |
+| `pdf.Read.TextBlocks(...)` | `result.TextBlocks`; for a selection, set `PdfReadOptions.PageSelection` before reading |
+| `pdf.Read.Markdown()` | `pdf.Read().ToMarkdown()` |
+| `pdf.Read.TryText(...)` / `TryTextByPage(...)` / `TryMarkdown(...)` | Check `pdf.Preflight().Can(PdfPreflightCapability.ReadLogicalObjects)`, then call `pdf.Read(readOptions)` inside the application's exception or result boundary and use `result.Text`, project `result.Pages[*].TextBlocks`, or call `result.ToMarkdown()` |
+| `pdf.Read.ExportStructured(format)` | `pdf.Read().ExportStructured(format)`; pass semantic options to `Read(...)` and load/security options to `Load(...)` |
+| `pdf.Read.TextByPage()` | project `result.Pages[*].TextBlocks` for the application's text shape |
+| `pdf.Read.Images(...)` | `pdf.Images.Extract(...)` |
+| `pdf.Read.ImagePlacements(...)` | `pdf.Images.Placements(...)` |
+| `pdf.Read.TryImages()` / `TryImagePlacements()` | `pdf.Images.TryExtract()` / `pdf.Images.TryPlacements()` for an all-page non-throwing result |
+| selected `pdf.Read.TryImages(selection)` / `TryImagePlacements(selection)` | Check `pdf.Preflight().Can(PdfPreflightCapability.ExtractImages)`, then call `pdf.Images.Extract(selection)` / `Placements(selection)` inside the application's exception or result boundary |
+| `pdf.Read.SaveImages(...)` | Call `pdf.Images.Extract(...)`; for each result where `IsImageFile` is true, write `Bytes` using a caller-owned deterministic name and `FileExtension`. The caller now owns overwrite policy. |
+| `pdf.Read.Fonts(...)` / `pdf.Read.RawStructure(...)` | `pdf.Resources.Fonts(...)` / `pdf.Resources.RawStructure(...)` |
+| `pdf.Read.TryFonts()` / `pdf.Read.TryRawStructure()` | `pdf.Resources.TryFonts()` / `pdf.Resources.TryRawStructure()` for all-page non-throwing results |
+| selected `pdf.Read.TryFonts(selection)` | Check `pdf.Preflight().Can(PdfPreflightCapability.ReadLogicalObjects)`, then call `pdf.Resources.Fonts(selection)` inside the application's exception or result boundary; `pdf.Resources.TryFonts()` is intentionally all-page only |
+| `pdf.Read.RenderPages(...)` / `pdf.Read.Drawing(...)` | `pdf.Render.Pages(...)` / `pdf.Render.Drawing(...)` |
+| `pdf.Read.ExportImages(...)` | `pdf.Render.ExportImages(...)` |
+| `pdf.Read.LayoutDebugOverlay(...)` / `pdf.Read.RenderCapabilityDiagnostics(...)` | `pdf.Render.LayoutDebugOverlay(...)` / `pdf.Render.CapabilityDiagnostics(...)` |
+| `pdf.Read.OcrAsync(...)` | `pdf.Ocr.ReadAsync(...)` |
+| `pdf.Read.Attachments()` / `TryAttachments()` | `pdf.Attachments.Extract()` / `pdf.Attachments.TryExtract()`; metadata remains on `result.Attachments` |
+| `pdf.Read.JavaScripts()` | `pdf.JavaScript.List()` |
+| `pdf.Read.TryJavaScripts()` | Check `pdf.Preflight().Can(PdfPreflightCapability.ReadLogicalObjects)`, then call `pdf.JavaScript.List()` inside the application's existing exception or result boundary |
+| `pdf.Read.Links()` / `LinksByUri(...)` and other link filters | `result.Links`, `result.GetLinksByUri(...)`, and the matching `result.GetLinksBy...(...)` helper |
+| `pdf.Read.FormField(name)` / `FormFields(...)` | `result.TryGetFormField(name, out PdfFormField? field)`, `result.FormFields`, `result.GetFormFields(kind)`, or `result.GetFormFields(pageNumber)` |
+| `pdf.Read.FormWidgets(...)` and widget filters | `result.FormWidgets`, `result.GetFormWidgets(fieldName)`, or `result.GetFormWidgets(pageNumber)` |
+| `pdf.Read.Outlines()` | `result.Outlines` |
+| `pdf.Read.PageLabels()` | `result.PageLabels` |
+| `pdf.Read.NamedDestinations()` | `result.NamedDestinations` |
+| `pdf.Read.TryTextBlocks(...)`, `TryLinks...(...)`, `TryFormFields(...)`, `TryFormWidgets(...)`, `TryOutlines()`, `TryPageLabels()`, or `TryNamedDestinations()` | Check `ReadLogicalObjects` with `pdf.Preflight()`, call `pdf.Read(readOptions)` inside the application's exception or result boundary, then use the corresponding result property or filter helper above |
+| `pdf.Read.DocumentInfo()` / `pdf.Read.Pages()` / `pdf.Read.Annotations()` | `PdfDocumentInfo info = pdf.Inspect()`; use `info`, `info.Pages`, and `info.Annotations` |
+| `pdf.Read.Page(pageNumber)` | `pdf.Inspect().Pages.FirstOrDefault(page => page.PageNumber == pageNumber)` |
+| `pdf.Read.AnnotationsBySubtype(...)` / `AnnotationsByActionType(...)` | `info.GetAnnotationsBySubtype(...)` / `info.GetAnnotationsByActionType(...)` |
+| `pdf.Read.Metadata()` / `Security()` / `HeaderVersion()` / `EffectiveVersion()` / `IsPdf20OrLater()` | use `info.Metadata`, `info.Security`, `info.HeaderVersion`, `info.EffectiveVersion`, and `info.IsPdf20OrLater` |
+| `pdf.Read.XmpMetadata()` / `TaggedContent()` / `OptionalContent()` / `OptionalContentGroups()` | use `info.XmpMetadata`, `info.TaggedContent`, `info.OptionalContent`, and `info.OptionalContentGroups`; use `info.GetOptionalContentGroupsByName(...)` for name filtering |
+| `pdf.Read.OutputIntents()` and output-intent filters | use `info.OutputIntents`, `info.GetOutputIntentsBySubtype(...)`, or `info.GetOutputIntentsByOutputConditionIdentifier(...)` |
+| `pdf.Read.AttachmentMetadata()` and attachment-metadata filters | use `info.Attachments` and the matching `info.GetAttachmentsByName(...)`, `GetAttachmentsByFileName(...)`, `GetAttachmentsBySource(...)`, or `GetAttachmentsByRelationship(...)` helper |
+| `pdf.Read.CatalogActions()` / `PageActions()` and action filters | use `info.CatalogActions`, `info.PageActions`, `info.GetCatalogActionsByActionType(...)`, `GetCatalogActionsBySource(...)`, or the corresponding `GetPageActions...(...)` helper |
+| `pdf.Read.OpenAction()` / `ViewerPreferences()` | use `result.OpenAction` / `result.ViewerPreferences`, or the matching `info` properties when already using `pdf.Inspect()` |
+| `pdf.Read.CatalogPageMode()` / `CatalogPageLayout()` / `CatalogVersion()` / `CatalogLanguage()` | use `result.CatalogPageMode`, `result.CatalogPageLayout`, `result.CatalogVersion`, and `result.CatalogLanguage`, or the matching `info` properties |
+| `pdf.Read.TryDocumentInfo()` / `TryPages()` / `TryAnnotations()` and other inspection `Try*` calls | There is no parallel `Try*` inspection surface. Use `PdfDocument.Preflight(...)` for non-throwing capability diagnosis, then call `pdf.Inspect()` inside the application's existing exception or result boundary. |
+| `pdf.Read.ParagraphContinuations(...)` | `result.GetParagraphContinuationGroups(...)` |
+| `pdf.Read.TableContinuations(...)` | `result.GetTableContinuationGroups(...)` |
+| `pdf.Read.TryParagraphContinuations(...)` / `TryTableContinuations(...)` | Check `ReadLogicalObjects` with `pdf.Preflight()`, call `pdf.Read(readOptions)` inside the application's exception or result boundary, then use the matching continuation helper |
+| `pdf.Read.Interactions(pageNumber, ...)` | `PdfPageInteractionMap.Create(pdf.ToBytes(), pageNumber, interactionOptions, loadOptions)` |
+| `pdf.Read.Understand(options, selection, readOptions)` | `pdf.Read(new PdfReadOptions { Pipeline = options, PageSelection = selection })`; move the former parser, limit, credential, and buffering settings to `PdfLoadOptions` when calling `PdfDocument.Load(...)` |
+| `new PdfUnderstandingPipeline(...).Run(...)` | `pdf.Read(new PdfReadOptions { Pipeline = ... })`; use `result.Pages[*].Analysis` for page analysis |
+| `PdfUnderstandingResult` | `PdfDocumentReadResult`; page-level understanding artifacts are available from `result.Pages[*].Analysis` |
+| `ReaderPdfOptions.LayoutOptions`, `PageRanges` | `ReaderPdfOptions.ReadOptions`; use `PdfReadOptions.LayoutOptions` and `PageSelection`, and configure semantic ceilings through `PdfReadOptions.Pipeline` |
+| `PdfPowerPointImportOptions.PageSelection` | `PdfPowerPointImportOptions.ReadOptions.PageSelection`; `PdfPowerPointImportOptions.MaxPages` remains the destination import/rendering limit |
+
+In 3.2, omitted stages on a manually assembled understanding pipeline fell back
+to the lightweight stage set. In 3.3, omitted custom stages resolve to the
+canonical structured page stages. `PdfReadProfile.Fast` uses that same page
+pipeline and only skips optional document-wide enrichment; it is not a
+compatibility switch for the old lightweight fallback.
+
+`ExportStructured(PdfStructuredExportFormat.PageXml)` remains page scoped. For
+a multi-page read result, call `result.ToPageXmlDocuments()` to produce one
+schema-valid PAGE XML document per logical page.
+
+Page-local `page.Tables`, `page.Paragraphs`, `page.Headings`, and the other
+logical collections remain available. `Analyze()` continues to report PDF
+health, preflight, and rewrite safety; it does not build the semantic document
+model and is not an alternative to `Read()`.
+
+## OfficeIMO 3.2: aggregate Reader legacy-format registrations
+
+`AddAllOfficeIMOHandlers()` now includes safe legacy-word and legacy-spreadsheet handlers. Applications that already register handlers for extensions such as `.wpd`, `.wps`, `.wk1`, or `.wq1` must opt out of the corresponding preset family to avoid an extension conflict, then add their application-owned registration:
+
+```csharp
+new OfficeDocumentReaderBuilder()
+    .AddAllOfficeIMOHandlers(new ReaderAllOptions {
+        IncludeLegacyWord = false,
+        IncludeLegacySpreadsheet = false
+    })
+    .AddHandler(applicationLegacyWordHandler)
+    .AddHandler(applicationLegacySpreadsheetHandler);
+```
+
+Either flag can be disabled independently. Both default to `true`.
+
+## OfficeIMO 3.2: Reader capability schema 5
+
+Reader capability descriptors and manifests now advertise `officeimo.reader.capability` schema version `5`. The new optional `defaultMaxInputBytesByExtension` map lets one handler publish different default input limits for the extensions it owns; the existing handler-wide `defaultMaxInputBytes` remains the fallback.
+
+Hosts that require an exact capability schema version must accept version `5` before upgrading OfficeIMO. Update generated clients or manifest validators to read `defaultMaxInputBytesByExtension` as a string-to-integer map, continue using `defaultMaxInputBytes` when the map is absent or has no entry for the selected extension, and tolerate the new field when it is not needed. A host pinned to schema version `4` will reject manifests produced by the upgraded Reader until that gate is updated.
+
+## OfficeIMO 3.2: Reader schema version 7 and shared format enums
+
+`OfficeDocumentReadResult` now defaults to schema version 7. Version 7 adds `ReaderInputKind.Opml` (`23`) and `ReaderInputKind.DocBook` (`24`) so serialized Reader results can retain those source formats. Applications that validate `schemaVersion`, use the packaged JSON Schema, generate transport bindings, or switch exhaustively over `ReaderInputKind` must accept version 7 and handle the two new values. Load the current schema with `OfficeDocumentReadResultSchema.GetJsonSchema()` instead of pinning the version 5 or 6 artifact.
+
+The shared `OfficeDocumentFormat` enum also adds `Opml` and `DocBook`. Applications that switch exhaustively over `OfficeDocumentFormat` must handle both values after upgrading.
+
+Version 5 and 6 payloads remain readable and are normalized to the current model after deserialization. They cannot represent OPML or DocBook kinds: do not force a version 5 or 6 header when serializing either format.
+
+## OfficeIMO 3.2: bounded email body resource projections
+
+`EmailBodyProjection.Create(...)` now indexes at most 128 resources, accepts at most 128 MiB from one resource, and reads or declares at most 256 MiB across one projection by default. Older versions had no resource-count or projection-wide byte ceiling. Exceeding a ceiling throws `EmailLimitExceededException`; repeated and parallel reads share the same projection-wide budget.
+
+Trusted applications that must process larger messages can set explicit, application-owned values through `EmailBodyProjectionOptions.MaxResourceCount`, `MaxResourceBytes`, and `MaxTotalResourceBytes`. Body-only consumers should set `IncludeResources = false` so attachments are not indexed. Prefer `OpenReadStream`, `CopyTo`, or their asynchronous counterparts when content does not need to be materialized as a byte array.
+
+## OfficeIMO 3.2: deterministic Reader export destinations
+
+`WriteAssetsToDirectory`, `WriteTableExportsToDirectory`, and `WriteVisualExportsToDirectory` now reject duplicate destination filenames before creating or replacing any output. The comparison uses the destination filesystem's case and Unicode-normalization behavior after applying the materializer's filename sanitization. It also treats trailing dots and spaces as aliases when the destination filesystem applies Windows filename semantics, so names such as `report`, `report.`, and `report ` cannot target one output. Older versions could write or skip colliding entries according to `Overwrite`, making the surviving payload depend on enumeration order.
+
+Applications that construct assets, table exports, or visual exports must assign names that remain unique after sanitization and destination-filesystem canonicalization. Deduplicate or rename colliding entries before materialization, remove trailing dots and spaces from Windows-bound custom filenames, or catch `InvalidOperationException` and report the conflicting destination. `Overwrite` continues to control conflicts with files already on disk; it does not allow two entries in one operation to target the same file.
 
 ## OfficeIMO 3.2: editable HTML layout projection defaults
 
@@ -71,6 +250,12 @@ Direct ODT and ODP byte-array `AddImage(...)` methods now validate complete imag
 PDF reading now accepts at most 4,096 text-show clipping paths across one page content tree, including repeated and nested Form XObjects reached through Type 3 glyph programs. The limit counts one path for each non-empty shown-string run from `Tj`, `'`, `"`, and each string entry in a `TJ` array, not individual glyphs. Older versions reset the count at each text object or parser traversal and could perform unbounded path intersections across consecutive objects and repeated forms; current versions throw `PdfReadLimitException` with `Kind == PdfReadLimitKind.TextClippingPaths` when the aggregate path ceiling is exceeded, `PdfReadLimitKind.TextClippingIntersectionWork` when text-derived clipping exceeds the fixed page work budget, or `PdfReadLimitKind.ClippingIntersectionWork` when ordinary clipping exceeds the same aggregate budget. Disjoint clip bounds and conservative overlapping-contour fallbacks are handled before polygon-intersection work is charged. These safety ceilings are not configurable through `PdfReadLimits`. Applications that accept external PDFs should handle these exceptions as unsupported or over-complex input. Trusted producers must simplify clipping paths, simplify clipping text, or reduce consecutive clipping-mode text objects before OfficeIMO reads the file.
 
 Type 3 glyph programs now enter `MaxContentNestingDepth` one level below the content stream that invokes the glyph. A glyph invoked at the previous depth boundary can therefore throw `PdfReadLimitException` where older versions rendered it at the enclosing depth. Applications using a deliberately low custom nesting limit should raise it by the required trusted glyph depth or handle the exception as an over-complex PDF; the default remains the recommended limit for untrusted input.
+
+## OfficeIMO 3.2: PDF Reader paragraph continuation metadata
+
+`OfficeIMO.Reader.Pdf` document results now include conservative cross-page paragraph continuation evidence by default. This adds `officeimo.pdf.paragraph-continuations` to `CapabilitiesUsed` and may add `pdf.paragraph.continuation` metadata entries. Page-local text, Markdown, chunks, and source pages remain unchanged.
+
+Applications that persist or compare the complete normalized Reader envelope and require the previous metadata shape must set `ReaderPdfOptions.IncludeParagraphContinuationMetadata = false`. Applications that enable the metadata can configure inference through `ReaderPdfOptions.ParagraphContinuationOptions`; likely line-ending hyphens are preserved unless `RejoinLineEndingHyphens` is explicitly enabled.
 
 ## OfficeIMO 3.2: one PDF authoring and operation model
 
@@ -749,11 +934,11 @@ The 3.1 PDF adapters use destination-shaped names for general conversion and exp
 
 Excel remains explicitly table-shaped because its PDF adapter recovers detected tables rather than arbitrary page content. Keep using `PdfExcelTableImportOptions`, `PdfExcelTableImportReport`, `PdfExcelTableImportResult`, `ImportTablesToExcelDocument`, and `SaveTablesAsExcel`.
 
-PowerPoint behavior broadens in 3.1: an opened `PdfDocument` now reconstructs supported text, detected tables, safe vector primitives, and images as editable slide objects by default. `PdfPowerPointImportOptions.Mode` defaults to `Auto`, which resolves an opened PDF to `EditableContent` and an already reduced `PdfLogicalDocument` to `EditableTables`. This intentionally changes the no-options behavior of `ToPowerPointPresentation*`, `SaveAsPowerPoint*`, and the opened-PDF-to-ODP bridge. Use `PdfPowerPointImportOptions.CreateVisualPages()` to retain the previous one-rendered-page-image-per-slide behavior. Use `CreateHybrid()` for visual pages with editable table overlays or `CreateEditableTables()` for detected tables only. None of these profiles claims recovery of original themes, masters, charts, groups, animations, notes, or authoring intent.
+PowerPoint behavior broadens in 3.1: an opened `PdfDocument` now reconstructs supported text, detected tables, safe vector primitives, and images as editable slide objects by default. `PdfPowerPointImportOptions.Mode` defaults to `Auto`, which resolves an opened PDF to `EditableContent` and an already reduced `PdfDocumentReadResult` to `EditableTables`. This intentionally changes the no-options behavior of `ToPowerPointPresentation*`, `SaveAsPowerPoint*`, and the opened-PDF-to-ODP bridge. Use `PdfPowerPointImportOptions.CreateVisualPages()` to retain the previous one-rendered-page-image-per-slide behavior. Use `CreateHybrid()` for visual pages with editable table overlays or `CreateEditableTables()` for detected tables only. None of these profiles claims recovery of original themes, masters, charts, groups, animations, notes, or authoring intent.
 
 Use `PdfWordImportOptions.CreateTablesOnly()` for narrow Word table recovery. PowerPoint table details remain available through `PdfPowerPointConversionReport.TableEntries` when the editable-table profile is selected.
 
-Open a source once with `PdfDocument.Open(...)`. Destination adapters also accept `PdfLogicalDocument` when an application performs custom layout analysis or page selection before conversion. Word and RTF semantic import consume shared `PdfLogicalTextRun` fragments so color, font size, and best-effort bold or italic classification do not need to be reconstructed independently in each adapter.
+Open a source once with `PdfDocument.Load(...)`. Destination adapters also accept `PdfDocumentReadResult` when an application performs custom layout analysis or page selection before conversion. Word and RTF semantic import consume shared `PdfLogicalTextRun` fragments so color, font size, and best-effort bold or italic classification do not need to be reconstructed independently in each adapter.
 
 The common conversion grammar is:
 
@@ -786,7 +971,7 @@ The reverse-route boundaries are:
 | PDF to PowerPoint with `EditableTables` | Detected tables on editable slides | Other page content is reported as omitted |
 | PDF to RTF | Semantic text, lists, page breaks, and detected run styling | Unsupported tables, images, links, and widgets produce loss diagnostics |
 | PDF to HTML | Semantic or positioned review HTML | Neither profile claims browser-clone fidelity for arbitrary PDFs |
-| PDF to Markdown | Logical readable text through `pdf.Read.Markdown(...)` | Portable text rather than visual fidelity |
+| PDF to Markdown | Logical readable text through `pdf.Read().ToMarkdown(...)` | Portable text rather than visual fidelity |
 | PDF to ODT, ODS, or ODP | Composed Word-semantic, Excel-table, or PowerPoint-editable routes | Inspect both conversion stages and their loss reports; logical PDF input remains table-shaped for ODP |
 
 `PdfResourcePolicy.CreateDefault()` is the balanced adapter default: installed and document fonts are available while arbitrary local-file and remote-resource access remains denied. Use `PdfResourcePolicy.CreatePortableDeterministic()` for untrusted or reproducible conversion. Use `PdfResourcePolicy.CreateTrustedHost()` only when the operation intentionally resolves host or remote resources.
@@ -968,7 +1153,7 @@ OpenDocument save methods now return `OdfSaveResult` directly. Replace the disca
 
 Reusable conversion options no longer retain operation state in members such as `LastSaveReport`, `LastSaveDiagnostics`, `ConversionReport`, or `Warnings`. Read that evidence from the returned result.
 
-The canonical forward PDF result method is `ToPdfDocumentResult()`. Reverse PDF adapters extend `PdfDocument` and `PdfLogicalDocument` with destination-shaped result methods such as `ToWordDocumentResult()`, `ToPowerPointPresentationResult()`, and `ToRtfDocumentResult()`. `SaveAsPdf(...)` returns `PdfSaveResult` evidence across Word, Excel, PowerPoint, HTML, Markdown, and RTF adapters, while `ToPdf()` remains the encoded-byte convenience API. Opening a generated file in another application is an explicit application action, not part of saving.
+The canonical forward PDF result method is `ToPdfDocumentResult()`. Reverse PDF adapters extend `PdfDocument` and `PdfDocumentReadResult` with destination-shaped result methods such as `ToWordDocumentResult()`, `ToPowerPointPresentationResult()`, and `ToRtfDocumentResult()`. `SaveAsPdf(...)` returns `PdfSaveResult` evidence across Word, Excel, PowerPoint, HTML, Markdown, and RTF adapters, while `ToPdf()` remains the encoded-byte convenience API. Opening a generated file in another application is an explicit application action, not part of saving.
 
 `VisioDocument.Load(path)` and `Load(stream)` now apply a 512 MiB default input
 limit before opening the package. For trusted documents that intentionally

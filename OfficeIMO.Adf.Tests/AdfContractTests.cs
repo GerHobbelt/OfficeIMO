@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -8,6 +9,25 @@ using Xunit;
 namespace OfficeIMO.Adf.Tests;
 
 public sealed class AdfContractTests {
+    [Fact]
+    public void ParsedSparseModel_CollectionsRemainMutable() {
+        AdfDocument document = AdfDocument.Parse("{\"version\":1,\"type\":\"doc\",\"content\":[]}");
+
+        document.ExtensionData["vendorRoot"] = JsonSerializer.SerializeToElement(true);
+        var paragraph = new AdfNode("paragraph");
+        paragraph.Attributes["localId"] = JsonSerializer.SerializeToElement("paragraph-1");
+        paragraph.ExtensionData["vendorNode"] = JsonSerializer.SerializeToElement(17);
+        paragraph.Content.Add(AdfNode.TextNode("Ready"));
+        document.Content.Add(paragraph);
+
+        using JsonDocument output = JsonDocument.Parse(document.ToJson());
+        Assert.True(output.RootElement.GetProperty("vendorRoot").GetBoolean());
+        JsonElement writtenParagraph = output.RootElement.GetProperty("content")[0];
+        Assert.Equal("paragraph-1", writtenParagraph.GetProperty("attrs").GetProperty("localId").GetString());
+        Assert.Equal(17, writtenParagraph.GetProperty("vendorNode").GetInt32());
+        Assert.Equal("Ready", writtenParagraph.GetProperty("content")[0].GetProperty("text").GetString());
+    }
+
     [Fact]
     public void SetAttribute_PreservesCustomJsonValuesOnDynamicRuntimes() {
         var node = new AdfNode("extension").SetAttribute("parameters", new {
@@ -54,6 +74,35 @@ public sealed class AdfContractTests {
         Assert.Equal(17, node.GetProperty("vendorNode").GetInt32());
         Assert.Equal("blue", node.GetProperty("attrs").GetProperty("tone").GetString());
         Assert.Equal("kept", node.GetProperty("content")[0].GetProperty("marks")[0].GetProperty("vendorMarkProperty").GetString());
+    }
+
+    [Fact]
+    public void Parse_DuplicateKnownPropertiesUseTheLastValue() {
+        const string json = "{\"version\":1,\"type\":\"doc\",\"content\":[{" +
+            "\"type\":17,\"type\":\"paragraph\"," +
+            "\"attrs\":[],\"attrs\":{\"source\":\"last\"}," +
+            "\"content\":{},\"content\":[{" +
+                "\"type\":false,\"type\":\"text\"," +
+                "\"text\":17,\"text\":\"Last text\"," +
+                "\"marks\":{},\"marks\":[{" +
+                    "\"type\":null,\"type\":\"link\"," +
+                    "\"attrs\":[],\"attrs\":{\"href\":\"https://example.com/last\"}" +
+                "}]" +
+            "}]," +
+            "\"marks\":{},\"marks\":[{\"type\":\"strong\"}]" +
+        "}]}";
+
+        AdfDocument document = AdfDocument.Parse(json);
+
+        AdfNode paragraph = Assert.Single(document.Content);
+        Assert.Equal("paragraph", paragraph.Type);
+        Assert.Equal("last", paragraph.GetStringAttribute("source"));
+        Assert.Equal("strong", Assert.Single(paragraph.Marks).Type);
+        AdfNode text = Assert.Single(paragraph.Content);
+        Assert.Equal("Last text", text.Text);
+        AdfMark link = Assert.Single(text.Marks);
+        Assert.Equal("link", link.Type);
+        Assert.Equal("https://example.com/last", link.Attributes["href"].GetString());
     }
 
     [Fact]
@@ -800,6 +849,90 @@ public sealed class AdfContractTests {
         AdfNode text = Assert.Single(Assert.Single(roundTrip.Value.Content).Content);
         Assert.Equal("first second", text.Text);
         Assert.Contains(text.Marks, mark => mark.Type == "code");
+    }
+
+    [Theory]
+    [InlineData("sup", "^2^")]
+    [InlineData("sub", "~2~")]
+    public void SubsupProjection_RoundTripsThroughMarkdownAndHtml(string script, string expectedMarkdown) {
+        var document = new AdfDocument();
+        document.Content.Add(new AdfNode("paragraph") {
+            Content = {
+                AdfNode.TextNode("2", new[] { new AdfMark("subsup").SetAttribute("type", script) })
+            }
+        });
+
+        AdfConversionResult<string> markdown = AdfConverter.ToMarkdown(document);
+        AdfConversionResult<AdfDocument> roundTrip = AdfConverter.FromMarkdown(markdown.Value);
+        AdfConversionResult<string> html = AdfConverter.ToHtml(document);
+
+        Assert.Contains(expectedMarkdown, markdown.Value);
+        AdfMark mark = Assert.Single(Assert.Single(Assert.Single(roundTrip.Value.Content).Content).Marks);
+        Assert.Equal("subsup", mark.Type);
+        Assert.Equal(script, mark.GetStringAttribute("type"));
+        Assert.Contains(script == "sup" ? "<sup>2</sup>" : "<sub>2</sub>", html.Value);
+    }
+
+    [Theory]
+    [InlineData("sup", "x^y", "^x\\^y^")]
+    [InlineData("sub", "x~y", "~x\\~y~")]
+    public void SubsupProjectionEscapesItsOwnDelimiter(string script, string text, string expectedMarkdown) {
+        var document = new AdfDocument();
+        document.Content.Add(new AdfNode("paragraph") {
+            Content = {
+                AdfNode.TextNode(text, new[] { new AdfMark("subsup").SetAttribute("type", script) })
+            }
+        });
+
+        AdfConversionResult<string> markdown = AdfConverter.ToMarkdown(document);
+        AdfConversionResult<AdfDocument> roundTrip = AdfConverter.FromMarkdown(markdown.Value);
+
+        Assert.Contains(expectedMarkdown, markdown.Value, StringComparison.Ordinal);
+        IReadOnlyList<AdfNode> restored = Assert.Single(roundTrip.Value.Content).Content;
+        Assert.Equal(text, string.Concat(restored.Select(node => node.Text)));
+        Assert.All(restored, node => Assert.Contains(node.Marks,
+            mark => mark.Type == "subsup" && mark.GetStringAttribute("type") == script));
+    }
+
+    [Theory]
+    [InlineData("sup", "before ^ready^ after")]
+    [InlineData("sub", "before ~ready~ after")]
+    public void SubsupProjectionMovesBoundaryWhitespaceOutsideMarkdownDelimiters(string script, string expectedMarkdown) {
+        var document = new AdfDocument();
+        document.Content.Add(new AdfNode("paragraph") {
+            Content = {
+                AdfNode.TextNode("before"),
+                AdfNode.TextNode(" ready ", new[] { new AdfMark("subsup").SetAttribute("type", script) }),
+                AdfNode.TextNode("after")
+            }
+        });
+
+        AdfConversionResult<string> markdown = AdfConverter.ToMarkdown(document);
+        AdfConversionResult<AdfDocument> roundTrip = AdfConverter.FromMarkdown(markdown.Value);
+
+        Assert.Contains(expectedMarkdown, markdown.Value, StringComparison.Ordinal);
+        Assert.Contains(markdown.Report.Diagnostics, item => item.Code == "ADF_MARK_BOUNDARY_WHITESPACE_NORMALIZED");
+        IReadOnlyList<AdfNode> restored = Assert.Single(roundTrip.Value.Content).Content;
+        Assert.Equal("before ready after", string.Concat(restored.Select(node => node.Text)));
+        Assert.Contains(restored, node => node.Text == "ready" && node.Marks.Any(mark =>
+            mark.Type == "subsup" && mark.GetStringAttribute("type") == script));
+    }
+
+    [Fact]
+    public void UnderlineProjection_RoundTripsThroughMarkdownAndHtml() {
+        var document = new AdfDocument();
+        document.Content.Add(new AdfNode("paragraph") {
+            Content = { AdfNode.TextNode("underlined", new[] { new AdfMark("underline") }) }
+        });
+
+        AdfConversionResult<string> markdown = AdfConverter.ToMarkdown(document);
+        AdfConversionResult<AdfDocument> roundTrip = AdfConverter.FromMarkdown(markdown.Value);
+        AdfConversionResult<string> html = AdfConverter.ToHtml(document);
+
+        Assert.Contains("<u>underlined</u>", markdown.Value);
+        Assert.Contains("<u>underlined</u>", html.Value);
+        Assert.Contains(Assert.Single(Assert.Single(roundTrip.Value.Content).Content).Marks,
+            mark => mark.Type == "underline");
     }
 
     private static AdfNode TableCell(string type, string text) => new AdfNode(type) {

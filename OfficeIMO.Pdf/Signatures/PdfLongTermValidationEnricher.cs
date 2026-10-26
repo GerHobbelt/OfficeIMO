@@ -13,7 +13,7 @@ public static class PdfLongTermValidationEnricher {
         byte[] pdf,
         PdfLongTermValidationEvidence evidence,
         IPdfSignatureCryptographyProvider cryptographyProvider,
-        PdfReadOptions? readOptions = null) {
+        PdfLoadOptions? readOptions = null) {
         Guard.NotNull(pdf, nameof(pdf));
         Guard.NotNull(evidence, nameof(evidence));
         Guard.NotNull(cryptographyProvider, nameof(cryptographyProvider));
@@ -75,12 +75,22 @@ public static class PdfLongTermValidationEnricher {
             trailerRaw,
             changedObjects,
             encryptionHandler: encryptionHandler);
-        PdfSignatureValidationReport after = PdfSignatureValidator.Validate(enriched, cryptographyProvider, readOptions);
+        PdfGeneratedOutputGrowth generatedGrowth = PdfGeneratedOutputGrowth.FromSerializedObjects(
+            objects,
+            changedObjects,
+            additionalRevisions: 1);
+        PdfLoadOptions outputReadOptions = PdfLoadOptions.ForGeneratedOutput(
+            readOptions,
+            pdf,
+            enriched,
+            generatedGrowth);
+        PdfSignatureValidationReport after = PdfSignatureValidator.Validate(enriched, cryptographyProvider, outputReadOptions);
         PdfSignatureMutationReport mutation = PdfSignatureMutationAnalyzer.Analyze(
             pdf,
             enriched,
             PdfMutationOperation.EnrichLongTermValidation,
-            readOptions: readOptions);
+            readOptions: readOptions,
+            afterReadOptions: outputReadOptions);
         var result = new PdfLongTermValidationEnrichmentResult(
             enriched,
             vriKey,
@@ -105,7 +115,7 @@ public static class PdfLongTermValidationEnricher {
         Stream input,
         PdfLongTermValidationEvidence evidence,
         IPdfSignatureCryptographyProvider cryptographyProvider,
-        PdfReadOptions? readOptions = null) {
+        PdfLoadOptions? readOptions = null) {
         Guard.NotNull(input, nameof(input));
         if (!input.CanRead) {
             throw new ArgumentException("Stream must be readable.", nameof(input));
@@ -122,7 +132,7 @@ public static class PdfLongTermValidationEnricher {
         string outputPath,
         PdfLongTermValidationEvidence evidence,
         IPdfSignatureCryptographyProvider cryptographyProvider,
-        PdfReadOptions? readOptions = null) {
+        PdfLoadOptions? readOptions = null) {
         Guard.NotNullOrWhiteSpace(inputPath, nameof(inputPath));
         Guard.NotNullOrWhiteSpace(outputPath, nameof(outputPath));
         PdfLongTermValidationEnrichmentResult result = Enrich(File.ReadAllBytes(inputPath), evidence, cryptographyProvider, readOptions);

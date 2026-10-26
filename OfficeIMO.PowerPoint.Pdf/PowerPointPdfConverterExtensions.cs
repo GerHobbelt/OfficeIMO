@@ -28,6 +28,8 @@ public static partial class PowerPointPdfConverterExtensions {
             throw new ArgumentNullException(nameof(presentation));
         }
 
+        CancellationToken cancellationToken = options.CancellationToken;
+        cancellationToken.ThrowIfCancellationRequested();
         PdfCore.PdfOptions pdfOptions = CreatePdfOptions(presentation, options);
         PdfCore.PdfDocument pdf = PdfCore.PdfDocument.Create(pdfOptions);
 
@@ -43,6 +45,7 @@ public static partial class PowerPointPdfConverterExtensions {
         IReadOnlyList<PptCore.PowerPointSlide> slides = presentation.Slides;
         int renderedSlides = 0;
         for (int slideIndex = 0; slideIndex < slides.Count; slideIndex++) {
+            cancellationToken.ThrowIfCancellationRequested();
             PptCore.PowerPointSlide slide = slides[slideIndex];
             if (!options.IncludeHiddenSlides && slide.Hidden) {
                 continue;
@@ -60,6 +63,7 @@ public static partial class PowerPointPdfConverterExtensions {
             RenderEmptySlide(pdf, presentation.SlideSize.WidthPoints, presentation.SlideSize.HeightPoints);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return pdf;
     }
 
@@ -96,6 +100,8 @@ public static partial class PowerPointPdfConverterExtensions {
     public static PdfCore.PdfSaveResult TrySaveAsPdf(this PptCore.PowerPointPresentation presentation, string path, PowerPointPdfSaveOptions? options = null) {
         try {
             return presentation.ToPdfDocumentResult(options).TrySave(path);
+        } catch (OperationCanceledException) {
+            throw;
         } catch (Exception ex) {
             return PdfCore.PdfSaveResult.FromFailure(path, ex);
         }
@@ -113,29 +119,33 @@ public static partial class PowerPointPdfConverterExtensions {
     public static PdfCore.PdfSaveResult TrySaveAsPdf(this PptCore.PowerPointPresentation presentation, Stream stream, PowerPointPdfSaveOptions? options = null) {
         try {
             return presentation.ToPdfDocumentResult(options).TrySave(stream);
+        } catch (OperationCanceledException) {
+            throw;
         } catch (Exception ex) {
             return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
         }
     }
 
     /// <summary>Converts synchronously, then asynchronously saves a PowerPoint presentation PDF at the specified path.</summary>
-    public static Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
+    public static async Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
         this PptCore.PowerPointPresentation presentation,
         string path,
         PowerPointPdfSaveOptions? options = null,
         CancellationToken cancellationToken = default) {
         cancellationToken.ThrowIfCancellationRequested();
-        return presentation.ToPdfDocumentResult(options).SaveAsync(path, cancellationToken);
+        using CancellationTokenSource? linked = CreateAsyncConversionOptions(options, cancellationToken, out PowerPointPdfSaveOptions operation);
+        return await presentation.ToPdfDocumentResult(operation).SaveAsync(path, operation.CancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Converts synchronously, then asynchronously saves a PowerPoint presentation PDF to a caller-owned stream.</summary>
-    public static Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
+    public static async Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
         this PptCore.PowerPointPresentation presentation,
         Stream stream,
         PowerPointPdfSaveOptions? options = null,
         CancellationToken cancellationToken = default) {
         cancellationToken.ThrowIfCancellationRequested();
-        return presentation.ToPdfDocumentResult(options).SaveAsync(stream, cancellationToken);
+        using CancellationTokenSource? linked = CreateAsyncConversionOptions(options, cancellationToken, out PowerPointPdfSaveOptions operation);
+        return await presentation.ToPdfDocumentResult(operation).SaveAsync(stream, operation.CancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Attempts to asynchronously save a PowerPoint presentation as PDF at the specified path.</summary>
@@ -146,10 +156,11 @@ public static partial class PowerPointPdfConverterExtensions {
         CancellationToken cancellationToken = default) {
         cancellationToken.ThrowIfCancellationRequested();
         try {
-            return await presentation.ToPdfDocumentResult(options)
-                .TrySaveAsync(path, cancellationToken)
+            using CancellationTokenSource? linked = CreateAsyncConversionOptions(options, cancellationToken, out PowerPointPdfSaveOptions operation);
+            return await presentation.ToPdfDocumentResult(operation)
+                .TrySaveAsync(path, operation.CancellationToken)
                 .ConfigureAwait(false);
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        } catch (OperationCanceledException) {
             throw;
         } catch (Exception ex) {
             return PdfCore.PdfSaveResult.FromFailure(path, ex);
@@ -164,14 +175,30 @@ public static partial class PowerPointPdfConverterExtensions {
         CancellationToken cancellationToken = default) {
         cancellationToken.ThrowIfCancellationRequested();
         try {
-            return await presentation.ToPdfDocumentResult(options)
-                .TrySaveAsync(stream, cancellationToken)
+            using CancellationTokenSource? linked = CreateAsyncConversionOptions(options, cancellationToken, out PowerPointPdfSaveOptions operation);
+            return await presentation.ToPdfDocumentResult(operation)
+                .TrySaveAsync(stream, operation.CancellationToken)
                 .ConfigureAwait(false);
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        } catch (OperationCanceledException) {
             throw;
         } catch (Exception ex) {
             return PdfCore.PdfSaveResult.FromFailure(outputPath: null, ex);
         }
+    }
+
+    private static CancellationTokenSource? CreateAsyncConversionOptions(
+        PowerPointPdfSaveOptions? options,
+        CancellationToken methodToken,
+        out PowerPointPdfSaveOptions operation) {
+        operation = (options ?? new PowerPointPdfSaveOptions()).CloneForConversion();
+        if (!methodToken.CanBeCanceled || operation.CancellationToken == methodToken) return null;
+        if (!operation.CancellationToken.CanBeCanceled) {
+            operation.CancellationToken = methodToken;
+            return null;
+        }
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(operation.CancellationToken, methodToken);
+        operation.CancellationToken = linked.Token;
+        return linked;
     }
 
     private static void RenderSlide(PdfCore.PdfDocument pdf, PptCore.PowerPointSlide slide, int slideNumber, double pageWidth, double pageHeight, PowerPointPdfSaveOptions options) {
@@ -191,6 +218,7 @@ public static partial class PowerPointPdfConverterExtensions {
             return;
         }
         for (int index = 0; index < slides.Count; index++) {
+            options.CancellationToken.ThrowIfCancellationRequested();
             if (index > 0) pdf.PageBreak();
             var item = slides[index];
             pdf.Canvas(canvas => {
@@ -222,6 +250,7 @@ public static partial class PowerPointPdfConverterExtensions {
         }
         int perPage = options.HandoutSlidesPerPage;
         for (int pageStart = 0, pageIndex = 0; pageStart < slides.Count; pageStart += perPage, pageIndex++) {
+            options.CancellationToken.ThrowIfCancellationRequested();
             if (pageIndex > 0) pdf.PageBreak();
             List<(PptCore.PowerPointSlide Slide, int Number)> pageSlides = slides.Skip(pageStart)
                 .Take(perPage).ToList();
@@ -239,6 +268,7 @@ public static partial class PowerPointPdfConverterExtensions {
             double rowHeight = (pageHeight - margin * 2D - gutter * 2D) / 3D;
             double thumbWidth = (pageWidth - margin * 2D - gutter) * 0.46D;
             for (int index = 0; index < slides.Count; index++) {
+                options.CancellationToken.ThrowIfCancellationRequested();
                 double top = margin + index * (rowHeight + gutter);
                 double thumbHeight = Math.Min(rowHeight - 18D, thumbWidth *
                     presentation.SlideSize.HeightPoints / presentation.SlideSize.WidthPoints);
@@ -263,6 +293,7 @@ public static partial class PowerPointPdfConverterExtensions {
         double cellWidth = (pageWidth - margin * 2D - gutter * (columns - 1)) / columns;
         double cellHeight = (pageHeight - margin * 2D - gutter * (rows - 1)) / rows;
         for (int index = 0; index < slides.Count; index++) {
+            options.CancellationToken.ThrowIfCancellationRequested();
             int row = index / columns;
             int column = index % columns;
             double left = margin + column * (cellWidth + gutter);
@@ -789,35 +820,28 @@ public static partial class PowerPointPdfConverterExtensions {
             runs.Add(new PdfCore.PdfTextRun(prefix, color: ParsePdfColor(textBox.Color), fontSize: textBox.FontSize, font: MapFont(fontFamily), fontFamily: fontFamily));
         }
 
-        IReadOnlyList<PptCore.PowerPointTextRun> paragraphRuns = paragraph.Runs;
-        if (paragraphRuns.Count == 0 && !paragraph.Paragraph.ChildElements.Any(child => child is A.Break or A.Field)) {
+        IReadOnlyList<PptCore.PowerPointParagraphInline> inlineNodes = paragraph.InlineNodes;
+        if (inlineNodes.Count == 0) {
             runs.Add(new PdfCore.PdfTextRun(paragraph.Text, font: MapFont(fontFamily), fontFamily: fontFamily));
             return runs;
         }
 
-        int runIndex = 0;
         bool hasInlineContent = false;
-        foreach (OpenXmlElement child in paragraph.Paragraph.ChildElements) {
-            switch (child) {
-                case A.Run:
-                    if (runIndex < paragraphRuns.Count) {
-                        runs.Add(CreateTextRun(paragraphRuns[runIndex], textBox, slideNumber, options));
+        foreach (PptCore.PowerPointParagraphInline node in inlineNodes) {
+            switch (node.Kind) {
+                case PptCore.PowerPointParagraphInlineKind.Run:
+                case PptCore.PowerPointParagraphInlineKind.Field:
+                    if (node.Run != null && !string.IsNullOrEmpty(node.Text)) {
+                        foreach (PptCore.PowerPointEffectiveTextSegment segment in PptCore.PowerPointEffectiveRunStyleResolver.ResolveSegments(
+                                     node.Run, paragraph, textBox.TextBody?.ListStyle, textBox.MasterTextStyle)) {
+                            runs.Add(CreateTextRun(node.Run, segment.Text, segment.Style, textBox, slideNumber, options));
+                        }
                         hasInlineContent = true;
                     }
-
-                    runIndex++;
                     break;
-                case A.Break:
+                case PptCore.PowerPointParagraphInlineKind.LineBreak:
                     runs.Add(PdfCore.PdfTextRun.LineBreak());
                     hasInlineContent = true;
-                    break;
-                case A.Field field:
-                    string fieldText = field.Text?.Text ?? field.InnerText ?? string.Empty;
-                    if (!string.IsNullOrEmpty(fieldText)) {
-                        runs.Add(new PdfCore.PdfTextRun(fieldText, color: ParsePdfColor(textBox.Color), fontSize: textBox.FontSize, font: MapFont(fontFamily), fontFamily: fontFamily));
-                        hasInlineContent = true;
-                    }
-
                     break;
             }
         }
@@ -846,28 +870,119 @@ public static partial class PowerPointPdfConverterExtensions {
         return string.Empty;
     }
 
-    private static PdfCore.PdfTextRun CreateTextRun(PptCore.PowerPointTextRun run, PptCore.PowerPointTextBox textBox, int slideNumber, PowerPointPdfSaveOptions options) {
-        string text = run.Text ?? string.Empty;
-        PdfCore.PdfColor? color = ParsePdfColor(run.Color ?? textBox.Color);
-        string? fontFamily = run.FontName ?? ResolveTextBoxFontFamily(textBox, options);
+    private static PdfCore.PdfTextRun CreateTextRun(
+        PptCore.PowerPointTextRun run,
+        string segmentText,
+        PptCore.PowerPointEffectiveRunStyle effective,
+        PptCore.PowerPointTextBox textBox,
+        int slideNumber,
+        PowerPointPdfSaveOptions options) {
+        string text = ApplyPowerPointDisplayCase(segmentText, effective.Capitalization, effective.Language, options, slideNumber);
+        PdfCore.PdfColor? color = ParsePdfColor(effective.Color ?? textBox.Color);
+        string? fontFamily = effective.FontName ?? ResolveTextBoxFontFamily(textBox, options);
         PdfCore.PdfStandardFont? font = MapFont(fontFamily);
-        double? fontSize = run.FontSize ?? textBox.FontSize;
+        double? fontSize = effective.FontSizePoints ?? textBox.FontSize;
         Uri? hyperlink = run.Hyperlink;
         string? linkUri = hyperlink != null && hyperlink.IsAbsoluteUri && !string.IsNullOrEmpty(text) ? hyperlink.AbsoluteUri : null;
+        PptCore.PowerPointUnderlineStyle effectiveUnderline = effective.UnderlineStyle ?? PptCore.PowerPointUnderlineStyle.None;
         if (hyperlink != null && !hyperlink.IsAbsoluteUri) {
             AddWarning(options, slideNumber, "relative-hyperlink", "Skipped a relative PowerPoint hyperlink because PDF URI annotations require absolute targets.");
         }
 
         return new PdfCore.PdfTextRun(
             text,
-            bold: run.Bold,
-            underline: run.Underline || linkUri != null,
+            bold: effective.Bold == true,
+            underline: effectiveUnderline != PptCore.PowerPointUnderlineStyle.None || linkUri != null,
             color: color,
-            italic: run.Italic,
+            italic: effective.Italic == true,
+            strike: effective.StrikeStyle is { } strikeStyle && strikeStyle != PptCore.PowerPointStrikeStyle.None,
             fontSize: fontSize,
             font: font,
             linkUri: linkUri,
-            fontFamily: fontFamily);
+            baseline: MapPowerPointBaseline(effective.BaselinePercent, options, slideNumber),
+            fontFamily: fontFamily,
+            underlineStyle: linkUri != null && effectiveUnderline == PptCore.PowerPointUnderlineStyle.None
+                ? OfficeTextDecorationStyle.Single
+                : MapPowerPointUnderline(effectiveUnderline),
+            strikeStyle: MapPowerPointStrike(effective.StrikeStyle));
+    }
+
+    private static string ApplyPowerPointDisplayCase(
+        string text,
+        PptCore.PowerPointCapitalization? capitalization,
+        string? language,
+        PowerPointPdfSaveOptions options,
+        int slideNumber) {
+        if (capitalization is not (PptCore.PowerPointCapitalization.AllCaps or PptCore.PowerPointCapitalization.SmallCaps)) {
+            return text;
+        }
+
+        if (capitalization == PptCore.PowerPointCapitalization.SmallCaps) {
+            AddWarning(options, slideNumber, "small-caps-approximation", "Rendered PowerPoint small caps as uppercase because PDF text runs do not provide native small-cap glyph substitution.");
+        }
+
+        return OfficeTextCaseTransformer.Apply(text, OfficeTextCase.Uppercase, ResolvePowerPointRunCulture(language));
+    }
+
+    private static CultureInfo ResolvePowerPointRunCulture(string? language) {
+        if (string.IsNullOrWhiteSpace(language)) return CultureInfo.InvariantCulture;
+        try {
+            return CultureInfo.GetCultureInfo(language);
+        } catch (CultureNotFoundException) {
+            return CultureInfo.InvariantCulture;
+        }
+    }
+
+    private static OfficeTextDecorationStyle MapPowerPointUnderline(PptCore.PowerPointUnderlineStyle? style) => style switch {
+        null or PptCore.PowerPointUnderlineStyle.None => OfficeTextDecorationStyle.None,
+        PptCore.PowerPointUnderlineStyle.Double or PptCore.PowerPointUnderlineStyle.WavyDouble => OfficeTextDecorationStyle.Double,
+        PptCore.PowerPointUnderlineStyle.Dotted or PptCore.PowerPointUnderlineStyle.HeavyDotted => OfficeTextDecorationStyle.Dotted,
+        PptCore.PowerPointUnderlineStyle.Dash or PptCore.PowerPointUnderlineStyle.DashHeavy or
+            PptCore.PowerPointUnderlineStyle.DashLong or PptCore.PowerPointUnderlineStyle.DashLongHeavy or
+            PptCore.PowerPointUnderlineStyle.DotDash or PptCore.PowerPointUnderlineStyle.DotDashHeavy or
+            PptCore.PowerPointUnderlineStyle.DotDotDash or PptCore.PowerPointUnderlineStyle.DotDotDashHeavy => OfficeTextDecorationStyle.Dashed,
+        PptCore.PowerPointUnderlineStyle.Wavy or PptCore.PowerPointUnderlineStyle.WavyHeavy => OfficeTextDecorationStyle.Wavy,
+        _ => OfficeTextDecorationStyle.Single
+    };
+
+    private static OfficeTextDecorationStyle MapPowerPointUnderline(TextUnderlineValues? style) {
+        if (!style.HasValue || style.Value == TextUnderlineValues.None) return OfficeTextDecorationStyle.None;
+        if (style.Value == TextUnderlineValues.Double || style.Value == TextUnderlineValues.WavyDouble) return OfficeTextDecorationStyle.Double;
+        if (style.Value == TextUnderlineValues.Dotted || style.Value == TextUnderlineValues.HeavyDotted) return OfficeTextDecorationStyle.Dotted;
+        if (style.Value == TextUnderlineValues.Wavy || style.Value == TextUnderlineValues.WavyHeavy) return OfficeTextDecorationStyle.Wavy;
+        if (style.Value == TextUnderlineValues.Dash || style.Value == TextUnderlineValues.DashHeavy ||
+            style.Value == TextUnderlineValues.DashLong || style.Value == TextUnderlineValues.DashLongHeavy ||
+            style.Value == TextUnderlineValues.DotDash || style.Value == TextUnderlineValues.DotDashHeavy ||
+            style.Value == TextUnderlineValues.DotDotDash || style.Value == TextUnderlineValues.DotDotDashHeavy) {
+            return OfficeTextDecorationStyle.Dashed;
+        }
+
+        return OfficeTextDecorationStyle.Single;
+    }
+
+    private static OfficeTextDecorationStyle MapPowerPointStrike(PptCore.PowerPointStrikeStyle? style) => style switch {
+        PptCore.PowerPointStrikeStyle.Double => OfficeTextDecorationStyle.Double,
+        PptCore.PowerPointStrikeStyle.Single => OfficeTextDecorationStyle.Single,
+        _ => OfficeTextDecorationStyle.None
+    };
+
+    private static PdfCore.PdfTextBaseline MapPowerPointBaseline(
+        double? baselinePercent,
+        PowerPointPdfSaveOptions options,
+        int slideNumber) {
+        if (baselinePercent.HasValue && baselinePercent.Value != 0D &&
+            Math.Abs(baselinePercent.Value - 30D) > 0.0001D &&
+            Math.Abs(baselinePercent.Value + 25D) > 0.0001D &&
+            !options.Warnings.Any(warning => warning.SlideNumber == slideNumber && warning.Code == "baseline-percent-approximation")) {
+            AddWarning(options, slideNumber, "baseline-percent-approximation",
+                "Rendered a native PowerPoint baseline percentage using the PDF superscript or subscript geometry; the exact authored percentage is not representable.");
+        }
+
+        return baselinePercent switch {
+            > 0D => PdfCore.PdfTextBaseline.Superscript,
+            < 0D => PdfCore.PdfTextBaseline.Subscript,
+            _ => PdfCore.PdfTextBaseline.Normal
+        };
     }
 
     private static string? ResolveTextBoxFontFamily(PptCore.PowerPointTextBox textBox, PowerPointPdfSaveOptions options) {

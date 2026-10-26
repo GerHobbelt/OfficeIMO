@@ -7,29 +7,48 @@ public static partial class PdfHtmlConverterExtensions {
     /// <summary>Renders an opened PDF as HTML and returns a machine-readable export summary.</summary>
     public static PdfHtmlConversionResult ToHtmlResult(this PdfCore.PdfDocument document, PdfHtmlSaveOptions? options = null) {
         if (document == null) throw new ArgumentNullException(nameof(document));
-        return document.Read.Logical().ToHtmlResult(options);
+        return ReadForHtml(document, options, options?.CancellationToken ?? default)
+            .ToHtmlResult(CreateRenderOptionsAfterPreselection(options));
     }
 
     /// <summary>
     /// Renders an already loaded logical PDF model as HTML and returns a machine-readable export summary.
     /// </summary>
-    public static PdfHtmlConversionResult ToHtmlResult(this PdfCore.PdfLogicalDocument document, PdfHtmlSaveOptions? options = null) {
+    public static PdfHtmlConversionResult ToHtmlResult(this PdfCore.PdfDocumentReadResult document, PdfHtmlSaveOptions? options = null) {
         if (document == null) {
             throw new ArgumentNullException(nameof(document));
         }
 
         options = (options ?? new PdfHtmlSaveOptions()).CloneForConversion();
+        options.CancellationToken.ThrowIfCancellationRequested();
         options.Validate();
         IReadOnlyList<PdfCore.PdfLogicalPage> pages = GetRenderPages(document, options);
-        string html = options.Profile switch {
-            PdfHtmlProfile.Semantic => RenderSemanticDocument(document, pages, options),
-            PdfHtmlProfile.PositionedReview => RenderPositionedReviewDocument(document, pages, options),
-            _ => throw new ArgumentOutOfRangeException(nameof(options.Profile), options.Profile, "Unsupported PDF HTML profile.")
-        };
-        return new PdfHtmlConversionResult(html, BuildExportSummary(document, pages, options, document.PageCount), options.Report);
+        string html;
+        try {
+            html = options.Profile switch {
+                PdfHtmlProfile.Semantic => RenderSemanticDocument(document, pages, options),
+                PdfHtmlProfile.PositionedReview => RenderPositionedReviewDocument(document, pages, options),
+                _ => throw new ArgumentOutOfRangeException(nameof(options.Profile), options.Profile, "Unsupported PDF HTML profile.")
+            };
+        } catch (Exception exception) when (
+            options.MaximumOutputCharacters.HasValue &&
+            IsOutputBuilderCapacityException(exception)) {
+            throw new InvalidOperationException(
+                $"Generated HTML exceeded the configured {options.MaximumOutputCharacters.Value:N0}-character output limit while it was being rendered.",
+                exception);
+        }
+        return new PdfHtmlConversionResult(html, BuildExportSummary(document, pages, options, document.SourcePageCount), options.Report);
     }
 
-    private static PdfHtmlExportSummary BuildExportSummary(PdfCore.PdfLogicalDocument document, IReadOnlyList<PdfCore.PdfLogicalPage> pages, PdfHtmlSaveOptions options, int sourcePageCount) {
+    private static bool IsOutputBuilderCapacityException(Exception exception) =>
+        exception is PdfHtmlOutputCapacityException ||
+        exception is ArgumentOutOfRangeException argumentException &&
+        (string.Equals(argumentException.ParamName, "valueCount", StringComparison.Ordinal) ||
+         string.Equals(argumentException.ParamName, "requiredLength", StringComparison.Ordinal) ||
+         string.Equals(argumentException.ParamName, "repeatCount", StringComparison.Ordinal)) &&
+        argumentException.StackTrace?.IndexOf("System.Text.StringBuilder", StringComparison.Ordinal) >= 0;
+
+    private static PdfHtmlExportSummary BuildExportSummary(PdfCore.PdfDocumentReadResult document, IReadOnlyList<PdfCore.PdfLogicalPage> pages, PdfHtmlSaveOptions options, int sourcePageCount) {
         int textBlockCount = 0;
         int headingCount = 0;
         int listItemCount = 0;
@@ -48,6 +67,7 @@ public static partial class PdfHtmlConverterExtensions {
         ActionDiagnosticSummary actionSummary = BuildActionDiagnosticSummary(document, pages);
 
         for (int i = 0; i < pages.Count; i++) {
+            options.CancellationToken.ThrowIfCancellationRequested();
             PdfCore.PdfLogicalPage page = pages[i];
             pageNumbers[i] = page.PageNumber;
             textBlockCount += page.TextBlocks.Count;
@@ -163,7 +183,7 @@ public static partial class PdfHtmlConverterExtensions {
         }
     }
 
-    private static ActionDiagnosticSummary BuildActionDiagnosticSummary(PdfCore.PdfLogicalDocument document, IReadOnlyList<PdfCore.PdfLogicalPage> pages) {
+    private static ActionDiagnosticSummary BuildActionDiagnosticSummary(PdfCore.PdfDocumentReadResult document, IReadOnlyList<PdfCore.PdfLogicalPage> pages) {
         int catalogActionCount = AreAllDocumentPagesSelected(document, pages) ? document.CatalogActionCount : 0;
         int selectedPageActionCount = 0;
         int selectedAnnotationActionCount = 0;
@@ -234,7 +254,7 @@ public static partial class PdfHtmlConverterExtensions {
         return count;
     }
 
-    private static bool AreAllDocumentPagesSelected(PdfCore.PdfLogicalDocument document, IReadOnlyList<PdfCore.PdfLogicalPage> pages) {
+    private static bool AreAllDocumentPagesSelected(PdfCore.PdfDocumentReadResult document, IReadOnlyList<PdfCore.PdfLogicalPage> pages) {
         if (document.PageCount == 0 || pages.Count != document.PageCount) {
             return false;
         }

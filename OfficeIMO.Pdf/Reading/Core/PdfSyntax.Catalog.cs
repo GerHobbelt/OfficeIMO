@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace OfficeIMO.Pdf;
 
@@ -47,20 +47,7 @@ internal static partial class PdfSyntax {
     }
 
     private static bool TryGetTrailerRootReference(string? trailerRaw, out PdfReference reference) {
-        reference = null!;
-        if (string.IsNullOrWhiteSpace(trailerRaw)) {
-            return false;
-        }
-
-        Match match = TrailerRootRegex.Match(trailerRaw);
-        if (!match.Success ||
-            !int.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int objectNumber) ||
-            !int.TryParse(match.Groups[2].Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int generation)) {
-            return false;
-        }
-
-        reference = new PdfReference(objectNumber, generation);
-        return true;
+        return TryGetTrailerReference(trailerRaw, "Root", limits: null, out reference);
     }
 
     private static bool TryGetXrefStreamRootReference(Dictionary<int, PdfIndirectObject> map, out PdfReference reference) {
@@ -474,11 +461,45 @@ internal static partial class PdfSyntax {
         return false;
     }
 
+    internal static bool ContainsAnyPdfName(
+        string text,
+        CancellationToken cancellationToken,
+        params string[] names) {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!cancellationToken.CanBeCanceled) return ContainsAnyPdfName(text, names);
+        for (int i = 0; i < names.Length; i++) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ContainsPdfName(text, names[i], cancellationToken)) return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsPdfName(
+        string text,
+        string name,
+        CancellationToken cancellationToken) {
+        if (string.IsNullOrEmpty(text)) return false;
+        string token = "/" + name;
+        int maximumStart = text.Length - token.Length;
+        for (int index = 0; index <= maximumStart; index++) {
+            if ((index & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+            if (text[index] != '/' ||
+                string.CompareOrdinal(text, index, token, 0, token.Length) != 0) {
+                continue;
+            }
+
+            int after = index + token.Length;
+            if (after >= text.Length || IsPdfDelimiter(text[after]) || char.IsWhiteSpace(text[after])) return true;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return false;
+    }
+
     private static bool ContainsAnyParsedPdfName(byte[] pdf, params string[] names) {
         return ContainsAnyParsedPdfName(pdf, null, names);
     }
 
-    private static bool ContainsAnyParsedPdfName(byte[] pdf, PdfReadOptions? options, params string[] names) {
+    private static bool ContainsAnyParsedPdfName(byte[] pdf, PdfLoadOptions? options, params string[] names) {
         try {
             var (map, _) = ParseObjects(pdf, options);
             var nameSet = new HashSet<string>(names, StringComparer.Ordinal);
@@ -507,7 +528,53 @@ internal static partial class PdfSyntax {
         return false;
     }
 
-    private static bool ShouldSuppressParsedPdfNameException(Exception exception, PdfReadOptions? options) {
+    internal static bool ContainsAnyReachableParsedPdfName(
+        PdfObject root,
+        Dictionary<int, PdfIndirectObject> objects,
+        params string[] names) {
+        var nameSet = new HashSet<string>(names, StringComparer.Ordinal);
+        var visitedReferences = new HashSet<(int ObjectNumber, int Generation)>();
+        var visitedContainers = new HashSet<PdfObject>();
+        var pending = new Stack<PdfObject>();
+        pending.Push(root);
+        while (pending.Count > 0) {
+            PdfObject value = pending.Pop();
+
+            if (value is PdfReference reference) {
+                if (!visitedReferences.Add((reference.ObjectNumber, reference.Generation)) ||
+                    !PdfObjectLookup.TryGet(objects, reference, out PdfIndirectObject? indirect) ||
+                    indirect == null) {
+                    continue;
+                }
+                pending.Push(indirect.Value);
+                continue;
+            }
+            if (value is PdfName name) {
+                if (nameSet.Contains(name.Name)) return true;
+                continue;
+            }
+            if (value is PdfStream stream) {
+                if (visitedContainers.Add(stream)) pending.Push(stream.Dictionary);
+                continue;
+            }
+            if (value is PdfArray array) {
+                if (!visitedContainers.Add(array)) continue;
+                for (int index = array.Items.Count - 1; index >= 0; index--) {
+                    pending.Push(array.Items[index]);
+                }
+                continue;
+            }
+            if (value is not PdfDictionary dictionary || !visitedContainers.Add(dictionary)) continue;
+            foreach (KeyValuePair<string, PdfObject> item in dictionary.Items) {
+                if (nameSet.Contains(item.Key)) return true;
+                pending.Push(item.Value);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ShouldSuppressParsedPdfNameException(Exception exception, PdfLoadOptions? options) {
         if (exception is OutOfMemoryException || exception is StackOverflowException) {
             return false;
         }

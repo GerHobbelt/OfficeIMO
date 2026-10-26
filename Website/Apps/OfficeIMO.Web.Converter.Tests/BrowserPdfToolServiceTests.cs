@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using OfficeIMO.Pdf;
+using OfficeIMO.Security;
 using OfficeIMO.Web.Converter.Models;
 using OfficeIMO.Web.Converter.Services;
 using Xunit;
@@ -46,7 +47,7 @@ public sealed class BrowserPdfToolServiceTests {
         SelectedDocument second = Document(CreatePdf("Second"), "second.pdf");
         PdfToolResult merged = _service.Execute(Request("merge", [first, second]));
 
-        Assert.Equal(2, PdfDocument.Open(merged.Artifact.Bytes).Inspect().PageCount);
+        Assert.Equal(2, PdfDocument.Load(merged.Artifact.Bytes).Inspect().PageCount);
         Assert.NotNull(merged.Report);
 
         PdfToolResult split = _service.Execute(Request("split", [Document(CreateThreePagePdf())], pagesPerDocument: 2));
@@ -63,14 +64,14 @@ public sealed class BrowserPdfToolServiceTests {
     public void PageTools_ApplySelectorsAndRequireDestructiveConfirmation() {
         SelectedDocument source = Document(CreateThreePagePdf());
         PdfToolResult extracted = _service.Execute(Request("extract", [source], pageSelection: "3..2"));
-        Assert.Equal(2, PdfDocument.Open(extracted.Artifact.Bytes).Inspect().PageCount);
+        Assert.Equal(2, PdfDocument.Load(extracted.Artifact.Bytes).Inspect().PageCount);
 
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
             _service.Execute(Request("delete", [source], pageSelection: "1")));
         Assert.Contains("Confirm", error.Message, StringComparison.Ordinal);
 
         PdfToolResult deleted = _service.Execute(Request("delete", [source], pageSelection: "1", confirmed: true));
-        Assert.Equal(2, PdfDocument.Open(deleted.Artifact.Bytes).Inspect().PageCount);
+        Assert.Equal(2, PdfDocument.Load(deleted.Artifact.Bytes).Inspect().PageCount);
     }
 
     [Fact]
@@ -78,7 +79,7 @@ public sealed class BrowserPdfToolServiceTests {
         PdfToolResult result = _service.Execute(Request("optimize", [Document(CreatePdf("Lossless"))]));
 
         Assert.Equal("application/pdf", result.Artifact.ContentType);
-        Assert.Equal(1, PdfDocument.Open(result.Artifact.Bytes).Inspect().PageCount);
+        Assert.Equal(1, PdfDocument.Load(result.Artifact.Bytes).Inspect().PageCount);
         using JsonDocument report = JsonDocument.Parse(result.Report!.Bytes);
         Assert.Equal("Balanced", report.RootElement.GetProperty("details").GetProperty("profile").GetString());
     }
@@ -104,6 +105,36 @@ public sealed class BrowserPdfToolServiceTests {
             ownerPassword: "owner-2026"));
         Assert.False(PdfDocument.Preflight(unlocked.Artifact.Bytes).Probe.Security.HasEncryption);
         Assert.Contains("Protected", PdfReadDocument.Open(unlocked.Artifact.Bytes).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProtectAndUnlock_RoundTripJapaneseArchivalArtifact() {
+        const string japanese = "日本語の保存版を東京都で確認します。";
+        var conversions = new BrowserConversionService();
+        ConversionResult archival = conversions.ConvertText(
+            ConversionRouteCatalog.Find("html-pdf"),
+            $"<article lang='ja'><h1>日本語の保存版</h1><p>{japanese}</p></article>",
+            BrowserPdfProfileCatalog.Archival);
+
+        PdfToolResult protectedPdf = _service.Execute(Request(
+            "protect",
+            [Document(archival.Bytes, archival.FileName)],
+            userPassword: "reader-2026",
+            ownerPassword: "owner-2026"));
+        PdfToolResult unlocked = _service.Execute(Request(
+            "unlock",
+            [Document(protectedPdf.Artifact.Bytes, protectedPdf.Artifact.FileName)],
+            ownerPassword: "owner-2026"));
+
+        PdfDocumentPreflight protectedPreflight = PdfDocument.Preflight(protectedPdf.Artifact.Bytes, new PdfLoadOptions {
+            Password = "reader-2026",
+            AesCryptographyProvider = OfficeManagedAesCryptographyProvider.Default
+        });
+        Assert.True(protectedPreflight.Probe.Security.HasEncryption);
+        Assert.Equal(6, protectedPreflight.Probe.Security.EncryptionRevision);
+        Assert.Equal(256, protectedPreflight.Probe.Security.EncryptionLengthBits);
+        Assert.False(PdfDocument.Preflight(unlocked.Artifact.Bytes).Probe.Security.HasEncryption);
+        Assert.Contains(japanese, PdfReadDocument.Open(unlocked.Artifact.Bytes).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -138,8 +169,9 @@ public sealed class BrowserPdfToolServiceTests {
 
     [Fact]
     public void BrowserReadPolicy_UsesWebAssemblyScaleBudgets() {
-        PdfReadOptions options = BrowserPdfPolicy.CreateReadOptions();
+        PdfLoadOptions options = BrowserPdfPolicy.CreateReadOptions();
 
+        Assert.Same(OfficeManagedAesCryptographyProvider.Default, options.AesCryptographyProvider);
         Assert.Equal(BrowserPdfPolicy.MaxInputBytes, options.Limits.MaxInputBytes);
         Assert.Equal(BrowserPdfPolicy.MaxPages, options.Limits.MaxPages);
         Assert.True(options.Limits.MaxDecodedStreamBytes <= 32 * 1024 * 1024);

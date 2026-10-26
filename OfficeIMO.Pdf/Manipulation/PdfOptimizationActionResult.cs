@@ -3,7 +3,7 @@ namespace OfficeIMO.Pdf;
 /// <summary>Result of applying lossless PDF optimization actions.</summary>
 public sealed class PdfOptimizationActionResult {
     private readonly byte[] _bytes;
-    private readonly PdfReadOptions? _readOptions;
+    private readonly PdfLoadOptions? _readOptions;
 
     internal PdfOptimizationActionResult(
         byte[] bytes,
@@ -20,9 +20,9 @@ public sealed class PdfOptimizationActionResult {
         bool candidateUsesObjectStreams,
         bool candidateLinearized,
         bool returnedOriginal,
-        PdfReadOptions? readOptions = null) {
+        PdfLoadOptions? readOptions = null) {
         _bytes = (byte[])bytes.Clone();
-        _readOptions = PdfReadOptions.WithMinimumInputBytes(readOptions, _bytes.LongLength);
+        _readOptions = PdfLoadOptions.WithMinimumInputBytes(readOptions, _bytes.LongLength);
         OriginalLengthBytes = originalLengthBytes;
         OptimizedLengthBytes = optimizedLengthBytes;
         CandidateLengthBytes = candidateLengthBytes;
@@ -47,7 +47,10 @@ public sealed class PdfOptimizationActionResult {
     /// <summary>Returned PDF length in bytes.</summary>
     public long OptimizedLengthBytes { get; }
 
-    /// <summary>Optimized candidate length before KeepOriginalWhenNotSmaller is applied.</summary>
+    /// <summary>
+    /// Optimized candidate length before KeepOriginalWhenNotSmaller is applied, or the smallest
+    /// known candidate length when serialization stopped at the configured output limit.
+    /// </summary>
     public long CandidateLengthBytes { get; }
 
     /// <summary>Bytes saved in the returned PDF.</summary>
@@ -59,7 +62,10 @@ public sealed class PdfOptimizationActionResult {
     /// <summary>Optimization analysis collected before applying actions.</summary>
     public PdfOptimizationReport ReportBefore { get; }
 
-    /// <summary>Optimization analysis collected from the optimized candidate.</summary>
+    /// <summary>
+    /// Optimization analysis collected from the optimized candidate. When candidate serialization
+    /// stops at the output limit and the original is retained, this is the unchanged source analysis.
+    /// </summary>
     public PdfOptimizationReport ReportAfter { get; }
 
     /// <summary>Actions applied while building the optimized candidate.</summary>
@@ -96,6 +102,6 @@ public sealed class PdfOptimizationActionResult {
     public int SkippedActionCount => SkippedActions.Count;
 
     /// <summary>Opens the selected optimized or original bytes through the fluent document API.</summary>
-    public PdfDocument ToDocument(PdfReadOptions? readOptions = null) => PdfDocument.Open(_bytes, readOptions ?? _readOptions);
+    public PdfDocument ToDocument(PdfLoadOptions? readOptions = null) => PdfDocument.Load(_bytes, readOptions ?? _readOptions);
 
 }

@@ -5,7 +5,7 @@
         <AssemblyName>OfficeIMO.PowerPoint</AssemblyName>
         <AssemblyTitle>OfficeIMO.PowerPoint</AssemblyTitle>
 
-        <VersionPrefix>3.2.5</VersionPrefix>
+        <VersionPrefix>3.3.0</VersionPrefix>
         <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
         <TargetFrameworks Condition=" '$([MSBuild]::IsOsPlatform(`Windows`))' ">
             $(TargetFrameworks);net472
@@ -96,6 +96,7 @@
         <InternalsVisibleTo Include="OfficeIMO.PowerPoint.Html" />
         <InternalsVisibleTo Include="OfficeIMO.PowerPoint.GoogleSlides" />
         <InternalsVisibleTo Include="OfficeIMO.Markup.PowerPoint" />
+        <InternalsVisibleTo Include="OfficeIMO.PowerPoint.IWork" />
     </ItemGroup>
 
   <ItemGroup>

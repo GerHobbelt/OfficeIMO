@@ -2,23 +2,23 @@
   "schemaVersion": 1,
   "format": "officeimo.documentation-catalog",
   "repository": {
-    "projectCount": 174,
-    "productionComponentCount": 101,
-    "testProjectCount": 34,
-    "benchmarkProjectCount": 16,
-    "validationProjectCount": 24,
+    "projectCount": 216,
+    "productionComponentCount": 115,
+    "testProjectCount": 41,
+    "benchmarkProjectCount": 33,
+    "validationProjectCount": 28,
     "apiReferenceCount": 21,
-    "conceptualPageCount": 95,
-    "conceptualWordCount": 41463
+    "conceptualPageCount": 96,
+    "conceptualWordCount": 42338
   },
   "categories": [
     {
       "name": "Extraction and ingestion",
-      "componentCount": 27
+      "componentCount": 30
     },
     {
       "name": "Formats and interoperability",
-      "componentCount": 16
+      "componentCount": 17
     },
     {
       "name": "Foundations and integrations",
@@ -30,11 +30,11 @@
     },
     {
       "name": "Office documents",
-      "componentCount": 18
+      "componentCount": 21
     },
     {
       "name": "Publishing and conversion",
-      "componentCount": 17
+      "componentCount": 18
     },
     {
       "name": "Rendering surfaces",
@@ -42,7 +42,7 @@
     },
     {
       "name": "Specialized components",
-      "componentCount": 5
+      "componentCount": 11
     }
   ],
   "components": [
@@ -99,6 +99,19 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.AsciiDoc.Pdf"
     },
     {
+      "name": "OfficeIMO.Bibliography",
+      "packageId": "OfficeIMO.Bibliography",
+      "category": "Specialized components",
+      "description": "Source-preserving citation data model and deterministic bibliography codecs for .NET.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Bibliography/OfficeIMO.Bibliography.csproj",
+      "sourceFileCount": 20,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/capabilities/packages/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Bibliography"
+    },
+    {
       "name": "OfficeIMO.ChartForgeX",
       "packageId": "OfficeIMO.ChartForgeX",
       "category": "Specialized components",
@@ -131,7 +144,7 @@
       "description": "Shared zero-dependency document, security, drawing, color, image, and font primitives for OfficeIMO projects.",
       "kind": "package",
       "projectPath": "OfficeIMO.Core/OfficeIMO.Core.csproj",
-      "sourceFileCount": 426,
+      "sourceFileCount": 498,
       "referencingTestProjectCount": 11,
       "docsUrl": "/docs/capabilities/packages/",
       "apiUrl": null,
@@ -144,11 +157,50 @@
       "description": "A fluent, strongly-typed CSV document model for OfficeIMO.",
       "kind": "package",
       "projectPath": "OfficeIMO.CSV/OfficeIMO.CSV.csproj",
-      "sourceFileCount": 73,
+      "sourceFileCount": 74,
       "referencingTestProjectCount": 2,
       "docsUrl": "/docs/csv/",
       "apiUrl": "/api/csv/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.CSV"
+    },
+    {
+      "name": "OfficeIMO.Data.Arrow",
+      "packageId": "OfficeIMO.Data.Arrow",
+      "category": "Specialized components",
+      "description": "Apache Arrow adapters for forward-only OfficeIMO and ADO.NET tabular readers.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Data.Arrow/OfficeIMO.Data.Arrow.csproj",
+      "sourceFileCount": 4,
+      "referencingTestProjectCount": 2,
+      "docsUrl": "/docs/capabilities/packages/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Data.Arrow"
+    },
+    {
+      "name": "OfficeIMO.Data.Generators",
+      "packageId": "OfficeIMO.Data.Generators",
+      "category": "Specialized components",
+      "description": "Incremental source generators for AOT-safe OfficeIMO tabular row mappings.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Data.Generators/OfficeIMO.Data.Generators.csproj",
+      "sourceFileCount": 1,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/capabilities/packages/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Data.Generators"
+    },
+    {
+      "name": "OfficeIMO.DocBook",
+      "packageId": "OfficeIMO.DocBook",
+      "category": "Specialized components",
+      "description": "Bounded, source-preserving DocBook 4.5 and 5.2 common-structure parser, editor, writer, validator, and converter.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.DocBook/OfficeIMO.DocBook.csproj",
+      "sourceFileCount": 7,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/capabilities/packages/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.DocBook"
     },
     {
       "name": "OfficeIMO.Drawing.CodeGlyphX",
@@ -196,7 +248,7 @@
       "description": "Dependency-isolated safe HTML, RTF, text, and inline-resource projection for OfficeIMO email artifacts.",
       "kind": "package",
       "projectPath": "OfficeIMO.Email.Html/OfficeIMO.Email.Html.csproj",
-      "sourceFileCount": 1,
+      "sourceFileCount": 4,
       "referencingTestProjectCount": 1,
       "docsUrl": "/docs/email/",
       "apiUrl": null,
@@ -248,8 +300,8 @@
       "description": "Open-source, cross-platform .NET library for creating, reading, editing, and converting Microsoft Excel XLS, XLSX, XLSB, XLSM, and XLTX workbooks without Microsoft Office; legacy XLT templates are supported for classification and import.",
       "kind": "package",
       "projectPath": "OfficeIMO.Excel/OfficeIMO.Excel.csproj",
-      "sourceFileCount": 983,
-      "referencingTestProjectCount": 9,
+      "sourceFileCount": 1003,
+      "referencingTestProjectCount": 10,
       "docsUrl": "/docs/excel/",
       "apiUrl": "/api/excel/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Excel"
@@ -262,7 +314,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Excel.Csv/OfficeIMO.Excel.Csv.csproj",
       "sourceFileCount": 4,
-      "referencingTestProjectCount": 2,
+      "referencingTestProjectCount": 3,
       "docsUrl": "/docs/excel/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Excel.Csv"
@@ -287,11 +339,24 @@
       "description": "HTML converter for OfficeIMO.Excel - Export Excel workbooks and worksheets to semantic or visual review HTML.",
       "kind": "package",
       "projectPath": "OfficeIMO.Excel.Html/OfficeIMO.Excel.Html.csproj",
-      "sourceFileCount": 16,
-      "referencingTestProjectCount": 3,
+      "sourceFileCount": 17,
+      "referencingTestProjectCount": 4,
       "docsUrl": "/docs/excel/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Excel.Html"
+    },
+    {
+      "name": "OfficeIMO.Excel.IWork",
+      "packageId": "OfficeIMO.Excel.IWork",
+      "category": "Office documents",
+      "description": "Opt-in Apple Numbers to OfficeIMO Excel conversion adapter with bounded source and loss reports.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Excel.IWork/OfficeIMO.Excel.IWork.csproj",
+      "sourceFileCount": 3,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/iwork/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Excel.IWork"
     },
     {
       "name": "OfficeIMO.Excel.OpenDocument",
@@ -301,7 +366,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Excel.OpenDocument/OfficeIMO.Excel.OpenDocument.csproj",
       "sourceFileCount": 8,
-      "referencingTestProjectCount": 2,
+      "referencingTestProjectCount": 3,
       "docsUrl": "/docs/excel/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Excel.OpenDocument"
@@ -314,7 +379,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Excel.Pdf/OfficeIMO.Excel.Pdf.csproj",
       "sourceFileCount": 23,
-      "referencingTestProjectCount": 3,
+      "referencingTestProjectCount": 4,
       "docsUrl": "/docs/excel/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Excel.Pdf"
@@ -378,7 +443,7 @@
       "description": "HTML parsing, resource policy, CSS layout, diagnostics, and direct rendering for OfficeIMO converters.",
       "kind": "package",
       "projectPath": "OfficeIMO.Html/OfficeIMO.Html.csproj",
-      "sourceFileCount": 272,
+      "sourceFileCount": 279,
       "referencingTestProjectCount": 6,
       "docsUrl": "/docs/html/",
       "apiUrl": "/api/html/",
@@ -391,7 +456,7 @@
       "description": "Direct dependency-free HTML/PDF rendering and PDF-to-HTML conversion for OfficeIMO.",
       "kind": "package",
       "projectPath": "OfficeIMO.Html.Pdf/OfficeIMO.Html.Pdf.csproj",
-      "sourceFileCount": 22,
+      "sourceFileCount": 24,
       "referencingTestProjectCount": 4,
       "docsUrl": "/docs/html/",
       "apiUrl": null,
@@ -411,17 +476,43 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Html.Pdf.Browser"
     },
     {
+      "name": "OfficeIMO.Html.Pdf.Workbench",
+      "packageId": "OfficeIMO.Html.Pdf.Workbench",
+      "category": "Publishing and conversion",
+      "description": "Local browser workbench for inspecting managed and Chromium HTML-to-PDF output and conversion evidence.",
+      "kind": "tool",
+      "projectPath": "Tools/OfficeIMO.Html.Pdf.Workbench/OfficeIMO.Html.Pdf.Workbench.csproj",
+      "sourceFileCount": 9,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/html/",
+      "apiUrl": null,
+      "packageUrl": null
+    },
+    {
       "name": "OfficeIMO.Html.Rtf",
       "packageId": "OfficeIMO.Html.Rtf",
       "category": "Publishing and conversion",
       "description": "Bidirectional HTML and RTF conversion for OfficeIMO.",
       "kind": "package",
       "projectPath": "OfficeIMO.Html.Rtf/OfficeIMO.Html.Rtf.csproj",
-      "sourceFileCount": 88,
+      "sourceFileCount": 89,
       "referencingTestProjectCount": 3,
       "docsUrl": "/docs/html/",
       "apiUrl": "/api/html-rtf/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Html.Rtf"
+    },
+    {
+      "name": "OfficeIMO.IWork",
+      "packageId": "OfficeIMO.IWork",
+      "category": "Formats and interoperability",
+      "description": "Bounded read-only Apple iWork package and IWA inspection with Pages, Numbers, and Keynote source projections.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.IWork/OfficeIMO.IWork.csproj",
+      "sourceFileCount": 30,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/iwork/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.IWork"
     },
     {
       "name": "OfficeIMO.Latex",
@@ -469,7 +560,7 @@
       "description": "Markdown builder, typed reader/AST, and HTML renderer for .NET with GitHub-like output and an optional portable reader profile.",
       "kind": "package",
       "projectPath": "OfficeIMO.Markdown/OfficeIMO.Markdown.csproj",
-      "sourceFileCount": 361,
+      "sourceFileCount": 362,
       "referencingTestProjectCount": 6,
       "docsUrl": "/docs/markdown/",
       "apiUrl": "/api/markdown/",
@@ -560,7 +651,7 @@
       "description": "Excel workbook renderer for OfficeIMO Markup semantic AST.",
       "kind": "library",
       "projectPath": "OfficeIMO.Markup.Excel/OfficeIMO.Markup.Excel.csproj",
-      "sourceFileCount": 3,
+      "sourceFileCount": 4,
       "referencingTestProjectCount": 2,
       "docsUrl": "/docs/capabilities/packages/",
       "apiUrl": null,
@@ -599,8 +690,8 @@
       "description": "MHTML archive loading, saving, HTML projection, and embedded MIME resources for OfficeIMO.",
       "kind": "package",
       "projectPath": "OfficeIMO.Mhtml/OfficeIMO.Mhtml.csproj",
-      "sourceFileCount": 2,
-      "referencingTestProjectCount": 4,
+      "sourceFileCount": 6,
+      "referencingTestProjectCount": 5,
       "docsUrl": "/docs/html/",
       "apiUrl": "/api/mhtml/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Mhtml"
@@ -613,7 +704,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Mhtml.Pdf/OfficeIMO.Mhtml.Pdf.csproj",
       "sourceFileCount": 1,
-      "referencingTestProjectCount": 3,
+      "referencingTestProjectCount": 4,
       "docsUrl": "/docs/html/",
       "apiUrl": "/api/mhtml-pdf/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Mhtml.Pdf"
@@ -626,7 +717,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.OneNote/OfficeIMO.OneNote.csproj",
       "sourceFileCount": 89,
-      "referencingTestProjectCount": 2,
+      "referencingTestProjectCount": 3,
       "docsUrl": "/docs/onenote/",
       "apiUrl": "/api/onenote/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OneNote"
@@ -638,7 +729,7 @@
       "description": "First-party offline OneNote to HTML conversion for OfficeIMO.",
       "kind": "package",
       "projectPath": "OfficeIMO.OneNote.Html/OfficeIMO.OneNote.Html.csproj",
-      "sourceFileCount": 7,
+      "sourceFileCount": 9,
       "referencingTestProjectCount": 2,
       "docsUrl": "/docs/onenote/",
       "apiUrl": null,
@@ -665,7 +756,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.OneNote.Pdf/OfficeIMO.OneNote.Pdf.csproj",
       "sourceFileCount": 7,
-      "referencingTestProjectCount": 1,
+      "referencingTestProjectCount": 2,
       "docsUrl": "/docs/onenote/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OneNote.Pdf"
@@ -677,7 +768,7 @@
       "description": "Native OpenDocument ODT, ODS, and ODP reader, writer, and preservation-aware document model for .NET.",
       "kind": "package",
       "projectPath": "OfficeIMO.OpenDocument/OfficeIMO.OpenDocument.csproj",
-      "sourceFileCount": 111,
+      "sourceFileCount": 114,
       "referencingTestProjectCount": 4,
       "docsUrl": "/docs/open-document/",
       "apiUrl": "/api/open-document/",
@@ -723,13 +814,26 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OpenDocument.Odt.Pdf"
     },
     {
+      "name": "OfficeIMO.Opml",
+      "packageId": "OfficeIMO.Opml",
+      "category": "Specialized components",
+      "description": "Lossless OPML 1.0 and 2.0 parser, editor, writer, validator, and conversion model for .NET.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Opml/OfficeIMO.Opml.csproj",
+      "sourceFileCount": 6,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/capabilities/packages/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Opml"
+    },
+    {
       "name": "OfficeIMO.Pdf",
       "packageId": "OfficeIMO.Pdf",
       "category": "Publishing and conversion",
       "description": "First-party PDF builder, reader, editor, renderer, and signature workflow for .NET.",
       "kind": "package",
       "projectPath": "OfficeIMO.Pdf/OfficeIMO.Pdf.csproj",
-      "sourceFileCount": 1016,
+      "sourceFileCount": 1089,
       "referencingTestProjectCount": 12,
       "docsUrl": "/docs/pdf/",
       "apiUrl": "/api/pdf/",
@@ -742,7 +846,7 @@
       "description": "Open-source, cross-platform .NET library for creating, reading, editing, and converting Microsoft PowerPoint PPT, PPTX, PPTM, POT, PPS, and related presentations without Microsoft Office.",
       "kind": "package",
       "projectPath": "OfficeIMO.PowerPoint/OfficeIMO.PowerPoint.csproj",
-      "sourceFileCount": 462,
+      "sourceFileCount": 466,
       "referencingTestProjectCount": 8,
       "docsUrl": "/docs/powerpoint/",
       "apiUrl": "/api/powerpoint/",
@@ -773,6 +877,19 @@
       "docsUrl": "/docs/powerpoint/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.PowerPoint.Html"
+    },
+    {
+      "name": "OfficeIMO.PowerPoint.IWork",
+      "packageId": "OfficeIMO.PowerPoint.IWork",
+      "category": "Office documents",
+      "description": "Opt-in Apple Keynote to OfficeIMO PowerPoint conversion adapter with bounded source and loss reports.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.PowerPoint.IWork/OfficeIMO.PowerPoint.IWork.csproj",
+      "sourceFileCount": 3,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/iwork/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.PowerPoint.IWork"
     },
     {
       "name": "OfficeIMO.PowerPoint.OpenDocument",
@@ -846,7 +963,7 @@
       "description": "Dependency-light contracts, routing, processing, and normalized document models for modular OfficeIMO readers.",
       "kind": "package",
       "projectPath": "OfficeIMO.Reader.Core/OfficeIMO.Reader.Core.csproj",
-      "sourceFileCount": 111,
+      "sourceFileCount": 114,
       "referencingTestProjectCount": 5,
       "docsUrl": "/docs/reader/",
       "apiUrl": "/api/reader/",
@@ -864,6 +981,19 @@
       "docsUrl": "/docs/reader/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Csv"
+    },
+    {
+      "name": "OfficeIMO.Reader.DocBook",
+      "packageId": "OfficeIMO.Reader.DocBook",
+      "category": "Extraction and ingestion",
+      "description": "Modular OfficeIMO.Reader adapter for bounded DocBook ingestion.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Reader.DocBook/OfficeIMO.Reader.DocBook.csproj",
+      "sourceFileCount": 5,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/reader/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.DocBook"
     },
     {
       "name": "OfficeIMO.Reader.Email",
@@ -898,8 +1028,8 @@
       "description": "Excel workbook adapter for OfficeIMO.Reader.Core.",
       "kind": "package",
       "projectPath": "OfficeIMO.Reader.Excel/OfficeIMO.Reader.Excel.csproj",
-      "sourceFileCount": 4,
-      "referencingTestProjectCount": 2,
+      "sourceFileCount": 5,
+      "referencingTestProjectCount": 3,
       "docsUrl": "/docs/reader/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Excel"
@@ -983,6 +1113,19 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Notebook"
     },
     {
+      "name": "OfficeIMO.Reader.Ocr",
+      "packageId": "OfficeIMO.Reader.Ocr",
+      "category": "Extraction and ingestion",
+      "description": "Easy local OCR facade for OfficeIMO images and searchable PDFs.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Reader.Ocr/OfficeIMO.Reader.Ocr.csproj",
+      "sourceFileCount": 5,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/reader/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Ocr"
+    },
+    {
       "name": "OfficeIMO.Reader.Ocr.Process",
       "packageId": "OfficeIMO.Reader.Ocr.Process",
       "category": "Extraction and ingestion",
@@ -1002,7 +1145,7 @@
       "description": "Optional Tesseract CLI OCR engine for OfficeIMO.Reader.",
       "kind": "package",
       "projectPath": "OfficeIMO.Reader.Ocr.Tesseract/OfficeIMO.Reader.Ocr.Tesseract.csproj",
-      "sourceFileCount": 5,
+      "sourceFileCount": 8,
       "referencingTestProjectCount": 1,
       "docsUrl": "/docs/reader/",
       "apiUrl": null,
@@ -1035,13 +1178,26 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.OpenDocument"
     },
     {
+      "name": "OfficeIMO.Reader.Opml",
+      "packageId": "OfficeIMO.Reader.Opml",
+      "category": "Extraction and ingestion",
+      "description": "Modular OfficeIMO.Reader adapter for bounded OPML ingestion.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Reader.Opml/OfficeIMO.Reader.Opml.csproj",
+      "sourceFileCount": 4,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/reader/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Opml"
+    },
+    {
       "name": "OfficeIMO.Reader.Pdf",
       "packageId": "OfficeIMO.Reader.Pdf",
       "category": "Extraction and ingestion",
       "description": "PDF reader and normalized PDF projection bridge for OfficeIMO.Reader.",
       "kind": "package",
       "projectPath": "OfficeIMO.Reader.Pdf/OfficeIMO.Reader.Pdf.csproj",
-      "sourceFileCount": 16,
+      "sourceFileCount": 18,
       "referencingTestProjectCount": 3,
       "docsUrl": "/docs/reader/",
       "apiUrl": null,
@@ -1119,8 +1275,8 @@
       "description": "Word document adapter for OfficeIMO.Reader.Core.",
       "kind": "package",
       "projectPath": "OfficeIMO.Reader.Word/OfficeIMO.Reader.Word.csproj",
-      "sourceFileCount": 5,
-      "referencingTestProjectCount": 2,
+      "sourceFileCount": 6,
+      "referencingTestProjectCount": 3,
       "docsUrl": "/docs/reader/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Word"
@@ -1210,7 +1366,7 @@
       "description": "Optional CMS, S/MIME, RFC 3161, X.509, and XML Digital Signature support for OfficeIMO packages.",
       "kind": "package",
       "projectPath": "OfficeIMO.Security/OfficeIMO.Security.csproj",
-      "sourceFileCount": 13,
+      "sourceFileCount": 14,
       "referencingTestProjectCount": 4,
       "docsUrl": "/docs/capabilities/packages/",
       "apiUrl": null,
@@ -1220,10 +1376,10 @@
       "name": "OfficeIMO.Tool",
       "packageId": "OfficeIMO.Tool",
       "category": "Specialized components",
-      "description": "Unified command-line interface for OfficeIMO document conversion, extraction, markup, and capability discovery.",
+      "description": "Unified command-line interface for OfficeIMO document conversion, extraction, markup, output, intake, and capability discovery.",
       "kind": "tool",
       "projectPath": "OfficeIMO.Tool/OfficeIMO.Tool.csproj",
-      "sourceFileCount": 30,
+      "sourceFileCount": 36,
       "referencingTestProjectCount": 1,
       "docsUrl": "/docs/capabilities/packages/",
       "apiUrl": null,
@@ -1236,8 +1392,8 @@
       "description": "An Open Source cross-platform .NET library providing an easy way to create\n            Microsoft Visio documents.",
       "kind": "package",
       "projectPath": "OfficeIMO.Visio/OfficeIMO.Visio.csproj",
-      "sourceFileCount": 350,
-      "referencingTestProjectCount": 4,
+      "sourceFileCount": 351,
+      "referencingTestProjectCount": 5,
       "docsUrl": "/docs/visio/",
       "apiUrl": "/api/visio/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Visio"
@@ -1250,7 +1406,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Visio.Pdf/OfficeIMO.Visio.Pdf.csproj",
       "sourceFileCount": 3,
-      "referencingTestProjectCount": 1,
+      "referencingTestProjectCount": 2,
       "docsUrl": "/docs/visio/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Visio.Pdf"
@@ -1262,8 +1418,8 @@
       "description": "Open-source, cross-platform .NET library for creating, reading, editing, and converting Microsoft Word DOC, DOCX, DOCM, DOT, DOTX, and DOTM documents without Microsoft Office.",
       "kind": "package",
       "projectPath": "OfficeIMO.Word/OfficeIMO.Word.csproj",
-      "sourceFileCount": 654,
-      "referencingTestProjectCount": 12,
+      "sourceFileCount": 670,
+      "referencingTestProjectCount": 13,
       "docsUrl": "/docs/word/",
       "apiUrl": "/api/word/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Word"
@@ -1288,11 +1444,24 @@
       "description": "HTML converter for OfficeIMO.Word - Convert Word documents to/from HTML using AngleSharp",
       "kind": "package",
       "projectPath": "OfficeIMO.Word.Html/OfficeIMO.Word.Html.csproj",
-      "sourceFileCount": 72,
-      "referencingTestProjectCount": 3,
+      "sourceFileCount": 73,
+      "referencingTestProjectCount": 4,
       "docsUrl": "/docs/word/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Word.Html"
+    },
+    {
+      "name": "OfficeIMO.Word.IWork",
+      "packageId": "OfficeIMO.Word.IWork",
+      "category": "Office documents",
+      "description": "Opt-in Apple Pages to OfficeIMO Word conversion adapter with bounded source and loss reports.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Word.IWork/OfficeIMO.Word.IWork.csproj",
+      "sourceFileCount": 3,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/iwork/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Word.IWork"
     },
     {
       "name": "OfficeIMO.Word.Markdown",
@@ -1302,7 +1471,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Word.Markdown/OfficeIMO.Word.Markdown.csproj",
       "sourceFileCount": 28,
-      "referencingTestProjectCount": 5,
+      "referencingTestProjectCount": 6,
       "docsUrl": "/docs/word/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Word.Markdown"
@@ -1315,7 +1484,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Word.OpenDocument/OfficeIMO.Word.OpenDocument.csproj",
       "sourceFileCount": 6,
-      "referencingTestProjectCount": 2,
+      "referencingTestProjectCount": 3,
       "docsUrl": "/docs/word/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Word.OpenDocument"
@@ -1328,7 +1497,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Word.Pdf/OfficeIMO.Word.Pdf.csproj",
       "sourceFileCount": 36,
-      "referencingTestProjectCount": 4,
+      "referencingTestProjectCount": 5,
       "docsUrl": "/docs/word/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Word.Pdf"
@@ -1345,6 +1514,19 @@
       "docsUrl": "/docs/word/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Word.Rtf"
+    },
+    {
+      "name": "OfficeIMO.Workflows",
+      "packageId": "OfficeIMO.Workflows",
+      "category": "Specialized components",
+      "description": "Typed local document workflows that compose first-party OfficeIMO conversion and PDF capabilities.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.Workflows/OfficeIMO.Workflows.csproj",
+      "sourceFileCount": 15,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/capabilities/packages/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Workflows"
     },
     {
       "name": "OfficeIMO.Zip",

@@ -3,8 +3,26 @@ using System.Threading;
 namespace OfficeIMO.Pdf;
 
 internal static class PdfOcrLogicalDocumentBuilder {
-    internal static PdfLogicalDocument Build(
-        PdfLogicalDocument nativeDocument,
+    internal static IReadOnlyList<PdfRecognizedWord> OrderWordsForLogicalReading(
+        IReadOnlyList<PdfRecognizedWord> words,
+        CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        PdfRecognizedWord[] ordered = words
+            .OrderBy(static word => word.ProviderSequence)
+            .ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+        return ordered;
+    }
+
+    internal static IReadOnlyList<PdfOcrLogicalTextLine> BuildTextLines(
+        IReadOnlyList<PdfRecognizedWord> words,
+        CancellationToken cancellationToken) =>
+        BuildLines(words, cancellationToken)
+            .Select(static line => new PdfOcrLogicalTextLine(line.Top, line.Left, line.Text))
+            .ToArray();
+
+    internal static PdfDocumentReadResult Build(
+        PdfDocumentReadResult nativeDocument,
         IReadOnlyList<PdfOcrPageMergeResult> mergePages,
         PdfOcrMergeOptions options,
         CancellationToken cancellationToken) {
@@ -295,19 +313,7 @@ internal static class PdfOcrLogicalDocumentBuilder {
     }
 
     private static bool TryParseList(string text, out string marker, out string body) {
-        marker = string.Empty;
-        body = text;
-        string trimmed = text.TrimStart();
-        int separator = trimmed.IndexOf(' ');
-        if (separator <= 0) return false;
-        string candidate = trimmed.Substring(0, separator);
-        bool bullet = candidate == "-" || candidate == "*" || candidate == "•";
-        string numeric = candidate.TrimEnd('.', ')').TrimStart('(');
-        bool numbered = numeric.Length > 0 && numeric.All(static character => char.IsDigit(character) || character == '.');
-        if (!bullet && !numbered) return false;
-        marker = candidate;
-        body = trimmed.Substring(separator + 1).TrimStart();
-        return body.Length > 0;
+        return ContentStructureExtractor.TryParseListItemText(text, out marker, out body, out _);
     }
 
     private static int HeadingLevel(double height, double medianHeight) =>
@@ -341,7 +347,7 @@ internal static class PdfOcrLogicalDocumentBuilder {
         internal double CenterY => (Top + Bottom) / 2D;
         internal double Height => Bottom - Top;
         internal double Confidence => Words.Count == 0 ? 0D : _confidenceTotal / Words.Count;
-        internal string Text => JoinWords(Words);
+        internal string Text => JoinWords(Words.OrderBy(static word => word.ProviderSequence));
         internal void Add(PdfRecognizedWord word) {
             if (Words.Count == 0) {
                 Left = word.X;
@@ -380,13 +386,14 @@ internal static class PdfOcrLogicalDocumentBuilder {
             new OcrCell(
                 words.Min(static word => word.X),
                 words.Max(static word => word.X + word.Width),
-                JoinWords(words),
+                JoinWords(words.OrderBy(static word => word.ProviderSequence)),
                 words.ToArray());
     }
 
-    private static string JoinWords(IReadOnlyList<PdfRecognizedWord> words) {
+    private static string JoinWords(IEnumerable<PdfRecognizedWord> source) {
+        PdfRecognizedWord[] words = source as PdfRecognizedWord[] ?? source.ToArray();
         var builder = new System.Text.StringBuilder();
-        for (int index = 0; index < words.Count; index++) {
+        for (int index = 0; index < words.Length; index++) {
             string text = words[index].Text;
             bool attach = index > 0 && text.Length > 0 && IsTrailingPunctuation(text[0]);
             if (builder.Length > 0 && !attach) builder.Append(' ');
@@ -398,4 +405,16 @@ internal static class PdfOcrLogicalDocumentBuilder {
     private static bool IsTrailingPunctuation(char character) =>
         character == ',' || character == '.' || character == ';' || character == ':' ||
         character == '!' || character == '?' || character == ')' || character == ']' || character == '}';
+}
+
+internal readonly struct PdfOcrLogicalTextLine {
+    internal PdfOcrLogicalTextLine(double top, double left, string text) {
+        Top = top;
+        Left = left;
+        Text = text;
+    }
+
+    internal double Top { get; }
+    internal double Left { get; }
+    internal string Text { get; }
 }

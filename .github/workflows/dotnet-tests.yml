@@ -100,6 +100,40 @@ jobs:
         shell: pwsh
         run: ./Build/Test-HtmlPackages.ps1
 
+  typography-package-consumers:
+    name: 'OfficeIMO typography providers / ${{ matrix.os }}'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Build, test, and package-smoke typography providers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet test OfficeIMO.Drawing.HarfBuzz.Tests/OfficeIMO.Drawing.HarfBuzz.Tests.csproj --configuration Release --verbosity $env:TEST_VERBOSITY
+          dotnet test OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj --configuration Release --verbosity $env:TEST_VERBOSITY --filter "FullyQualifiedName~DrawingWoff2FontTests|FullyQualifiedName~DrawingCffFontTests|FullyQualifiedName~DrawingTrueTypeVariableFontTests"
+          ./Build/Test-TypographyPackages.ps1
+
   email-package-consumers:
     name: 'OfficeIMO email platform packed consumers'
     runs-on: windows-latest
@@ -130,6 +164,7 @@ jobs:
             'OfficeIMO.Rtf/OfficeIMO.Rtf.csproj',
             'OfficeIMO.Email/OfficeIMO.Email.csproj',
             'OfficeIMO.Html/OfficeIMO.Html.csproj',
+            'OfficeIMO.Html.Rtf/OfficeIMO.Html.Rtf.csproj',
             'OfficeIMO.Email.Html/OfficeIMO.Email.Html.csproj',
             'OfficeIMO.Markdown.Html/OfficeIMO.Markdown.Html.csproj',
             'OfficeIMO.Mhtml/OfficeIMO.Mhtml.csproj',
@@ -160,6 +195,7 @@ jobs:
           $markdownVersion = Get-PackedPackageVersion 'OfficeIMO.Markdown'
           $rtfVersion = Get-PackedPackageVersion 'OfficeIMO.Rtf'
           $htmlVersion = Get-PackedPackageVersion 'OfficeIMO.Html'
+          $htmlRtfVersion = Get-PackedPackageVersion 'OfficeIMO.Html.Rtf'
           $markdownHtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Markdown.Html'
           $mhtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Mhtml'
           $readerHtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Html'
@@ -194,6 +230,7 @@ jobs:
             'OfficeIMO.Email',
             'OfficeIMO.Email.Html',
             'OfficeIMO.Html',
+            'OfficeIMO.Html.Rtf',
             'OfficeIMO.Markdown.Html',
             'OfficeIMO.Mhtml',
             'OfficeIMO.Reader.Core',
@@ -223,6 +260,7 @@ jobs:
             @{ Id = 'officeimo.markdown'; Version = $markdownVersion },
             @{ Id = 'officeimo.rtf'; Version = $rtfVersion },
             @{ Id = 'officeimo.html'; Version = $htmlVersion },
+            @{ Id = 'officeimo.html.rtf'; Version = $htmlRtfVersion },
             @{ Id = 'officeimo.markdown.html'; Version = $markdownHtmlVersion },
             @{ Id = 'officeimo.mhtml'; Version = $mhtmlVersion },
             @{ Id = 'officeimo.reader.html'; Version = $readerHtmlVersion }
@@ -503,6 +541,8 @@ jobs:
             project: OfficeIMO.AsciiDoc.Tests/OfficeIMO.AsciiDoc.Tests.csproj
           - name: AsciiDoc-Markdown
             project: OfficeIMO.AsciiDoc.Markdown.Tests/OfficeIMO.AsciiDoc.Markdown.Tests.csproj
+          - name: Bibliography
+            project: OfficeIMO.Bibliography.Tests/OfficeIMO.Bibliography.Tests.csproj
           - name: CSV
             project: OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj
           - name: ChartForgeX
@@ -641,6 +681,35 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          function Invoke-VerifiedDownload {
+            param(
+              [Parameter(Mandatory)] [string] $Uri,
+              [Parameter(Mandatory)] [string] $DestinationPath,
+              [Parameter(Mandatory)] [string] $ExpectedSha256,
+              [int] $MaximumAttempts = 3
+            )
+
+            for ($attempt = 1; $attempt -le $MaximumAttempts; $attempt++) {
+              try {
+                Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+                Invoke-WebRequest -Uri $Uri -OutFile $DestinationPath
+                $actualSha256 = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash
+                if ($actualSha256 -ne $ExpectedSha256) {
+                  throw "Download checksum mismatch for $Uri`: $actualSha256"
+                }
+                return
+              } catch {
+                Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+                if ($attempt -eq $MaximumAttempts) {
+                  throw
+                }
+                $delaySeconds = [Math]::Pow(2, $attempt)
+                Write-Warning "Download attempt $attempt of $MaximumAttempts failed for $Uri. Retrying in $delaySeconds seconds. $($_.Exception.Message)"
+                Start-Sleep -Seconds $delaySeconds
+              }
+            }
+          }
+
           $downloadUrl = 'https://download.microsoft.com/download/c53e473c-3060-4ee9-ac5c-0ddbbeced4e5/OfficeSips_x64_16-0-19416-43425.exe'
           $expectedSha256 = '96335D8AFBED13919E6BD31CF38974FB4EE2A534734A5E5736E1A40D032D2456'
           $downloadPath = Join-Path $env:RUNNER_TEMP 'OfficeSips_x64.exe'
@@ -658,18 +727,10 @@ jobs:
           $outerDirectory = Join-Path $extractRoot 'outer'
           $toolsDirectory = Join-Path $extractRoot 'tools'
           New-Item -ItemType Directory -Force -Path $outerDirectory, $toolsDirectory, $corpusRoot | Out-Null
-          Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath
-          $actualSha256 = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash
-          if ($actualSha256 -ne $expectedSha256) {
-            throw "OfficeSips download checksum mismatch: $actualSha256"
-          }
+          Invoke-VerifiedDownload -Uri $downloadUrl -DestinationPath $downloadPath -ExpectedSha256 $expectedSha256
           $runtimeDll = Join-Path $env:WINDIR 'System32\msvcr100.dll'
           if (-not (Test-Path -LiteralPath $runtimeDll)) {
-            Invoke-WebRequest -Uri $runtimeUrl -OutFile $runtimePath
-            $actualRuntimeSha256 = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash
-            if ($actualRuntimeSha256 -ne $runtimeSha256) {
-              throw "Visual C++ 2010 SP1 runtime checksum mismatch: $actualRuntimeSha256"
-            }
+            Invoke-VerifiedDownload -Uri $runtimeUrl -DestinationPath $runtimePath -ExpectedSha256 $runtimeSha256
             $runtimeInstall = Start-Process -FilePath $runtimePath -ArgumentList '/q', '/norestart' -Wait -PassThru
             if ($runtimeInstall.ExitCode -notin 0, 1638, 3010) {
               throw "Visual C++ 2010 SP1 runtime installation failed with exit code $($runtimeInstall.ExitCode)."
@@ -681,11 +742,7 @@ jobs:
           foreach ($item in $corpus) {
             $corpusPath = Join-Path $corpusRoot $item.Name
             $corpusUrl = 'https://raw.githubusercontent.com/apache/poi/f613a72d8c591751caca83b45637a1b653cea833/test-data/' + $item.Path
-            Invoke-WebRequest -Uri $corpusUrl -OutFile $corpusPath
-            $actualCorpusSha256 = (Get-FileHash -LiteralPath $corpusPath -Algorithm SHA256).Hash
-            if ($actualCorpusSha256 -ne $item.Sha256) {
-              throw "VBA interoperability corpus checksum mismatch for $($item.Name): $actualCorpusSha256"
-            }
+            Invoke-VerifiedDownload -Uri $corpusUrl -DestinationPath $corpusPath -ExpectedSha256 $item.Sha256
           }
           & 7z.exe x $downloadPath "-o$outerDirectory" -y | Out-Null
           $sipPath = Get-ChildItem -LiteralPath $outerDirectory -Filter msosipx.dll -Recurse |
@@ -901,6 +958,8 @@ jobs:
           if [ "${{ matrix.partition }}" = "other-projects" ]; then
             dotnet restore OfficeIMO.Shared.Tests/OfficeIMO.Shared.Tests.csproj
             dotnet restore OfficeIMO.ChartForgeX.Tests/OfficeIMO.ChartForgeX.Tests.csproj
+            dotnet restore OfficeIMO.Tool.Tests/OfficeIMO.Tool.Tests.csproj
+            dotnet restore OfficeIMO.Bibliography.Tests/OfficeIMO.Bibliography.Tests.csproj
           fi
           if [[ "${{ matrix.partition }}" == markdown-* ]]; then
             dotnet restore OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj
@@ -930,6 +989,7 @@ jobs:
             dotnet restore OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj
             dotnet restore OfficeIMO.Drawing.CodeGlyphX.Tests/OfficeIMO.Drawing.CodeGlyphX.Tests.csproj
             dotnet restore OfficeIMO.GoogleWorkspace.Tests/OfficeIMO.GoogleWorkspace.Tests.csproj
+            dotnet restore OfficeIMO.IWork.Tests/OfficeIMO.IWork.Tests.csproj
             dotnet restore OfficeIMO.Markup.Tests/OfficeIMO.Markup.Tests.csproj
             dotnet restore OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj
             dotnet restore OfficeIMO.Visio.Tests/OfficeIMO.Visio.Tests.csproj
@@ -951,6 +1011,8 @@ jobs:
           if [ "${{ matrix.partition }}" = "other-projects" ]; then
             dotnet build OfficeIMO.Shared.Tests/OfficeIMO.Shared.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.ChartForgeX.Tests/OfficeIMO.ChartForgeX.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.Tool.Tests/OfficeIMO.Tool.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.Bibliography.Tests/OfficeIMO.Bibliography.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
           fi
           if [[ "${{ matrix.partition }}" == markdown-* ]]; then
             dotnet build OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
@@ -980,6 +1042,7 @@ jobs:
             dotnet build OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.Drawing.CodeGlyphX.Tests/OfficeIMO.Drawing.CodeGlyphX.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.GoogleWorkspace.Tests/OfficeIMO.GoogleWorkspace.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.IWork.Tests/OfficeIMO.IWork.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.Markup.Tests/OfficeIMO.Markup.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.Visio.Tests/OfficeIMO.Visio.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
@@ -1224,6 +1287,7 @@ jobs:
               run_drawing_tests
               dotnet test OfficeIMO.Drawing.CodeGlyphX.Tests/OfficeIMO.Drawing.CodeGlyphX.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               run_googleworkspace_tests
+              dotnet test OfficeIMO.IWork.Tests/OfficeIMO.IWork.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               run_markup_tests
               run_opendocument_tests
               dotnet test OfficeIMO.OpenDocument.Converters.Tests/OfficeIMO.OpenDocument.Converters.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "${test_filter}" -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
@@ -1233,6 +1297,8 @@ jobs:
               dotnet test OfficeIMO.OneNote.Tests/OfficeIMO.OneNote.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               run_shared_tests "shared-contracts" 'FullyQualifiedName~OfficeIMO.Shared.Tests.'
               dotnet test OfficeIMO.ChartForgeX.Tests/OfficeIMO.ChartForgeX.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+              dotnet test OfficeIMO.Tool.Tests/OfficeIMO.Tool.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+              dotnet test OfficeIMO.Bibliography.Tests/OfficeIMO.Bibliography.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               dotnet test OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               dotnet test OfficeIMO.VerifyTests/OfficeIMO.VerifyTests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               dotnet test OfficeIMO.MarkdownRenderer.Wpf.Tests/OfficeIMO.MarkdownRenderer.Wpf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
@@ -1296,6 +1362,42 @@ jobs:
           files: '**/coverage.cobertura.xml'
           fail_ci_if_error: false
         continue-on-error: true
+
+  officeimo-tool-package-gate:
+    name: 'OfficeIMO.Tool package smoke gate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Pack and install the .NET tool
+        run: |
+          dotnet pack OfficeIMO.Tool/OfficeIMO.Tool.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --output artifacts/tool-package -p:PackageVersion=0.0.0-local
+          dotnet tool install OfficeIMO.Tool --tool-path artifacts/tool-install --version 0.0.0-local --add-source artifacts/tool-package
+
+      - name: Exercise the installed command surface
+        run: |
+          test "$(artifacts/tool-install/officeimo --version)" = "OfficeIMO.Tool 0.0.0-local"
+          artifacts/tool-install/officeimo help
+          artifacts/tool-install/officeimo reader capabilities
+          artifacts/tool-install/officeimo read README.md --format markdown --output artifacts/readme.md
+          artifacts/tool-install/officeimo inspect README.md
+          test -s artifacts/readme.md
+
+      - name: Exercise a manifest-local installation
+        run: |
+          mkdir -p artifacts/tool-manifest
+          cd artifacts/tool-manifest
+          dotnet new tool-manifest
+          dotnet tool install OfficeIMO.Tool --version 0.0.0-local --add-source ../tool-package
+          test "$(dotnet tool run officeimo --version)" = "OfficeIMO.Tool 0.0.0-local"
+          dotnet officeimo help
 
   excel-image-visual-gate:
     name: 'Excel image visual smoke gate'
@@ -1378,6 +1480,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - test-ubuntu-matrix
+      - officeimo-tool-package-gate
       - excel-image-visual-gate
       - office-interoperability-gate
       - binary-powerpoint-libreoffice
@@ -1388,6 +1491,10 @@ jobs:
         run: |
           if [ "${{ needs.test-ubuntu-matrix.result }}" != "success" ]; then
             echo "Ubuntu test matrix result: ${{ needs.test-ubuntu-matrix.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.officeimo-tool-package-gate.result }}" != "success" ]; then
+            echo "OfficeIMO.Tool package gate result: ${{ needs.officeimo-tool-package-gate.result }}"
             exit 1
           fi
           if [ "${{ needs.excel-image-visual-gate.result }}" != "success" ]; then

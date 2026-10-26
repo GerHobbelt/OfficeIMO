@@ -8,21 +8,26 @@ internal static class PdfSignatureMutationAnalyzer {
         byte[] after,
         PdfMutationOperation operation,
         IEnumerable<string>? fieldNames = null,
-        PdfReadOptions? readOptions = null,
+        PdfLoadOptions? readOptions = null,
+        PdfLoadOptions? afterReadOptions = null,
         PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic) {
         Guard.NotNull(before, nameof(before));
         Guard.NotNull(after, nameof(after));
 
-        PdfMutationPlan plan = PdfMutationPlanner.Plan(before, operation, readOptions, fieldNames, executionPreference);
-        PdfSignatureValidationReport beforeValidation = PdfSignatureValidator.Validate(before, readOptions);
-        PdfReadOptions afterReadOptions = PdfReadOptions.WithMinimumInputBytes(readOptions, after.LongLength);
-        PdfSignatureValidationReport afterValidation = PdfSignatureValidator.Validate(after, afterReadOptions);
-        Dictionary<int, PdfIndirectObject> beforeObjects = PdfSyntax.ParseObjects(before, readOptions).Map;
-        Dictionary<int, PdfIndirectObject> afterObjects = PdfSyntax.ParseObjects(after, afterReadOptions).Map;
-        bool prefixPreserved = HasExactPrefix(after, before);
-        bool revisionChainExtended = HasExtendedRevisionChain(beforeValidation.Security, afterValidation.Security);
         int[] beforeRevisionEnds = FindRevisionEnds(before);
         int[] afterRevisionEnds = FindRevisionEnds(after);
+        PdfMutationPlan plan = PdfMutationPlanner.Plan(before, operation, readOptions, fieldNames, executionPreference);
+        PdfSignatureValidationReport beforeValidation = PdfSignatureValidator.Validate(before, readOptions);
+        PdfLoadOptions effectiveAfterReadOptions = afterReadOptions ?? PdfLoadOptions.ForGeneratedOutput(
+            readOptions,
+            before,
+            after,
+            new PdfGeneratedOutputGrowth(additionalRevisions: Math.Max(0, afterRevisionEnds.Length - beforeRevisionEnds.Length)));
+        PdfSignatureValidationReport afterValidation = PdfSignatureValidator.Validate(after, effectiveAfterReadOptions);
+        Dictionary<int, PdfIndirectObject> beforeObjects = PdfSyntax.ParseObjects(before, readOptions).Map;
+        Dictionary<int, PdfIndirectObject> afterObjects = PdfSyntax.ParseObjects(after, effectiveAfterReadOptions).Map;
+        bool prefixPreserved = HasExactPrefix(after, before);
+        bool revisionChainExtended = HasExtendedRevisionChain(beforeValidation.Security, afterValidation.Security);
         PdfSignatureMutationPermissionStatus permission = GetPermissionStatus(plan, beforeValidation.HasSignatures);
         var results = new List<PdfSignatureMutationResult>(beforeValidation.Signatures.Count);
 

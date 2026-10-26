@@ -14,7 +14,7 @@ public class PdfDocumentIOTests {
         using var stream = new MemoryStream(bytes);
         stream.Position = Math.Min(10, stream.Length);
 
-        PdfDocument document = await PdfDocument.OpenAsync(stream);
+        PdfDocument document = await PdfDocument.LoadAsync(stream);
 
         Assert.Equal(Math.Min(10, stream.Length), stream.Position);
         Assert.Equal(1, PdfInspector.Inspect(document.ToBytes()).PageCount);
@@ -29,7 +29,7 @@ public class PdfDocumentIOTests {
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            PdfDocument.OpenAsync(stream, cancellationToken: cancellation.Token));
+            PdfDocument.LoadAsync(stream, cancellationToken: cancellation.Token));
 
         Assert.Equal(7, stream.Position);
     }
@@ -95,7 +95,7 @@ public class PdfDocumentIOTests {
         Assert.True(PdfInspector.Probe(bytes).HasEncryption);
         Assert.Contains(
             "Direct encrypted stream",
-            PdfTextExtractor.ExtractAllText(bytes, (PdfTextLayoutOptions?)null, new PdfReadOptions { Password = "open" }),
+            PdfTextExtractor.ExtractAllText(bytes, (PdfTextLayoutOptions?)null, new PdfLoadOptions { Password = "open" }),
             StringComparison.Ordinal);
     }
 
@@ -174,6 +174,27 @@ public class PdfDocumentIOTests {
     }
 
     [Fact]
+    public async Task SaveAsync_FailIfExists_PreservesDestinationAtCommitBoundary() {
+        string directory = Path.Combine(Path.GetTempPath(), "officeimo-pdf-save-conflict-" + Guid.NewGuid().ToString("N"));
+        string outputPath = Path.Combine(directory, "document.pdf");
+
+        try {
+            Directory.CreateDirectory(directory);
+            byte[] existing = Encoding.UTF8.GetBytes("caller-owned destination");
+            File.WriteAllBytes(outputPath, existing);
+
+            await Assert.ThrowsAsync<IOException>(() => BuildDocument("Must not replace")
+                .SaveAsync(outputPath, OfficeConversionFileConflictPolicy.FailIfExists, CancellationToken.None));
+
+            Assert.Equal(existing, File.ReadAllBytes(outputPath));
+        } finally {
+            if (Directory.Exists(directory)) {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SaveAsync_WithCanceledToken_DoesNotCreatePathOutput() {
         string directory = Path.Combine(Path.GetTempPath(), "officeimo-pdf-save-canceled-" + Guid.NewGuid().ToString("N"));
         string outputPath = Path.Combine(directory, "out", "document.pdf");
@@ -185,6 +206,20 @@ public class PdfDocumentIOTests {
 
         Assert.False(Directory.Exists(directory));
         Assert.False(File.Exists(outputPath));
+    }
+
+    [Fact]
+    public async Task SaveAsync_DefaultLiteralBindsToTheCancellationTokenOverload() {
+        string directory = Path.Combine(Path.GetTempPath(), "officeimo-pdf-save-default-token-" + Guid.NewGuid().ToString("N"));
+        string outputPath = Path.Combine(directory, "document.pdf");
+        try {
+            await BuildDocument("Default cancellation token").SaveAsync(outputPath, default);
+
+            Assert.True(File.Exists(outputPath));
+            Assert.Equal("Default cancellation token", PdfInspector.Inspect(outputPath).Metadata.Title);
+        } finally {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

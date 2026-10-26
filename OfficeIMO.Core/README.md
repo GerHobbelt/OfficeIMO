@@ -5,7 +5,7 @@
 
 `OfficeIMO.Core` is the zero-dependency shared foundation for OfficeIMO packages. It owns common document lifecycle and package-safety contracts, neutral tabular row mapping, color conversion, image metadata, font and text measurement, vector scenes, reusable ink and math models, chart snapshots, SVG, raster canvases, PNG/JPEG/TIFF/WebP encoding, and drawing-quality primitives. Format packages keep their file-format behavior while reusing these document-agnostic models and renderers.
 
-The assembly was previously named `OfficeIMO.Drawing`. Drawing became the original shared foundation because keeping these primitives together avoided a separate Core → Drawing → format dependency chain. As lifecycle, security, package, and data contracts accumulated, the package name stopped describing its actual responsibility. OfficeIMO 3.1 renames that same single zero-dependency foundation to `OfficeIMO.Core`; it does not split it into another runtime dependency. Actual drawing APIs remain in `OfficeIMO.Drawing`, neutral data and flattening contracts use `OfficeIMO.Data`, security APIs remain in `OfficeIMO.Security`, and cross-document lifecycle, compatibility, capability, and conversion-report contracts use the root `OfficeIMO` namespace.
+The assembly was previously named `OfficeIMO.Drawing`. Drawing became the original shared foundation because keeping these primitives together avoided a separate Core → Drawing → format dependency chain. As lifecycle, security, package, and data contracts accumulated, the package name stopped describing its actual responsibility. That same single zero-dependency foundation is now named `OfficeIMO.Core`; it was not split into another runtime dependency. Actual drawing APIs remain in `OfficeIMO.Drawing`, neutral data and flattening contracts use `OfficeIMO.Data`, security APIs remain in `OfficeIMO.Security`, and cross-document lifecycle, compatibility, capability, and conversion-report contracts use the root `OfficeIMO` namespace.
 
 ## Install
 
@@ -27,6 +27,18 @@ var loadOptions = new DocumentLoadOptions {
 ```
 
 Word, Excel, and PowerPoint expose format-specific options derived from these shared contracts.
+
+### Portable AES for restricted hosts
+
+Browser WebAssembly and other hosts without synchronous platform AES can explicitly supply the dependency-free managed
+AES-CBC provider to a format API that accepts `IOfficeAesCryptographyProvider`. Desktop and server applications should
+normally keep using their native platform AES implementation.
+
+```csharp
+using OfficeIMO.Security;
+
+IOfficeAesCryptographyProvider aes = OfficeManagedAesCryptographyProvider.Default;
+```
 
 ### Colors and vector intent
 
@@ -224,7 +236,10 @@ using OfficeIMO.Drawing;
 var image = new OfficeRasterImage(320, 180, OfficeColor.White);
 var options = new OfficeRasterEncodingOptions {
     Jpeg = new OfficeJpegEncodeOptions { Quality = 90 },
-    Tiff = new OfficeTiffEncodeOptions { Compression = OfficeTiffCompression.Deflate }
+    Tiff = new OfficeTiffEncodeOptions {
+        Compression = OfficeTiffCompression.Lzw,
+        Predictor = OfficeTiffPredictor.Horizontal
+    }
 };
 
 byte[] jpeg = OfficeRasterImageEncoder.Encode(image, OfficeImageExportFormat.Jpeg, options);
@@ -232,9 +247,78 @@ byte[] tiff = OfficeRasterImageEncoder.Encode(image, OfficeImageExportFormat.Tif
 byte[] webp = OfficeRasterImageEncoder.Encode(image, OfficeImageExportFormat.Webp, options);
 ```
 
-WebP output is deterministic, lossless VP8L. TIFF output is a single-page classic RGBA image with uncompressed, PackBits, or Deflate strips. JPEG uses the existing managed quality, subsampling, progressive, metadata, and transparency-flattening settings.
+The same encoder can write directly to a caller-owned stream when materializing another complete output array would be wasteful. On .NET 8 and later, the codecs also accept `IBufferWriter<byte>` without adding a package dependency to `OfficeIMO.Core`:
 
-`OfficeRasterExportPlanner` is the shared pre-allocation owner for image export. It combines the caller's `MaximumRasterPixels` with renderer and encoder dimension/pixel limits, then either reduces scale with `IMAGE_RASTER_SCALE_REDUCED` or throws `OfficeImageExportLimitException`, according to `RasterOverflowBehavior`. The returned plan also owns the effective encoding settings: `CreateEncodingOptions()` reduces encoded density with the raster scale so safety limits preserve the document's physical size. Explicit top-level `DpiX`/`DpiY` values apply across formats; when those values are not assigned, format-specific PNG, JPEG, and TIFF density remains authoritative. Drawing's managed PNG, JPEG, classic 8-bit chunky grayscale/palette/RGB/RGBA/DeviceCMYK TIFF, uncompressed BMP, explicitly selected composited GIF frame, and OfficeIMO literal-lossless WebP decoders enforce encoded-payload and source-pixel guards. `OfficeRasterDecodeOptions` selects a GIF frame or rejects animated input, while `OfficeRasterDecodeInfo` reports the detected format, frame count, selected frame, success, and any discarded animation. TIFF accepts uncompressed, PackBits, and Deflate strips with horizontal prediction; LZW/JPEG, tiled, planar, floating-point, BigTIFF pixel data, and multi-page images remain outside the bounded profile. `OfficeRasterImageFallbackCodec` can wrap an application codec at the final raster boundary. It reports `IMAGE_SOURCE_DECODED_BY_CALLER_CODEC` when that codec succeeds; if neither Drawing nor the application can decode a source image, it returns a visible placeholder and `IMAGE_SOURCE_DECODE_FALLBACK` instead of allowing the renderer to omit the image silently.
+```csharp
+using System.Buffers;
+
+using (Stream output = File.Create("photo.webp")) {
+    OfficeRasterImageEncoder.EncodeTo(image, OfficeImageExportFormat.Webp, output, options);
+}
+
+var writer = new ArrayBufferWriter<byte>();
+OfficeRasterImageEncoder.EncodeTo(image, OfficeImageExportFormat.Png, writer, options);
+ReadOnlyMemory<byte> png = writer.WrittenMemory;
+```
+
+The stream overload leaves the destination open. The byte-array WebP encoder deterministically chooses bounded prediction, subtract-green, LZ77, and Huffman coding when that is smaller than the literal lossless VP8L form; direct streaming keeps the low-copy literal form. TIFF output is a classic RGBA image with uncompressed, LZW, PackBits, or Deflate strips; LZW and Deflate use horizontal prediction by default. Use `OfficeTiffCodec.EncodePages(...)` when the output needs more than one page. JPEG uses the managed quality, subsampling, progressive, metadata, and transparency-flattening settings.
+
+### Inspect and select frames or pages
+
+`OfficeRasterContainerInspector` exposes one bounded inventory for static images, GIF and APNG frames, TIFF pages, and WebP frame metadata. The inventory includes canvas size, count, timing, offsets, disposal, blending, loop count, and the backwards-compatible default image. Decode accepts either bytes or a readable stream; a seekable stream is restored to its original position.
+
+```csharp
+using var input = File.OpenRead("pages.tiff");
+var decodeOptions = new OfficeRasterDecodeOptions {
+    FrameIndex = 1,
+    FrameLossPolicy = OfficeRasterFrameLossPolicy.UseSelectedFrame,
+    MaximumEncodedBytes = 32 * 1024 * 1024,
+    MaximumDecodedPixels = 20_000_000,
+    CancellationToken = cancellationToken
+};
+
+if (OfficeRasterImageDecoder.TryDecode(input, decodeOptions, out var page, out var decodeInfo)) {
+    Console.WriteLine($"Selected {decodeInfo.SelectedFrameIndex + 1} of {decodeInfo.FrameCount}");
+}
+```
+
+Set `FrameLossPolicy` to `RejectMultipleFrames` when a static result must not discard animation frames or document pages. Animated WebP pixel composition remains a caller-codec boundary, but its frame inventory is still available for a fail-closed decision.
+
+### Optimize encoded images for a placement
+
+`OfficeImageOptimizer` resizes and re-encodes a static raster image for the pixel bounds where it will be used:
+
+```csharp
+using OfficeIMO.Drawing;
+
+byte[] source = File.ReadAllBytes("photo.jpg");
+var request = new OfficeImageOptimizationRequest(1200, 800) {
+    OutputFormat = OfficeImageFormat.Jpeg,
+    JpegQuality = 82,
+    JpegSubsampling = OfficeJpegSubsampling.Y420,
+    JpegProgressive = true,
+    JpegOptimizeHuffman = true,
+    ResamplingMode = OfficeRasterResamplingMode.Lanczos3,
+    ResamplingColorSpace = OfficeRasterResamplingColorSpace.LinearLight,
+    MetadataPolicy = OfficeImageMetadataPolicy.SelectiveCopy,
+    MetadataSelection = OfficeImageMetadataKinds.Exif |
+                        OfficeImageMetadataKinds.Xmp |
+                        OfficeImageMetadataKinds.Icc |
+                        OfficeImageMetadataKinds.Orientation |
+                        OfficeImageMetadataKinds.Resolution
+};
+
+OfficeImageOptimizationResult result = OfficeImageOptimizer.Optimize(source, request, "photo.jpg");
+File.WriteAllBytes("photo.optimized.jpg", result.Bytes);
+Console.WriteLine($"{result.Status}: {result.BytesSaved} bytes saved");
+Console.WriteLine($"Metadata lost: {result.Metadata.Lost}");
+```
+
+The request preserves aspect ratio, avoids upscaling, keeps the original when re-encoding is not smaller, and retains source DPI by default. `ResamplingMode` defaults to premultiplied-alpha bilinear sampling; choose `Area` for coverage-correct downsampling or `Lanczos3` for a sharper high-quality filter. Filtering remains in encoded sRGB by default. Select `LinearLight` when the workload benefits from physically linear color averaging and accepts its additional cost. Set `OutputDpiX` and `OutputDpiY` to override density. Output can be PNG, JPEG, TIFF, or WebP; use `PngCompression`, the JPEG quality/subsampling/progressive/Huffman settings, or `TiffCompression` and `TiffPredictor` for the selected format.
+
+`MetadataPolicy` can preserve, strip, or selectively copy EXIF, XMP, ICC, orientation, comments, and resolution categories. A JPEG-to-JPEG rewrite preserves selected EXIF, standard single-packet XMP, and ICC bytes, applies embedded orientation to pixels, and neutralizes the copied orientation value. Adobe extended XMP is not copied during re-encoding; when selected XMP includes extension segments, the result reports XMP in `Lost`. The result reports `PolicyApplied`, `Preserved`, `Normalized`, `Stripped`, and `Lost`; unsupported or undecodable input returns the original bytes with `PolicyApplied = false`, and a required strip or selective-copy rewrite is never replaced by the metadata-bearing original merely because it is smaller. Metadata that has no safe output carrier is reported as loss rather than silently claimed as preserved; OfficeIMO does not currently perform ICC color conversion. Animated and multi-page input is rejected so optimization never silently drops frames or pages.
+
+`OfficeRasterExportPlanner` is the shared pre-allocation owner for image export. It combines the caller's `MaximumRasterPixels` with renderer and encoder dimension/pixel limits, then either reduces scale with `IMAGE_RASTER_SCALE_REDUCED` or throws `OfficeImageExportLimitException`, according to `RasterOverflowBehavior`. The returned plan also owns the effective encoding settings: `CreateEncodingOptions()` reduces encoded density with the raster scale so safety limits preserve the document's physical size. Explicit top-level `DpiX`/`DpiY` values apply across formats; when those values are not assigned, format-specific PNG, JPEG, and TIFF density remains authoritative. Drawing's managed PNG and APNG, JPEG, classic 8-bit grayscale/palette/RGB/RGBA/device-CMYK TIFF, uncompressed BMP, composited GIF, and ordinary lossless VP8L WebP paths enforce encoded-payload and decoded-pixel guards. TIFF accepts chunky or planar strips and tiles with uncompressed, LZW, PackBits, or Deflate payloads and horizontal prediction; arbitrary page selection and bounded multi-page writing use the same page contract. JPEG-in-TIFF, floating-point TIFF, BigTIFF, lossy or animated WebP pixel decoding, and uncommon encoders remain caller-codec boundaries. `OfficeRasterImageFallbackCodec` can wrap an application codec at the final raster boundary. It reports `IMAGE_SOURCE_DECODED_BY_CALLER_CODEC` when that codec succeeds; if neither Drawing nor the application can decode a source image, it returns a visible placeholder and `IMAGE_SOURCE_DECODE_FALLBACK` instead of allowing the renderer to omit the image silently.
 
 Every format package builds on the same fluent export contract. `FitWithin(width, height)`, `FitWithinWidth(...)`, and `FitWithinHeight(...)` cap both raster and SVG output without enlarging smaller content. `ConfigureOptions(...)` exposes the complete provider-specific option object when no dedicated fluent shortcut exists. Batch limits, cancellation, progress, and `WithRenderTimeout(...)` apply to the complete operation, including streaming saves. Each batch result reports its zero-based `SequenceIndex`; `SequenceCount` is populated when the total is known before streaming or after a fluent builder materializes the complete result list.
 
@@ -369,16 +453,27 @@ foreach (var issue in rendered.QualityReport.Issues) {
 }
 ```
 
-### Read TrueType outlines for renderers
+### Load first-party font programs for renderers
 
 ```csharp
+using System.Collections.Generic;
+using System.IO;
 using OfficeIMO.Drawing;
 
 OfficeTrueTypeFont? font = OfficeTrueTypeFont.TryLoadDefault(out string? path);
 if (font != null) {
     Console.WriteLine($"Loaded {path}");
 }
+
+var embedded = new OfficeFontFaceCollection {
+    FontVariationResolver = request => request.FamilyName == "Report Variable"
+        ? new Dictionary<string, float> { ["wght"] = 720 }
+        : null
+};
+embedded.Add("Report Variable", File.ReadAllBytes("ReportVariable.ttf"));
 ```
+
+`OfficeFontFaceCollection` accepts TrueType-glyf OpenType, WOFF 1, CFF/CFF2, and TrueType or CFF2 variable fonts. Single-face WOFF 2 decoding is available on .NET 8 and newer; extract and register individual faces from WOFF 2 font collections. The engine is part of `OfficeIMO.Core`; it does not require another font-program package or a license key.
 
 ## What it provides
 
@@ -390,7 +485,7 @@ if (font != null) {
 - `OfficeImageReader` and `OfficeImageInfo` for dependency-free image inspection where supported.
 - `OfficeImageFit` for shared stretch, contain, and cover intent.
 - `OfficeFontInfo`, `OfficeFontStyle`, `OfficeTextMeasurer`, and `OfficeTextMetrics` for deterministic layout estimates.
-- `OfficeTrueTypeFont` for dependency-free font-outline reading when renderers need glyph contours.
+- `OfficeTrueTypeFont` and `OfficeFontFaceCollection` for first-party static and variable font measurement, glyph contours, and bounded renderer integration.
 - `OfficeInkDocument`, `OfficeInkStroke`, sampled pressure/style metadata, recognition alternatives, and `OfficeInkRenderer` for reusable ink capture and projection.
 - `OfficeMathExpression`, `OfficeMath`, MathML/LaTeX conversion, deterministic measurement, and `OfficeMathRenderer` for reusable structured equations.
 - `OfficeShape`, `OfficeDrawing`, gradients, shadows, transforms, clipping, and vector descriptors that format-specific packages can map into their own coordinate systems.
@@ -404,7 +499,7 @@ if (font != null) {
 ## Boundaries
 
 - This package owns shared lifecycle contracts, persistence mechanics, drawing intent, ink/math models and renderers, raster buffers, SVG and raster encoding primitives, image projection, text layout helpers, chart drawing, and document-agnostic visual diagnostics.
-- Security contracts live here so format packages can expose strongly typed opt-in APIs without depending on a cryptographic implementation. No CMS, XML DSig, certificate-chain, or private-key operation is implemented here.
+- Security contracts live here so format packages can expose strongly typed opt-in APIs without depending on the optional cryptographic package. Core includes only the portable AES-CBC compatibility provider; CMS, XML DSig, certificate-chain, and private-key operations remain in `OfficeIMO.Security`.
 - Word, Excel, PowerPoint, Visio, and PDF packages own source-document semantics: package parsing, layout policy, coordinate systems, style/theme resolution, and user-facing export APIs.
 - Document packages should not add private ink or math ASTs, pixel engines, image encoders/decoders, SVG primitive writers, text wrapping engines, or duplicate image-transform loops when the behavior can reasonably live here.
 - PDF keeps PDF-stream and page-writer behavior in `OfficeIMO.Pdf`; when it needs generic image-like drawing, vector descriptors, colors, chart snapshots, PNG helpers, or raster visual QA, it should use `OfficeIMO.Core` and the `OfficeIMO.Drawing` namespace.

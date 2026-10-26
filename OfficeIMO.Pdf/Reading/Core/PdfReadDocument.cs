@@ -7,7 +7,7 @@ namespace OfficeIMO.Pdf;
 public sealed partial class PdfReadDocument {
     private readonly Dictionary<int, PdfIndirectObject> _objects;
     private readonly string _trailerRaw;
-    private readonly PdfReadOptions _options;
+    private readonly PdfLoadOptions _options;
     private readonly long _decodedStreamBytes;
     private readonly PdfDecodedStreamBudget _decodedStreamBudget;
     private readonly Dictionary<string, PdfNamedDestination> _nameDestinations = new(StringComparer.Ordinal);
@@ -16,6 +16,7 @@ public sealed partial class PdfReadDocument {
     private readonly PdfMetadata _metadata;
     private readonly PdfXmpMetadataInfo? _xmpMetadata;
     private readonly IReadOnlyList<PdfOutputIntentInfo> _outputIntents;
+    private readonly bool _outputIntentsAreComplete;
     private readonly PdfIccProfileRetentionBudget _outputIntentMetadataRetentionBudget;
     private readonly IReadOnlyList<PdfOutlineItem> _outlines;
     private readonly IReadOnlyList<PdfPageLabel> _pageLabels;
@@ -39,7 +40,7 @@ public sealed partial class PdfReadDocument {
 
     internal Dictionary<int, PdfIndirectObject> Objects => _objects;
     internal string TrailerRaw => _trailerRaw;
-    internal PdfReadOptions ReadOptions => _options;
+    internal PdfLoadOptions ReadOptions => _options;
     internal int FormWidgetJavaScriptCount => _formWidgetJavaScriptCount;
     internal long FormWidgetJavaScriptBytes => _formWidgetJavaScriptBytes;
     internal long DecodedStreamBytes => _decodedStreamBytes;
@@ -50,9 +51,10 @@ public sealed partial class PdfReadDocument {
         string trailerRaw,
         PdfDocumentSecurityInfo security,
         PdfRepairReport repairReport,
-        PdfReadOptions? options,
-        long decodedStreamBytes) {
-        _objects = objects; _trailerRaw = trailerRaw; _options = options ?? new PdfReadOptions();
+        PdfLoadOptions? options,
+        long decodedStreamBytes,
+        System.Threading.CancellationToken cancellationToken) {
+        _objects = objects; _trailerRaw = trailerRaw; _options = options ?? new PdfLoadOptions();
         _decodedStreamBudget = new PdfDecodedStreamBudget(_options.Limits, decodedStreamBytes);
         _outputIntentMetadataRetentionBudget = new PdfIccProfileRetentionBudget(_options.Limits.MaxDecodedStreamBytes);
         Security = security;
@@ -67,8 +69,9 @@ public sealed partial class PdfReadDocument {
         _pageLabels = ExtractPageLabels();
         _namedDestinations = ExtractNamedDestinations();
         _catalogActions = ExtractCatalogActions(out _javaScripts);
-        _attachments = ExtractAttachmentInfos();
-        _outputIntents = ExtractOutputIntents();
+        _attachments = ExtractAttachmentInfos(cancellationToken);
+        _outputIntents = ExtractOutputIntents(out bool outputIntentsAreComplete);
+        _outputIntentsAreComplete = outputIntentsAreComplete;
         _xmpMetadata = ExtractXmpMetadata();
         _taggedContent = ExtractTaggedContent();
         _optionalContent = ExtractOptionalContent();
@@ -159,6 +162,7 @@ public sealed partial class PdfReadDocument {
     internal PdfMetadata UncheckedMetadata => _metadata;
     internal PdfXmpMetadataInfo? UncheckedXmpMetadata => _xmpMetadata;
     internal IReadOnlyList<PdfOutputIntentInfo> UncheckedOutputIntents => _outputIntents;
+    internal bool UncheckedOutputIntentsAreComplete => _outputIntentsAreComplete;
     internal IReadOnlyList<PdfPageLabel> UncheckedPageLabels => _pageLabels;
     internal IReadOnlyList<PdfNamedDestination> UncheckedNamedDestinations => _namedDestinations;
     internal IReadOnlyList<PdfCatalogAction> UncheckedCatalogActions => _catalogActions;

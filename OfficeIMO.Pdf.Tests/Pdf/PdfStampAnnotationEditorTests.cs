@@ -81,7 +81,7 @@ public class PdfStampAnnotationEditorTests {
         byte[] source = PdfDocument.Create(new PdfOptions().SetEncryption("open", "owner"))
             .Paragraph(paragraph => paragraph.Text("Encrypted stamp source"))
             .ToBytes();
-        var readOptions = new PdfReadOptions { Password = "owner" };
+        var readOptions = new PdfLoadOptions { Password = "owner" };
 
         PdfAnnotationEditResult result = PdfAnnotationEditor.AddStampAnnotation(
             source,
@@ -95,6 +95,32 @@ public class PdfStampAnnotationEditorTests {
         Assert.True(result.SignatureMutationReport!.IsPreservedAppendOnlyMutation);
         Assert.True(result.Bytes.AsSpan(0, source.Length).SequenceEqual(source));
         Assert.Equal("Encrypted approval", Assert.Single(PdfInspector.Inspect(result.Bytes, readOptions).GetAnnotationsBySubtype("Stamp")).Contents);
+    }
+
+    [Fact]
+    public void AddStampAnnotation_ReservesGeneratedAnnotationAndAppearanceLimits() {
+        byte[] source = PdfDocument.Create()
+            .TextAnnotation("Existing note")
+            .Paragraph(paragraph => paragraph.Text("Tight stamp budget"))
+            .ToBytes();
+        int maximumSourceStreamBytes = PdfSyntax.ParseObjects(source).Map.Values
+            .Select(static indirect => indirect.Value)
+            .OfType<PdfStream>()
+            .Max(static stream => stream.Data.Length);
+        var readOptions = new PdfLoadOptions {
+            Limits = new PdfReadLimits {
+                MaxAnnotationsPerPage = 1,
+                MaxRawStreamBytes = maximumSourceStreamBytes,
+                MaxDecodedStreamBytes = maximumSourceStreamBytes
+            }
+        };
+
+        PdfAnnotationEditResult result = PdfAnnotationEditor.AddStampAnnotation(
+            source,
+            new PdfStampAnnotationOptions { Contents = new string('A', 400) },
+            readOptions);
+
+        Assert.Equal(2, result.ToDocument().Reader.Annotations().Count);
     }
 
     private static byte[] Certify(byte[] source, PdfCertificationPermissionLevel permission) {

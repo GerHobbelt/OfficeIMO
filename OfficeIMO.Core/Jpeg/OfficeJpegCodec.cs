@@ -1,20 +1,38 @@
 using System;
+using System.Threading;
 
 namespace OfficeIMO.Drawing;
 
 /// <summary>Dependency-free baseline and progressive JPEG decoder plus JPEG encoder.</summary>
-public static class OfficeJpegCodec {
+public static partial class OfficeJpegCodec {
     /// <summary>Returns whether the payload starts with the JPEG start-of-image marker.</summary>
     public static bool IsJpeg(byte[]? encodedBytes) =>
         encodedBytes != null && OfficeJpegReader.IsJpeg(encodedBytes);
 
     /// <summary>Attempts to decode JPEG bytes into an RGBA image.</summary>
     public static bool TryDecode(byte[]? encodedBytes, out OfficeRasterImage? image, OfficeJpegDecodeOptions options = default) {
+        return TryDecode(encodedBytes, CancellationToken.None, out image, options);
+    }
+
+    internal static bool TryDecode(
+        byte[]? encodedBytes,
+        CancellationToken cancellationToken,
+        out OfficeRasterImage? image,
+        OfficeJpegDecodeOptions options = default) =>
+        TryDecode(encodedBytes, cancellationToken, retainedManagedBytes: 0L, out image, options);
+
+    internal static bool TryDecode(
+        byte[]? encodedBytes,
+        CancellationToken cancellationToken,
+        long retainedManagedBytes,
+        out OfficeRasterImage? image,
+        OfficeJpegDecodeOptions options = default) {
         image = null;
         if (!IsJpeg(encodedBytes)) return false;
         try {
-            byte[] pixels = OfficeJpegReader.DecodeRgba32(encodedBytes!, out int width, out int height, options);
-            image = OfficeRasterImage.FromRgba32(width, height, pixels);
+            byte[] pixels = OfficeJpegReader.DecodeRgba32(
+                encodedBytes!, out int width, out int height, options, cancellationToken, retainedManagedBytes);
+            image = OfficeRasterImage.FromOwnedRgba32(width, height, pixels);
             return true;
         } catch (Exception ex) when (ex is FormatException || ex is ArgumentException || ex is IndexOutOfRangeException || ex is OverflowException) {
             return false;
@@ -25,7 +43,7 @@ public static class OfficeJpegCodec {
     public static OfficeRasterImage Decode(byte[] encodedBytes, OfficeJpegDecodeOptions options = default) {
         if (encodedBytes == null) throw new ArgumentNullException(nameof(encodedBytes));
         byte[] pixels = OfficeJpegReader.DecodeRgba32(encodedBytes, out int width, out int height, options);
-        return OfficeRasterImage.FromRgba32(width, height, pixels);
+        return OfficeRasterImage.FromOwnedRgba32(width, height, pixels);
     }
 
     internal static bool TryDecodeColorComponents(
@@ -65,13 +83,29 @@ public static class OfficeJpegCodec {
     public static byte[] Encode(OfficeRasterImage image, OfficeJpegEncodeOptions? options = null) {
         if (image == null) throw new ArgumentNullException(nameof(image));
         OfficeJpegEncodeOptions effectiveOptions = options ?? new OfficeJpegEncodeOptions();
-        byte[] rgba = image.GetPixels();
-        FlattenAlpha(rgba, effectiveOptions.Background);
+        byte[] rgba = image.PixelBuffer;
+        if (HasTransparency(rgba)) {
+            effectiveOptions = effectiveOptions.WithAdditionalRetainedManagedBytes(rgba.LongLength + 24L);
+            rgba = (byte[])rgba.Clone();
+            FlattenAlpha(rgba, effectiveOptions.Background);
+        }
         return OfficeJpegWriter.WriteRgba(image.Width, image.Height, rgba, checked(image.Width * 4), effectiveOptions);
     }
 
-    private static void FlattenAlpha(byte[] rgba, OfficeColor background) {
+    private static bool HasTransparency(byte[] rgba, CancellationToken cancellationToken = default) {
+        for (int index = 3; index < rgba.Length; index += 4) {
+            if ((index & 0x3FFF) == 3) cancellationToken.ThrowIfCancellationRequested();
+            if (rgba[index] != byte.MaxValue) return true;
+        }
+        return false;
+    }
+
+    private static void FlattenAlpha(
+        byte[] rgba,
+        OfficeColor background,
+        CancellationToken cancellationToken = default) {
         for (int i = 0; i < rgba.Length; i += 4) {
+            if ((i & 0x3FFF) == 0) cancellationToken.ThrowIfCancellationRequested();
             int alpha = rgba[i + 3];
             if (alpha == 255) continue;
             int inverse = 255 - alpha;

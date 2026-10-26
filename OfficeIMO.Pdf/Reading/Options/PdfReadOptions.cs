@@ -1,116 +1,95 @@
 namespace OfficeIMO.Pdf;
 
-/// <summary>
-/// Options for controlling PDF reading/decoding behavior.
-/// </summary>
+/// <summary>Chooses the cost and evidence depth of canonical PDF semantic reconstruction.</summary>
+public enum PdfReadProfile {
+    /// <summary>
+    /// Uses the canonical page pipeline while omitting optional document-wide enrichment stages.
+    /// The result reports every capability that was applied or skipped.
+    /// </summary>
+    Fast,
+
+    /// <summary>
+    /// Uses the complete built-in semantic reconstruction pipeline, including document-wide evidence.
+    /// </summary>
+    Structured
+}
+
+/// <summary>Controls semantic reconstruction performed by <see cref="PdfDocument.Read(PdfReadOptions, System.Threading.CancellationToken)"/>.</summary>
 public sealed class PdfReadOptions {
-    /// <summary>Creates default read settings with an independent limits graph.</summary>
+    /// <summary>Creates independent structured-read settings.</summary>
     public static PdfReadOptions Default => new PdfReadOptions();
 
-    /// <summary>Structural parsing policy. Lenient recovery is the compatibility default and always produces a repair report.</summary>
-    public PdfParsingMode ParsingMode { get; init; } = PdfParsingMode.Lenient;
+    /// <summary>Semantic reconstruction profile. Structured is the default public contract.</summary>
+    public PdfReadProfile Profile { get; init; } = PdfReadProfile.Structured;
 
-    /// <summary>Resource budgets for object scanning and raw stream allocation.</summary>
-    public PdfReadLimits Limits { get; init; } = new PdfReadLimits();
+    /// <summary>Optional caller-ordered page selection. Null reads every page in document order.</summary>
+    public PdfPageSelection? PageSelection { get; init; }
 
-    /// <summary>Password used to open encrypted PDFs. The same value is tried as user and owner password for Standard security handler files.</summary>
-    public string? Password { get; init; }
+    /// <summary>Layout and geometry settings shared by every built-in semantic stage.</summary>
+    public PdfTextLayoutOptions LayoutOptions { get; init; } = new PdfTextLayoutOptions();
 
     /// <summary>
-    /// Controls whether authenticated user-password permission restrictions are enforced.
-    /// Ignoring restrictions still requires the PDF to be successfully decrypted with a valid password.
+    /// Optional semantic-stage customization. Null selects the built-in stages for <see cref="Profile"/>.
+    /// Custom stages still run inside the canonical read engine and produce the same result contract.
     /// </summary>
-    public PdfPermissionPolicy PermissionPolicy { get; init; } = PdfPermissionPolicy.Enforce;
-    /// <summary>Prefer decoding via ToUnicode CMap when available. Default: true.</summary>
-    public bool PreferToUnicode { get; init; } = true;
-    /// <summary>Fallback to WinAnsi (Windows-1252) when no ToUnicode is present. Default: true.</summary>
-    public bool UseWinAnsiFallback { get; init; } = true;
-    /// <summary>Adjust X position using TJ kerning values (thousandths of font size). Default: true.</summary>
-    public bool AdjustKerningFromTJ { get; init; } = true;
+    public PdfUnderstandingPipelineOptions? Pipeline { get; init; }
+
     /// <summary>
-    /// Includes text inside PDF artifact marked-content sequences, such as page headers, footers,
-    /// and chart decorations. Default: false, which returns logical document text.
+    /// Creates an independent copy of these semantic read settings.
+    /// Custom stage instances are reused, while mutable layout and pipeline option containers are copied.
     /// </summary>
-    public bool IncludeArtifactText { get; init; }
+    public PdfReadOptions Clone() {
+        PdfReadOptions effective = Resolve(this);
+        return new PdfReadOptions {
+            Profile = effective.Profile,
+            PageSelection = effective.PageSelection,
+            LayoutOptions = CloneLayoutOptions(effective.LayoutOptions),
+            Pipeline = ClonePipelineOptions(effective.Pipeline)
+        };
+    }
 
     internal static PdfReadOptions Resolve(PdfReadOptions? options) {
         PdfReadOptions effective = options ?? Default;
-        Guard.NotNull(effective.Limits, nameof(Limits));
-        effective.Limits.Validate();
+        if (effective.Profile < PdfReadProfile.Fast || effective.Profile > PdfReadProfile.Structured) {
+            throw new ArgumentOutOfRangeException(nameof(options), effective.Profile, "Unknown PDF read profile.");
+        }
+        Guard.NotNull(effective.LayoutOptions, nameof(LayoutOptions));
         return effective;
     }
 
-    internal static PdfReadOptions WithMinimumInputBytes(PdfReadOptions? options, long minimumInputBytes) {
-        PdfReadOptions effective = Resolve(options);
-        return new PdfReadOptions {
-            ParsingMode = effective.ParsingMode,
-            Limits = effective.Limits.WithMinimumInputBytes(minimumInputBytes),
-            Password = effective.Password,
-            PermissionPolicy = effective.PermissionPolicy,
-            PreferToUnicode = effective.PreferToUnicode,
-            UseWinAnsiFallback = effective.UseWinAnsiFallback,
-            AdjustKerningFromTJ = effective.AdjustKerningFromTJ,
-            IncludeArtifactText = effective.IncludeArtifactText
-        };
-    }
+    private static PdfTextLayoutOptions CloneLayoutOptions(PdfTextLayoutOptions options) => new PdfTextLayoutOptions {
+        MarginLeft = options.MarginLeft,
+        MarginRight = options.MarginRight,
+        BinWidth = options.BinWidth,
+        MinGutterWidth = options.MinGutterWidth,
+        LineMergeToleranceEm = options.LineMergeToleranceEm,
+        LineMergeMaxPoints = options.LineMergeMaxPoints,
+        ForceSingleColumn = options.ForceSingleColumn,
+        JoinHyphenationAcrossLines = options.JoinHyphenationAcrossLines,
+        IgnoreHeaderHeight = options.IgnoreHeaderHeight,
+        IgnoreFooterHeight = options.IgnoreFooterHeight,
+        GapSpaceThresholdEm = options.GapSpaceThresholdEm,
+        GapGlyphFactor = options.GapGlyphFactor
+    };
 
-    internal static PdfReadOptions WithMaximumContainerEntries(
-        PdfReadOptions? options,
-        int maximumContainerEntries,
-        long? maximumDecodedStreamBytes = null,
-        long? maximumTotalDecodedStreamBytes = null,
-        long? maximumTotalAttachmentBytes = null,
-        bool preserveExistingDecodedStreamLimit = true,
-        long? maximumRawStreamBytes = null,
-        bool preserveExistingRawStreamLimit = true) {
-        PdfReadOptions effective = Resolve(options);
-        if (maximumContainerEntries <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(maximumContainerEntries), maximumContainerEntries, "Maximum container entries must be positive.");
-        }
-        return new PdfReadOptions {
-            ParsingMode = effective.ParsingMode,
-            Limits = effective.Limits.WithMaximumContainerEntries(
-                maximumContainerEntries,
-                maximumDecodedStreamBytes,
-                maximumTotalDecodedStreamBytes,
-                maximumTotalAttachmentBytes,
-                preserveExistingDecodedStreamLimit,
-                maximumRawStreamBytes,
-                preserveExistingRawStreamLimit),
-            Password = effective.Password,
-            PermissionPolicy = effective.PermissionPolicy,
-            PreferToUnicode = effective.PreferToUnicode,
-            UseWinAnsiFallback = effective.UseWinAnsiFallback,
-            AdjustKerningFromTJ = effective.AdjustKerningFromTJ,
-            IncludeArtifactText = effective.IncludeArtifactText
-        };
-    }
+    private static PdfUnderstandingPipelineOptions? ClonePipelineOptions(PdfUnderstandingPipelineOptions? options) {
+        if (options is null) return null;
 
-    internal static PdfReadOptions WithPassword(PdfReadOptions? options, string? password) {
-        PdfReadOptions effective = Resolve(options);
-        return new PdfReadOptions {
-            ParsingMode = effective.ParsingMode,
-            Limits = effective.Limits,
-            Password = password,
-            PermissionPolicy = effective.PermissionPolicy,
-            PreferToUnicode = effective.PreferToUnicode,
-            UseWinAnsiFallback = effective.UseWinAnsiFallback,
-            AdjustKerningFromTJ = effective.AdjustKerningFromTJ,
-            IncludeArtifactText = effective.IncludeArtifactText
-        };
-    }
-    internal static PdfReadOptions WithArtifactText(PdfReadOptions? options) {
-        PdfReadOptions effective = Resolve(options);
-        if (effective.IncludeArtifactText) return effective;
-        return new PdfReadOptions {
-            ParsingMode = effective.ParsingMode,
-            Limits = effective.Limits,
-            Password = effective.Password,
-            PermissionPolicy = effective.PermissionPolicy,
-            PreferToUnicode = effective.PreferToUnicode,
-            UseWinAnsiFallback = effective.UseWinAnsiFallback,
-            AdjustKerningFromTJ = effective.AdjustKerningFromTJ,
-            IncludeArtifactText = true
+        return new PdfUnderstandingPipelineOptions {
+            GlyphDecoding = options.GlyphDecoding,
+            WordGrouping = options.WordGrouping,
+            LineGrouping = options.LineGrouping,
+            PageSegmentation = options.PageSegmentation,
+            ReadingOrder = options.ReadingOrder,
+            SemanticClassification = options.SemanticClassification,
+            MaxPages = options.MaxPages,
+            MaxRunsPerPage = options.MaxRunsPerPage,
+            MaxTextCharactersPerPage = options.MaxTextCharactersPerPage,
+            MaxWordsPerPage = options.MaxWordsPerPage,
+            MaxLinesPerPage = options.MaxLinesPerPage,
+            MaxRegionsPerPage = options.MaxRegionsPerPage,
+            MaxWorkUnitsPerPage = options.MaxWorkUnitsPerPage,
+            MaxDocumentWorkUnits = options.MaxDocumentWorkUnits
         };
     }
 }

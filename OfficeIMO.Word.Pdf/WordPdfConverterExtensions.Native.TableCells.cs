@@ -386,20 +386,14 @@ namespace OfficeIMO.Word.Pdf {
 
             if (paragraph.IndentationHangingPoints.HasValue) {
                 double hangingIndent = paragraph.IndentationHangingPoints.Value;
-                if (leftIndent < hangingIndent) {
-                    leftIndent = hangingIndent;
-                }
-
                 firstLineIndent = -hangingIndent;
-            } else if (firstLineIndent < 0D && leftIndent < -firstLineIndent) {
-                leftIndent = -firstLineIndent;
             }
 
             return (leftIndent, rightIndent, firstLineIndent);
         }
 
         private static double NormalizeNativeTableCellIndent(double value) =>
-            value < 0D || double.IsNaN(value) || double.IsInfinity(value) ? 0D : value;
+            double.IsNaN(value) || double.IsInfinity(value) ? 0D : value;
 
         private static double? ResolveNativeTableCellParagraphLineHeight(
             WordParagraph paragraph,
@@ -668,7 +662,9 @@ namespace OfficeIMO.Word.Pdf {
                 font: previous.Font,
                 baseline: previous.Baseline,
                 backgroundColor: previous.BackgroundColor,
-                fontFamily: previous.FontFamily);
+                fontFamily: previous.FontFamily,
+                underlineStyle: previous.UnderlineStyle,
+                strikeStyle: previous.StrikeStyle);
         }
 
         private static bool CanMergeNativeCellTextRuns(PdfCore.PdfTextRun left, PdfCore.PdfTextRun right) =>
@@ -685,9 +681,9 @@ namespace OfficeIMO.Word.Pdf {
             right.Text != "\n" &&
             right.Text != "\t" &&
             left.Bold == right.Bold &&
-            left.Underline == right.Underline &&
+            left.UnderlineStyle == right.UnderlineStyle &&
             left.Italic == right.Italic &&
-            left.Strike == right.Strike &&
+            left.StrikeStyle == right.StrikeStyle &&
             NullableDoubleEquals(left.FontSize, right.FontSize) &&
             left.Font == right.Font &&
             string.Equals(left.FontFamily, right.FontFamily, StringComparison.OrdinalIgnoreCase) &&
@@ -708,7 +704,9 @@ namespace OfficeIMO.Word.Pdf {
                 font: style.Font,
                 baseline: style.Baseline,
                 backgroundColor: style.BackgroundColor,
-                fontFamily: style.FontFamily);
+                fontFamily: style.FontFamily,
+                underlineStyle: style.UnderlineStyle,
+                strikeStyle: style.StrikeStyle);
         }
 
         private static PdfCore.PdfTextRun CreateNativeCellLinkRun(string text, WordParagraph paragraph, WordHyperLink hyperlink, NativeTableStyleDefaults tableStyleDefaults = default, NativeDocumentDefaults? nativeDefaults = null, NativeFontMap? nativeFontMap = null) {
@@ -735,7 +733,13 @@ namespace OfficeIMO.Word.Pdf {
                 baseline: style.Baseline,
                 linkDestinationName: destinationName,
                 backgroundColor: style.BackgroundColor,
-                fontFamily: style.FontFamily);
+                fontFamily: style.FontFamily,
+                underlineStyle: style.Underline || linkUri != null || destinationName != null
+                    ? style.UnderlineStyle == OfficeTextDecorationStyle.None
+                        ? OfficeTextDecorationStyle.Single
+                        : style.UnderlineStyle
+                    : OfficeTextDecorationStyle.None,
+                strikeStyle: style.StrikeStyle);
         }
 
         private static PdfCore.PdfTextRun CreateNativeCellTabRun(IReadOnlyList<WordTabStop> tabStops, int tabIndex) {

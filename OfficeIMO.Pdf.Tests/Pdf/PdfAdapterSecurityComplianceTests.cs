@@ -107,10 +107,10 @@ public class PdfAdapterSecurityComplianceTests {
         Assert.Equal(256, probe.Security.EncryptionLengthBits);
         Assert.Throws<PdfCore.PdfPasswordRequiredException>(() => PdfCore.PdfReadDocument.Open(pdf));
         Assert.Throws<PdfCore.PdfInvalidPasswordException>(() =>
-            PdfCore.PdfReadDocument.Open(pdf, new PdfCore.PdfReadOptions { Password = "wrong" }));
+            PdfCore.PdfReadDocument.Open(pdf, new PdfCore.PdfLoadOptions { Password = "wrong" }));
         Assert.Contains(
             Marker(route),
-            PdfCore.PdfReadDocument.Open(pdf, new PdfCore.PdfReadOptions { Password = "open" }).ExtractText(),
+            PdfCore.PdfReadDocument.Open(pdf, new PdfCore.PdfLoadOptions { Password = "open" }).ExtractText(),
             StringComparison.Ordinal);
     }
 
@@ -141,6 +141,28 @@ public class PdfAdapterSecurityComplianceTests {
 
         Assert.Contains("PDF/A", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("encryption", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(PdfCore.PdfStandardEncryptionAlgorithm.Aes128)]
+    [InlineData(PdfCore.PdfStandardEncryptionAlgorithm.Aes256)]
+    public void GeneratedPdfA2BArtifactCanBeProtectedAndUnlockedAfterCreation(PdfCore.PdfStandardEncryptionAlgorithm algorithm) {
+        byte[] archivalPdf = Convert("html", CreatePdfA2BOptions());
+        var encryption = new PdfCore.PdfStandardEncryptionOptions("open") {
+            OwnerPassword = "owner",
+            Algorithm = algorithm,
+            AesCryptographyProvider = OfficeIMO.Security.OfficeManagedAesCryptographyProvider.Default
+        };
+
+        PdfCore.PdfSecurityMutationResult protectedPdf = PdfCore.PdfDocument.Load(archivalPdf).Security.Encrypt(encryption);
+        PdfCore.PdfSecurityMutationResult unlockedPdf = protectedPdf.ToDocument().Security.Decrypt("owner");
+
+        Assert.True(PdfCore.PdfInspector.Probe(protectedPdf.Pdf).HasEncryption);
+        Assert.False(PdfCore.PdfInspector.Probe(unlockedPdf.Pdf).HasEncryption);
+        Assert.Contains(
+            Marker("html"),
+            PdfCore.PdfReadDocument.Open(unlockedPdf.Pdf).ExtractText(),
+            StringComparison.Ordinal);
     }
 
     private static PdfCore.PdfOptions CreatePdfA2BOptions() {

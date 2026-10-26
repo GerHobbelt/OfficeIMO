@@ -1,3 +1,5 @@
+using System.Threading;
+
 namespace OfficeIMO.Pdf;
 
 internal static partial class PdfSyntax {
@@ -6,13 +8,18 @@ internal static partial class PdfSyntax {
         Dictionary<int, PdfIndirectObject> objects,
         string trailerRaw,
         PdfDocumentSecurityInfo fallback,
-        PdfReadOptions? options = null) {
+        PdfLoadOptions? options = null,
+        CancellationToken cancellationToken = default) {
         Guard.NotNull(pdf, nameof(pdf));
         Guard.NotNull(objects, nameof(objects));
         Guard.NotNull(fallback, nameof(fallback));
+        cancellationToken.ThrowIfCancellationRequested();
 
         string text = PdfEncoding.Latin1GetString(pdf);
-        int? encryptObjectNumber = TryReadFirstReferenceObjectNumber(trailerRaw, "Encrypt");
+        cancellationToken.ThrowIfCancellationRequested();
+        PdfReadLimits limits = options?.Limits ?? new PdfReadLimits();
+        PdfReference? encryptReference = ReadTrailerReference(trailerRaw, "Encrypt", limits);
+        int? encryptObjectNumber = encryptReference?.ObjectNumber;
         bool hasEncryption = encryptObjectNumber.HasValue;
         string? encryptionFilter = null;
         string? encryptionSubFilter = null;
@@ -23,7 +30,7 @@ internal static partial class PdfSyntax {
         bool? encryptMetadata = null;
         PdfPasswordAuthenticationRole passwordAuthenticationRole = fallback.PasswordAuthenticationRole;
         if (encryptObjectNumber.HasValue &&
-            TryReadFirstReference(trailerRaw, "Encrypt") is PdfReference encryptReference &&
+            encryptReference is not null &&
             PdfObjectLookup.TryGet(objects, encryptReference, out PdfIndirectObject? encryptionObject) &&
             encryptionObject.Value is PdfDictionary parsedEncryptionDictionary) {
             encryptionFilter = TryReadName(parsedEncryptionDictionary, "Filter");
@@ -57,6 +64,7 @@ internal static partial class PdfSyntax {
 
         PdfDictionary? catalog = FindCatalog(objects, trailerRaw);
         if (catalog is not null) {
+            cancellationToken.ThrowIfCancellationRequested();
             documentSecurityStore = ReadDocumentSecurityStoreInfo(objects, catalog);
             ReadCatalogSecurityState(
                 objects,
@@ -72,6 +80,7 @@ internal static partial class PdfSyntax {
         }
 
         foreach (var entry in objects.OrderBy(static item => item.Key)) {
+            cancellationToken.ThrowIfCancellationRequested();
             PdfDictionary? dictionary = entry.Value.Value switch {
                 PdfDictionary directDictionary => directDictionary,
                 PdfStream stream => stream.Dictionary,
@@ -101,6 +110,7 @@ internal static partial class PdfSyntax {
         }
 
         foreach (var entry in objects.OrderBy(static item => item.Key)) {
+            cancellationToken.ThrowIfCancellationRequested();
             PdfDictionary? dictionary = entry.Value.Value switch {
                 PdfDictionary directDictionary => directDictionary,
                 PdfStream stream => stream.Dictionary,
@@ -129,14 +139,15 @@ internal static partial class PdfSyntax {
             }
         }
 
-        PdfReference? rootReference = TryReadFirstReference(trailerRaw, "Root");
+        PdfReference? rootReference = ReadTrailerReference(trailerRaw, "Root", limits);
         int? rootObjectNumber = rootReference?.ObjectNumber ?? fallback.RootObjectNumber;
         int? rootObjectGeneration = rootReference?.Generation ?? fallback.RootObjectGeneration;
-        PdfReference? infoReference = TryReadFirstReference(trailerRaw, "Info");
+        PdfReference? infoReference = ReadTrailerReference(trailerRaw, "Info", limits);
         int? infoObjectNumber = infoReference?.ObjectNumber ?? fallback.InfoObjectNumber;
         int? infoObjectGeneration = infoReference?.Generation ?? fallback.InfoObjectGeneration;
-        bool hasByteRange = byteRangeValueCount > 0 || ContainsPdfName(text, "ByteRange");
+        bool hasByteRange = byteRangeValueCount > 0 || ContainsPdfName(text, "ByteRange", cancellationToken);
 
+        cancellationToken.ThrowIfCancellationRequested();
         return new PdfDocumentSecurityInfo(
             hasEncryption,
             encryptObjectNumber,

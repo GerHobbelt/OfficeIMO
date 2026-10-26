@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using OfficeIMO.Excel.Pdf;
 using OfficeIMO.Html.Pdf;
 using OfficeIMO.PowerPoint.Pdf;
+using OfficeIMO.Reader.Pdf;
 using OfficeIMO.Rtf.Pdf;
 using OfficeIMO.Word.Pdf;
 using Xunit;
@@ -30,7 +31,7 @@ public sealed class PdfBridgeApiContracts {
         Assert.Equal(2, methodNames.Count(name => name == importName));
         Assert.Equal(2, methodNames.Count(name => name == resultName));
 
-        foreach (Type receiverType in new[] { typeof(PdfDocument), typeof(PdfLogicalDocument) }) {
+        foreach (Type receiverType in new[] { typeof(PdfDocument), typeof(PdfDocumentReadResult) }) {
             MethodInfo[] receiverMethods = methods
                 .Where(method => method.GetParameters()[0].ParameterType == receiverType)
                 .ToArray();
@@ -61,7 +62,7 @@ public sealed class PdfBridgeApiContracts {
         Assert.Equal(2, methodNames.Count(static name => name == "ImportTablesToExcelDocument"));
         Assert.Equal(2, methodNames.Count(static name => name == "ImportTablesToExcelDocumentResult"));
 
-        foreach (Type receiverType in new[] { typeof(PdfDocument), typeof(PdfLogicalDocument) }) {
+        foreach (Type receiverType in new[] { typeof(PdfDocument), typeof(PdfDocumentReadResult) }) {
             MethodInfo[] receiverMethods = methods
                 .Where(method => method.GetParameters()[0].ParameterType == receiverType)
                 .ToArray();
@@ -105,6 +106,73 @@ public sealed class PdfBridgeApiContracts {
         Assert.Null(typeof(PdfExcelTableImportOptions).Assembly.GetType("OfficeIMO.Excel.Pdf.PdfExcelImportOptions"));
         Assert.Null(typeof(PdfPowerPointImportOptions).Assembly.GetType("OfficeIMO.PowerPoint.Pdf.PdfPowerPointTableImportOptions"));
         Assert.Null(typeof(PdfRtfImportOptions).Assembly.GetType("OfficeIMO.Rtf.Pdf.PdfRtfReadOptions"));
+    }
+
+    [Fact]
+    public void OpenedDocumentAdaptersExposeTheCanonicalSemanticReadOptions() {
+        foreach (Type optionType in new[] {
+            typeof(PdfWordImportOptions),
+            typeof(PdfExcelTableImportOptions),
+            typeof(PdfRtfImportOptions),
+            typeof(PdfHtmlSaveOptions),
+            typeof(PdfPowerPointImportOptions),
+            typeof(ReaderPdfOptions)
+        }) {
+            PropertyInfo property = Assert.IsAssignableFrom<PropertyInfo>(optionType.GetProperty("ReadOptions"));
+            Assert.Equal(typeof(PdfReadOptions), property.PropertyType);
+            Assert.True(property.CanRead);
+            Assert.True(property.CanWrite);
+        }
+    }
+
+    [Fact]
+    public void OpenedDocumentAdaptersPropagateTheCanonicalSemanticPageLimit() {
+        byte[] pdf = PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("First page"))
+            .PageBreak()
+            .Paragraph(paragraph => paragraph.Text("Second page"))
+            .ToBytes();
+        PdfDocument document = PdfDocument.Load(pdf);
+        var readOptions = new PdfReadOptions {
+            Pipeline = new PdfUnderstandingPipelineOptions { MaxPages = 1 }
+        };
+
+        Assert.Throws<PdfReadLimitException>(() =>
+            document.ToWordDocument(new PdfWordImportOptions { ReadOptions = readOptions }));
+        Assert.Throws<PdfReadLimitException>(() =>
+            document.ImportTablesToExcelDocument(new PdfExcelTableImportOptions { ReadOptions = readOptions }));
+        Assert.Throws<PdfReadLimitException>(() =>
+            document.ToRtfDocument(new PdfRtfImportOptions { ReadOptions = readOptions }));
+        Assert.Throws<PdfReadLimitException>(() =>
+            document.ToHtml(new PdfHtmlSaveOptions { ReadOptions = readOptions }));
+        Assert.Throws<PdfReadLimitException>(() =>
+            document.ToPowerPointPresentation(new PdfPowerPointImportOptions { ReadOptions = readOptions }));
+        using var stream = new MemoryStream(pdf, writable: false);
+        Assert.Throws<PdfReadLimitException>(() =>
+            PdfReaderAdapter.ReadDocument(stream, pdfOptions: new ReaderPdfOptions { ReadOptions = readOptions }));
+    }
+
+    [Fact]
+    public void WordImportUsesCanonicalPageSelectionWithinTheConfiguredLimit() {
+        byte[] pdf = PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("First page marker"))
+            .PageBreak()
+            .Paragraph(paragraph => paragraph.Text("Second page marker"))
+            .ToBytes();
+        PdfDocument document = PdfDocument.Load(pdf);
+        var options = new PdfWordImportOptions {
+            ReadOptions = new PdfReadOptions {
+                PageSelection = PdfPageSelection.From(2),
+                Pipeline = new PdfUnderstandingPipelineOptions { MaxPages = 1 }
+            }
+        };
+
+        using OfficeIMO.Word.WordDocument word = document.ToWordDocument(options);
+        string text = string.Join(" ", word.Paragraphs.Select(static paragraph => paragraph.Text));
+
+        Assert.Contains("Second page marker", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("First page marker", text, StringComparison.Ordinal);
+        Assert.Same(options.ReadOptions, options.Clone().ReadOptions);
     }
 
     [Fact]

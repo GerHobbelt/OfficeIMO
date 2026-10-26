@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory)]
     [string] $FeedPath,
 
-    [string] $Version = '3.2.1',
+    [string] $Version = '3.3.0',
 
     [switch] $KeepWorkingDirectory
 )
@@ -116,8 +116,17 @@ try {
     }
 
     $expectedDirectDependencies = @{
+        'OfficeIMO.Data.Arrow' = @('OfficeIMO.Core')
         'OfficeIMO.Provenance.C2pa' = @('OfficeIMO.Core')
         'OfficeIMO.Security' = @('OfficeIMO.Core')
+        'OfficeIMO.IWork' = @('OfficeIMO.Core')
+        'OfficeIMO.Word' = @('OfficeIMO.Core')
+        'OfficeIMO.Excel' = @('OfficeIMO.Core')
+        'OfficeIMO.PowerPoint' = @('OfficeIMO.Core')
+        'OfficeIMO.Word.IWork' = @('OfficeIMO.Core', 'OfficeIMO.IWork', 'OfficeIMO.Word')
+        'OfficeIMO.Excel.IWork' = @('OfficeIMO.Core', 'OfficeIMO.Excel', 'OfficeIMO.IWork')
+        'OfficeIMO.PowerPoint.IWork' = @('OfficeIMO.Core', 'OfficeIMO.IWork', 'OfficeIMO.PowerPoint')
+        'OfficeIMO.Drawing.HarfBuzz' = @('OfficeIMO.Core')
         'OfficeIMO.Html' = @('OfficeIMO.Core')
         'OfficeIMO.Html.Pdf.Browser' = @('OfficeIMO.Core', 'OfficeIMO.Pdf')
         'OfficeIMO.Html.Rtf' = @('OfficeIMO.Core', 'OfficeIMO.Html', 'OfficeIMO.Rtf')
@@ -185,7 +194,10 @@ try {
     Set-Content -LiteralPath $projectPath -Value $projectXml -Encoding utf8
     $programSource = @"
 using System.Data.Common;
+using Apache.Arrow;
 using OfficeIMO.CSV;
+using OfficeIMO.Data;
+using OfficeIMO.Data.Arrow;
 using OfficeIMO.Excel;
 using OfficeIMO.Excel.Csv;
 using OfficeIMO.Excel.Html;
@@ -219,6 +231,26 @@ internal static class Program
             if (!string.Equals(ReadCsvRows(csvPath).Single().Value, "Alpha", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException("Packed OfficeIMO.CSV typed mapping failed its runtime smoke.");
+            }
+            using (DbDataReader generatedReader = OpenCsv(csvPath))
+            {
+                ReleaseGeneratedRow generated = generatedReader
+                    .RowsAs<ReleaseGeneratedRow>(ReleaseGeneratedRowRowMapping.Configure)
+                    .Single();
+                if (!string.Equals(generated.Value, "Alpha", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Packed OfficeIMO.Data.Generators mapping failed its runtime smoke.");
+                }
+            }
+            using (DbDataReader arrowReader = OpenCsv(csvPath))
+            using (RecordBatch arrowBatch = arrowReader
+                .ReadArrowBatches(new ArrowReadOptions { BatchSize = 1 })
+                .Single())
+            {
+                if (arrowBatch.Length != 1 || arrowBatch.Schema.FieldsList.Count != 1)
+                {
+                    throw new InvalidOperationException("Packed OfficeIMO.Data.Arrow adapter failed its runtime smoke.");
+                }
             }
 
             string adapterExcelPath = Path.Combine(workingPath, "csv-import.xlsx");
@@ -355,6 +387,13 @@ internal static class Program
     {
         public string? Value { get; set; }
     }
+
+}
+
+[GenerateRowMapper]
+internal sealed class ReleaseGeneratedRow
+{
+    public string? Value { get; set; }
 }
 "@
     Set-Content -LiteralPath $programPath -Value $programSource -Encoding utf8

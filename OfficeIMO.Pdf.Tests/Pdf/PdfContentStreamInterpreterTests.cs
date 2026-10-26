@@ -113,6 +113,38 @@ public sealed class PdfContentStreamInterpreterTests {
         Assert.Empty(operation.Operands);
     }
 
+    [Theory]
+    [InlineData("(unterminated")]
+    [InlineData("<0011")]
+    [InlineData("[1 2")]
+    [InlineData("<< /Key (value)")]
+    public void Interpreter_DispatchesUnterminatedOperandsToStrictVisitors(string content) {
+        var operations = new List<PdfContentOperation>();
+
+        PdfContentStreamInterpreter.Interpret(
+            content,
+            10,
+            operations.Add,
+            dispatchInvalidOperations: true);
+
+        PdfContentOperation operation = Assert.Single(operations);
+        Assert.True(operation.HasInvalidOperands);
+        Assert.Empty(operation.Operands);
+    }
+
+    [Fact]
+    public void Interpreter_RejectsRawInlineImageWithoutEiTerminator() {
+        const string content = "BI /W 1 /H 1 /BPC 8 /CS /G ID A";
+        var operations = new List<PdfContentOperation>();
+
+        PdfContentStreamInterpreter.Interpret(content, 10, operations.Add, dispatchInvalidOperations: true);
+
+        PdfContentOperation operation = Assert.Single(operations);
+        Assert.Equal("BI", operation.Name);
+        Assert.True(operation.HasInvalidOperands);
+        Assert.NotNull(operation.InlineImage);
+    }
+
     [Fact]
     public void StrictVisualParserReportsGraphicsStackUnderflow() {
         var unsupported = new List<string>();
@@ -197,6 +229,22 @@ public sealed class PdfContentStreamInterpreterTests {
         PdfTextSpan span = Assert.Single(spans);
         Assert.Equal("F1", span.FontResource);
         Assert.Equal(12D, span.FontSize);
+    }
+
+    [Fact]
+    public void TextParser_PollsCancellationDuringContentOperations() {
+        int polls = 0;
+
+        Assert.Throws<OperationCanceledException>(() => TextContentParser.Parse(
+            "q Q BT /F1 12 Tf (text) Tj ET",
+            (_, bytes) => System.Text.Encoding.ASCII.GetString(bytes),
+            (_, bytes) => bytes.Length * 500D,
+            cancellationCheck: () => {
+                polls++;
+                if (polls == 3) throw new OperationCanceledException();
+            }));
+
+        Assert.Equal(3, polls);
     }
 
     [Fact]

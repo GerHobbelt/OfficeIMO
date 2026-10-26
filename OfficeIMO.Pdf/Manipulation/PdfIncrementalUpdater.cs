@@ -13,7 +13,7 @@ internal static partial class PdfIncrementalUpdater {
     }
 
     /// <summary>Analyzes append-only mutation support using optional password and parsing settings.</summary>
-    public static PdfAppendOnlyMutationReport AnalyzeAppendOnlyMutation(byte[] pdf, PdfReadOptions? readOptions) {
+    public static PdfAppendOnlyMutationReport AnalyzeAppendOnlyMutation(byte[] pdf, PdfLoadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
         return AnalyzeAppendOnlyMutation(PdfSyntax.ReadDocumentSecurityInfo(pdf, readOptions));
     }
@@ -58,7 +58,7 @@ internal static partial class PdfIncrementalUpdater {
         string? author = null,
         string? subject = null,
         string? keywords = null,
-        PdfReadOptions? readOptions = null,
+        PdfLoadOptions? readOptions = null,
         bool createXmpMetadata = false) {
         return UpdateMetadataCore(
             pdf,
@@ -81,7 +81,7 @@ internal static partial class PdfIncrementalUpdater {
         string? author = null,
         string? subject = null,
         string? keywords = null,
-        PdfReadOptions? readOptions = null,
+        PdfLoadOptions? readOptions = null,
         bool createXmpMetadata = true) {
         return UpdateMetadataCore(
             pdf,
@@ -100,7 +100,7 @@ internal static partial class PdfIncrementalUpdater {
         string? author,
         string? subject,
         string? keywords,
-        PdfReadOptions? readOptions,
+        PdfLoadOptions? readOptions,
         bool createXmpMetadata,
         PdfMutationOperation operation) {
         Guard.NotNull(pdf, nameof(pdf));
@@ -124,8 +124,12 @@ internal static partial class PdfIncrementalUpdater {
             Title = title ?? existing.Title ?? existingXmp?.Title,
             Author = author ?? existing.Author ?? existingXmp?.Creator,
             Subject = subject ?? existing.Subject ?? existingXmp?.Description,
-            Keywords = keywords ?? existing.Keywords ?? existingXmp?.Keywords
+            Keywords = keywords ?? existing.Keywords ?? existingXmp?.Keywords,
+            TrappingStatus = existing.TrappingStatus,
+            PdfXVersion = existing.PdfXVersion,
+            PdfXConformance = existing.PdfXConformance
         };
+        updated.CopySourceDatesFrom(existing);
 
         int newInfoObjectNumber = objects.Count == 0 ? 1 : objects.Keys.Max() + 1;
         objects[newInfoObjectNumber] = new PdfIndirectObject(newInfoObjectNumber, 0, PdfInfoDictionaryBuilder.BuildDictionary(updated));
@@ -154,7 +158,7 @@ internal static partial class PdfIncrementalUpdater {
         string? author = null,
         string? subject = null,
         string? keywords = null,
-        PdfReadOptions? readOptions = null,
+        PdfLoadOptions? readOptions = null,
         bool createXmpMetadata = false) {
         Guard.NotNull(input, nameof(input));
         if (!input.CanRead) {
@@ -174,7 +178,7 @@ internal static partial class PdfIncrementalUpdater {
         string? author = null,
         string? subject = null,
         string? keywords = null,
-        PdfReadOptions? readOptions = null,
+        PdfLoadOptions? readOptions = null,
         bool createXmpMetadata = false) {
         Guard.NotNullOrWhiteSpace(inputPath, nameof(inputPath));
         Guard.NotNullOrWhiteSpace(outputPath, nameof(outputPath));
@@ -239,7 +243,7 @@ internal static partial class PdfIncrementalUpdater {
         changedObjectNumbers.Add(metadataObjectNumber);
     }
 
-    internal static bool CanPreserveXmpMetadataAppendOnly(byte[] pdf, PdfReadOptions? readOptions) {
+    internal static bool CanPreserveXmpMetadataAppendOnly(byte[] pdf, PdfLoadOptions? readOptions) {
         PdfDocumentSecurityInfo security = PdfSyntax.ReadDocumentSecurityInfo(pdf, readOptions);
         if (!security.RootObjectNumber.HasValue) return false;
         var (objects, _) = PdfSyntax.ParseObjects(pdf, readOptions);
@@ -294,7 +298,13 @@ internal static partial class PdfIncrementalUpdater {
         formBlockers.AddRange(commonBlockers);
         signaturePreparationBlockers.AddRange(commonBlockers);
         longTermValidationBlockers.AddRange(commonBlockers);
-        annotationBlockers.AddRange(commonBlockers);
+        annotationBlockers.AddRange(commonBlockers.Where(static blocker => blocker != "Encrypted"));
+        if (security.HasEncryption &&
+            !security.HasOwnerAuthorization &&
+            security.AllowsAnnotationChanges != true &&
+            security.AllowsModification != true) {
+            annotationBlockers.Add("AnnotationPermission");
+        }
         if (security.HasEncryption) {
             signaturePreparationBlockers.Add("EncryptedRawSignatureObject");
         }

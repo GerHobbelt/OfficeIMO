@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading;
 using OfficeIMO.Pdf;
 using Xunit;
 
@@ -96,6 +97,26 @@ public class PdfAttachmentExtractorTests {
     }
 
     [Fact]
+    public void ExtractAttachments_PropagatesCancellationBeforeAttachmentPayloadDecoding() {
+        byte[] pdf = BuildFlateEmbeddedFilePdf(Encoding.UTF8.GetBytes(new string('A', 4096)));
+        PdfReadDocument document = PdfReadDocument.Open(pdf);
+        using var cancellation = new CancellationTokenSource();
+        bool descriptorVisited = false;
+
+        Assert.Throws<OperationCanceledException>(() => PdfAttachmentExtractor.ExtractAttachments(
+            document,
+            _ => {
+                descriptorVisited = true;
+                cancellation.Cancel();
+                return true;
+            },
+            maxDecodedBytes: 1L * 1024L * 1024L,
+            cancellationToken: cancellation.Token));
+
+        Assert.True(descriptorVisited);
+    }
+
+    [Fact]
     public void InspectAttachments_DoesNotPresentDeclaredOrEncodedSizeAsDecodedSize() {
         byte[] payload = Encoding.UTF8.GetBytes(new string('A', 4096));
         byte[] pdf = BuildFlateEmbeddedFilePdf(payload, declaredSize: 1);
@@ -143,7 +164,7 @@ public class PdfAttachmentExtractorTests {
         byte[] pdf = BuildRepeatedFileAttachmentAnnotationPdf(annotationCount: 3);
 
         PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() =>
-            PdfReadDocument.Open(pdf, new PdfReadOptions {
+            PdfReadDocument.Open(pdf, new PdfLoadOptions {
                 Limits = new PdfReadLimits { MaxAttachments = 2 }
             }));
 
@@ -160,7 +181,7 @@ public class PdfAttachmentExtractorTests {
             .Paragraph(p => p.Text("Aggregate attachment budget."))
             .ToBytes();
 
-        PdfReadDocument document = PdfReadDocument.Open(pdf, new PdfReadOptions {
+        PdfReadDocument document = PdfReadDocument.Open(pdf, new PdfLoadOptions {
             Limits = new PdfReadLimits { MaxTotalAttachmentBytes = 5 }
         });
         Assert.Equal(2, document.Attachments.Count);
@@ -180,7 +201,7 @@ public class PdfAttachmentExtractorTests {
         }
         byte[] pdf = BuildFlateEmbeddedFilePdf(payload, malformedPredictor: true);
 
-        PdfReadDocument document = PdfReadDocument.Open(pdf, new PdfReadOptions {
+        PdfReadDocument document = PdfReadDocument.Open(pdf, new PdfLoadOptions {
             Limits = new PdfReadLimits { MaxTotalAttachmentBytes = 64 }
         });
         Assert.Single(document.Attachments);
@@ -201,7 +222,7 @@ public class PdfAttachmentExtractorTests {
             .ToBytes();
 
         PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() =>
-            PdfReadDocument.Open(pdf, new PdfReadOptions {
+            PdfReadDocument.Open(pdf, new PdfLoadOptions {
                 Limits = new PdfReadLimits {
                     MaxAttachments = 1,
                     MaxTotalAttachmentBytes = 3

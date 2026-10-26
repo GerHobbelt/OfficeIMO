@@ -2,11 +2,20 @@ param(
     [string] $ConfigPath = "$PSScriptRoot\project.build.json",
     [Nullable[bool]] $UpdateVersions,
     [Nullable[bool]] $Build,
-    [Nullable[bool]] $PublishNuget =$false,
+    [Nullable[bool]] $PublishNuget = $false,
     [Nullable[bool]] $PublishGitHub = $false,
     [Nullable[bool]] $Plan,
-    [string] $PlanPath
+    [string] $PlanPath,
+    [bool] $RequireHtmlPdfReleaseProof = $false,
+    [string] $PdfComplianceProofPath = $env:OFFICEIMO_PDF_COMPLIANCE_PROOF_PATH
 )
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+if ($RequireHtmlPdfReleaseProof -and $Plan -ne $true) {
+    & "$PSScriptRoot/Test-HtmlPdfReleaseGate.ps1" -PdfComplianceProofPath $PdfComplianceProofPath
+}
 
 Import-Module PSPublishModule -Force -ErrorAction Stop
 

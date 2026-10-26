@@ -70,7 +70,7 @@ public class PdfEngineRoadmapFoundationTests {
             .Paragraph(paragraph => paragraph.Text("Mutation portfolio"))
             .TextField("customer", value: "Ada")
             .ToBytes();
-        PdfDocument opened = PdfDocument.Open(bytes);
+        PdfDocument opened = PdfDocument.Load(bytes);
 
         PdfMutationPortfolioReport report = opened.AssessMutations(new[] {
             PdfMutationOperation.ModifyAnnotations,
@@ -98,7 +98,7 @@ public class PdfEngineRoadmapFoundationTests {
             yield return "customer";
         }
 
-        PdfMutationPortfolioReport report = PdfDocument.Open(bytes).AssessMutations(
+        PdfMutationPortfolioReport report = PdfDocument.Load(bytes).AssessMutations(
             new[] { PdfMutationOperation.ModifyCatalog, PdfMutationOperation.FillFormFields },
             FieldNames());
 
@@ -112,7 +112,7 @@ public class PdfEngineRoadmapFoundationTests {
             .Paragraph(paragraph => paragraph.Text("Producer compatibility"))
             .ToBytes();
 
-        PdfRenderCompatibilityReport report = PdfDocument.Open(bytes).AssessRenderCompatibility();
+        PdfRenderCompatibilityReport report = PdfDocument.Load(bytes).AssessRenderCompatibility();
 
         Assert.Same(PdfRenderCapabilities.Current, report.Manifest);
         Assert.Single(report.Pages);
@@ -356,7 +356,7 @@ public class PdfEngineRoadmapFoundationTests {
                     Kind = "preview-image",
                     FileName = "preview.gif",
                     MediaType = "image/gif",
-                    PayloadBytes = Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
+                    PayloadBytes = Convert.FromBase64String("R0lGODlhAQABAJAAAAAAAP///ywAAAAAAQABAAACAkwBADs=")
                 }
             }
         };
@@ -370,7 +370,7 @@ public class PdfEngineRoadmapFoundationTests {
     }
 
     private static byte[] CreateTwoFrameGif() {
-        byte[] first = Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==");
+        byte[] first = Convert.FromBase64String("R0lGODlhAQABAJAAAAAAAP///ywAAAAAAQABAAACAkwBADs=");
         const int imageDescriptorOffset = 19;
         return first.Take(first.Length - 1)
             .Concat(first.Skip(imageDescriptorOffset).Take(first.Length - imageDescriptorOffset - 1))

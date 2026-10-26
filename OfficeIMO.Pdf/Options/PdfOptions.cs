@@ -76,8 +76,12 @@ public sealed partial class PdfOptions {
     private PdfComplianceProfile _complianceProfile;
     private PdfAIdentification? _pdfAIdentification;
     private PdfUaIdentification? _pdfUaIdentification;
+    private PdfXIdentification? _pdfXIdentification;
+    private PdfXProductionMetadata? _pdfXProductionMetadata;
+    private bool _useAutomaticPdfXProductionMetadata;
     private PdfElectronicInvoiceMetadata? _electronicInvoiceMetadata;
     private PdfOutputIntent? _outputIntent;
+    private PdfTrappingStatus? _trappingStatus;
     private PdfTaggedStructureMode _taggedStructureMode;
     private string? _language;
     private PdfCatalogPageMode? _catalogPageMode;
@@ -112,6 +116,7 @@ public sealed partial class PdfOptions {
     private System.Collections.Generic.HashSet<PdfStandardFont>? _embeddedFontProgramFailures;
     private System.Collections.Generic.HashSet<string>? _reportedEmbeddedFontProgramFailures;
     private System.Collections.Generic.HashSet<string>? _reportedTextShapingDiagnostics;
+    private System.Collections.Generic.HashSet<string>? _reportedLayoutDiagnostics;
     private System.Collections.Generic.HashSet<string>? _providerShapedTextRuns;
     private Func<string, IReadOnlyList<int>>? _textLineBreakCallback;
     private PdfTextHyphenationCallback? _textHyphenationCallback;

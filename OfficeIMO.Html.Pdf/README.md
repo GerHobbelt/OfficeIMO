@@ -117,7 +117,33 @@ result.Save("report.pdf").RequireNoLoss();
 
 ## Fonts and text shaping
 
-The dependency-light path loads policy-approved TrueType-glyf OpenType and WOFF 1 faces and provides deterministic managed Unicode, bidirectional, and bounded core-Arabic behavior. WOFF 2 transformed tables and CFF outlines are not silently substituted: font loading reports `HtmlRenderFontFormatUnsupported` unless the host pre-converts the face to a supported static font.
+The first-party font engine loads policy-approved TrueType-glyf OpenType, WOFF 1, CFF/CFF2, and TrueType or CFF2 variable fonts. Single-face WOFF 2 decoding is built in on .NET 8 and newer; extract and register individual faces from WOFF 2 font collections. Static faces remain eligible for PDF embedding; variable instances and shaped results that cannot use the scalar PDF text path are rendered as vector outlines plus logical `ActualText`, preserving extraction and accessibility.
+
+PDF outline expansion is fail-closed. The selected program must implement
+`IOfficeBoundedFontProgram`; conversion carries cancellation into contour expansion
+and enforces `MaxOutlinedTextCharactersPerRun` plus the operation-wide
+`MaxOutlinedTextPathCommands` budget. The defaults are 16,384 UTF-16 characters per
+run and 1,000,000 path commands per conversion. Raise them only for trusted inputs.
+
+No font-program package or license key is required. Select variable-font axes on the font collection before conversion:
+
+```csharp
+using System.Collections.Generic;
+using OfficeIMO.Drawing;
+using OfficeIMO.Html.Pdf;
+
+var options = new HtmlPdfSaveOptions();
+options.Fonts.FontVariationResolver = request =>
+    request.FamilyName == "Report Variable"
+        ? new Dictionary<string, float> {
+            ["wght"] = 720,
+            ["wdth"] = 110
+        }
+        : null;
+
+options.MaxOutlinedTextCharactersPerRun = 16_384;
+options.MaxOutlinedTextPathCommands = 1_000_000;
+```
 
 For complete OpenType GSUB/GPOS shaping, add the optional `OfficeIMO.Drawing.HarfBuzz` adapter and assign its provider to the same options object used by PDF and image output:
 
@@ -131,7 +157,7 @@ var options = new HtmlPdfSaveOptions {
 options.Fonts.Add("Report Arabic", File.ReadAllBytes("ReportArabic.ttf"));
 ```
 
-If a configured provider declines a joining-script run, OfficeIMO retains logical searchable text and reports `HtmlRenderComplexTextShapingUnsupported`; strict mode rejects that fallback.
+If no configured provider accepts a run that requires provider-owned complex shaping, OfficeIMO retains logical searchable text and reports `HtmlRenderComplexTextShapingUnsupported`; strict mode rejects that fallback, including outlined-font output.
 
 Install `OfficeIMO.Mhtml.Pdf` when the source is an MHT/MHTML archive. That bridge adds MIME parsing and embedded-resource resolution without putting `OfficeIMO.Email` into ordinary HTML/PDF applications.
 
@@ -246,9 +272,13 @@ using OfficeIMO.Drawing;
 using OfficeIMO.Html.Pdf;
 using OfficeIMO.Pdf;
 
-PdfDocument sourcePdf = PdfDocument.Open("quarterly-update.pdf");
+PdfDocument sourcePdf = PdfDocument.Load("quarterly-update.pdf");
 PdfHtmlSaveOptions semanticOptions = PdfHtmlSaveOptions.CreateSemanticProfile(
     OfficeVisualThemeKind.TechnicalDocument);
+semanticOptions.ReadOptions = new PdfReadOptions {
+    PageSelection = PdfPageSelection.Parse("1-20"),
+    Pipeline = new PdfUnderstandingPipelineOptions { MaxPages = 20 }
+};
 string semantic = sourcePdf.ToHtml(semanticOptions);
 
 PdfHtmlSaveOptions reviewOptions = PdfHtmlSaveOptions.CreatePositionedReviewProfile(
@@ -256,7 +286,7 @@ PdfHtmlSaveOptions reviewOptions = PdfHtmlSaveOptions.CreatePositionedReviewProf
 reviewOptions.ImageExportMode = PdfHtmlImageExportMode.EmbeddedDataUri;
 PdfConversionReport saveReport = sourcePdf.SaveAsHtml("quarterly-review.html", reviewOptions);
 
-PdfHtmlConversionResult reviewResult = sourcePdf.Read.Logical().ToHtmlResult(reviewOptions);
+PdfHtmlConversionResult reviewResult = sourcePdf.Read().ToHtmlResult(reviewOptions);
 foreach (PdfConversionWarning warning in reviewResult.Report.Warnings) {
     Console.WriteLine($"{warning.Code}: {warning.Message}");
 }
@@ -267,6 +297,8 @@ The named profiles emit the shared responsive OfficeIMO document shell, stable p
 PDF-to-HTML profiles describe how an existing PDF is projected to review HTML. They are unrelated to HTML-to-PDF, which has one direct rendering path. HTML-to-PDF and HTML-to-PNG/JPEG/TIFF/SVG/WebP use the same `HtmlRenderOptions` scene and diagnostics; `HtmlPdfSaveOptions` extends that shared options type with PDF-only settings. PDF page images use `OfficeIMO.Pdf`'s `ToImage()` / `ToImages()` API instead of routing through HTML. An image is embedded into HTML as a resource; turning image pixels into document structure is an OCR workflow, not an image-rendering profile.
 
 Semantic output uses the shared crop-, rotation-, spanning-band-, and column-aware PDF reading order by default. Set `PdfHtmlSaveOptions.UseSharedPageReadingOrder = false` only when source sequence is deliberately preferred; positioned-review output always retains source geometry.
+
+`PdfHtmlSaveOptions.ReadOptions` configures the canonical semantic read for an opened `PdfDocument`. Existing `PageRanges` take precedence over `ReadOptions.PageSelection`; the profile, layout, and semantic budgets still come from `ReadOptions`. The setting is ignored when the source is already a `PdfDocumentReadResult`.
 
 ## Targets and license
 

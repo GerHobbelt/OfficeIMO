@@ -28,7 +28,7 @@ function Get-ComponentCategory {
         '^OfficeIMO\.(Word|Excel|PowerPoint)' { return 'Office documents' }
         '^OfficeIMO\.MarkdownRenderer' { return 'Rendering surfaces' }
         '^OfficeIMO\.(Pdf|Html|Markdown|Rtf|AsciiDoc|Latex)' { return 'Publishing and conversion' }
-        '^OfficeIMO\.(Email|OneNote|OpenDocument|Epub|CSV|Visio)' { return 'Formats and interoperability' }
+        '^OfficeIMO\.(Email|OneNote|OpenDocument|Epub|CSV|Visio|IWork)' { return 'Formats and interoperability' }
         '^OfficeIMO\.GoogleWorkspace|Google(Docs|Sheets|Slides)$' { return 'Google Workspace' }
         '^OfficeIMO\.(Drawing|Provenance|Security|Zip|Markup|Adf|Confluence)' { return 'Foundations and integrations' }
         default { return 'Specialized components' }
@@ -39,6 +39,7 @@ function Get-DocumentationUrl {
     param([string] $Name)
 
     switch -Regex ($Name) {
+        '^OfficeIMO\.(?:IWork|Word\.IWork|Excel\.IWork|PowerPoint\.IWork)$' { return '/docs/iwork/' }
         '^OfficeIMO\.Word' { return '/docs/word/' }
         '^OfficeIMO\.Excel' { return '/docs/excel/' }
         '^OfficeIMO\.PowerPoint' { return '/docs/powerpoint/' }
@@ -63,7 +64,7 @@ $allProjects = @(Get-ChildItem -LiteralPath $RepositoryRoot -Recurse -File -Filt
     Where-Object {
         $relativeProjectPath = [System.IO.Path]::GetRelativePath($RepositoryRoot, $_.FullName).Replace('\', '/')
         $relativeProjectPath -notmatch '(^|/)(?:bin|obj)(?:/|$)' -and
-            $relativeProjectPath -notmatch '(^|/)(?:\.ci-artifacts|\.playwright-cli|artifacts|_worktrees)(?:/|$)' -and
+            $relativeProjectPath -notmatch '(^|/)(?:\.ci-artifacts|\.playwright-cli|\.powerforge-runner|artifacts|Ignore|_worktrees)(?:/|$)' -and
             $relativeProjectPath -notmatch '^Website/projects/'
     })
 

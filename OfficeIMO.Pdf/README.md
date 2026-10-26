@@ -63,18 +63,19 @@ PdfDocument.Create(pdf => pdf.Content(content => content
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument.Open("input.pdf")
+PdfDocument.Load("input.pdf")
     .Pages.Extract("1-2,4")
     .MergeWith("appendix.pdf")
     .UpdateMetadata(title: "Merged report")
     .Stamp.Text("Reviewed")
     .Save("output.pdf");
 
-string text = PdfDocument.Open("output.pdf").Read.Text();
+PdfDocumentReadResult read = PdfDocument.Load("output.pdf").Read();
+string text = string.Join('\n', read.Pages.SelectMany(page => page.TextBlocks).Select(block => block.Text));
 ```
 
-`Open(...)` is the one entry point for byte arrays, files, and streams. It
-enforces the same `PdfReadOptions` limits before buffering, snapshots caller
+`Load(...)` is the one entry point for byte arrays, files, and streams. It
+enforces the same `PdfLoadOptions` limits before buffering, snapshots caller
 input once, and reuses one parsed document across read, inspection, preflight,
 diagnostic, optimization, signature, and compliance operations.
 
@@ -83,7 +84,7 @@ diagnostic, optimization, signature, and compliance operations.
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument document = PdfDocument.Open("input.pdf");
+PdfDocument document = PdfDocument.Load("input.pdf");
 
 foreach (PdfJavaScript script in document.JavaScript.List()) {
     Console.WriteLine(script.Name);
@@ -99,14 +100,14 @@ File.WriteAllBytes("output.pdf", edited.ToBytes());
 Script names use exact, case-sensitive matching. Editing preserves untouched
 name-tree entries and action data, then reads the saved artifact back before
 returning it. Per-script, script-count, and aggregate-byte limits come from
-`PdfReadOptions.Limits`. Document JavaScript is active content: the default
+`PdfLoadOptions.Limits`. Document JavaScript is active content: the default
 sanitizer removes it, and full-rewrite edits are blocked for encrypted or signed
 inputs rather than weakening their security or revision contracts.
 
 ### Add interactive fields to an existing PDF
 
 ```csharp
-PdfAcroFormEditResult edited = PdfDocument.Open("input.pdf").Forms.Edit(form => form
+PdfAcroFormEditResult edited = PdfDocument.Load("input.pdf").Forms.Edit(form => form
     .Create(new PdfFormFieldCreateOptions {
         Name = "customer.notes",
         Kind = PdfFormFieldCreationKind.Text,
@@ -145,7 +146,7 @@ For a single health and capability view:
 
 ```csharp
 PdfAnalysisReport analysis = PdfDocument
-    .Open("incoming.pdf")
+    .Load("incoming.pdf")
     .Analyze(PdfComplianceProfile.PdfA2B);
 
 Console.WriteLine($"Pages: {analysis.Info.PageCount}");
@@ -158,13 +159,14 @@ foreach (PdfDiagnosticFinding finding in analysis.Diagnostics.Findings) {
 }
 ```
 
-## Migrating to the unified API
+## Unified document API
 
 The unified API intentionally narrows the public surface around the fluent
 `PdfDocument` facade:
 
-- Replace `PdfDocument.Load(...)` and `PdfReadDocument.Load(...)` with
-  `PdfDocument.Open(...)` or `PdfReadDocument.Open(...)`.
+- Use `PdfDocument.Load(...)` for normal existing-document workflows. Use
+  `PdfReadDocument.Open(...)` only when a low-level parser model is the intended
+  result rather than the canonical semantic document model.
 - Seekable PDF input streams are now consistently read from the beginning and
   restored to their original position. Non-seekable streams are read forward
   from their current position.
@@ -193,7 +195,8 @@ The unified API intentionally narrows the public surface around the fluent
   same result shape while capturing exceptions instead of throwing.
 
 The target-framework support remains `netstandard2.0`, `net8.0`, and
-`net10.0`; the API cleanup itself is a deliberate source-breaking change.
+`net10.0`. See the [OfficeIMO migration guide](https://github.com/EvotecIT/OfficeIMO/blob/master/MIGRATION.md)
+for the OfficeIMO 3.3 breaking changes and old-to-new API map.
 
 ## Examples
 
@@ -290,7 +293,7 @@ PdfDocument.Create(pdf => pdf.Page(page => page
     .Save("styled-header.pdf");
 ```
 
-Styled header/footer runs support fonts, size, color, highlighting, underline, strike, and baseline changes. Use the existing header/footer image and shape methods for visuals; interactive links and inline elements are intentionally kept out of text runs.
+Styled header/footer runs support fonts, size, color, highlighting, underline, strike, and baseline changes. Use the existing header/footer image and shape methods for visuals; interactive links and inline elements are intentionally kept out of text runs. Authored header/footer content that enters margins or overlaps another zone is preserved instead of rejected; attach a `PdfConversionReport` with `ReportDiagnosticsTo(...)` when the host needs structured overflow or clipping warnings.
 
 ### Rich report layout
 
@@ -383,62 +386,116 @@ Console.WriteLine($"Peak page payload: {save.Serialization?.PeakRetainedPageCont
 Console.WriteLine($"Object spill used: {save.Serialization?.ObjectBufferSpilled}");
 ```
 
-### Read text, Markdown, tables, images, and attachments
+### Load once and build one semantic read result
 
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument pdf = PdfDocument.Open("statement.pdf");
+PdfDocument pdf = PdfDocument.Load("statement.pdf");
+PdfDocumentReadResult result = pdf.Read(); // Structured is the default profile.
 
-string text = pdf.Read.Text();
-string firstPages = pdf.Read.Text("1-2");
-PdfOperationResult<string> safeFirstPages = pdf.Read.TryText("1-2");
-string markdown = pdf.Read.Markdown();
-IReadOnlyList<string> pages = pdf.Read.TextByPage();
-PdfLogicalDocument logical = pdf.Read.Logical();
-PdfMetadata metadata = pdf.Read.Metadata();
-PdfDocumentSecurityInfo security = pdf.Read.Security();
-IReadOnlyList<PdfPageInfo> pageInfo = pdf.Read.Pages();
-PdfXmpMetadataInfo? xmp = pdf.Read.XmpMetadata();
-IReadOnlyList<PdfOutputIntentInfo> outputIntents = pdf.Read.OutputIntents();
-PdfTaggedContentInfo? taggedContent = pdf.Read.TaggedContent();
-PdfOptionalContentProperties? optionalContent = pdf.Read.OptionalContent();
-PdfOperationResult<PdfDocumentInfo> safeInfo = pdf.Read.TryDocumentInfo();
+foreach (PdfLogicalPage page in result.Pages) {
+    foreach (PdfLogicalParagraph paragraph in page.Paragraphs) {
+        Console.WriteLine(paragraph.Text);
+    }
 
-foreach (var table in logical.Tables) {
-    Console.WriteLine($"Table on page {table.PageNumber}: {table.Rows.Count} rows");
+    foreach (PdfLogicalTable table in page.Tables) {
+        PdfLogicalTableData data = PdfLogicalTableAnalysis.Extract(table);
+        Console.WriteLine($"Page {page.PageNumber}: {data.Rows.Count} table rows");
+    }
 }
 
-IReadOnlyList<PdfLogicalReadingOrderItem> readingOrder =
-    PdfLogicalReadingOrderAnalysis.Analyze(logical.Pages[0]);
+string markdown = result.ToMarkdown();
+PdfMetadata metadata = result.Metadata;
+PdfDocumentSecurityInfo security = result.Security;
+IReadOnlyList<PdfOutlineItem> outlines = result.Outlines;
+IReadOnlyList<PdfLogicalLinkAnnotation> links = result.Links;
+IReadOnlyList<PdfFormField> formFields = result.FormFields;
+IReadOnlyList<PdfAttachmentInfo> attachmentMetadata = result.Attachments;
 
-PdfLogicalTableData tableData = PdfLogicalTableAnalysis.Extract(logical.Tables[0]);
-foreach (PdfLogicalTableValueProfile profile in tableData.ValueProfiles) {
-    Console.WriteLine($"{profile.Name}: {profile.Kind} ({profile.Confidence:P0})");
-}
-
-string markdownTables = PdfLogicalTableTextExportExtensions.ExtractMarkdownTables("statement.pdf");
-IReadOnlyList<PdfExtractedImage> images = pdf.Read.Images();
-IReadOnlyList<PdfExtractedImage> firstPageImages = pdf.Read.Images("1");
-PdfOperationResult<IReadOnlyList<PdfExtractedImage>> safeImages = pdf.Read.TryImages("1-2");
-IReadOnlyList<PdfImagePlacement> imageGeometry = pdf.Read.ImagePlacements("1-2");
-IReadOnlyList<PdfOutlineItem> outlines = pdf.Read.Outlines();
-IReadOnlyList<PdfLogicalLinkAnnotation> links = pdf.Read.Links();
-IReadOnlyList<PdfLogicalLinkAnnotation> supportLinks = pdf.Read.LinksByUri("https://example.com/support");
-PdfOperationResult<IReadOnlyList<PdfNamedDestination>> safeDestinations = pdf.Read.TryNamedDestinations();
-IReadOnlyList<PdfAnnotation> annotations = pdf.Read.Annotations();
-IReadOnlyList<PdfAnnotation> freeTextNotes = pdf.Read.AnnotationsBySubtype("FreeText");
-PdfOperationResult<IReadOnlyList<PdfAnnotation>> safeAnnotations = pdf.Read.TryAnnotations();
-IReadOnlyList<PdfCatalogAction> catalogActions = pdf.Read.CatalogActions();
-IReadOnlyList<PdfPageAction> pageActions = pdf.Read.PageActions();
-PdfOperationResult<IReadOnlyList<PdfPageAction>> safePageActions = pdf.Read.TryPageActions();
-IReadOnlyList<PdfFormField> formFields = pdf.Read.FormFields();
-IReadOnlyList<PdfLogicalFormWidget> formWidgets = pdf.Read.FormWidgets("Person.Name");
-PdfOperationResult<IReadOnlyList<PdfFormField>> safeFormFields = pdf.Read.TryFormFields();
-IReadOnlyList<PdfAttachmentInfo> attachmentMetadata = pdf.Read.AttachmentMetadata();
-IReadOnlyList<PdfExtractedAttachment> attachments = pdf.Read.Attachments();
-PdfOperationResult<IReadOnlyList<PdfExtractedAttachment>> safeAttachments = pdf.Read.TryAttachments();
+IReadOnlyList<PdfExtractedImage> images = pdf.Images.Extract();
+IReadOnlyList<PdfImagePlacement> placements = pdf.Images.Placements("1-2");
+IReadOnlyList<PdfExtractedAttachment> attachments = pdf.Attachments.Extract();
 ```
+
+`PdfDocument.Read(...)` is the only semantic reconstruction entry point. Both
+profiles return `PdfDocumentReadResult`; they do not maintain separate logical
+models. `Structured` adds document-wide tagged-PDF, outline, repeated-edge,
+heading-tier, hierarchy, and continuation evidence. `Fast` keeps the same page
+pipeline and result contract while omitting optional document-wide enrichment:
+
+```csharp
+PdfDocumentReadResult selected = pdf.Read(new PdfReadOptions {
+    Profile = PdfReadProfile.Fast,
+    PageSelection = PdfPageSelection.Parse("1-2,5")
+});
+```
+
+Every built-in semantic stage observes the supplied cancellation token while it
+works, not only between pages. Custom pipeline stages receive the same token and
+work-budget context. `PdfUnderstandingPipelineOptions.MaxWorkUnitsPerPage` and
+`MaxDocumentWorkUnits` bound geometry comparisons, recursive partitioning, and
+document-wide evidence; over-complex input fails with
+`PdfReadLimitKind.UnderstandingWork` instead of continuing unbounded work.
+
+### Inspect fonts, image paint, and cross-page continuations
+
+The font inventory reports every unique declared font dictionary and every page
+or nested Form XObject resource path that references it. Embedded OpenType and
+TrueType programs are parsed through the same bounded font engine used by PDF
+generation. The parsed glyph count describes the embedded program; it is not a
+count of glyphs painted by the page.
+
+```csharp
+using OfficeIMO.Pdf;
+
+PdfDocument pdf = PdfDocument.Load("annual-report.pdf");
+PdfDocumentReadResult result = pdf.Read();
+PdfFontInventory fonts = pdf.Resources.Fonts();
+
+foreach (PdfFontInfo font in fonts.Fonts) {
+    Console.WriteLine($"{font.FamilyName}: embedded={font.IsEmbedded}, subset={font.IsSubset}");
+    if (font.EmbeddedOpenTypeInfo is PdfOpenTypeFontInfo program) {
+        Console.WriteLine($"Program glyphs: {program.GlyphCount}; Unicode mappings: {program.UnicodeScalarCount}");
+    }
+}
+
+IReadOnlyList<PdfImagePlacement> placements = pdf.Images.Placements();
+foreach (PdfImagePlacement placement in placements) {
+    Console.WriteLine(
+        $"Page {placement.PageNumber}: {placement.Width} x {placement.Height}, " +
+        $"opacity={placement.Opacity}, blend={placement.EffectiveBlendMode}, clipped={placement.Clip is not null}");
+}
+
+IReadOnlyList<PdfLogicalParagraphContinuationGroup> paragraphs =
+    result.GetParagraphContinuationGroups(new PdfLogicalParagraphContinuationOptions {
+        MinimumConfidence = 0.80
+    });
+IReadOnlyList<PdfLogicalTableContinuationGroup> tables =
+    result.GetTableContinuationGroups(new PdfLogicalTableContinuationOptions {
+        MinimumConfidence = 0.80
+    });
+
+foreach (PdfLogicalParagraphContinuationGroup paragraph in paragraphs.Where(item => item.SpansPages)) {
+    Console.WriteLine($"Paragraph {paragraph.FirstPageNumber}-{paragraph.LastPageNumber}: {paragraph.Confidence:P0}");
+}
+foreach (PdfLogicalTableContinuationGroup table in tables.Where(item => item.SpansPages)) {
+    Console.WriteLine($"Table {table.FirstPageNumber}-{table.LastPageNumber}: {table.TotalRowCount} rows");
+}
+```
+
+Cross-page recovery is conservative. It joins only adjacent boundary items with
+compatible geometry and content evidence, returns confidence and evidence flags,
+and leaves the original page-local logical model unchanged. Embedded program bytes
+are returned only when `IncludeEmbeddedProgramBytes` is explicitly enabled and
+remain subject to both `MaxEmbeddedProgramBytes` per font and
+`MaxTotalDecodedFontBytes` across embedded programs and ToUnicode maps. ToUnicode
+per-map and aggregate limit outcomes have separate diagnostics and inventory counts,
+so resource limits are not reported as malformed maps. Nested Form XObject discovery
+deduplicates shared resource contexts by their shallowest reachable depth and is
+bounded by `MaxFormResourceTraversals`.
+For image paint inspection, `AuthoredBlendMode` is null when the normal PDF default
+was not declared and retains an explicit or inherited authored `Normal` value.
 
 Text extraction excludes PDF artifact marked content by default, which is the
 logical-text behavior expected for decorative headers, footers, and chart
@@ -446,11 +503,14 @@ labels. Opt into visual text when those marked artifacts are part of the
 required payload:
 
 ```csharp
-PdfDocument visualTextPdf = PdfDocument.Open("spreadsheet-export.pdf", new PdfReadOptions {
+PdfDocument visualTextPdf = PdfDocument.Load("spreadsheet-export.pdf", new PdfLoadOptions {
     IncludeArtifactText = true
 });
 
-IReadOnlyList<string> visualTextByPage = visualTextPdf.Read.TextByPage();
+PdfDocumentReadResult visual = visualTextPdf.Read();
+IReadOnlyList<string> visualTextByPage = visual.Pages
+    .Select(page => string.Join('\n', page.TextBlocks.Select(block => block.Text)))
+    .ToArray();
 ```
 
 Image-only and mixed pages can be enriched through a caller-owned OCR provider
@@ -459,12 +519,12 @@ to cropped, rotated visual page coordinates, de-duplicated against native text,
 and projected into the same logical model used by reverse converters:
 
 ```csharp
-static async Task<PdfLogicalDocument> ReadWithOcrAsync(
+static async Task<PdfDocumentReadResult> ReadWithOcrAsync(
     string path,
     IPdfOcrProvider provider) {
     PdfOcrMergeResult ocr = await PdfDocument
-        .Open(path)
-        .Read.OcrAsync(provider, new PdfOcrMergeOptions {
+        .Load(path)
+        .Ocr.ReadAsync(provider, new PdfOcrMergeOptions {
             MinimumConfidence = 0.75,
             DetectAlignedTables = true
         });
@@ -488,7 +548,7 @@ PowerPoint, HTML, RTF, ODT, ODS, and ODP packages consume
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument source = PdfDocument.Open("packet.pdf");
+PdfDocument source = PdfDocument.Load("packet.pdf");
 
 source.Pages.Extract("1-3")
     .Save("cover-and-summary.pdf");
@@ -508,7 +568,7 @@ selectedRanges[1].Save("packet-evidence.pdf");
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument.Open("packet.pdf")
+PdfDocument.Load("packet.pdf")
     .MergeWith("appendix.pdf")
     .Pages.Delete("2,5-6")
     .Pages.Duplicate("1")
@@ -524,10 +584,10 @@ permission bits unless the caller explicitly opts into ignoring those
 restrictions:
 
 ```csharp
-PdfDocument first = PdfDocument.Open("first.pdf", new PdfReadOptions {
+PdfDocument first = PdfDocument.Load("first.pdf", new PdfLoadOptions {
     Password = "first-owner-password"
 });
-PdfDocument second = PdfDocument.Open("second.pdf", new PdfReadOptions {
+PdfDocument second = PdfDocument.Load("second.pdf", new PdfLoadOptions {
     Password = "second-user-password",
     PermissionPolicy = PdfPermissionPolicy.IgnoreRestrictions
 });
@@ -547,6 +607,150 @@ recovery. The document must still decrypt with the supplied password; an
 unknown or incorrect password remains an error. Full rewrites of signed PDFs
 remain blocked because they would invalidate existing signatures.
 
+### Production document workflows
+
+Apply one continuous Bates sequence across a batch. Each output includes its
+page assignments and rewrite-preservation evidence:
+
+```csharp
+var inputs = new[] {
+    new PdfBatesDocument(File.ReadAllBytes("volume-a.pdf"), "volume-a.pdf"),
+    new PdfBatesDocument(File.ReadAllBytes("volume-b.pdf"), "volume-b.pdf")
+};
+
+PdfBatesBatchResult numbered = PdfBatesNumberer.Apply(inputs, new PdfBatesNumberingOptions {
+    StartNumber = 1200,
+    Prefix = "CASE-",
+    MinimumDigits = 6,
+    Position = PdfBatesPosition.BottomRight
+});
+
+File.WriteAllBytes("volume-a-numbered.pdf", numbered.Documents[0].ToBytes());
+Console.WriteLine(numbered.NextNumber);
+```
+
+Every label is measured against its target page rectangle. A batch fails
+instead of wrapping or clipping an identifier that cannot be rendered in full.
+
+Interleave selected pages with explicit output provenance, including reverse
+order for duplex scan backs:
+
+```csharp
+var fronts = new PdfInterleaveSource(File.ReadAllBytes("fronts.pdf"), "fronts");
+var backs = new PdfInterleaveSource(File.ReadAllBytes("backs.pdf"), "backs") {
+    Reverse = true
+};
+
+PdfInterleaveResult interleaved = PdfPageInterleaver.Interleave(
+    new[] { fronts, backs },
+    new PdfInterleaveOptions { RemainderMode = PdfInterleaveRemainderMode.Reject });
+
+File.WriteAllBytes("duplex-scan.pdf", interleaved.ToBytes());
+```
+
+Page-addressed form fields and named links follow the selected pages and their
+final output ownership; structures that belong only to excluded pages are not
+carried into the composed document.
+
+Production splitting can combine page-count, text-boundary, and target-size
+rules. Every part reports its source pages, termination reason, byte size, and
+whether one indivisible page exceeded the target. Probe count and cumulative
+generated bytes are bounded and reported for the complete operation:
+
+```csharp
+PdfProductionSplitResult split = PdfProductionSplitter.Split(
+    File.ReadAllBytes("records.pdf"),
+    new PdfProductionSplitOptions {
+        MaximumPagesPerPart = 100,
+        BoundaryText = "START OF RECORD",
+        TargetPartSizeBytes = 20L * 1024 * 1024
+    });
+
+foreach (PdfProductionSplitPart part in split.Parts) {
+    File.WriteAllBytes($"records-{part.PartNumber:000}.pdf", part.ToBytes());
+}
+```
+
+These operations reuse the existing selector, importer, stamping, mutation
+preflight, and preservation engines. They do not bypass encryption,
+permissions, signatures, or catalog-structure policy.
+
+### Verified repair artifacts
+
+Lenient parsing can persist only explicitly recovered structural defects into
+a normalized artifact. The result must reopen in strict mode and pass the
+rewrite-preservation comparison:
+
+```csharp
+PdfRepairArtifactResult repaired = PdfRepairArtifact.Create(
+    File.ReadAllBytes("recovered-input.pdf"));
+
+if (repaired.IsVerified) {
+    File.WriteAllBytes("repaired.pdf", repaired.ToBytes());
+}
+```
+
+Detected-only ambiguity is rejected by default. Encrypted PDFs, signatures,
+certification permissions, and usage rights are not silently removed by the
+repair workflow.
+
+### Annotation review threads
+
+Read reply relationships as threads, add a reply, and record a standard review
+state through the same annotation mutation policy used by lower-level edits:
+
+```csharp
+byte[] source = File.ReadAllBytes("review.pdf");
+PdfAnnotationReviewCatalog review = PdfAnnotationReviewCatalog.Read(source);
+int rootObjectNumber = review.Threads[0].Root.Annotation.ObjectNumber!.Value;
+
+PdfAnnotationEditResult reply = PdfAnnotationReviewEditor.AddReply(
+    source,
+    rootObjectNumber,
+    "Confirmed against the source record.",
+    new PdfAnnotationReplyOptions { Author = "Reviewer", Subject = "Evidence" });
+
+PdfAnnotationReviewCatalog updated = PdfAnnotationReviewCatalog.Read(reply.Bytes);
+int replyObjectNumber = updated.Threads[0].Root.Replies[0].Annotation.ObjectNumber!.Value;
+PdfAnnotationEditResult accepted = PdfAnnotationReviewEditor.SetState(
+    reply.Bytes,
+    replyObjectNumber,
+    PdfAnnotationReviewState.Accepted);
+```
+
+Replies expose raw `/IRT`, `/RT`, `/State`, `/StateModel`, `/Subj`, and `/IT`
+metadata alongside the typed standard state. Certified documents use an
+append-only revision only when the signature permission model allows the
+annotation change. Thread construction has explicit relationship and nesting
+limits so hostile reply chains fail closed.
+
+### Password protection on browser or restricted hosts
+
+Desktop and server applications use platform AES automatically. A host without synchronous platform AES can pass the
+managed provider included in `OfficeIMO.Core` explicitly; the same provider handles writing and opening the protected PDF.
+
+```csharp
+using OfficeIMO.Pdf;
+using OfficeIMO.Security;
+
+IOfficeAesCryptographyProvider aes = OfficeManagedAesCryptographyProvider.Default;
+var encryption = new PdfStandardEncryptionOptions("reader-password") {
+    OwnerPassword = "owner-password",
+    Algorithm = PdfStandardEncryptionAlgorithm.Aes256,
+    AesCryptographyProvider = aes
+};
+
+PdfDocument.Create(pdf => pdf.Content(content => content
+        .Paragraph(p => p.Text("Protected in the current host."))),
+        new PdfOptions().SetEncryption(encryption))
+    .Save("protected.pdf");
+
+PdfDocument opened = PdfDocument.Load("protected.pdf", new PdfLoadOptions {
+    Password = "owner-password",
+    AesCryptographyProvider = aes
+});
+```
+
 ### Certificate-based PDF signatures
 
 PDF signature discovery, byte-range inspection, mutation blocking, and caller-defined external signing do not require
@@ -560,7 +764,7 @@ IOfficeSecurityProvider security = OfficeSecurityProvider.Default;
 using var signer = new PdfCmsExternalSigner(security, signingCertificate);
 
 PdfExternalSignatureCompletion signed = PdfDocument
-    .Open("contract.pdf")
+    .Load("contract.pdf")
     .Security.SignExternal(
         signer,
         new PdfExternalSignatureOptions { FieldName = "Approval" });
@@ -580,7 +784,7 @@ provider owns CMS, timestamps, and certificate trust. A custom `IPdfExternalSign
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument.Open("contract.pdf")
+PdfDocument.Load("contract.pdf")
     .Stamp.Text("Reviewed", new PdfTextStampOptions {
         X = 72,
         Y = 720,
@@ -599,7 +803,7 @@ Import a complete source page above or below selected target pages without
 rasterizing it:
 
 ```csharp
-PdfDocument.Open("contract.pdf")
+PdfDocument.Load("contract.pdf")
     .Stamp.OverlayPage("letterhead.pdf", new PdfPageOverlayOptions {
         SourcePageNumber = 1,
         TargetPages = PdfPageSelector.Parse("all,!last"),
@@ -613,7 +817,7 @@ For richer existing-page automation, stamp a general visual canvas instead of
 using separate table-, text-, and image-only operations:
 
 ```csharp
-PdfDocument.Open("contract.pdf")
+PdfDocument.Load("contract.pdf")
     .Stamp.Content((canvas, page) => {
         canvas.Text($"Page {page.PageNumber} of {page.PageCount}", 36, 24, 220, 24)
             .Table(new[] {
@@ -640,7 +844,7 @@ or move it through the same text-removal and stamping owners used by redaction
 and existing-page stamps:
 
 ```csharp
-PdfDocument document = PdfDocument.Open("contract.pdf");
+PdfDocument document = PdfDocument.Load("contract.pdf");
 var region = new PdfPageRegion(pageNumber: 1, x: 72, y: 640, width: 260, height: 28);
 
 PdfRegionText current = document.Text.Inspect(region);
@@ -675,7 +879,7 @@ invocation without deleting overlapping text, paths, annotations, or unrelated
 images:
 
 ```csharp
-PdfDocument document = PdfDocument.Open("contract.pdf");
+PdfDocument document = PdfDocument.Load("contract.pdf");
 PdfImagePlacement logo = document.Images.Find(
     new PdfPageRegion(pageNumber: 1, x: 36, y: 720, width: 180, height: 60)).Single();
 
@@ -705,7 +909,7 @@ XObject removal remains available for rotated and skewed placements.
 ```csharp
 using OfficeIMO.Pdf;
 
-PdfDocument.Open("application-form.pdf")
+PdfDocument.Load("application-form.pdf")
     .Forms.FillAndFlatten(new Dictionary<string, string> {
         ["Applicant.Name"] = "Adele Vance",
         ["Applicant.Email"] = "adele@example.com",
@@ -744,12 +948,46 @@ PdfExternalValidationResult validation = PdfExternalValidationResult.PassedForAr
 
 PdfComplianceProofReport proof = artifact.AssessProof(new[] { validation });
 
-if (!proof.CanClaimConformance) {
+PdfDeclaredComplianceClaimsReport declaredClaims = PdfDocument
+    .Load(pdf)
+    .AssessDeclaredComplianceClaims(new[] { validation });
+
+if (!proof.CanClaimConformance || !declaredClaims.CanClaimAllDeclaredConformance) {
     throw new InvalidOperationException(proof.ExternalProofSummary);
 }
 ```
 
-Formal generation gates are available for PDF/A-2a/b/u, PDF/A-3a/b/u, PDF/A-4/4e/4f, PDF/UA-1, PDF/UA-2, Factur-X, and ZUGFeRD. `RequireCompliance(...)` rejects incomplete generation settings. A conformance claim still requires a passing external result for the same profile, SHA-256, and byte length; validators are build-time tools and are not runtime dependencies of `OfficeIMO.Pdf`.
+Formal generation gates are available for PDF/A-2a/b/u, PDF/A-3a/b/u, PDF/A-4/4e/4f, PDF/UA-1, PDF/UA-2, PDF/X-1a:2003, PDF/X-4, Factur-X, and ZUGFeRD. `RequireCompliance(...)` rejects incomplete generation settings. PDF/X additionally inspects the complete serialized artifact before any bytes are returned or committed to a destination. A conformance claim still requires a passing external result for the same profile, SHA-256, and byte length; validators are build-time tools and are not runtime dependencies of `OfficeIMO.Pdf`.
+
+### Generate a fail-closed PDF/X artifact
+
+```csharp
+using OfficeIMO.Pdf;
+
+byte[] cmykProfile = File.ReadAllBytes("PSOcoated_v3.icc");
+byte[] fontBytes = File.ReadAllBytes("SourceSerif4-Regular.otf");
+var options = new PdfOptions()
+    .ConfigurePdfX(
+        PdfComplianceProfile.PdfX4,
+        cmykProfile,
+        "FOGRA51",
+        PdfTrappingStatus.False)
+    .EmbedStandardFont(PdfStandardFont.Helvetica, fontBytes, "Source Serif 4");
+
+PdfComplianceArtifact artifact = PdfDocument.Create(pdf => pdf.Content(content => content
+        .Paragraph(paragraph => paragraph.Text("Generated colors are converted through the CMYK print condition."))),
+        options)
+    .Meta(title: "Print-ready report")
+    .CreateComplianceArtifact(PdfComplianceProfile.PdfX4);
+
+File.WriteAllBytes("print-ready.pdf", artifact.ToBytes());
+```
+
+`ConfigurePdfX` requires a caller-selected CMYK output-device profile because the correct profile depends on the printing condition and profile redistribution terms. For example, the [ICC registry entry for PSOcoated_v3](https://registry.color.org/profile-registry/PSOcoated_v3) identifies it as FOGRA51 and permits use, embedding, and exchange while restricting redistribution. OfficeIMO requires the ICC `prtr` device class, validates the header, declared size, CMYK component count, and a supported output transform, and writes a boolean trapping status (`False` by default). It also creates synchronized Info/XMP production dates, PDF/X identification, document and instance UUIDs, version identity, rendition class, and trapping metadata. It converts generated vector, text, and supported raster colors, applies the selected black-preservation policy, writes production page boxes, and inspects the exact PDF for remaining DeviceRGB content, embedded fonts, prohibited references, and profile-specific transparency. PDF/X-1a:2003 also rejects device-independent color spaces and flattens raster alpha before rejecting any remaining transparency. PDF/X-4 retains its standard color-management and transparency allowances, while OfficeIMO deliberately emits a conservative CMYK generated-content subset.
+
+For reproducible builds, replace the generated timestamps and UUIDs with an explicit `PdfXProductionMetadata` value through `SetPdfXProductionMetadata(...)`. Reusing the same value produces stable production metadata; create a new document and instance UUID when the output represents a different resource.
+
+Internal readiness is not a certification. Pass the exact artifact to a qualified PDF/X preflight tool and bind its result with `PdfExternalValidationResult.PassedForArtifact`; `PdfComplianceProofReport.CanClaimConformance` remains false when that exact external evidence is absent or mismatched.
 
 ### Choose converter-friendly text fallbacks
 
@@ -796,6 +1034,7 @@ The PDF owner recognizes the standards-defined embedded file with media type `ap
 using OfficeIMO.Pdf;
 
 byte[] invoiceXml = File.ReadAllBytes("factur-x.xml");
+DateTimeOffset invoiceModifiedAt = File.GetLastWriteTimeUtc("factur-x.xml");
 byte[] fontBytes = File.ReadAllBytes("SourceSerif4-Regular.otf");
 
 PdfDocument.Create(pdf => pdf.Content(content => content
@@ -805,6 +1044,7 @@ PdfDocument.Create(pdf => pdf.Content(content => content
             invoiceXml,
             relationship: PdfAssociatedFileRelationship.Alternative,
             textFallbacks: PdfTextFallbackFeatures.None)
+        .SetEmbeddedFileModificationDate("factur-x.xml", invoiceModifiedAt)
         .EmbedStandardFont(PdfStandardFont.Helvetica, fontBytes, "Source Serif 4")
         .RequireCompliance(PdfComplianceProfile.FacturX))
     .Save("invoice.pdf");
@@ -836,7 +1076,7 @@ PdfDocument.Create(pdf => pdf.Content(content => content
 using OfficeIMO.Pdf;
 
 byte[] bytes = File.ReadAllBytes("incoming.pdf");
-PdfDocument pdf = PdfDocument.Open(bytes);
+PdfDocument pdf = PdfDocument.Load(bytes);
 PdfDocumentPreflight preflight = pdf.Preflight();
 
 if (!preflight.Can(PdfPreflightCapability.ManipulatePages)) {
@@ -854,7 +1094,7 @@ if (result.Succeeded) {
 ### Inspect before automating
 
 ```csharp
-PdfDocument pdf = PdfDocument.Open("incoming.pdf");
+PdfDocument pdf = PdfDocument.Load("incoming.pdf");
 
 var inspection = pdf.Inspect();
 Console.WriteLine($"Pages: {inspection.PageCount}");
@@ -884,7 +1124,7 @@ using OfficeIMO.Word.Pdf;
 using var word = WordDocument.Load("proposal.docx");
 word.SaveAsPdf("proposal.pdf");
 
-PdfDocument statement = PdfDocument.Open("bank-statement.pdf");
+PdfDocument statement = PdfDocument.Load("bank-statement.pdf");
 PdfExcelTableImportReport tableReport = statement.SaveTablesAsExcel(
     "bank-statement-tables.xlsx");
 
@@ -937,12 +1177,18 @@ dotnet test OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj -c Release -f net10.0
 dotnet run --project OfficeIMO.Pdf.Benchmarks/OfficeIMO.Pdf.Benchmarks.csproj -c Release -f net8.0 -- --verify-budgets
 dotnet run --project OfficeIMO.Pdf.Benchmarks/OfficeIMO.Pdf.Benchmarks.csproj -c Release -f net10.0 -- --verify-budgets
 dotnet run --project OfficeIMO.Pdf.Benchmarks/OfficeIMO.Pdf.Benchmarks.csproj -c Release -f net10.0 -- --verify-timing-budgets
+Build/Test-PdfQualityCorpus.ps1 -Configuration Release -Framework net8.0
+Build/Test-RealWorldCorpusContract.ps1
 Build/Export-PdfComplianceProof.ps1 -Configuration Release -Framework net8.0
 Build/Export-PdfVisualReviewGallery.ps1 -Configuration Release -Framework net8.0
 ```
 
-The checked-in interoperability gate uses hash-pinned Open Preservation
-Foundation and veraPDF fixtures with explicit provenance. The performance gate
+The strict PDF quality scorecard runs every public inspection and semantic stage,
+the complete 21-operation mutation portfolio, managed rendering, and declared
+compliance claim gating against hash-pinned Open Preservation Foundation and
+veraPDF fixtures. The real-world corpus lane applies the same deep PDF stages to
+a deterministic sample of a checksum-pinned public GovDocs archive in isolated
+processes. The performance gate
 uses a deterministic 60-page mixed corpus and checks cold and cached analysis,
 SVG rendering, PNG rendering, output integrity, absolute allocation and heap
 budgets, generous elapsed-time ceilings, and cached allocation savings. Relative

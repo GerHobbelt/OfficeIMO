@@ -25,7 +25,7 @@ public class PowerPointPdfTableImportTests {
             .Paragraph(p => p.Text("Visual page two"))
             .ToBytes();
 
-        PdfCore.PdfDocument opened = PdfCore.PdfDocument.Open(pdf);
+        PdfCore.PdfDocument opened = PdfCore.PdfDocument.Load(pdf);
         PdfPowerPointConversionResult result = opened.ToPowerPointPresentationResult(
             PdfPowerPointImportOptions.CreateVisualPages());
 
@@ -75,7 +75,7 @@ public class PowerPointPdfTableImportTests {
 
         Assert.Equal(PdfPowerPointImportMode.Auto, new PdfPowerPointImportOptions().Mode);
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult();
 
         Assert.Equal(PdfPowerPointImportMode.EditableContent, result.Report.Mode);
@@ -120,7 +120,7 @@ public class PowerPointPdfTableImportTests {
             .Paragraph(p => p.Text("Editable rectangle"))
             .ToBytes();
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateEditableContent());
 
         PdfPowerPointEditablePageEntry page = Assert.Single(result.Report.EditablePages);
@@ -154,7 +154,7 @@ public class PowerPointPdfTableImportTests {
         };
 
         Exception exception = Assert.ThrowsAny<Exception>(() =>
-            PdfCore.PdfDocument.Open(pdf).ToPowerPointPresentationResult(options));
+            PdfCore.PdfDocument.Load(pdf).ToPowerPointPresentationResult(options));
 
         Assert.Contains("limit", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -170,14 +170,82 @@ public class PowerPointPdfTableImportTests {
         var options = new PdfPowerPointImportOptions {
             Mode = mode,
             MaxPages = 1,
-            PageSelection = PdfCore.PdfPageSelection.From(2, 2)
+            ReadOptions = new PdfCore.PdfReadOptions {
+                PageSelection = PdfCore.PdfPageSelection.From(2, 2)
+            }
         };
 
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
-            PdfCore.PdfDocument.Open(pdf).ToPowerPointPresentationResult(options));
+            PdfCore.PdfDocument.Load(pdf).ToPowerPointPresentationResult(options));
 
         Assert.Contains("page count 2", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("configured limit of 1", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PdfDocument_ToPowerPointPresentation_AllowsRaisedDestinationAndSemanticPageLimits() {
+        const int selectedPageCount = 1_001;
+        byte[] pdf = PdfCore.PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("Repeated source page"))
+            .ToBytes();
+        var options = new PdfPowerPointImportOptions {
+            Mode = PdfPowerPointImportMode.EditableTables,
+            MaxPages = selectedPageCount,
+            ReadOptions = new PdfCore.PdfReadOptions {
+                PageSelection = PdfCore.PdfPageSelection.From(Enumerable.Repeat(1, selectedPageCount).ToArray()),
+                Pipeline = new PdfCore.PdfUnderstandingPipelineOptions { MaxPages = selectedPageCount }
+            }
+        };
+
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
+            .ToPowerPointPresentationResult(options);
+
+        using (result.Value) {
+            Assert.Single(result.Value.Slides);
+        }
+    }
+
+    [Fact]
+    public void PdfDocumentReadResult_ToPowerPointPresentation_AppliesSelectionBeforeDestinationLimit() {
+        byte[] pdf = PdfCore.PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("Page one"))
+            .PageBreak()
+            .Paragraph(paragraph => paragraph.Text("Page two"))
+            .ToBytes();
+        PdfCore.PdfDocumentReadResult logical = PdfCore.PdfDocument.Load(pdf).Read();
+        var options = PdfPowerPointImportOptions.CreateEditableContent();
+        options.MaxPages = 1;
+        options.ReadOptions = new PdfCore.PdfReadOptions {
+            PageSelection = PdfCore.PdfPageSelection.From(2)
+        };
+
+        PdfPowerPointConversionResult result = logical.ToPowerPointPresentationResult(options);
+
+        using (result.Value) {
+            PdfPowerPointEditablePageEntry page = Assert.Single(result.Report.EditablePages);
+            Assert.Equal(2, page.PageNumber);
+        }
+    }
+
+    [Fact]
+    public void PdfDocumentReadResult_ToPowerPointPresentation_PreservesSelectedOrderAndDuplicates() {
+        byte[] pdf = PdfCore.PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("Page one"))
+            .PageBreak()
+            .Paragraph(paragraph => paragraph.Text("Page two"))
+            .ToBytes();
+        PdfCore.PdfDocumentReadResult logical = PdfCore.PdfDocument.Load(pdf).Read();
+        var options = PdfPowerPointImportOptions.CreateEditableContent();
+        options.MaxPages = 3;
+        options.ReadOptions = new PdfCore.PdfReadOptions {
+            PageSelection = PdfCore.PdfPageSelection.From(2, 1, 2)
+        };
+
+        PdfPowerPointConversionResult result = logical.ToPowerPointPresentationResult(options);
+
+        using (result.Value) {
+            Assert.Equal(new[] { 2, 1, 2 }, result.Report.EditablePages.Select(page => page.PageNumber).ToArray());
+        }
     }
 
     [Fact]
@@ -194,7 +262,7 @@ public class PowerPointPdfTableImportTests {
         var options = PdfPowerPointImportOptions.CreateEditableContent();
         options.MaxEditableObjectsPerPage = 1;
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult(options);
 
         using (result.Value) {
@@ -226,7 +294,7 @@ public class PowerPointPdfTableImportTests {
             })
             .Paragraph(p => p.Text("Scale probe"))
             .ToBytes();
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateEditableContent());
 
         using var presentation = new MemoryStream();
@@ -255,8 +323,8 @@ public class PowerPointPdfTableImportTests {
             })
             .Paragraph(p => p.Text("Rotation probe"))
             .ToBytes();
-        byte[] rotated = PdfCore.PdfDocument.Open(source).Pages.Rotate(pageRotation, "1").ToBytes();
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(rotated)
+        byte[] rotated = PdfCore.PdfDocument.Load(source).Pages.Rotate(pageRotation, "1").ToBytes();
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(rotated)
             .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateEditableContent());
 
         using var presentation = new MemoryStream();
@@ -282,7 +350,7 @@ public class PowerPointPdfTableImportTests {
         options.MaxRowsPerSlide = 1;
         options.IncludeSourceTitles = false;
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult(options);
 
         using (result.Value) {
@@ -323,7 +391,7 @@ public class PowerPointPdfTableImportTests {
             })
             .ToBytes();
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateHybrid());
 
         Assert.Equal(PdfPowerPointImportMode.HybridVisualAndEditableTables, result.Report.Mode);
@@ -367,7 +435,7 @@ public class PowerPointPdfTableImportTests {
             .ToBytes();
         byte[] rotated = PdfCore.PdfPageEditor.RotatePages(source, 90, 1);
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(rotated)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(rotated)
             .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateHybrid());
         using var presentation = new MemoryStream();
         using (result.Value) result.Value.Save(presentation);
@@ -395,7 +463,7 @@ public class PowerPointPdfTableImportTests {
             }, includeHeader: false)
             .ToBytes();
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateHybrid());
         using var presentation = new MemoryStream();
         using (result.Value) result.Value.Save(presentation);
@@ -433,7 +501,7 @@ public class PowerPointPdfTableImportTests {
             }, style: new PdfCore.PdfTableStyle { HeaderRowCount = 1, ColumnWidthPoints = new List<double?> { 140, 80 } })
             .ToBytes();
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf)
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf)
             .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateHybrid());
 
         Assert.Equal(new[] { 0, 1 }, result.Report.TableEntries.Select(entry => entry.PageIndex).ToArray());
@@ -469,7 +537,7 @@ public class PowerPointPdfTableImportTests {
         options.MaxRowsPerSlide = 2;
         options.MaxColumnsPerSlide = 2;
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf).ToPowerPointPresentationResult(options);
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf).ToPowerPointPresentationResult(options);
 
         Assert.Equal(4, result.Report.TableEntries.Count);
         Assert.Equal(4, result.Report.VisualPages.Count);
@@ -529,8 +597,8 @@ public class PowerPointPdfTableImportTests {
                 HeaderRowCount = 1
             })
             .ToBytes();
-        PdfCore.PdfDocument source = PdfCore.PdfDocument.Open(pdf);
-        PdfCore.PdfPageRenderResult rendered = Assert.Single(source.Read.RenderPages(
+        PdfCore.PdfDocument source = PdfCore.PdfDocument.Load(pdf);
+        PdfCore.PdfPageRenderResult rendered = Assert.Single(source.Render.Pages(
             options: new PdfCore.PdfPageRenderOptions { Dpi = 144 }));
         long oneBackgroundBytes = Assert.IsType<byte[]>(rendered.Bytes).LongLength;
         var options = PdfPowerPointImportOptions.CreateHybrid();
@@ -567,7 +635,7 @@ public class PowerPointPdfTableImportTests {
                 CellPaddingY = 3
             })
             .ToBytes();
-        PdfCore.PdfDocument resized = PdfCore.PdfDocument.Open(source).Pages.SetMediaBox(0, 0, 240, 420, 2);
+        PdfCore.PdfDocument resized = PdfCore.PdfDocument.Load(source).Pages.SetMediaBox(0, 0, 240, 420, 2);
 
         PdfPowerPointConversionResult result = resized.ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateHybrid());
 
@@ -621,7 +689,7 @@ public class PowerPointPdfTableImportTests {
         var options = PdfPowerPointImportOptions.CreateHybrid();
         options.MaxPixelsPerPage = 10;
 
-        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Open(pdf).ToPowerPointPresentationResult(options);
+        PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(pdf).ToPowerPointPresentationResult(options);
 
         Assert.False(Assert.Single(result.Report.VisualPages).Succeeded);
         Assert.Single(result.Report.TableEntries);
@@ -990,11 +1058,11 @@ public class PowerPointPdfTableImportTests {
         Assert.Equal(new[] { "Check 30", "Team 30" }, tableRows[30]);
     }
 
-    private static PdfCore.PdfLogicalDocument LoadTables(byte[] pdf, params PdfCore.PdfPageRange[] ranges) {
+    private static PdfCore.PdfDocumentReadResult LoadTables(byte[] pdf, params PdfCore.PdfPageRange[] ranges) {
         var layout = new PdfCore.PdfTextLayoutOptions { ForceSingleColumn = true };
         return ranges.Length == 0
-            ? PdfCore.PdfLogicalDocument.Load(pdf, layout)
-            : PdfCore.PdfLogicalDocument.LoadPageRanges(pdf, layout, ranges);
+            ? PdfCore.PdfDocumentReadResult.Load(pdf, layout)
+            : PdfCore.PdfDocumentReadResult.LoadPageRanges(pdf, layout, ranges);
     }
 
     private static A.Table GetSingleTable(PresentationDocument package) {

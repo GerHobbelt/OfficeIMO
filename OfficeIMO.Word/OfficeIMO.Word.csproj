@@ -5,7 +5,7 @@
         <AssemblyName>OfficeIMO.Word</AssemblyName>
         <AssemblyTitle>OfficeIMO.Word</AssemblyTitle>
 
-        <VersionPrefix>3.2.5</VersionPrefix>
+        <VersionPrefix>3.3.0</VersionPrefix>
         <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
         <TargetFrameworks Condition=" '$([MSBuild]::IsOsPlatform(`Windows`))' ">
             $(TargetFrameworks);net472</TargetFrameworks>
@@ -101,11 +101,14 @@
         <InternalsVisibleTo Include="OfficeIMO.Pdf.Tests" />
         <InternalsVisibleTo Include="OfficeIMO.Rtf.Tests" />
         <InternalsVisibleTo Include="OfficeIMO.Html.Tests" />
+        <InternalsVisibleTo Include="OfficeIMO.OpenDocument.Converters.Tests" />
         <InternalsVisibleTo Include="OfficeIMO.Word.Html" />
         <InternalsVisibleTo Include="OfficeIMO.Word.GoogleDocs" />
         <InternalsVisibleTo Include="OfficeIMO.Word.Markdown" />
         <InternalsVisibleTo Include="OfficeIMO.Word.Pdf" />
         <InternalsVisibleTo Include="OfficeIMO.Word.Rtf" />
+        <InternalsVisibleTo Include="OfficeIMO.LegacyImport.Tests" />
+        <InternalsVisibleTo Include="OfficeIMO.Word.IWork" />
         <InternalsVisibleTo Include="OfficeIMO.VerifyTests" />
     </ItemGroup>
 

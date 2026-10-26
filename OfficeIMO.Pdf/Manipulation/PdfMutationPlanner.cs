@@ -1,3 +1,5 @@
+using System.Threading;
+
 namespace OfficeIMO.Pdf;
 
 /// <summary>Chooses a proven full-rewrite, append-only, or blocked path for existing-document mutations.</summary>
@@ -6,7 +8,7 @@ internal static class PdfMutationPlanner {
     public static PdfMutationPlan Require(
         byte[] pdf,
         PdfMutationOperation operation,
-        PdfReadOptions? options = null,
+        PdfLoadOptions? options = null,
         IEnumerable<string>? fieldNames = null,
         PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic) {
         PdfMutationPlan plan = Plan(pdf, operation, options, fieldNames, executionPreference);
@@ -21,12 +23,12 @@ internal static class PdfMutationPlanner {
     public static PdfMutationPlan RequireFullRewrite(
         byte[] pdf,
         PdfMutationOperation operation,
-        PdfReadOptions? options = null,
+        PdfLoadOptions? options = null,
         IEnumerable<string>? fieldNames = null) =>
         Require(pdf, operation, options, fieldNames, PdfMutationExecutionPreference.RequireFullRewrite);
 
     /// <summary>Allows the canonical catalog-rooted page-content rewriter to preserve an existing AcroForm graph.</summary>
-    internal static void RequireCatalogPreservingPageContentRewrite(byte[] pdf, PdfReadOptions? options = null) {
+    internal static void RequireCatalogPreservingPageContentRewrite(byte[] pdf, PdfLoadOptions? options = null) {
         Guard.NotNull(pdf, nameof(pdf));
         PdfDocumentPreflight preflight = PdfInspector.Preflight(pdf, options);
         bool supported = preflight.CanRead;
@@ -53,9 +55,10 @@ internal static class PdfMutationPlanner {
     internal static (PdfMutationPlan Plan, PdfReadDocument Document) RequireFullRewriteDocument(
         byte[] pdf,
         PdfMutationOperation operation,
-        PdfReadOptions? options = null,
-        IEnumerable<string>? fieldNames = null) =>
-        RequireFullRewriteDocumentCore(pdf, operation, options, fieldNames, documentFactory: null);
+        PdfLoadOptions? options = null,
+        IEnumerable<string>? fieldNames = null,
+        CancellationToken cancellationToken = default) =>
+        RequireFullRewriteDocumentCore(pdf, operation, options, fieldNames, documentFactory: null, cancellationToken);
 
     /// <summary>
     /// Requires a full rewrite while reusing a canonical parse already owned by the caller.
@@ -64,10 +67,11 @@ internal static class PdfMutationPlanner {
         byte[] pdf,
         PdfMutationOperation operation,
         PdfReadDocument document,
-        PdfReadOptions? options = null,
-        IEnumerable<string>? fieldNames = null) {
+        PdfLoadOptions? options = null,
+        IEnumerable<string>? fieldNames = null,
+        CancellationToken cancellationToken = default) {
         Guard.NotNull(document, nameof(document));
-        return RequireFullRewriteDocumentCore(pdf, operation, options, fieldNames, () => document);
+        return RequireFullRewriteDocumentCore(pdf, operation, options, fieldNames, () => document, cancellationToken);
     }
 
     /// <summary>
@@ -78,25 +82,29 @@ internal static class PdfMutationPlanner {
         byte[] pdf,
         PdfMutationOperation operation,
         Func<PdfReadDocument> documentFactory,
-        PdfReadOptions? options = null,
-        IEnumerable<string>? fieldNames = null) {
+        PdfLoadOptions? options = null,
+        IEnumerable<string>? fieldNames = null,
+        CancellationToken cancellationToken = default) {
         Guard.NotNull(documentFactory, nameof(documentFactory));
-        return RequireFullRewriteDocumentCore(pdf, operation, options, fieldNames, documentFactory);
+        return RequireFullRewriteDocumentCore(pdf, operation, options, fieldNames, documentFactory, cancellationToken);
     }
 
     private static (PdfMutationPlan Plan, PdfReadDocument Document) RequireFullRewriteDocumentCore(
         byte[] pdf,
         PdfMutationOperation operation,
-        PdfReadOptions? options,
+        PdfLoadOptions? options,
         IEnumerable<string>? fieldNames,
-        Func<PdfReadDocument>? documentFactory) {
+        Func<PdfReadDocument>? documentFactory,
+        CancellationToken cancellationToken) {
         Guard.NotNull(pdf, nameof(pdf));
-        PdfReadOptions effectiveOptions = PdfReadOptions.Resolve(options);
+        cancellationToken.ThrowIfCancellationRequested();
+        PdfLoadOptions effectiveOptions = PdfLoadOptions.Resolve(options);
         PdfReadDocument? document = null;
         PdfDocumentPreflight preflight = PdfInspector.Preflight(
             pdf,
             effectiveOptions,
-            () => document ??= documentFactory?.Invoke() ?? PdfReadDocument.Open(pdf, effectiveOptions));
+            () => document ??= documentFactory?.Invoke() ?? PdfReadDocument.Open(pdf, effectiveOptions, cancellationToken),
+            cancellationToken);
         PdfMutationPlan plan = Plan(
             preflight,
             pdf,
@@ -108,14 +116,15 @@ internal static class PdfMutationPlanner {
             throw new PdfMutationBlockedException(plan);
         }
 
-        return (plan, document ??= documentFactory?.Invoke() ?? PdfReadDocument.Open(pdf, effectiveOptions));
+        cancellationToken.ThrowIfCancellationRequested();
+        return (plan, document ??= documentFactory?.Invoke() ?? PdfReadDocument.Open(pdf, effectiveOptions, cancellationToken));
     }
 
     /// <summary>Requires the shared planner to prove an append-only path for an existing-document editor.</summary>
     public static PdfMutationPlan RequireAppendOnly(
         byte[] pdf,
         PdfMutationOperation operation,
-        PdfReadOptions? options = null,
+        PdfLoadOptions? options = null,
         IEnumerable<string>? fieldNames = null) =>
         Require(pdf, operation, options, fieldNames, PdfMutationExecutionPreference.RequireAppendOnly);
 
@@ -123,7 +132,7 @@ internal static class PdfMutationPlanner {
     public static PdfMutationPlan Plan(
         byte[] pdf,
         PdfMutationOperation operation,
-        PdfReadOptions? options = null,
+        PdfLoadOptions? options = null,
         IEnumerable<string>? fieldNames = null,
         PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic) {
         Guard.NotNull(pdf, nameof(pdf));
@@ -135,7 +144,7 @@ internal static class PdfMutationPlanner {
     public static PdfMutationPlan Plan(
         Stream input,
         PdfMutationOperation operation,
-        PdfReadOptions? options = null,
+        PdfLoadOptions? options = null,
         IEnumerable<string>? fieldNames = null,
         PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic) {
         Guard.NotNull(input, nameof(input));
@@ -171,7 +180,7 @@ internal static class PdfMutationPlanner {
     public static PdfMutationPlan Plan(
         string inputPath,
         PdfMutationOperation operation,
-        PdfReadOptions? options = null,
+        PdfLoadOptions? options = null,
         IEnumerable<string>? fieldNames = null,
         PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic) {
         Guard.NotNullOrWhiteSpace(inputPath, nameof(inputPath));
@@ -201,7 +210,7 @@ internal static class PdfMutationPlanner {
         PdfMutationOperation operation,
         IEnumerable<string>? fieldNames = null,
         PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic,
-        PdfReadOptions? options = null) {
+        PdfLoadOptions? options = null) {
         Guard.NotNull(preflight, nameof(preflight));
         Guard.NotNull(pdf, nameof(pdf));
         bool finalizationReservationValidated = operation != PdfMutationOperation.FinalizeExternalSignature ||
@@ -240,6 +249,7 @@ internal static class PdfMutationPlanner {
                 (!security.BlocksOfficeIMOFullRewriteMutation || unsignedSignatureFieldRewrite || normalizedObjectGraphRewrite || authorizedEncryptedRewrite || CanExtractPagesViaNormalization(preflight, operation))));
         bool appendOnlyAvailable = appendOnlyImplemented &&
             CanAppend(appendOnly, operation, finalizationReservationValidated) &&
+            PdfPermissionAuthorization.CanMutate(security, preflight.PermissionPolicy, operation) &&
             metadataPreservationValidated &&
             !BlocksActiveContentPreservingMutation(preflight, operation);
 

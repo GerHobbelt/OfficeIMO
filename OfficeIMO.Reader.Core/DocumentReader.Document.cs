@@ -34,7 +34,7 @@ internal static partial class DocumentReaderEngine {
             return ApplyDetectionDiagnostics(FinalizeHandlerDocumentResult(result, source, opt.ComputeHashes), detection);
         }
 
-        ReaderChunk[] chunks = Read(path, opt, cancellationToken).ToArray();
+        ReaderChunk[] chunks = ReadResolvedPath(path, opt, handler, cancellationToken);
         return BuildChunkDocumentResult(
             chunks, path, handler.Kind, BuildPathDocumentSource(path, chunks), detection: detection);
     }
@@ -56,6 +56,7 @@ internal static partial class DocumentReaderEngine {
             stream,
             ResolveStreamMaxInputBytes(logicalSourceName, opt,
                 stream.CanSeek),
+            ResolveStreamInputLimitProbe(logicalSourceName, opt),
             cancellationToken,
             out bool ownsReadStream);
         try {
@@ -79,7 +80,12 @@ internal static partial class DocumentReaderEngine {
             }
 
             long position = readStream.Position;
-            ReaderChunk[] chunks = Read(readStream, logicalSourceName, opt, cancellationToken).ToArray();
+            ReaderChunk[] chunks = ReadResolvedStream(
+                readStream,
+                logicalSourceName,
+                opt,
+                customStreamHandler,
+                cancellationToken);
             if (readStream.CanSeek) readStream.Position = position;
             return BuildChunkDocumentResult(
                 chunks,
@@ -490,7 +496,7 @@ internal static partial class DocumentReaderEngine {
         return diagnostics.Count == 0 ? Array.Empty<OfficeDocumentDiagnostic>() : diagnostics;
     }
 
-    private static OfficeDocumentDiagnostic BuildWarningDiagnostic(string warning, ReaderLocation location) {
+    internal static OfficeDocumentDiagnostic BuildWarningDiagnostic(string warning, ReaderLocation location) {
         string message = warning ?? string.Empty;
         string lower = message.ToLowerInvariant();
         string code = "reader-warning";

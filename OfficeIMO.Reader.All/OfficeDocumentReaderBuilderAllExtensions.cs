@@ -1,5 +1,6 @@
 using OfficeIMO.Reader.AsciiDoc;
 using OfficeIMO.Reader.Csv;
+using OfficeIMO.Reader.DocBook;
 using OfficeIMO.Reader.Email;
 using OfficeIMO.Reader.Epub;
 using OfficeIMO.Reader.Excel;
@@ -10,6 +11,7 @@ using OfficeIMO.Reader.Latex;
 using OfficeIMO.Reader.Markdown;
 using OfficeIMO.Reader.Notebook;
 using OfficeIMO.Reader.OneNote;
+using OfficeIMO.Reader.Opml;
 using OfficeIMO.Reader.OpenDocument;
 using OfficeIMO.Reader.Pdf;
 using OfficeIMO.Reader.PowerPoint;
@@ -44,13 +46,18 @@ public static class OfficeDocumentReaderBuilderAllExtensions {
         ReaderOneNoteOptions oneNoteOptions = configured.OneNote ?? new ReaderOneNoteOptions {
             AllowTableOfContentsSiblingFileReads = false
         };
-        return builder
+        builder
             .AddPlainTextHandlers()
             .AddAsciiDocHandler(configured.AsciiDoc)
             .AddCsvHandler(configured.Csv)
+            .AddDocBookHandler(configured.DocBook)
             .AddEmailHandlers(configured.Email)
             .AddEpubHandler(configured.Epub)
-            .AddExcelHandler(configured.Excel)
+            .AddExcelHandler(configured.Excel);
+        if (configured.IncludeLegacySpreadsheet) {
+            builder.AddLegacySpreadsheetHandler(configured.LegacySpreadsheet, configured.Excel);
+        }
+        builder
             .AddHtmlHandler(configured.Html)
             .AddImageHandler(configured.Image)
             .AddJsonHandler(configured.Json)
@@ -58,13 +65,18 @@ public static class OfficeDocumentReaderBuilderAllExtensions {
             .AddMarkdownHandler(configured.Markdown)
             .AddNotebookHandler(configured.Notebook)
             .AddOneNoteHandler(oneNoteOptions)
+            .AddOpmlHandler(configured.Opml)
             .AddOpenDocumentHandler(configured.OpenDocument)
             .AddPdfHandler(configured.Pdf)
             .AddPowerPointHandler(configured.PowerPoint)
             .AddRtfHandler(configured.Rtf)
             .AddSubtitleHandler(configured.Subtitles)
             .AddVisioHandler(configured.Visio)
-            .AddWordHandler(configured.Word)
+            .AddWordHandlerWithLegacyRouting(configured.Word, configured.LegacyWord, configured.IncludeLegacyWord);
+        if (configured.IncludeLegacyWord) {
+            builder.AddLegacyWordHandler(configured.LegacyWord, configured.Word);
+        }
+        return builder
             .AddXmlHandler(configured.Xml)
             .AddYamlHandler(configured.Yaml)
             .AddZipHandler(configured.ZipTraversal, configured.Zip);

@@ -6,16 +6,21 @@ internal static partial class PdfAnnotationEditor {
         FlattenAnnotations(pdf, options, readOptions: null);
 
     /// <summary>Flattens selected supported visual annotations using explicit read limits or credentials.</summary>
-    public static PdfAnnotationEditResult FlattenAnnotations(byte[] pdf, PdfAnnotationFlattenOptions? options, PdfReadOptions? readOptions) {
+    public static PdfAnnotationEditResult FlattenAnnotations(byte[] pdf, PdfAnnotationFlattenOptions? options, PdfLoadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
         PdfMutationPlan plan = PdfMutationPlanner.RequireFullRewrite(pdf, PdfMutationOperation.ModifyAnnotations, readOptions);
-        int before = CountSelectedAnnotations(PdfInspector.Inspect(pdf, readOptions), options);
-        byte[] output = PdfAnnotationFlattener.FlattenVisualAnnotations(pdf, options, readOptions);
+        int before = CountSelectedAnnotations(GetAnnotationMutationDocumentInfo(plan), options);
+        byte[] output = PdfAnnotationFlattener.FlattenVisualAnnotations(
+            pdf,
+            options,
+            readOptions,
+            out PdfGeneratedOutputGrowth generatedGrowth);
+        PdfLoadOptions outputReadOptions = PdfLoadOptions.ForGeneratedOutput(readOptions, pdf, output, generatedGrowth);
         int after = CountSelectedAnnotations(
-            PdfInspector.Inspect(output, PdfReadOptions.WithMinimumInputBytes(readOptions, output.LongLength)),
+            ReadAnnotationMetadata(output, outputReadOptions),
             options);
         int affected = Math.Max(0, before - after);
-        return CreateFullRewriteResult(pdf, output, affected, plan, annotationsChanged: affected > 0, readOptions: readOptions);
+        return CreateFullRewriteResult(pdf, output, affected, plan, annotationsChanged: affected > 0, readOptions: readOptions, rewrittenReadOptions: outputReadOptions);
     }
 
     private static int CountSelectedAnnotations(PdfDocumentInfo info, PdfAnnotationFlattenOptions? options) {

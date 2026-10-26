@@ -23,7 +23,7 @@ internal static partial class PdfMetadataEditor {
         string? author,
         string? subject,
         string? keywords,
-        PdfReadOptions? readOptions) {
+        PdfLoadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
         _ = PdfMutationPlanner.RequireFullRewrite(pdf, PdfMutationOperation.UpdateMetadata, readOptions);
 
@@ -32,8 +32,12 @@ internal static partial class PdfMetadataEditor {
             Title = title ?? document.UncheckedMetadata.Title,
             Author = author ?? document.UncheckedMetadata.Author,
             Subject = subject ?? document.UncheckedMetadata.Subject,
-            Keywords = keywords ?? document.UncheckedMetadata.Keywords
+            Keywords = keywords ?? document.UncheckedMetadata.Keywords,
+            TrappingStatus = document.UncheckedMetadata.TrappingStatus,
+            PdfXVersion = document.UncheckedMetadata.PdfXVersion,
+            PdfXConformance = document.UncheckedMetadata.PdfXConformance
         };
+        metadata.CopySourceDatesFrom(document.UncheckedMetadata);
 
         return RewriteWithMetadata(pdf, metadata, readOptions);
     }
@@ -131,7 +135,7 @@ internal static partial class PdfMetadataEditor {
         return ReplaceMetadata(pdf, metadata, readOptions: null);
     }
 
-    internal static byte[] ReplaceMetadata(byte[] pdf, PdfMetadata metadata, PdfReadOptions? readOptions) {
+    internal static byte[] ReplaceMetadata(byte[] pdf, PdfMetadata metadata, PdfLoadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
         Guard.NotNull(metadata, nameof(metadata));
         _ = PdfMutationPlanner.RequireFullRewrite(pdf, PdfMutationOperation.UpdateMetadata, readOptions);
@@ -195,7 +199,7 @@ internal static partial class PdfMetadataEditor {
         return ReplaceMetadata(File.ReadAllBytes(inputPath), metadata);
     }
 
-    private static byte[] RewriteWithMetadata(byte[] pdf, PdfMetadata metadata, PdfReadOptions? readOptions) {
+    private static byte[] RewriteWithMetadata(byte[] pdf, PdfMetadata metadata, PdfLoadOptions? readOptions) {
         var (objects, trailerRaw) = PdfSyntax.ParseObjects(pdf, readOptions);
         var document = PdfReadDocument.Open(pdf, readOptions);
         if (document.Pages.Count == 0) {

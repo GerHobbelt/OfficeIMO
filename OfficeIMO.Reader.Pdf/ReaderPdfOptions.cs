@@ -19,19 +19,24 @@ public sealed class ReaderPdfOptions {
     };
 
     /// <summary>
-    /// Optional PDF text layout options used by the logical read model.
+    /// Canonical semantic read settings. Null uses <see cref="PdfReadOptions.Default"/>.
+    /// When the adapter receives an already reconstructed PDF result, only its page selection is applied.
     /// </summary>
-    public PdfTextLayoutOptions? LayoutOptions { get; set; }
-
-    /// <summary>
-    /// Optional inclusive one-based source page ranges. Null reads the full document.
-    /// </summary>
-    public IReadOnlyList<PdfPageRange>? PageRanges { get; set; }
+    public PdfReadOptions? ReadOptions { get; set; }
 
     /// <summary>
     /// Markdown rendering options used for page chunk content.
     /// </summary>
     public PdfLogicalMarkdownOptions? MarkdownOptions { get; set; }
+
+    /// <summary>
+    /// When true, projects conservative cross-page paragraph continuation evidence into document metadata.
+    /// Page-local text and chunks remain unchanged. Default: true.
+    /// </summary>
+    public bool IncludeParagraphContinuationMetadata { get; set; } = true;
+
+    /// <summary>Optional confidence and hyphenation policy for paragraph continuation metadata.</summary>
+    public PdfLogicalParagraphContinuationOptions? ParagraphContinuationOptions { get; set; }
 
     /// <summary>
     /// When true, emits one or more chunks per logical source page. Default: true.
@@ -42,28 +47,22 @@ public sealed class ReaderPdfOptions {
     /// Creates a defensive copy for handler registration reuse.
     /// </summary>
     public ReaderPdfOptions Clone() => new ReaderPdfOptions {
-        LayoutOptions = CloneLayoutOptions(LayoutOptions),
-        PageRanges = PageRanges?.ToArray(),
+        ReadOptions = ReadOptions?.Clone(),
         MarkdownOptions = CloneMarkdownOptions(MarkdownOptions),
+        IncludeParagraphContinuationMetadata = IncludeParagraphContinuationMetadata,
+        ParagraphContinuationOptions = CloneParagraphContinuationOptions(ParagraphContinuationOptions),
         ChunkByPage = ChunkByPage
     };
 
-    internal static PdfTextLayoutOptions? CloneLayoutOptions(PdfTextLayoutOptions? options) {
+    internal static PdfLogicalParagraphContinuationOptions? CloneParagraphContinuationOptions(PdfLogicalParagraphContinuationOptions? options) {
         if (options is null) return null;
 
-        return new PdfTextLayoutOptions {
-            MarginLeft = options.MarginLeft,
-            MarginRight = options.MarginRight,
-            BinWidth = options.BinWidth,
-            MinGutterWidth = options.MinGutterWidth,
-            LineMergeToleranceEm = options.LineMergeToleranceEm,
-            LineMergeMaxPoints = options.LineMergeMaxPoints,
-            ForceSingleColumn = options.ForceSingleColumn,
-            JoinHyphenationAcrossLines = options.JoinHyphenationAcrossLines,
-            IgnoreHeaderHeight = options.IgnoreHeaderHeight,
-            IgnoreFooterHeight = options.IgnoreFooterHeight,
-            GapSpaceThresholdEm = options.GapSpaceThresholdEm,
-            GapGlyphFactor = options.GapGlyphFactor
+        return new PdfLogicalParagraphContinuationOptions {
+            MergePageContinuations = options.MergePageContinuations,
+            RejoinLineEndingHyphens = options.RejoinLineEndingHyphens,
+            MaximumSegmentsPerParagraph = options.MaximumSegmentsPerParagraph,
+            GeometryTolerancePoints = options.GeometryTolerancePoints,
+            MinimumConfidence = options.MinimumConfidence
         };
     }
 

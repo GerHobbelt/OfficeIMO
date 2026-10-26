@@ -293,7 +293,8 @@ public sealed partial class PdfReadPage {
                                 glyph.StrokeWidth,
                                 glyph.StrokeDashStyle,
                                 glyph.StrokeLineCap,
-                                glyph.StrokeLineJoin),
+                                glyph.StrokeLineJoin,
+                                glyph.StrokeDashPattern),
                             type3.IsUncolored,
                             glyph.FillPattern,
                             glyph.FillPatternBaseColorSpace,
@@ -435,6 +436,7 @@ public sealed partial class PdfReadPage {
                 initialStrokeOpacity: programState.StrokeOpacity,
                 initialStrokeWidth: programState.StrokeWidth,
                 initialStrokeDashStyle: programState.StrokeDashStyle,
+                initialStrokeDashPattern: programState.StrokeDashPattern,
                 initialStrokeLineCap: programState.StrokeLineCap,
                 initialStrokeLineJoin: programState.StrokeLineJoin,
                 fonts: fonts,
@@ -519,6 +521,7 @@ public sealed partial class PdfReadPage {
                 initialStrokeOpacity: programState.StrokeOpacity,
                 initialStrokeWidth: programState.StrokeWidth,
                 initialStrokeDashStyle: programState.StrokeDashStyle,
+                initialStrokeDashPattern: programState.StrokeDashPattern,
                 initialStrokeLineCap: programState.StrokeLineCap,
                 initialStrokeLineJoin: programState.StrokeLineJoin,
                 scaleStrokeWidthWithTransform: true,
@@ -607,6 +610,7 @@ public sealed partial class PdfReadPage {
                          initialStrokeOpacity: programState.StrokeOpacity,
                          initialStrokeWidth: programState.StrokeWidth,
                          initialStrokeDashStyle: programState.StrokeDashStyle,
+                         initialStrokeDashPattern: programState.StrokeDashPattern,
                          initialStrokeLineCap: programState.StrokeLineCap,
                          initialStrokeLineJoin: programState.StrokeLineJoin,
                          fonts: fonts,
@@ -629,7 +633,8 @@ public sealed partial class PdfReadPage {
                                              glyph.StrokeWidth,
                                              glyph.StrokeDashStyle,
                                              glyph.StrokeLineCap,
-                                             glyph.StrokeLineJoin),
+                                             glyph.StrokeLineJoin,
+                                             glyph.StrokeDashPattern),
                                          requireImageMask || nestedType3.IsUncolored,
                                          glyph.FillPattern,
                                          glyph.FillPatternBaseColorSpace,
@@ -959,11 +964,13 @@ public sealed partial class PdfReadPage {
                 invocation.PaintOrder,
                 fillPattern: invocation.FillPattern,
                 effectiveResources: resources,
-                blendMode: invocation.BlendMode,
+                authoredBlendMode: invocation.AuthoredBlendMode,
                 hasUnsupportedBlendMode: invocation.HasUnsupportedBlendMode,
                 hasSoftMask: invocation.HasSoftMask,
                 hasAuthoredRenderingIntent: invocation.HasAuthoredRenderingIntent,
-                renderingIntent: invocation.RenderingIntent);
+                renderingIntent: invocation.RenderingIntent,
+                imageDictionary: imageDictionary,
+                objects: _objects);
         } else {
             if (!TryGetImageXObject(resources, invocation.Name, out int objectNumber, out int directStreamIdentity)) return false;
             PdfDictionary? xObjects = ResolveDictionary(resources?.Items.TryGetValue("XObject", out PdfObject? xObjectValue) == true ? xObjectValue : null);
@@ -982,11 +989,13 @@ public sealed partial class PdfReadPage {
                 paintOrder: invocation.PaintOrder,
                 fillPattern: invocation.FillPattern,
                 effectiveResources: resources,
-                blendMode: invocation.BlendMode,
+                authoredBlendMode: invocation.AuthoredBlendMode,
                 hasUnsupportedBlendMode: invocation.HasUnsupportedBlendMode,
                 hasSoftMask: invocation.HasSoftMask,
                 hasAuthoredRenderingIntent: invocation.HasAuthoredRenderingIntent,
-                renderingIntent: invocation.RenderingIntent);
+                renderingIntent: invocation.RenderingIntent,
+                imageDictionary: imageDictionary,
+                objects: _objects);
         }
 
         if (IsInvisibleImagePlacement(

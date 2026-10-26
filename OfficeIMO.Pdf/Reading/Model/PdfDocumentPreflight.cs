@@ -45,13 +45,16 @@ public sealed partial class PdfDocumentPreflight {
     /// <summary>True when OfficeIMO.Pdf can attempt text and structured text readback operations for this PDF.</summary>
     public bool CanExtractText => CanRead && PdfPermissionAuthorization.CanExtractText(Probe.Security, PermissionPolicy);
 
+    /// <summary>True when the authenticated document permissions allow printing.</summary>
+    public bool CanPrint => CanRead && PdfPermissionAuthorization.CanPrint(Probe.Security, PermissionPolicy);
+
     /// <summary>True when OfficeIMO.Pdf can attempt image XObject extraction for this PDF.</summary>
     public bool CanExtractImages => _documentInfo is not null && !HasImageExtractionBlocker() && PdfPermissionAuthorization.CanExtractContent(Probe.Security, PermissionPolicy);
 
     /// <summary>True when OfficeIMO.Pdf can attempt embedded-file and associated-file attachment extraction for this PDF.</summary>
     public bool CanExtractAttachments => _documentInfo is not null && !HasAttachmentExtractionBlocker() && PdfPermissionAuthorization.CanExtractContent(Probe.Security, PermissionPolicy);
 
-    /// <summary>True when OfficeIMO.Pdf can attempt logical object readback through PdfLogicalDocument for this PDF.</summary>
+    /// <summary>True when OfficeIMO.Pdf can attempt logical object readback through PdfDocumentReadResult for this PDF.</summary>
     public bool CanReadLogicalObjects => CanRead && PdfPermissionAuthorization.CanExtractContent(Probe.Security, PermissionPolicy);
 
     /// <summary>Permission policy used while evaluating extraction and mutation capabilities.</summary>

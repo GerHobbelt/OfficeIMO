@@ -231,13 +231,13 @@ public class PdfOutputIntentRenderingTests {
             profileBytes,
             "0.2 0.4 0.8 rg BT /F1 12 Tf 10 40 Td (managed) Tj ET",
             resources);
-        PdfTextMatch match = Assert.Single(PdfDocument.Open(pdf).Text.Find(
+        PdfTextMatch match = Assert.Single(PdfDocument.Load(pdf).Text.Find(
             "managed",
             new PdfTextSearchOptions { MatchCase = true }));
         var region = new PdfPageRegion(1, match.X, match.Y, match.Width, match.Height);
 
         Assert.Throws<NotSupportedException>(() =>
-            PdfDocument.Open(pdf).Text.Move(region, 5D, 0D));
+            PdfDocument.Load(pdf).Text.Move(region, 5D, 0D));
     }
 
     [Fact]
@@ -363,7 +363,7 @@ public class PdfOutputIntentRenderingTests {
             compressedProfile,
             "0.2 0.4 0.8 rg 10 10 20 20 re f",
             profileEntries: "/Filter /FlateDecode");
-        var options = new PdfReadOptions {
+        var options = new PdfLoadOptions {
             Limits = new PdfReadLimits { MaxDecodedStreamBytes = profileBytes.Length - 1 }
         };
 
@@ -403,7 +403,7 @@ public class PdfOutputIntentRenderingTests {
     public void OutputIntentMetadata_BoundsDistinctRetainedProfileBytesAcrossDocument() {
         byte[] profileBytes = PdfIccProfiles.SrgbIec6196621;
         byte[] pdf = BuildPdfWithTwoOutputProfiles(profileBytes);
-        PdfReadDocument document = PdfReadDocument.Open(pdf, new PdfReadOptions {
+        PdfReadDocument document = PdfReadDocument.Open(pdf, new PdfLoadOptions {
             Limits = new PdfReadLimits { MaxDecodedStreamBytes = profileBytes.Length + 16 }
         });
 
@@ -887,6 +887,29 @@ public class PdfOutputIntentRenderingTests {
 
         Assert.Contains(page.GetRenderCapabilityDiagnostics(),
             diagnostic => diagnostic.Code == PdfRenderCapabilities.OutputIntentTransparencyId);
+    }
+
+    [Theory]
+    [InlineData("99 0 R")]
+    [InlineData("/NotAnOutputIntent")]
+    public void InspectorPreservesIncompleteOutputIntentArraySignal(string malformedEntry) {
+        byte[] profileBytes = IccMabTestProfiles.CreateCmykLab8Bidirectional();
+        string outputIntents =
+            "[<< /Type /OutputIntent /S /GTS_PDFX /OutputConditionIdentifier (FOGRA51) /DestOutputProfile 6 0 R >> " +
+            malformedEntry + "]";
+        byte[] pdf = BuildPdf(profileBytes, string.Empty, outputIntents: outputIntents);
+
+        PdfReadDocument document = PdfReadDocument.Open(pdf);
+        PdfDocumentInfo info = PdfInspector.Inspect(pdf);
+
+        Assert.Single(document.OutputIntents);
+        Assert.False(document.OutputIntentsAreComplete);
+        Assert.Single(info.OutputIntents);
+        Assert.False(info.OutputIntentsAreComplete);
+        PdfComplianceReadinessReport report = PdfComplianceAnalyzer.AssessReadback(PdfComplianceProfile.PdfX4, pdf);
+        Assert.Equal(
+            PdfComplianceRequirementStatus.Missing,
+            report.FindRequirement("readback-pdfx-output-intent")!.Status);
     }
 
     [Fact]

@@ -14,10 +14,13 @@ on:
       - 'OfficeIMO.Tool/Commands/Html/**'
       - 'OfficeIMO.Tool.Tests/**'
       - 'OfficeIMO.Html.Tests/Html.Rendering.cs'
+      - 'Website/Apps/OfficeIMO.Web.Converter/**'
+      - 'Website/Apps/OfficeIMO.Web.Converter.Tests/**'
       - 'OfficeIMO.Pdf.Tests/Pdf/PdfCompliance*.cs'
       - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalValidator.cs'
       - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalEngineProofTests.cs'
       - 'Build/Export-PdfComplianceProof.ps1'
+      - 'Build/Invoke-CallasPdfXValidator.ps1'
       - 'Docs/pdf-conversion-scenarios.json'
       - 'Docs/officeimo.pdf*.md'
       - '.github/scripts/Assert-PdfComplianceProof.ps1'
@@ -36,10 +39,13 @@ on:
       - 'OfficeIMO.Tool/Commands/Html/**'
       - 'OfficeIMO.Tool.Tests/**'
       - 'OfficeIMO.Html.Tests/Html.Rendering.cs'
+      - 'Website/Apps/OfficeIMO.Web.Converter/**'
+      - 'Website/Apps/OfficeIMO.Web.Converter.Tests/**'
       - 'OfficeIMO.Pdf.Tests/Pdf/PdfCompliance*.cs'
       - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalValidator.cs'
       - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalEngineProofTests.cs'
       - 'Build/Export-PdfComplianceProof.ps1'
+      - 'Build/Invoke-CallasPdfXValidator.ps1'
       - 'Docs/pdf-conversion-scenarios.json'
       - 'Docs/officeimo.pdf*.md'
       - '.github/scripts/Assert-PdfComplianceProof.ps1'
@@ -48,7 +54,7 @@ on:
   workflow_dispatch:
     inputs:
       require_validators:
-        description: 'Fail if veraPDF, PDF/UA validator, or Mustang are unavailable'
+        description: 'Fail if veraPDF, PDF/UA, Mustang, or PDF/X validation is unavailable'
         required: false
         default: false
         type: boolean
@@ -82,6 +88,16 @@ on:
         required: false
         default: ''
         type: string
+      pdfx_validator_path:
+        description: 'Optional qualified PDF/X validator executable or PowerShell adapter path'
+        required: false
+        default: ''
+        type: string
+      pdfx_validator_args:
+        description: 'Optional PDF/X validator arguments; use {profile} and {pdf} placeholders'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -112,6 +128,9 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install .NET WebAssembly workload
+        run: dotnet workload install wasm-tools --skip-manifest-update
 
       - name: Cache NuGet packages
         uses: actions/cache@v6
@@ -176,6 +195,8 @@ jobs:
           PDFUA_VALIDATOR_ARGS: ${{ github.event_name == 'workflow_dispatch' && inputs.pdfua_validator_args || '' }}
           MUSTANG_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.mustang_path || '' }}
           MUSTANG_ARGS: ${{ github.event_name == 'workflow_dispatch' && inputs.mustang_args || '' }}
+          PDFX_VALIDATOR_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.pdfx_validator_path || '' }}
+          PDFX_VALIDATOR_ARGS: ${{ github.event_name == 'workflow_dispatch' && inputs.pdfx_validator_args || '' }}
         run: |
           $parameters = @{
             OutputDirectory = '${{ env.PROOF_PATH }}'
@@ -226,6 +247,14 @@ jobs:
             $parameters.MustangArgs = $env:MUSTANG_ARGS
           }
 
+          if (-not [string]::IsNullOrWhiteSpace($env:PDFX_VALIDATOR_PATH)) {
+            $parameters.PdfXValidatorPath = $env:PDFX_VALIDATOR_PATH
+          }
+
+          if (-not [string]::IsNullOrWhiteSpace($env:PDFX_VALIDATOR_ARGS)) {
+            $parameters.PdfXValidatorArgs = $env:PDFX_VALIDATOR_ARGS
+          }
+
           ./Build/Export-PdfComplianceProof.ps1 @parameters
 
       - name: Generate PDF engine proof fixtures
@@ -240,6 +269,27 @@ jobs:
               --no-restore \
               --filter 'FullyQualifiedName~PdfExternalEngineProofTests' \
               --verbosity minimal
+
+      - name: Validate browser PDF/A-2B profile externally
+        shell: bash
+        env:
+          VERAPDF_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.verapdf_path || '' }}
+        run: |
+          set -euo pipefail
+          output_dir="$(pwd)/${PROOF_PATH}/browser"
+          mkdir -p "$output_dir"
+          OFFICEIMO_BROWSER_PDF_COMPLIANCE_OUTPUT="$output_dir" \
+            dotnet test Website/Apps/OfficeIMO.Web.Converter.Tests/OfficeIMO.Web.Converter.Tests.csproj \
+              --configuration "${BUILD_CONFIGURATION}" \
+              --framework net10.0 \
+              --filter 'FullyQualifiedName~HtmlToPdf_ArchivalProfileCreatesInternallyReadyPdfA2BArtifact' \
+              --verbosity minimal
+
+          validator="${VERAPDF_PATH:-${OFFICEIMO_VERAPDF_CLI:-}}"
+          test -n "$validator"
+          test -x "$validator"
+          "$validator" -f 2b "$output_dir/officeimo-browser-pdfa-2b.pdf" \
+            > "$output_dir/verapdf-officeimo-browser-pdfa-2b.txt"
 
       - name: Validate syntax rendering and signatures externally
         shell: bash
@@ -284,6 +334,7 @@ jobs:
           $lines.Add("- veraPDF configured: ``$($proof.validatorConfiguration.veraPdfExecutableConfigured)``")
           $lines.Add("- PDF/UA validator configured: ``$($proof.validatorConfiguration.pdfUaValidatorExecutableConfigured)``")
           $lines.Add("- Mustang configured: ``$($proof.validatorConfiguration.mustangExecutableConfigured)``")
+          $lines.Add("- PDF/X validator configured: ``$($proof.validatorConfiguration.pdfXValidatorExecutableConfigured)``")
           $lines.Add('')
           $lines.Add('### PDF Fixtures')
           $lines.Add('')
@@ -341,3 +392,5 @@ jobs:
             ${{ env.PROOF_PATH }}/engine/*.pdf
             ${{ env.PROOF_PATH }}/engine/*.png
             ${{ env.PROOF_PATH }}/engine/*.txt
+            ${{ env.PROOF_PATH }}/browser/*.pdf
+            ${{ env.PROOF_PATH }}/browser/*.txt

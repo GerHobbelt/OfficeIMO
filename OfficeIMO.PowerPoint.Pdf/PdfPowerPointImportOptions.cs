@@ -1,4 +1,5 @@
 using PptCore = OfficeIMO.PowerPoint;
+using System.Threading;
 
 namespace OfficeIMO.PowerPoint.Pdf;
 
@@ -23,11 +24,18 @@ public enum PdfPowerPointImportMode {
 /// Options for importing PDF content into a PowerPoint presentation.
 /// </summary>
 public sealed class PdfPowerPointImportOptions {
+    /// <summary>Cancellation observed during page rendering and at page, slide, and table boundaries.</summary>
+    public CancellationToken CancellationToken { get; set; }
+
     /// <summary>Import strategy. Defaults to the richest safe projection available from the supplied source model.</summary>
     public PdfPowerPointImportMode Mode { get; set; } = PdfPowerPointImportMode.Auto;
 
-    /// <summary>Optional caller-ordered page selection used by all import modes.</summary>
-    public OfficeIMO.Pdf.PdfPageSelection? PageSelection { get; set; }
+    /// <summary>
+    /// Canonical semantic read settings. The page selection also controls visual and hybrid imports.
+    /// Null uses <see cref="OfficeIMO.Pdf.PdfReadOptions.Default"/>.
+    /// When importing an already reconstructed logical result, only its page selection is applied.
+    /// </summary>
+    public OfficeIMO.Pdf.PdfReadOptions? ReadOptions { get; set; }
 
     /// <summary>Raster resolution used by visual-page import.</summary>
     public double Dpi { get; set; } = 144D;

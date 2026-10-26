@@ -6,7 +6,7 @@ internal static partial class PdfAnnotationEditor {
         int objectNumber,
         PdfAnnotationUpdateOptions options,
         PdfMutationPlan mutationPlan,
-        PdfReadOptions? readOptions) {
+        PdfLoadOptions? readOptions) {
         var (objects, trailerRaw) = PdfSyntax.ParseObjects(pdf, readOptions);
         if (!objects.TryGetValue(objectNumber, out PdfIndirectObject? indirect) ||
             indirect.Value is not PdfDictionary annotation ||
@@ -23,15 +23,20 @@ internal static partial class PdfAnnotationEditor {
             trailerRaw,
             new[] { objectNumber }.Concat(additionalChangedObjects).Distinct().ToArray(),
             encryptionHandler: GetAppendEncryptionHandler(objects, trailerRaw, readOptions, mutationPlan.Preflight.Probe.Security));
-        PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, updated, mutationPlan, readOptions);
-        return new PdfAnnotationEditResult(updated, 1, mutationPlan, proof, readOptions: readOptions);
+        PdfGeneratedOutputGrowth generatedGrowth = BuildGeneratedOutputGrowth(
+            objects,
+            new[] { objectNumber }.Concat(additionalChangedObjects),
+            additionalRevisions: 1);
+        PdfLoadOptions outputReadOptions = PdfLoadOptions.ForGeneratedOutput(readOptions, pdf, updated, generatedGrowth);
+        PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, updated, mutationPlan, readOptions, outputReadOptions);
+        return new PdfAnnotationEditResult(updated, 1, mutationPlan, proof, readOptions: outputReadOptions);
     }
 
     private static PdfAnnotationEditResult RemoveAnnotationsIncrementally(
         byte[] pdf,
         PdfAnnotationRemovalOptions options,
         PdfMutationPlan mutationPlan,
-        PdfReadOptions? readOptions) {
+        PdfLoadOptions? readOptions) {
         var (objects, trailerRaw) = PdfSyntax.ParseObjects(pdf, readOptions);
         List<int> pageObjectNumbers = GetPageObjectNumbersInDocumentOrder(objects);
         var removedObjectNumbers = new HashSet<int>();
@@ -104,8 +109,10 @@ internal static partial class PdfAnnotationEditor {
             trailerRaw,
             changedObjectNumbers,
             encryptionHandler: GetAppendEncryptionHandler(objects, trailerRaw, readOptions, mutationPlan.Preflight.Probe.Security));
-        PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, updated, mutationPlan, readOptions);
-        return new PdfAnnotationEditResult(updated, Math.Max(affectedCount, 1), mutationPlan, proof, readOptions: readOptions);
+        PdfGeneratedOutputGrowth generatedGrowth = new PdfGeneratedOutputGrowth(additionalRevisions: 1);
+        PdfLoadOptions outputReadOptions = PdfLoadOptions.ForGeneratedOutput(readOptions, pdf, updated, generatedGrowth);
+        PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, updated, mutationPlan, readOptions, outputReadOptions);
+        return new PdfAnnotationEditResult(updated, Math.Max(affectedCount, 1), mutationPlan, proof, readOptions: outputReadOptions);
     }
 
     private static void RemoveIncrementalPopupReferences(
@@ -153,7 +160,7 @@ internal static partial class PdfAnnotationEditor {
     private static PdfStandardSecurityHandler? GetAppendEncryptionHandler(
         Dictionary<int, PdfIndirectObject> objects,
         string trailerRaw,
-        PdfReadOptions? readOptions,
+        PdfLoadOptions? readOptions,
         PdfDocumentSecurityInfo security) {
         if (!security.HasEncryption) return null;
         if (!PdfSyntax.TryCreateDecryptor(objects, trailerRaw, readOptions, out PdfStandardSecurityHandler? handler)) {
@@ -167,12 +174,14 @@ internal static partial class PdfAnnotationEditor {
         byte[] before,
         byte[] after,
         PdfMutationPlan mutationPlan,
-        PdfReadOptions? readOptions = null) {
+        PdfLoadOptions? readOptions,
+        PdfLoadOptions afterReadOptions) {
         PdfSignatureMutationReport proof = PdfSignatureMutationAnalyzer.Analyze(
             before,
             after,
             PdfMutationOperation.ModifyAnnotations,
             readOptions: readOptions,
+            afterReadOptions: afterReadOptions,
             executionPreference: mutationPlan.ExecutionPreference);
         if (!proof.IsPreservedAppendOnlyMutation) {
             throw new InvalidOperationException("Append-only annotation mutation did not preserve the input prefix, revision chain, and existing signature byte ranges.");
@@ -187,8 +196,10 @@ internal static partial class PdfAnnotationEditor {
         int affectedAnnotationCount,
         PdfMutationPlan mutationPlan,
         bool annotationsChanged,
-        PdfReadOptions? readOptions) {
-        PdfReadOptions rewrittenReadOptions = PdfReadOptions.WithMinimumInputBytes(readOptions, rewritten.LongLength);
+        PdfLoadOptions? readOptions,
+        PdfGeneratedOutputGrowth generatedGrowth = default,
+        PdfLoadOptions? rewrittenReadOptions = null) {
+        rewrittenReadOptions ??= PdfLoadOptions.ForGeneratedOutput(readOptions, source, rewritten, generatedGrowth);
         var preservationOptions = new PdfRewritePreservationOptions {
             OriginalReadOptions = readOptions,
             RewrittenReadOptions = rewrittenReadOptions,
@@ -197,6 +208,6 @@ internal static partial class PdfAnnotationEditor {
             PreserveRevisionStructure = false
         };
         PdfRewritePreservationReport preservation = PdfRewritePreservation.Assess(source, rewritten, preservationOptions);
-        return new PdfAnnotationEditResult(rewritten, affectedAnnotationCount, mutationPlan, rewritePreservationReport: preservation, readOptions: readOptions);
+        return new PdfAnnotationEditResult(rewritten, affectedAnnotationCount, mutationPlan, rewritePreservationReport: preservation, readOptions: rewrittenReadOptions);
     }
 }

@@ -145,26 +145,36 @@ internal static partial class DocumentReaderEngine {
         out ReaderHandlerDescriptor handler,
         out ReaderDetectionResult detection) {
         detection = DetectForRead(path, options, cancellationToken);
-        return TrySelectPathHandler(path, options, detection, out handler);
+        return TrySelectPathHandler(path, options, detection, cancellationToken, out handler);
     }
 
     private static bool TrySelectPathHandler(
         string path,
         ReaderOptions options,
         ReaderDetectionResult detection,
+        CancellationToken cancellationToken,
         out ReaderHandlerDescriptor handler) {
         bool hasExtensionHandler = TryResolveCustomHandlerByPath(path, out ReaderHandlerDescriptor extensionHandler) &&
                                    extensionHandler.SupportsPathInput;
         bool contentOverridesExtension = options.DetectionMode == ReaderDetectionMode.PreferContent &&
                                          detection.IsMismatch;
         if (contentOverridesExtension) {
-            return TryResolveDetectedHandler(detection, pathInput: true, out handler);
-        }
-        if (hasExtensionHandler) {
+            if (hasExtensionHandler && ValidateExtensionHandler(path, extensionHandler, options, cancellationToken)) {
+                handler = extensionHandler;
+            } else if (!TryResolveDetectedHandler(detection, pathInput: true, out handler)) {
+                return false;
+            }
+        } else if (hasExtensionHandler) {
             handler = extensionHandler;
-            return true;
+        } else if (!TryResolveDetectedHandler(detection, pathInput: true, out handler)) {
+            return false;
         }
-        return TryResolveDetectedHandler(detection, pathInput: true, out handler);
+        ReaderInputLimits.EnforceFileSize(
+            path,
+            ResolveSelectedHandlerMaxInputBytes(handler, path, options),
+            ResolveSelectedHandlerInputLimitProbe(handler),
+            cancellationToken);
+        return true;
     }
 
     private static bool TryResolveStreamHandler(
@@ -176,26 +186,37 @@ internal static partial class DocumentReaderEngine {
         out ReaderDetectionResult detection) {
         detection = DetectForRead(stream, sourceName, options,
             cancellationToken);
-        return TrySelectStreamHandler(sourceName, options, detection, out handler);
+        return TrySelectStreamHandler(stream, sourceName, options, detection, cancellationToken, out handler);
     }
 
     private static bool TrySelectStreamHandler(
+        Stream stream,
         string? sourceName,
         ReaderOptions options,
         ReaderDetectionResult detection,
+        CancellationToken cancellationToken,
         out ReaderHandlerDescriptor handler) {
         bool hasExtensionHandler = TryResolveCustomHandlerBySourceName(sourceName, out ReaderHandlerDescriptor extensionHandler) &&
                                    extensionHandler.SupportsStreamInput;
         bool contentOverridesExtension = options.DetectionMode == ReaderDetectionMode.PreferContent &&
                                          detection.IsMismatch;
         if (contentOverridesExtension) {
-            return TryResolveDetectedHandler(detection, pathInput: false, out handler);
-        }
-        if (hasExtensionHandler) {
+            if (hasExtensionHandler && ValidateExtensionHandler(stream, sourceName, extensionHandler, options, cancellationToken)) {
+                handler = extensionHandler;
+            } else if (!TryResolveDetectedHandler(detection, pathInput: false, out handler)) {
+                return false;
+            }
+        } else if (hasExtensionHandler) {
             handler = extensionHandler;
-            return true;
+        } else if (!TryResolveDetectedHandler(detection, pathInput: false, out handler)) {
+            return false;
         }
-        return TryResolveDetectedHandler(detection, pathInput: false, out handler);
+        ReaderInputLimits.EnforceSeekableStreamSize(
+            stream,
+            ResolveSelectedHandlerMaxInputBytes(handler, sourceName, options),
+            ResolveSelectedHandlerInputLimitProbe(handler),
+            cancellationToken);
+        return true;
     }
 
     private static bool TryResolveDetectedHandler(
@@ -227,7 +248,7 @@ internal static partial class DocumentReaderEngine {
             cancellationToken).ConfigureAwait(false);
         detection = ResolveEncryptedOpenXmlDetection(path, options,
             detection, cancellationToken);
-        bool hasHandler = TrySelectPathHandler(path, options, detection, out ReaderHandlerDescriptor handler);
+        bool hasHandler = TrySelectPathHandler(path, options, detection, cancellationToken, out ReaderHandlerDescriptor handler);
         return new HandlerDetectionResolution(hasHandler ? handler : null, detection);
     }
 
@@ -243,8 +264,28 @@ internal static partial class DocumentReaderEngine {
             cancellationToken).ConfigureAwait(false);
         detection = ResolveEncryptedOpenXmlDetection(stream, sourceName,
             options, detection, cancellationToken);
-        bool hasHandler = TrySelectStreamHandler(sourceName, options, detection, out ReaderHandlerDescriptor handler);
+        bool hasHandler = TrySelectStreamHandler(stream, sourceName, options, detection, cancellationToken, out ReaderHandlerDescriptor handler);
         return new HandlerDetectionResolution(hasHandler ? handler : null, detection);
+    }
+
+    private static bool ValidateExtensionHandler(string path, ReaderHandlerDescriptor handler, ReaderOptions options,
+        CancellationToken cancellationToken) {
+        if (handler.ExtensionValidationProbeStream == null || !handler.SupportsPathInput) return false;
+        cancellationToken.ThrowIfCancellationRequested();
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return handler.ExtensionValidationProbeStream(stream, path, options, cancellationToken);
+    }
+
+    private static bool ValidateExtensionHandler(Stream stream, string? sourceName, ReaderHandlerDescriptor handler,
+        ReaderOptions options, CancellationToken cancellationToken) {
+        if (handler.ExtensionValidationProbeStream == null || !handler.SupportsStreamInput || !stream.CanSeek) return false;
+        long position = stream.Position;
+        try {
+            cancellationToken.ThrowIfCancellationRequested();
+            return handler.ExtensionValidationProbeStream(stream, sourceName, options, cancellationToken);
+        } finally {
+            stream.Position = position;
+        }
     }
 
     private static ReaderDetectionOptions CreateDetectionOptions(ReaderOptions options) {
@@ -537,10 +578,26 @@ internal static partial class DocumentReaderEngine {
             lower.StartsWith("<html", StringComparison.Ordinal)) {
             return DetectionCandidate.High(ReaderInputKind.Html, "text/html", "text:html-root");
         }
+        string xmlProbe = trimmed;
+        if (TryGetXmlRoot(xmlProbe, out string qualifiedRootName, out string rootTag, out string xmlDocumentType)) {
+            int prefixSeparator = qualifiedRootName.IndexOf(':');
+            string localRootName = prefixSeparator >= 0 ? qualifiedRootName.Substring(prefixSeparator + 1) : qualifiedRootName;
+            bool hasResolvedNamespace = TryResolveXmlRootNamespace(
+                qualifiedRootName, rootTag, xmlDocumentType, out string rootNamespace);
+            if (qualifiedRootName == "opml" && hasResolvedNamespace && rootNamespace.Length == 0) {
+                return DetectionCandidate.High(ReaderInputKind.Opml, "text/x-opml", "text:opml-root");
+            }
+            if ((localRootName == "article" || localRootName == "book") &&
+                hasResolvedNamespace &&
+                (rootNamespace == "http://docbook.org/ns/docbook" ||
+                 prefixSeparator < 0 && rootNamespace.Length == 0 && HasDocBook45DocumentType(xmlDocumentType, localRootName))) {
+                return DetectionCandidate.High(ReaderInputKind.DocBook, "application/docbook+xml", "text:docbook-root");
+            }
+        }
         if (lower.StartsWith("<?xml", StringComparison.Ordinal)) {
             return DetectionCandidate.Medium(ReaderInputKind.Xml, "application/xml", "text:xml-declaration");
         }
-        if (trimmed.StartsWith("{", StringComparison.Ordinal) || trimmed.StartsWith("[", StringComparison.Ordinal)) {
+        if (LooksLikeJson(trimmed)) {
             return DetectionCandidate.Medium(ReaderInputKind.Json, "application/json", "text:json-leading-token");
         }
         if (LooksLikeMarkdown(trimmed)) {
@@ -556,6 +613,142 @@ internal static partial class DocumentReaderEngine {
     private static bool StartsWithContentLineRoot(string value, string root) {
         if (!value.StartsWith(root, StringComparison.Ordinal)) return false;
         return value.Length == root.Length || value[root.Length] == '\r' || value[root.Length] == '\n';
+    }
+
+    private static bool LooksLikeJson(string text) {
+        if (text.Length < 2 || (text[0] != '{' && text[0] != '[')) return false;
+        int index = 1;
+        while (index < text.Length && char.IsWhiteSpace(text[index])) index++;
+        if (index >= text.Length) return false;
+        char token = text[index];
+        if (text[0] == '{') return token == '"' || token == '}';
+        return token == '"' || token == '{' || token == '[' || token == ']' || token == '-' ||
+               (token >= '0' && token <= '9') || token == 't' || token == 'f' || token == 'n';
+    }
+
+    private static bool TryGetXmlRoot(string value, out string qualifiedName, out string rootTag, out string documentType) {
+        qualifiedName = string.Empty;
+        rootTag = string.Empty;
+        documentType = string.Empty;
+        string discoveredDocumentType = string.Empty;
+        int position = 0;
+        SkipWhitespace();
+        while (position < value.Length) {
+            if (StartsWithAt("<?")) {
+                int end = value.IndexOf("?>", position + 2, StringComparison.Ordinal);
+                if (end < 0) return false;
+                position = end + 2;
+            } else if (StartsWithAt("<!--")) {
+                int end = value.IndexOf("-->", position + 4, StringComparison.Ordinal);
+                if (end < 0) return false;
+                position = end + 3;
+            } else if (StartsWithAt("<!DOCTYPE")) {
+                if (!SkipDocumentType()) return false;
+            } else {
+                break;
+            }
+            SkipWhitespace();
+        }
+
+        if (position >= value.Length || value[position] != '<' || position + 1 >= value.Length ||
+            value[position + 1] == '!' || value[position + 1] == '?' || value[position + 1] == '/') return false;
+        int nameStart = position + 1;
+        int nameEnd = nameStart;
+        while (nameEnd < value.Length && !char.IsWhiteSpace(value[nameEnd]) && value[nameEnd] != '>' && value[nameEnd] != '/') nameEnd++;
+        if (nameEnd == nameStart) return false;
+        int tagEnd = FindMarkupEnd(position + 1);
+        if (tagEnd < 0) return false;
+        qualifiedName = value.Substring(nameStart, nameEnd - nameStart);
+        rootTag = value.Substring(position, tagEnd - position + 1);
+        documentType = discoveredDocumentType;
+        return true;
+
+        bool StartsWithAt(string marker) => value.IndexOf(marker, position, StringComparison.Ordinal) == position;
+        void SkipWhitespace() {
+            while (position < value.Length && char.IsWhiteSpace(value[position])) position++;
+        }
+        bool SkipDocumentType() {
+            int bracketDepth = 0;
+            char quote = '\0';
+            for (int index = position + 9; index < value.Length; index++) {
+                char current = value[index];
+                if (quote != '\0') {
+                    if (current == quote) quote = '\0';
+                    continue;
+                }
+                if (current == '<' && index + 3 < value.Length && value[index + 1] == '!' &&
+                    value[index + 2] == '-' && value[index + 3] == '-') {
+                    int end = value.IndexOf("-->", index + 4, StringComparison.Ordinal);
+                    if (end < 0) return false;
+                    index = end + 2;
+                } else if (current == '<' && index + 1 < value.Length && value[index + 1] == '?') {
+                    int end = value.IndexOf("?>", index + 2, StringComparison.Ordinal);
+                    if (end < 0) return false;
+                    index = end + 1;
+                } else if (current == '\'' || current == '"') quote = current;
+                else if (current == '[') bracketDepth++;
+                else if (current == ']') bracketDepth = Math.Max(0, bracketDepth - 1);
+                else if (current == '>' && bracketDepth == 0) {
+                    discoveredDocumentType = value.Substring(position, index - position + 1);
+                    position = index + 1;
+                    return true;
+                }
+            }
+            return false;
+        }
+        int FindMarkupEnd(int start) {
+            char quote = '\0';
+            for (int index = start; index < value.Length; index++) {
+                char current = value[index];
+                if (quote != '\0') {
+                    if (current == quote) quote = '\0';
+                } else if (current == '\'' || current == '"') quote = current;
+                else if (current == '>') return index;
+            }
+            return -1;
+        }
+    }
+
+    private static bool HasDocBook45DocumentType(string documentType, string rootName) {
+        const string publicId = "-//OASIS//DTD DocBook XML V4.5//EN";
+        const string systemId = "http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd";
+        if (!documentType.StartsWith("<!DOCTYPE", StringComparison.Ordinal)) return false;
+
+        int position = 9;
+        SkipWhitespace();
+        if (!TryReadToken(out string declaredRoot) || !string.Equals(declaredRoot, rootName, StringComparison.Ordinal)) return false;
+        SkipWhitespace();
+        if (!TryReadToken(out string externalIdKind)) return false;
+        SkipWhitespace();
+        if (string.Equals(externalIdKind, "SYSTEM", StringComparison.Ordinal)) {
+            return TryReadQuoted(out string declaredSystemId) && string.Equals(declaredSystemId, systemId, StringComparison.Ordinal);
+        }
+        if (!string.Equals(externalIdKind, "PUBLIC", StringComparison.Ordinal) ||
+            !TryReadQuoted(out string declaredPublicId) || !string.Equals(declaredPublicId, publicId, StringComparison.Ordinal)) return false;
+        SkipWhitespace();
+        return TryReadQuoted(out string publicSystemId) && string.Equals(publicSystemId, systemId, StringComparison.Ordinal);
+
+        void SkipWhitespace() {
+            while (position < documentType.Length && char.IsWhiteSpace(documentType[position])) position++;
+        }
+        bool TryReadToken(out string token) {
+            int start = position;
+            while (position < documentType.Length && !char.IsWhiteSpace(documentType[position]) &&
+                   documentType[position] != '[' && documentType[position] != '>') position++;
+            token = documentType.Substring(start, position - start);
+            return position > start;
+        }
+        bool TryReadQuoted(out string value) {
+            value = string.Empty;
+            if (position >= documentType.Length || (documentType[position] != '\'' && documentType[position] != '"')) return false;
+            char quote = documentType[position++];
+            int start = position;
+            while (position < documentType.Length && documentType[position] != quote) position++;
+            if (position >= documentType.Length) return false;
+            value = documentType.Substring(start, position - start);
+            position++;
+            return true;
+        }
     }
 
     private static bool LooksLikeEmailMessage(string text) {
@@ -622,8 +815,16 @@ internal static partial class DocumentReaderEngine {
     }
 
     private static string? DecodeTextPrefix(byte[] bytes) {
+        if (StartsWith(bytes, new byte[] { 0xFF, 0xFE, 0x00, 0x00 })) return Encoding.UTF32.GetString(bytes);
+        if (StartsWith(bytes, new byte[] { 0x00, 0x00, 0xFE, 0xFF })) return new UTF32Encoding(true, true).GetString(bytes);
         if (StartsWith(bytes, new byte[] { 0xFF, 0xFE })) return Encoding.Unicode.GetString(bytes);
         if (StartsWith(bytes, new byte[] { 0xFE, 0xFF })) return Encoding.BigEndianUnicode.GetString(bytes);
+        if (StartsWith(bytes, new byte[] { 0x3C, 0x00, 0x00, 0x00 })) return new UTF32Encoding(false, false).GetString(bytes);
+        if (StartsWith(bytes, new byte[] { 0x00, 0x00, 0x00, 0x3C })) return new UTF32Encoding(true, false).GetString(bytes);
+        if (bytes.Length >= 4 && bytes[0] == 0x3C && bytes[1] == 0x00 && bytes[3] == 0x00)
+            return Encoding.Unicode.GetString(bytes);
+        if (bytes.Length >= 4 && bytes[0] == 0x00 && bytes[1] == 0x3C && bytes[2] == 0x00)
+            return Encoding.BigEndianUnicode.GetString(bytes);
 
         int zeroCount = 0;
         int controlCount = 0;
@@ -706,6 +907,8 @@ internal static partial class DocumentReaderEngine {
             ReaderInputKind.Email => "message/rfc822",
             ReaderInputKind.Calendar => "text/calendar",
             ReaderInputKind.VCard => "text/vcard",
+            ReaderInputKind.Opml => "text/x-opml",
+            ReaderInputKind.DocBook => "application/docbook+xml",
             ReaderInputKind.OneNote => "application/onenote",
             ReaderInputKind.Text => "text/plain",
             ReaderInputKind.Csv => "text/csv",
@@ -748,6 +951,8 @@ internal static partial class DocumentReaderEngine {
             ".ics" => "text/calendar",
             ".vcs" => "text/x-vcalendar",
             ".vcf" or ".vcard" => "text/vcard",
+            ".opml" => "text/x-opml",
+            ".dbk" or ".docbook" => "application/docbook+xml",
             ".csv" => "text/csv",
             ".tsv" => "text/tab-separated-values",
             ".json" => "application/json",

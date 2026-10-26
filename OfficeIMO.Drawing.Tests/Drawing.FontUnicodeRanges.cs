@@ -60,6 +60,20 @@ public sealed class DrawingFontUnicodeRangeTests {
     }
 
     [Fact]
+    public void FontCollection_IgnoresJoiningControlsWhenMatchingUnicodeRanges() {
+        const string text = "A\u200D";
+        byte[] font = ManagedTextShapingTestAssets.CreateFont('A');
+        Assert.True(OfficeFontUnicodeRangeSet.TryParseCss("U+0041", out OfficeFontUnicodeRangeSet? latin));
+        var fonts = new OfficeFontFaceCollection().Add("Scoped", font, OfficeFontStyle.Regular, latin!);
+        string resourceFamily = Assert.Single(fonts.Faces).ResourceFamilyName;
+
+        OfficeFontFallbackRun run = Assert.Single(fonts.PlanFallbackRuns(text, "Scoped"));
+
+        Assert.Equal(text, run.Text);
+        Assert.Equal(resourceFamily, run.FamilyName);
+    }
+
+    [Fact]
     public void FontCollection_UsesRegularRangeFallbackAfterExactStyleCandidates() {
         byte[] font = ManagedTextShapingTestAssets.CreateFont('A', 0x05D0);
         Assert.True(OfficeFontUnicodeRangeSet.TryParseCss("U+0000-007F", out OfficeFontUnicodeRangeSet? latin));

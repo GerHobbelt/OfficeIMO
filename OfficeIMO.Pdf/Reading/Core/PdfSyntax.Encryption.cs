@@ -4,10 +4,10 @@ internal static partial class PdfSyntax {
     internal static bool TryCreateDecryptor(
         Dictionary<int, PdfIndirectObject> map,
         string trailerRaw,
-        PdfReadOptions? options,
+        PdfLoadOptions? options,
         out PdfStandardSecurityHandler? decryptor) {
         decryptor = null;
-        PdfReference? encryptReference = TryReadFirstReference(trailerRaw, "Encrypt");
+        PdfReference? encryptReference = ReadTrailerReference(trailerRaw, "Encrypt", options?.Limits);
         if (encryptReference is null) {
             return false;
         }
@@ -19,7 +19,12 @@ internal static partial class PdfSyntax {
 
         byte[] fileId = ReadFirstFileId(map, trailerRaw);
         bool supplied = options != null && options.Password != null;
-        decryptor = PdfStandardSecurityHandler.Create(encryptionDictionary, fileId, options?.Password, supplied);
+        decryptor = PdfStandardSecurityHandler.Create(
+            encryptionDictionary,
+            fileId,
+            options?.Password,
+            supplied,
+            options?.AesCryptographyProvider);
         return true;
     }
 

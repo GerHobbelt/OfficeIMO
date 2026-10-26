@@ -4,12 +4,28 @@ using OfficeIMO.Reader.Pdf;
 using OfficeIMO.Tests.Pdf;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Xunit;
 
 namespace OfficeIMO.Tests;
 
 [Collection("ReaderRegistryNonParallel")]
 public sealed class ReaderPdfModularTests {
+    [Fact]
+    public void DocumentReaderPdf_PropagatesCancellationIntoSemanticRead() {
+        byte[] pdf = BuildTwoPagePdf();
+        string path = Path.Combine(Path.GetTempPath(), "officeimo-reader-pdf-cancel-" + Guid.NewGuid().ToString("N") + ".pdf");
+        File.WriteAllBytes(path, pdf);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        try {
+            Assert.Throws<OperationCanceledException>((Action)(() =>
+                PdfReaderAdapter.Read(path, cancellationToken: cancellation.Token).ToList()));
+        } finally {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void DocumentReaderPdf_ReadPdfStream_EmitsPageAwareChunks() {
         byte[] pdf = BuildTwoPagePdf();
@@ -127,7 +143,7 @@ public sealed class ReaderPdfModularTests {
             stream,
             sourceName: "ranges.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] { PdfPageRange.From(2, 2) }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(2) }
             }).ToList();
 
         var chunk = Assert.Single(chunks);
@@ -137,14 +153,14 @@ public sealed class ReaderPdfModularTests {
     }
 
     [Fact]
-    public void DocumentReaderPdf_ReadPdfLogicalDocument_CanSelectPageRanges() {
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(BuildTwoPagePdf());
+    public void DocumentReaderPdf_ReadPdfDocumentReadResult_CanSelectPageRanges() {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(BuildTwoPagePdf());
 
         var chunks = PdfReaderAdapter.Read(
             logical,
             sourceName: "logical-ranges.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] { PdfPageRange.From(2, 2) }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(2) }
             }).ToList();
 
         var chunk = Assert.Single(chunks);
@@ -154,7 +170,7 @@ public sealed class ReaderPdfModularTests {
     }
 
     [Fact]
-    public void DocumentReaderPdf_ReadPdfLogicalDocument_FiltersOpenActionToSelectedPages() {
+    public void DocumentReaderPdf_ReadPdfDocumentReadResult_FiltersOpenActionToSelectedPages() {
         byte[] pdf = PdfDocument.Create()
             .OpenAction(pageNumber: 1, destinationMode: PdfOpenActionDestinationMode.Fit)
             .H1("Reader PDF page one")
@@ -163,13 +179,13 @@ public sealed class ReaderPdfModularTests {
             .H1("Reader PDF page two")
             .Paragraph(p => p.Text("Second page body."))
             .ToBytes();
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(pdf);
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(pdf);
 
         ReaderChunk chunk = Assert.Single(PdfReaderAdapter.Read(
             logical,
             sourceName: "logical-open-action-ranges.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] { PdfPageRange.From(2, 2) }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(2) }
             }).ToList());
 
         Assert.Equal(2, chunk.Location.Page);
@@ -425,16 +441,13 @@ public sealed class ReaderPdfModularTests {
 
     [Fact]
     public void DocumentReaderPdf_ReadPdfDocument_PreservesLogicalPageRangeOrder() {
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(BuildTwoPagePdf());
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(BuildTwoPagePdf());
 
         OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
             logical,
             sourceName: "logical-readback.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] {
-                    PdfPageRange.From(2, 2),
-                    PdfPageRange.From(1, 1)
-                }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(2, 1) }
             });
 
         Assert.Equal(new int?[] { 2, 1 }, result.Pages.Select(page => page.Number).ToArray());
@@ -827,13 +840,13 @@ public sealed class ReaderPdfModularTests {
             .Bookmark("SecondDest")
             .Paragraph(p => p.Text("Second page body."))
             .ToBytes();
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(pdf);
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(pdf);
 
         OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
             logical,
             sourceName: "selected-metadata.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] { PdfPageRange.From(1, 1) }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(1) }
             });
 
         Assert.Single(result.Pages);
@@ -858,13 +871,13 @@ public sealed class ReaderPdfModularTests {
             .H1("Second")
             .TextField("Second.Only", value: "hidden")
             .ToBytes();
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(pdf);
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(pdf);
 
         OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
             logical,
             sourceName: "selected-form.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] { PdfPageRange.From(1, 1) }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(1) }
             });
 
         Assert.Empty(result.Forms);
@@ -1069,10 +1082,7 @@ public sealed class ReaderPdfModularTests {
             stream,
             sourceName: "duplicate-ranges.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] {
-                    PdfPageRange.From(1, 1),
-                    PdfPageRange.From(1, 1)
-                }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(1, 1) }
             }).ToList();
 
         Assert.Equal(2, chunks.Count);
@@ -1136,16 +1146,14 @@ public sealed class ReaderPdfModularTests {
     }
 
     [Fact]
-    public void DocumentReaderPdf_ReadPdfLogicalDocument_RangedReadRetainsCatalogActions() {
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(BuildTwoPageCatalogActionsPdf());
+    public void DocumentReaderPdf_ReadPdfDocumentReadResult_RangedReadRetainsCatalogActions() {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(BuildTwoPageCatalogActionsPdf());
 
         ReaderChunk chunk = Assert.Single(PdfReaderAdapter.Read(
             logical,
             sourceName: "partial-catalog-actions.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] {
-                    PdfPageRange.From(2, 2)
-                }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(2) }
             },
             readerOptions: new ReaderOptions { MaxChars = 8_000 }).ToList());
 
@@ -1161,17 +1169,14 @@ public sealed class ReaderPdfModularTests {
     }
 
     [Fact]
-    public void DocumentReaderPdf_ReadPdfLogicalDocument_DuplicateRangesRetainCatalogActionsOnlyOnce() {
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(BuildTwoPageCatalogActionsPdf());
+    public void DocumentReaderPdf_ReadPdfDocumentReadResult_DuplicateRangesRetainCatalogActionsOnlyOnce() {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(BuildTwoPageCatalogActionsPdf());
 
         List<ReaderChunk> chunks = PdfReaderAdapter.Read(
             logical,
             sourceName: "catalog-actions-duplicate-ranges.pdf",
             pdfOptions: new ReaderPdfOptions {
-                PageRanges = new[] {
-                    PdfPageRange.From(2, 2),
-                    PdfPageRange.From(2, 2)
-                }
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(2, 2) }
             }).ToList();
 
         Assert.Equal(2, chunks.Count);
@@ -1213,11 +1218,7 @@ public sealed class ReaderPdfModularTests {
         var chunk = Assert.Single(PdfReaderAdapter.Read(
             stream,
             sourceName: "table.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            },
+            pdfOptions: CreateSingleColumnPdfOptions(),
             readerOptions: new ReaderOptions { MaxChars = 8_000 }).ToList());
 
         Assert.NotNull(chunk.Diagnostics);
@@ -1288,11 +1289,7 @@ public sealed class ReaderPdfModularTests {
         OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
             stream,
             sourceName: "table-readback.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            },
+            pdfOptions: CreateSingleColumnPdfOptions(),
             readerOptions: new ReaderOptions { MaxChars = 8_000 });
 
         ReaderTable table = Assert.Single(result.Tables);
@@ -1332,11 +1329,7 @@ public sealed class ReaderPdfModularTests {
         IReadOnlyList<ReaderTable> tables = PdfReaderAdapter.ReadTables(
             stream,
             sourceName: "tables-only.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            });
+            pdfOptions: CreateSingleColumnPdfOptions());
 
         ReaderTable table = Assert.Single(tables);
         Assert.Equal("tables-only.pdf", table.Location?.Path);
@@ -1352,11 +1345,7 @@ public sealed class ReaderPdfModularTests {
         ReaderTableExportBundle export = Assert.Single(PdfReaderAdapter.ReadTableExports(
             exportStream,
             sourceName: "tables-only.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            }));
+            pdfOptions: CreateSingleColumnPdfOptions()));
         Assert.Equal("tables-only-page-0001-table-0000", export.Id);
         Assert.Contains("A-100,Alpha,2", export.Csv, StringComparison.Ordinal);
         using JsonDocument exportJson = JsonDocument.Parse(export.Json);
@@ -1365,21 +1354,13 @@ public sealed class ReaderPdfModularTests {
         IReadOnlyList<ReaderTable> byteTables = PdfReaderAdapter.ReadTables(
             pdf,
             sourceName: "tables-bytes.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            });
+            pdfOptions: CreateSingleColumnPdfOptions());
         Assert.Equal("tables-bytes.pdf", Assert.Single(byteTables).Location?.Path);
 
         ReaderTableExportBundle byteExport = Assert.Single(PdfReaderAdapter.ReadTableExports(
             pdf,
             sourceName: "tables-bytes.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            }));
+            pdfOptions: CreateSingleColumnPdfOptions()));
         Assert.Equal("tables-bytes-page-0001-table-0000", byteExport.Id);
         Assert.Contains("B-200,Beta,14", byteExport.Csv, StringComparison.Ordinal);
     }
@@ -1404,11 +1385,7 @@ public sealed class ReaderPdfModularTests {
         ReaderChunk chunk = Assert.Single(PdfReaderAdapter.Read(
             stream,
             sourceName: "form.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            },
+            pdfOptions: CreateSingleColumnPdfOptions(),
             readerOptions: new ReaderOptions { MaxChars = 8_000 }).ToList());
 
         Assert.NotNull(chunk.Diagnostics);
@@ -1489,7 +1466,7 @@ public sealed class ReaderPdfModularTests {
     public void DocumentReaderPdf_ReadPdfDocument_ExposesAcroFormXfaMetadataWithoutRenderingXfa() {
         byte[] pdf = BuildAcroFormXfaPdf();
 
-        PdfLogicalDocument logical = PdfLogicalDocument.Load(pdf);
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(pdf);
         Assert.NotNull(logical.AcroFormXfa);
         Assert.True(logical.HasAcroFormXfa);
         Assert.Equal("array", logical.AcroFormXfa!.ObjectKind);
@@ -1991,15 +1968,7 @@ public sealed class ReaderPdfModularTests {
         var chunks = PdfReaderAdapter.Read(
             stream,
             sourceName: "duplicate-table-ranges.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                },
-                PageRanges = new[] {
-                    PdfPageRange.From(1, 1),
-                    PdfPageRange.From(1, 1)
-                }
-            },
+            pdfOptions: CreateSingleColumnPdfOptions(PdfPageSelection.From(1, 1)),
             readerOptions: new ReaderOptions { MaxChars = 8_000 }).ToList();
 
         var tableAnchors = chunks
@@ -2042,15 +2011,7 @@ public sealed class ReaderPdfModularTests {
         IReadOnlyList<ReaderTableExportBundle> exports = PdfReaderAdapter.ReadTableExports(
             stream,
             sourceName: "duplicate-table-ranges.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                },
-                PageRanges = new[] {
-                    PdfPageRange.From(1, 1),
-                    PdfPageRange.From(1, 1)
-                }
-            },
+            pdfOptions: CreateSingleColumnPdfOptions(PdfPageSelection.From(1, 1)),
             readerOptions: new ReaderOptions { MaxChars = 8_000 });
 
         Assert.Equal(2, exports.Count);
@@ -2088,11 +2049,7 @@ public sealed class ReaderPdfModularTests {
         var chunk = Assert.Single(PdfReaderAdapter.Read(
             stream,
             sourceName: "table-row-cap.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            },
+            pdfOptions: CreateSingleColumnPdfOptions(),
             readerOptions: new ReaderOptions {
                 MaxChars = 8_000,
                 MaxTableRows = 1
@@ -2133,11 +2090,7 @@ public sealed class ReaderPdfModularTests {
         var chunk = Assert.Single(PdfReaderAdapter.Read(
             stream,
             sourceName: "invoice-facts.pdf",
-            pdfOptions: new ReaderPdfOptions {
-                LayoutOptions = new PdfTextLayoutOptions {
-                    ForceSingleColumn = true
-                }
-            },
+            pdfOptions: CreateSingleColumnPdfOptions(),
             readerOptions: new ReaderOptions { MaxChars = 8_000 }).ToList());
 
         Assert.NotNull(chunk.Tables);
@@ -2244,30 +2197,125 @@ public sealed class ReaderPdfModularTests {
     [Fact]
     public void ReaderPdfOptions_CloneCopiesNestedOptionsIndependently() {
         var options = ReaderPdfOptions.CreateOfficeIMOProfile();
-        options.LayoutOptions = new PdfTextLayoutOptions {
-            ForceSingleColumn = true,
-            MarginLeft = 12
+        options.ReadOptions = new PdfReadOptions {
+            Profile = PdfReadProfile.Fast,
+            PageSelection = PdfPageSelection.From(1),
+            LayoutOptions = new PdfTextLayoutOptions {
+                ForceSingleColumn = true,
+                MarginLeft = 12
+            },
+            Pipeline = new PdfUnderstandingPipelineOptions {
+                MaxPages = 2_048,
+                MaxWorkUnitsPerPage = 5_000_000
+            }
         };
-        options.PageRanges = new[] { PdfPageRange.From(1, 1) };
         options.MarkdownOptions!.AlignNumericTableColumns = false;
+        options.ParagraphContinuationOptions = new PdfLogicalParagraphContinuationOptions {
+            MinimumConfidence = 0.85,
+            RejoinLineEndingHyphens = false
+        };
 
         var clone = options.Clone();
 
         Assert.NotSame(options, clone);
-        Assert.NotSame(options.LayoutOptions, clone.LayoutOptions);
+        Assert.NotSame(options.ReadOptions, clone.ReadOptions);
+        Assert.NotSame(options.ReadOptions.LayoutOptions, clone.ReadOptions!.LayoutOptions);
+        Assert.NotSame(options.ReadOptions.Pipeline, clone.ReadOptions.Pipeline);
         Assert.NotSame(options.MarkdownOptions, clone.MarkdownOptions);
-        Assert.Equal(options.LayoutOptions.MarginLeft, clone.LayoutOptions!.MarginLeft);
+        Assert.NotSame(options.ParagraphContinuationOptions, clone.ParagraphContinuationOptions);
+        Assert.Equal(options.ReadOptions.LayoutOptions.MarginLeft, clone.ReadOptions.LayoutOptions.MarginLeft);
         Assert.Equal(options.MarkdownOptions!.IncludeLinkAnnotations, clone.MarkdownOptions!.IncludeLinkAnnotations);
+        Assert.Equal(PdfReadProfile.Fast, clone.ReadOptions.Profile);
+        Assert.Equal(2_048, clone.ReadOptions.Pipeline!.MaxPages);
+        Assert.Equal(5_000_000, clone.ReadOptions.Pipeline.MaxWorkUnitsPerPage);
         Assert.False(clone.MarkdownOptions.AlignNumericTableColumns);
-        Assert.Equal(options.PageRanges.Single(), clone.PageRanges!.Single());
+        Assert.Equal(options.ReadOptions.PageSelection, clone.ReadOptions.PageSelection);
+        Assert.Equal(0.85, clone.ParagraphContinuationOptions!.MinimumConfidence);
+        Assert.False(clone.ParagraphContinuationOptions.RejoinLineEndingHyphens);
 
-        clone.LayoutOptions.MarginLeft = 48;
+        clone.ReadOptions.LayoutOptions.MarginLeft = 48;
+        clone.ReadOptions.Pipeline.MaxPages = 32;
         clone.MarkdownOptions.IncludeLinkAnnotations = false;
         clone.MarkdownOptions.AlignNumericTableColumns = true;
 
-        Assert.Equal(12, options.LayoutOptions.MarginLeft);
+        Assert.Equal(12, options.ReadOptions.LayoutOptions.MarginLeft);
+        Assert.Equal(2_048, options.ReadOptions.Pipeline.MaxPages);
         Assert.True(options.MarkdownOptions.IncludeLinkAnnotations);
         Assert.False(options.MarkdownOptions.AlignNumericTableColumns);
+    }
+
+    [Fact]
+    public void DocumentReaderPdf_ProjectsParagraphContinuationEvidenceWithoutRewritingPages() {
+        byte[] pdf = BuildParagraphContinuationPdf();
+        using var stream = new MemoryStream(pdf, writable: false);
+
+        OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
+            stream,
+            "continuation.pdf",
+            pdfOptions: new ReaderPdfOptions {
+                ParagraphContinuationOptions = new PdfLogicalParagraphContinuationOptions {
+                    RejoinLineEndingHyphens = true
+                }
+            });
+
+        Assert.Contains("officeimo.pdf.paragraph-continuations", result.CapabilitiesUsed);
+        Assert.Equal("1", Assert.Single(result.Metadata, entry => entry.Id == "pdf-paragraph-continuation-count").Value);
+        Assert.Equal("2", Assert.Single(result.Metadata, entry => entry.Id == "pdf-paragraph-continuation-segment-count").Value);
+        Assert.Equal("1", Assert.Single(result.Metadata, entry => entry.Id == "pdf-paragraph-continuation-rejoined-hyphen-count").Value);
+        OfficeDocumentMetadataEntry continuation = Assert.Single(result.Metadata, entry => entry.Id == "pdf-paragraph-continuation-0000");
+        Assert.Equal("1", continuation.Attributes!["firstPageNumber"]);
+        Assert.Equal("2", continuation.Attributes["lastPageNumber"]);
+        Assert.Contains("HyphenatedBreak", continuation.Attributes["evidence"], StringComparison.Ordinal);
+        Assert.Contains("discr-", result.Markdown, StringComparison.Ordinal);
+        Assert.Contains("etionary", result.Markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DocumentReaderPdf_ParagraphContinuationsRespectSelectedPageOrder() {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(BuildParagraphContinuationPdf());
+
+        OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
+            logical,
+            sourceName: "reversed-continuation.pdf",
+            pdfOptions: new ReaderPdfOptions {
+                ReadOptions = new PdfReadOptions { PageSelection = PdfPageSelection.From(2, 1) }
+            });
+
+        Assert.Equal(new int?[] { 2, 1 }, result.Pages.Select(page => page.Number).ToArray());
+        Assert.DoesNotContain(result.Metadata, entry => entry.Category == "pdf.paragraph.continuation");
+    }
+
+    [Fact]
+    public void DocumentReaderPdf_ParagraphContinuationsPreserveRepeatedPageOccurrences() {
+        PdfDocumentReadResult logical = PdfDocumentReadResult.Load(BuildParagraphContinuationPdf());
+
+        OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
+            logical,
+            sourceName: "repeated-continuation.pdf",
+            pdfOptions: new ReaderPdfOptions {
+                ReadOptions = new PdfReadOptions {
+                    PageSelection = PdfPageSelection.FromRanges(
+                        PdfPageRange.From(1, 2),
+                        PdfPageRange.From(1, 2))
+                }
+            });
+
+        Assert.Equal("2", Assert.Single(result.Metadata, entry => entry.Id == "pdf-paragraph-continuation-count").Value);
+        Assert.Equal("4", Assert.Single(result.Metadata, entry => entry.Id == "pdf-paragraph-continuation-segment-count").Value);
+        Assert.Equal(2, result.Metadata.Count(entry => entry.Category == "pdf.paragraph.continuation" && entry.ValueType == "object"));
+    }
+
+    [Fact]
+    public void DocumentReaderPdf_CanDisableParagraphContinuationProjection() {
+        using var stream = new MemoryStream(BuildParagraphContinuationPdf(), writable: false);
+
+        OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
+            stream,
+            "continuation.pdf",
+            pdfOptions: new ReaderPdfOptions { IncludeParagraphContinuationMetadata = false });
+
+        Assert.DoesNotContain("officeimo.pdf.paragraph-continuations", result.CapabilitiesUsed);
+        Assert.DoesNotContain(result.Metadata, entry => entry.Category == "pdf.paragraph.continuation");
     }
 
     [Fact]
@@ -2300,6 +2348,38 @@ public sealed class ReaderPdfModularTests {
             .Paragraph(p => p.Text("Second page body."))
             .ToBytes();
     }
+
+    private static byte[] BuildParagraphContinuationPdf() {
+        const string firstContent = "BT /F1 12 Tf 40 20 Td (The paragraph ends with a discr-) Tj ET";
+        const string secondContent = "BT /F1 12 Tf 40 280 Td (etionary break and continues here) Tj ET";
+        string[] objects = {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /Resources << /Font << /F1 7 0 R >> >> >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 6 0 R >>",
+            BuildReaderStreamObject(firstContent),
+            BuildReaderStreamObject(secondContent),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+        };
+        var builder = new StringBuilder("%PDF-1.7\n");
+        var offsets = new List<int>(objects.Length);
+        for (int index = 0; index < objects.Length; index++) {
+            offsets.Add(Encoding.ASCII.GetByteCount(builder.ToString()));
+            builder.Append(index + 1).Append(" 0 obj\n").Append(objects[index]).Append("\nendobj\n");
+        }
+        int xrefOffset = Encoding.ASCII.GetByteCount(builder.ToString());
+        builder.Append("xref\n0 ").Append(objects.Length + 1).Append("\n0000000000 65535 f \n");
+        for (int index = 0; index < offsets.Count; index++) {
+            builder.Append(offsets[index].ToString("D10", System.Globalization.CultureInfo.InvariantCulture)).Append(" 00000 n \n");
+        }
+        builder.Append("trailer\n<< /Root 1 0 R /Size ").Append(objects.Length + 1).Append(" >>\nstartxref\n")
+            .Append(xrefOffset.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append("\n%%EOF\n");
+        return Encoding.ASCII.GetBytes(builder.ToString());
+    }
+
+    private static string BuildReaderStreamObject(string content) =>
+        "<< /Length " + Encoding.ASCII.GetByteCount(content).ToString(System.Globalization.CultureInfo.InvariantCulture) +
+        " >>\nstream\n" + content + "\nendstream";
 
     private static byte[] CreateMinimalRgbPng() => PdfPngTestImages.CreateRgbPng(1, 1);
 
@@ -2886,6 +2966,13 @@ public sealed class ReaderPdfModularTests {
 
         return Encoding.ASCII.GetBytes(pdf);
     }
+
+    private static ReaderPdfOptions CreateSingleColumnPdfOptions(PdfPageSelection? selection = null) => new ReaderPdfOptions {
+        ReadOptions = new PdfReadOptions {
+            PageSelection = selection,
+            LayoutOptions = new PdfTextLayoutOptions { ForceSingleColumn = true }
+        }
+    };
 
     private static byte[] BuildSignedSecurityMetadataPdf() {
         string pdf = string.Join("\n", new[] {

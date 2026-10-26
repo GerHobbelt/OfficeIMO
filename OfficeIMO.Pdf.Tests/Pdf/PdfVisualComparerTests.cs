@@ -10,7 +10,7 @@ public class PdfVisualComparerTests {
         byte[] expected = BuildPdf("Expected visual text");
         byte[] actual = BuildPdf("Changed visual text");
 
-        PdfVisualComparisonReport exact = PdfDocument.Open(expected).CompareVisual(actual);
+        PdfVisualComparisonReport exact = PdfDocument.Load(expected).CompareVisual(actual);
         PdfVisualPageComparison page = Assert.Single(exact.Pages);
         var ignoredOptions = new PdfVisualComparisonOptions();
         ignoredOptions.IgnoredRegions.Add(new PdfPixelRegion(0, 0, page.Width, page.Height));
@@ -76,6 +76,24 @@ public class PdfVisualComparerTests {
         cancellation.Cancel();
         Assert.Throws<OperationCanceledException>(() =>
             PdfVisualComparer.Compare(pdf, pdf, cancellationToken: cancellation.Token));
+    }
+
+    [Fact]
+    public void ComparisonGallery_EnforcesUtf8OutputAndCancellationBudgetsDuringRendering() {
+        byte[] pdf = BuildPdf("Bounded gallery");
+        PdfVisualComparisonReport report = PdfVisualComparer.Compare(pdf, pdf);
+
+        InvalidOperationException output = Assert.Throws<InvalidOperationException>(() =>
+            report.ToHtmlGallery("Bounded gallery", maximumOutputBytes: 256L));
+        Assert.Contains("being rendered", output.Message, StringComparison.Ordinal);
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.Throws<OperationCanceledException>(() =>
+            report.ToHtmlGallery(
+                "Cancelled gallery",
+                maximumOutputBytes: 1024L * 1024L,
+                cancellationToken: cancellation.Token));
     }
 
     private static byte[] BuildPdf(string text) => PdfDocument.Create(new PdfOptions { PageSize = new PageSize(240, 180) })

@@ -97,6 +97,40 @@ public sealed class PdfImageExportContractTests {
     }
 
     [Fact]
+    public void PdfSvgExportEnforcesTheEncodedByteBudgetDuringSerialization() {
+        PdfReadPage page = LoadTwoPageDocument().Pages[0];
+
+        OfficeImageExportBatchLimitException exception =
+            Assert.Throws<OfficeImageExportBatchLimitException>(() =>
+                page.ExportImage(
+                    OfficeImageExportFormat.Svg,
+                    new PdfImageExportOptions { MaximumTotalEncodedBytes = 32L }));
+
+        Assert.Equal(nameof(OfficeImageExportOptions.MaximumTotalEncodedBytes), exception.LimitName);
+        Assert.Equal(32L, exception.Maximum);
+    }
+
+    [Fact]
+    public void PdfSvgBatchReportsTheConfiguredAggregateByteBudget() {
+        PdfReadDocument document = LoadTwoPageDocument();
+        long onePageBytes = document.Pages[0]
+            .ExportImage(OfficeImageExportFormat.Svg)
+            .Bytes.LongLength;
+        long maximumBytes = onePageBytes + 16L;
+
+        OfficeImageExportBatchLimitException exception =
+            Assert.Throws<OfficeImageExportBatchLimitException>(() =>
+                document
+                    .ToImages(new PdfImageExportOptions { MaximumTotalEncodedBytes = maximumBytes })
+                    .AsSvg()
+                    .Export());
+
+        Assert.Equal(nameof(OfficeImageExportOptions.MaximumTotalEncodedBytes), exception.LimitName);
+        Assert.True(exception.Actual > maximumBytes);
+        Assert.Equal(maximumBytes, exception.Maximum);
+    }
+
+    [Fact]
     public void PdfPageBuilderSupportsDpiThumbnailAndConfiguredEncoding() {
         PdfReadPage page = LoadTwoPageDocument().Pages[0];
 
@@ -175,11 +209,11 @@ public sealed class PdfImageExportContractTests {
 
     [Fact]
     public void FluentDocumentReaderUsesTheSharedImageExportContract() {
-        PdfDocument document = PdfDocument.Open(PdfDocument.Create()
+        PdfDocument document = PdfDocument.Load(PdfDocument.Create()
             .Paragraph(paragraph => paragraph.Text("Fluent image export"))
             .ToBytes());
 
-        OfficeImageExportResult result = Assert.Single(document.Read.ExportImages(
+        OfficeImageExportResult result = Assert.Single(document.Reader.ExportImages(
             OfficeImageExportFormat.Svg));
 
         Assert.Equal(OfficeImageExportFormat.Svg, result.Format);
@@ -218,9 +252,35 @@ public sealed class PdfImageExportContractTests {
         Assert.ThrowsAny<OperationCanceledException>(() =>
             document.ExportImages(OfficeImageExportFormat.Png, cancellationToken: cancellation.Token));
         Assert.ThrowsAny<OperationCanceledException>(() =>
-            document.Read.ExportImages(OfficeImageExportFormat.Png, cancellationToken: cancellation.Token));
+            document.Reader.ExportImages(OfficeImageExportFormat.Png, cancellationToken: cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => builder.ExportAsync(cancellation.Token));
         Assert.False(materialized);
+    }
+
+    [Fact]
+    public async Task FluentAuthoredDocumentExportPropagatesCancellationThroughDeferredSnapshot() {
+        using var cancellation = new CancellationTokenSource();
+        bool materializedAfterCancellation = false;
+        PdfDocument document = CreateCancelingDeferredDocument(cancellation, () => materializedAfterCancellation = true);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            document.ToImages().AsSvg().ExportAsync(cancellation.Token));
+
+        Assert.False(materializedAfterCancellation);
+    }
+
+    [Fact]
+    public async Task FluentConversionExportPropagatesCancellationThroughDeferredSnapshot() {
+        using var cancellation = new CancellationTokenSource();
+        bool materializedAfterCancellation = false;
+        var conversion = new PdfDocumentConversionResult(
+            CreateCancelingDeferredDocument(cancellation, () => materializedAfterCancellation = true),
+            new PdfConversionReport());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            conversion.ToImages().AsSvg().ExportAsync(cancellation.Token));
+
+        Assert.False(materializedAfterCancellation);
     }
 
     [Fact]
@@ -287,6 +347,19 @@ public sealed class PdfImageExportContractTests {
             .PageBreak()
             .Paragraph(paragraph => paragraph.Text("Page two"))
             .ToBytes());
+
+    private static PdfDocument CreateCancelingDeferredDocument(
+        CancellationTokenSource cancellation,
+        Action onMaterializedAfterCancellation) =>
+        PdfDocument.Create()
+            .Deferred(_ => {
+                cancellation.Cancel();
+                return item => item.Paragraph(paragraph => paragraph.Text("Cancellation boundary"));
+            })
+            .Deferred(_ => {
+                onMaterializedAfterCancellation();
+                return item => item.Paragraph(paragraph => paragraph.Text("Must not materialize"));
+            });
 
     private static byte[] BuildSinglePagePdf(string content) {
         int length = Encoding.ASCII.GetByteCount(content);

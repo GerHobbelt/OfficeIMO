@@ -4,12 +4,18 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Apache.Arrow;
 using OfficeIMO.Adf;
 using OfficeIMO.CSV;
 using OfficeIMO.Data;
+using OfficeIMO.Data.Arrow;
+using OfficeIMO.DocBook;
 using OfficeIMO.Excel;
 using OfficeIMO.GoogleWorkspace.Auth.GoogleApis;
+using OfficeIMO.Opml;
+using OfficeIMO.Pdf;
 using OfficeIMO.Reader;
+using OfficeIMO.Workflows;
 
 var adfAttributes = new ReadOnlyObjectDictionary(new Dictionary<string, object?> {
     ["html"] = "<strong>Ready</strong>",
@@ -20,6 +26,19 @@ JsonElement adfValue = new AdfNode("extension")
     .Attributes["parameters"];
 if (adfValue.ValueKind != JsonValueKind.Object || !adfValue.GetProperty("enabled").GetBoolean()) {
     throw new InvalidOperationException("The ADF read-only dictionary did not retain its JSON object shape.");
+}
+
+OpmlDocument opml = OpmlDocument.Create();
+opml.AddOutline("AOT root").AddChild("AOT child");
+if (OpmlDocument.Parse(opml.ToOpml()).Outlines.Single().Children.Single().Text != "AOT child") {
+    throw new InvalidOperationException("The OPML create/write/reopen path did not survive NativeAOT.");
+}
+
+DocBookDocument docBook = DocBookDocument.CreateArticle();
+docBook.Title = "AOT guide";
+docBook.AddSection("Start").AddParagraph("Body");
+if (!DocBookDocument.Parse(docBook.ToDocBook()).Validate().IsValid) {
+    throw new InvalidOperationException("The DocBook create/write/reopen path did not survive NativeAOT.");
 }
 
 string readerJson = OfficeDocumentReadResultJson.Serialize(new OfficeDocumentReadResult {
@@ -75,6 +94,24 @@ if (parallelRows.Length != 2
     throw new InvalidOperationException("The explicit ordered-parallel CSV mapping did not survive NativeAOT.");
 }
 
+using var generatedReader = CsvDocument.OpenTextDataReader("Id,Name\n3,Katherine\n");
+AotGeneratedRow generatedRow = generatedReader
+    .RowsAs<AotGeneratedRow>(AotGeneratedRowRowMapping.Configure)
+    .Single();
+if (generatedRow.Id != 3 || generatedRow.Name != "Katherine") {
+    throw new InvalidOperationException("The source-generated row mapping did not survive NativeAOT.");
+}
+
+using var arrowReader = CsvDocument.OpenTextDataReader(
+    "Id,Name\n4,Dorothy\n",
+    readerOptions: new CsvDataReaderOptions { InferSchema = true });
+using RecordBatch arrowBatch = arrowReader
+    .ReadArrowBatches(new ArrowReadOptions { BatchSize = 1 })
+    .Single();
+if (arrowBatch.Length != 1 || arrowBatch.Schema.FieldsList.Count != 2) {
+    throw new InvalidOperationException("The bounded Apache Arrow adapter did not survive NativeAOT.");
+}
+
 using var excelSourceStream = new System.IO.MemoryStream();
 ExcelDocument.WriteRows(
     excelSourceStream,
@@ -127,7 +164,50 @@ if (excelRows.Length != 2
     throw new InvalidOperationException("The IDataReader XLSX write fallback and ordered-parallel Excel mapping did not survive NativeAOT.");
 }
 
-Console.WriteLine("PASS | production libraries fully rooted; Google APIs token-store plus CSV and Excel read/write and ordered-parallel contracts passed from NativeAOT.");
+string workflowRoot = System.IO.Path.Combine(
+    System.IO.Path.GetTempPath(),
+    "OfficeIMO-AotWorkflow-" + Guid.NewGuid().ToString("N"));
+System.IO.Directory.CreateDirectory(workflowRoot);
+try {
+    string sourcePdf = System.IO.Path.Combine(workflowRoot, "source.pdf");
+    PdfDocument.Create(compose => compose.Page(page => page.Content(content => content
+        .Item(item => item.Paragraph(paragraph => paragraph.Text("Native workflow source"))))))
+        .Save(sourcePdf);
+
+    PdfPrintPlan printPlan = PdfPrintPlanner.Create(new PdfPrintPlanRequest {
+        InputPath = sourcePdf,
+        PagesPerSheet = 1
+    });
+    if (printPlan.SourcePageCount != 1 || printPlan.Sheets.Count != 1) {
+        throw new InvalidOperationException("The PDF print workflow did not produce one NativeAOT sheet.");
+    }
+
+    var workflowRunner = new OfficeWorkflowRunner();
+    string imageDirectory = System.IO.Path.Combine(workflowRoot, "pages");
+    PdfPageImageExportResult export = await workflowRunner.ExportPdfPagesAsync(new PdfPageImageExportRequest {
+        InputPath = sourcePdf,
+        OutputDirectory = imageDirectory,
+        Format = OfficeIMO.Drawing.OfficeImageExportFormat.Png
+    });
+    if (!export.Succeeded || export.Files.Count != 1) {
+        throw new InvalidOperationException("The PDF page export workflow did not survive NativeAOT: " + export.Summary);
+    }
+
+    string assembledPdf = System.IO.Path.Combine(workflowRoot, "assembled.pdf");
+    PdfAssemblyResult assembly = await workflowRunner.AssemblePdfAsync(new PdfAssemblyRequest {
+        Sources = new[] { sourcePdf, export.Files[0].Path },
+        OutputPath = assembledPdf
+    });
+    if (!assembly.Succeeded || assembly.PageCount != 2) {
+        throw new InvalidOperationException("The heterogeneous PDF assembly workflow did not survive NativeAOT: " + assembly.Summary);
+    }
+} finally {
+    if (System.IO.Directory.Exists(workflowRoot)) {
+        System.IO.Directory.Delete(workflowRoot, recursive: true);
+    }
+}
+
+Console.WriteLine("PASS | production libraries fully rooted; Google APIs, tabular, and PDF workflow contracts passed from NativeAOT.");
 
 file sealed class AotCsvRow {
     public int Id { get; set; }
@@ -136,6 +216,14 @@ file sealed class AotCsvRow {
 
 file sealed class AotExcelRow {
     public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+}
+
+[GenerateRowMapper]
+internal sealed class AotGeneratedRow {
+    [DataColumn("Id")]
+    public int Id { get; set; }
+
     public string Name { get; set; } = string.Empty;
 }
 

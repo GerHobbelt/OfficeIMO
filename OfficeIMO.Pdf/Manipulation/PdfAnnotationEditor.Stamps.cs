@@ -6,7 +6,7 @@ internal static partial class PdfAnnotationEditor {
         AddStampAnnotation(pdf, options, readOptions: null);
 
     /// <summary>Adds a visual Stamp annotation using explicit read limits or credentials.</summary>
-    public static PdfAnnotationEditResult AddStampAnnotation(byte[] pdf, PdfStampAnnotationOptions? options, PdfReadOptions? readOptions) {
+    public static PdfAnnotationEditResult AddStampAnnotation(byte[] pdf, PdfStampAnnotationOptions? options, PdfLoadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
         PdfStampAnnotationOptions effective = options ?? new PdfStampAnnotationOptions();
         ValidateStampOptions(effective);
@@ -37,10 +37,11 @@ internal static partial class PdfAnnotationEditor {
         int appearanceObjectNumber = checked(fontObjectNumber + 1);
         int annotationObjectNumber = checked(fontObjectNumber + 2);
         objects[fontObjectNumber] = new PdfIndirectObject(fontObjectNumber, 0, BuildStampFont());
+        PdfStream appearance = BuildStampAppearance(effective, fontObjectNumber);
         objects[appearanceObjectNumber] = new PdfIndirectObject(
             appearanceObjectNumber,
             0,
-            BuildStampAppearance(effective, fontObjectNumber));
+            appearance);
         objects[annotationObjectNumber] = new PdfIndirectObject(
             annotationObjectNumber,
             0,
@@ -51,6 +52,11 @@ internal static partial class PdfAnnotationEditor {
             pageObjectNumber,
             page,
             new PdfReference(annotationObjectNumber, 0));
+        PdfGeneratedOutputGrowth generatedGrowth = BuildGeneratedOutputGrowth(
+            objects,
+            new[] { annotationsOwnerObjectNumber, fontObjectNumber, appearanceObjectNumber, annotationObjectNumber },
+            additionalAnnotationsPerPage: 1,
+            additionalRevisions: mutationPlan.ExecutionMode == PdfMutationExecutionMode.AppendOnly ? 1 : 0);
         if (mutationPlan.ExecutionMode == PdfMutationExecutionMode.AppendOnly) {
             var changedObjectNumbers = new[] {
                 annotationsOwnerObjectNumber,
@@ -65,13 +71,14 @@ internal static partial class PdfAnnotationEditor {
                 trailerRaw,
                 changedObjectNumbers,
                 encryptionHandler: GetAppendEncryptionHandler(objects, trailerRaw, readOptions, mutationPlan.Preflight.Probe.Security));
-            PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, appended, mutationPlan, readOptions);
-            return new PdfAnnotationEditResult(appended, 1, mutationPlan, proof, readOptions: readOptions);
+            PdfLoadOptions outputReadOptions = PdfLoadOptions.ForGeneratedOutput(readOptions, pdf, appended, generatedGrowth);
+            PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, appended, mutationPlan, readOptions, outputReadOptions);
+            return new PdfAnnotationEditResult(appended, 1, mutationPlan, proof, readOptions: outputReadOptions);
         }
 
         PdfObjectGraphPruner.PruneUnreachableObjects(objects, catalogObjectNumber);
         byte[] rewritten = RewriteAllObjects(objects, catalogObjectNumber, PdfReadDocument.Open(pdf, readOptions).UncheckedMetadata, pdf);
-        return CreateFullRewriteResult(pdf, rewritten, 1, mutationPlan, annotationsChanged: true, readOptions: readOptions);
+        return CreateFullRewriteResult(pdf, rewritten, 1, mutationPlan, annotationsChanged: true, readOptions: readOptions, generatedGrowth: generatedGrowth);
     }
 
     private static int AddAnnotationReference(

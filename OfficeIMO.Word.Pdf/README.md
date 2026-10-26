@@ -91,7 +91,7 @@ using OfficeIMO.Pdf;
 using OfficeIMO.Word;
 using OfficeIMO.Word.Pdf;
 
-PdfDocument pdf = PdfDocument.Open("packet.pdf");
+PdfDocument pdf = PdfDocument.Load("packet.pdf");
 PdfWordConversionResult import = pdf.ToWordDocumentResult(
     new PdfWordImportOptions());
 
@@ -105,15 +105,21 @@ foreach (var warning in import.Report.Warnings) {
 
 The semantic import path preserves document metadata, page breaks, headings, paragraphs, lists, detected run color/size/emphasis, logical tables, safe URI hyperlinks, supported internal destination links, embedded images, form-widget placeholders, and conversion diagnostics when those structures are available in the PDF logical model. `UseSharedPageReadingOrder` defaults to `true`, so semantic items follow the core engine's crop-, rotation-, spanning-band-, and column-aware order. It creates an editable Word document; it does not claim fixed-layout page recreation or Microsoft Word rendering parity.
 
-For selected pages or custom layout analysis, read the logical model first:
+For selected pages, Fast versus Structured reconstruction, or custom semantic budgets, pass the canonical read settings through the import options:
 
 ```csharp
-PdfLogicalDocument selected = pdf.Read.Logical(
-    PdfPageSelection.Parse("1-3,5"),
-    new PdfTextLayoutOptions { ForceSingleColumn = true });
-
-selected.SaveAsWord("packet-selection.docx");
+PdfWordConversionReport report = pdf.SaveAsWord(
+    "packet-selection.docx",
+    new PdfWordImportOptions {
+        ReadOptions = new PdfReadOptions {
+            PageSelection = PdfPageSelection.Parse("1-3,5"),
+            LayoutOptions = new PdfTextLayoutOptions { ForceSingleColumn = true },
+            Pipeline = new PdfUnderstandingPipelineOptions { MaxPages = 5 }
+        }
+    });
 ```
+
+`ReadOptions` is used only when the source is an opened `PdfDocument`. When a `PdfDocumentReadResult` is already available, the adapter converts that supplied logical model directly.
 
 For table-only recovery, use the same façade with the explicit profile:
 
@@ -125,7 +131,7 @@ pdf.SaveAsWord(
 
 ## What it exports
 
-- Paragraphs, headings, rich runs, links, bookmarks, page breaks, lists, and common spacing/indentation settings.
+- Paragraphs, headings, rich runs, links, bookmarks, page breaks, lists, and common spacing/indentation settings, including hanging and legal negative left/right indents.
 - Word sections, page size, orientation, margins, columns, headers, footers, page numbers, and document background color.
 - Tables with common Word table styling, repeated headers, cell fills, borders, alignment, merged cells, and rich text in cells.
 - Paragraph-aligned images, selected shapes, text boxes, content controls, simple form controls, footnote/endnote markers, and table-of-contents links where supported by the first-party PDF path.
@@ -135,7 +141,7 @@ pdf.SaveAsWord(
 
 - Parser-supported PDF metadata, page breaks, headings, paragraphs, lists, logical tables, safe URI hyperlinks, supported internal destination links, complete image-file payloads with transparency-mask fidelity metadata, supported `ImageMask` stencil streams, color-key masked simple and `Indexed` streams, Decode-aware soft-mask-capable simple `DeviceGray`/`DeviceRGB`/basic-converted `DeviceCMYK` streams, basic `ICCBased` N=1/3/4 streams, and Decode-aware soft-mask-capable `Indexed` palette PDF image streams into editable `.docx` content when their filters are supported.
 - Image fallback placeholders and form-widget placeholders with diagnostics instead of silently dropping unsupported objects.
-- Page-range filtered imports through `PdfDocument.Read.Logical(PdfPageSelection, ...)`.
+- Page-range filtered imports through `PdfDocument.Read(new PdfReadOptions { PageSelection = ... })`.
 - Active hyperlink reconstruction for absolute `http`, `https`, and `mailto` URI annotations through `PdfWordImportOptions.ImportUriLinks` and `PdfWordImportOptions.AllowedHyperlinkUriSchemes`.
 - Internal PDF destination reconstruction through `PdfWordImportOptions.ImportInternalLinks`, mapping supported page and named destinations to Word bookmarks and anchor hyperlinks.
 - Native image embedding through `PdfWordImportOptions.ImportImages`; complete image files, supported `ImageMask` stencil streams, color-key masked simple and `Indexed` streams, Decode-aware soft-mask-capable simple 8-bit `DeviceGray`/`DeviceRGB`/basic-converted `DeviceCMYK` streams, basic `ICCBased` N=1/3/4 streams, and Decode-aware soft-mask-capable `Indexed` palette streams are embedded when their filters are supported. Pass-through JPEG image payloads with unresolved PDF transparency masks are embedded with `PdfImageTransparencyMaskNotResolved`; unsupported complex PDF image streams can still produce editable placeholders through `PdfWordImportOptions.IncludeImagePlaceholders`.
@@ -143,7 +149,7 @@ pdf.SaveAsWord(
 
 ## Options and diagnostics
 
-Use `WordPdfSaveOptions` when callers need to override page geometry, metadata, page-number behavior, font family, table-border fallback, profile presets, or text fallback policy. `TextFallbacks` uses the shared `PdfTextFallbackFeatures` enum. The balanced resource default enables installed fonts but denies arbitrary local and remote reads; use `PdfResourcePolicy.CreatePortableDeterministic()` for reproducible or untrusted conversion and `CreateTrustedHost()` only when local or remote resource access is intentional. Profiles do not inject page numbers; set `IncludePageNumbers = true` explicitly when generated numbering is desired. Request `ToPdfDocumentResult()` or `TrySaveAsPdf()` when diagnostics matter; unsupported Word features should become actionable operation results instead of mutable option state. Available embeddable Word families use shared named PDF resources and are not limited to three compatibility slots. Unavailable or non-embeddable families fall back to a mapped PDF font with an explicit warning.
+Use `WordPdfSaveOptions` when callers need to override page geometry, metadata, page-number behavior, font family, table-border fallback, profile presets, or text fallback policy. `TextFallbacks` uses the shared `PdfTextFallbackFeatures` enum. The balanced resource default enables installed fonts but denies arbitrary local and remote reads; use `PdfResourcePolicy.CreatePortableDeterministic()` for reproducible or untrusted conversion and `CreateTrustedHost()` only when local or remote resource access is intentional. Profiles do not inject page numbers; set `IncludePageNumbers = true` explicitly when generated numbering is desired. Request `ToPdfDocumentResult()` or `TrySaveAsPdf()` when diagnostics matter; unsupported Word features and preserved header/footer overflow become actionable operation results instead of mutable option state. Available embeddable Word families use shared named PDF resources and are not limited to three compatibility slots. Unavailable or non-embeddable families fall back to a mapped PDF font with an explicit warning.
 
 ## Current limits
 

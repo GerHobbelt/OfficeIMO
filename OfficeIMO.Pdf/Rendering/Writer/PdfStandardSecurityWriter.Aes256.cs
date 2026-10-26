@@ -1,37 +1,52 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Threading;
 
 namespace OfficeIMO.Pdf;
 
 #pragma warning disable CA1850 // Static HashData is unavailable on netstandard2.0 and net472.
 internal static partial class PdfStandardSecurityWriter {
-    private static PdfEncryptionAssembly EncryptAes256(IReadOnlyList<byte[]> sourceObjects, PdfStandardEncryptionOptions options, long objectMemoryLimitBytes) {
+    private static PdfEncryptionAssembly EncryptAes256(
+        IReadOnlyList<byte[]> sourceObjects,
+        PdfStandardEncryptionOptions options,
+        long objectMemoryLimitBytes,
+        CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         byte[] fileId = CreateFileId();
         byte[] fileKey = RandomBytes(32);
         byte[] userPassword = NormalizeModernPassword(options.UserPassword);
         byte[] ownerPassword = NormalizeModernPassword(options.OwnerPassword ?? options.UserPassword);
         byte[] userValidationSalt = RandomBytes(8);
         byte[] userKeySalt = RandomBytes(8);
-        byte[] userHash = ComputeRevision6Hash(userPassword, userValidationSalt, Array.Empty<byte>());
+        byte[] userHash = ComputeRevision6Hash(userPassword, userValidationSalt, Array.Empty<byte>(), options.AesCryptographyProvider, cancellationToken);
         byte[] userEntry = PdfObjectBytes.Concat(userHash, userValidationSalt, userKeySalt);
-        byte[] userEncryptionKey = ComputeRevision6Hash(userPassword, userKeySalt, Array.Empty<byte>());
-        byte[] userEncryptedFileKey = EncryptAes256NoPadding(userEncryptionKey, fileKey);
+        byte[] userEncryptionKey = ComputeRevision6Hash(userPassword, userKeySalt, Array.Empty<byte>(), options.AesCryptographyProvider, cancellationToken);
+        byte[] userEncryptedFileKey = EncryptAes256NoPadding(userEncryptionKey, fileKey, options.AesCryptographyProvider);
 
         byte[] ownerValidationSalt = RandomBytes(8);
         byte[] ownerKeySalt = RandomBytes(8);
-        byte[] ownerHash = ComputeRevision6Hash(ownerPassword, ownerValidationSalt, userEntry);
+        byte[] ownerHash = ComputeRevision6Hash(ownerPassword, ownerValidationSalt, userEntry, options.AesCryptographyProvider, cancellationToken);
         byte[] ownerEntry = PdfObjectBytes.Concat(ownerHash, ownerValidationSalt, ownerKeySalt);
-        byte[] ownerEncryptionKey = ComputeRevision6Hash(ownerPassword, ownerKeySalt, userEntry);
-        byte[] ownerEncryptedFileKey = EncryptAes256NoPadding(ownerEncryptionKey, fileKey);
-        byte[] encryptedPermissions = EncryptPermissions(fileKey, options.Permissions, options.EncryptMetadata);
+        byte[] ownerEncryptionKey = ComputeRevision6Hash(ownerPassword, ownerKeySalt, userEntry, options.AesCryptographyProvider, cancellationToken);
+        byte[] ownerEncryptedFileKey = EncryptAes256NoPadding(ownerEncryptionKey, fileKey, options.AesCryptographyProvider);
+        byte[] encryptedPermissions = EncryptPermissions(fileKey, options.Permissions, options.EncryptMetadata, options.AesCryptographyProvider);
 
         int encryptionObjectNumber = sourceObjects.Count + 1;
         var objects = new PdfObjectStore(objectMemoryLimitBytes);
         try {
             for (int i = 0; i < sourceObjects.Count; i++) {
-                objects.Add(EncryptAesIndirectObject(sourceObjects[i], i + 1, fileKey, options.EncryptMetadata, deriveObjectKey: false));
+                cancellationToken.ThrowIfCancellationRequested();
+                objects.Add(EncryptAesIndirectObject(
+                    sourceObjects[i],
+                    i + 1,
+                    fileKey,
+                    options.EncryptMetadata,
+                    deriveObjectKey: false,
+                    options.AesCryptographyProvider,
+                    cancellationToken));
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             objects.Add(PdfObjectBytes.WrapIndirectObject(
                 encryptionObjectNumber,
                 BuildAes256EncryptionDictionary(
@@ -49,11 +64,18 @@ internal static partial class PdfStandardSecurityWriter {
         }
     }
 
-    private static byte[] ComputeRevision6Hash(byte[] password, byte[] salt, byte[] userEntry) {
+    private static byte[] ComputeRevision6Hash(
+        byte[] password,
+        byte[] salt,
+        byte[] userEntry,
+        OfficeIMO.Security.IOfficeAesCryptographyProvider? provider,
+        CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         byte[] key = Sha256(PdfObjectBytes.Concat(password, salt, userEntry));
         int round = 0;
         byte lastByte;
         do {
+            cancellationToken.ThrowIfCancellationRequested();
             byte[] block = PdfObjectBytes.Concat(password, key, userEntry);
             var repeated = new byte[block.Length * 64];
             for (int i = 0; i < 64; i++) {
@@ -63,7 +85,8 @@ internal static partial class PdfStandardSecurityWriter {
             byte[] aesKey = Take(key, 16);
             var iv = new byte[16];
             Buffer.BlockCopy(key, 16, iv, 0, 16);
-            byte[] encrypted = EncryptAesNoPadding(aesKey, iv, repeated);
+            byte[] encrypted = EncryptAesNoPadding(aesKey, iv, repeated, provider);
+            cancellationToken.ThrowIfCancellationRequested();
             int selector = 0;
             for (int i = 0; i < 16; i++) {
                 selector = ((selector << 8) + encrypted[i]) % 3;
@@ -83,20 +106,24 @@ internal static partial class PdfStandardSecurityWriter {
         return bytes.Length <= 127 ? bytes : Take(bytes, 127);
     }
 
-    private static byte[] EncryptAes256NoPadding(byte[] key, byte[] data) =>
-        EncryptAesNoPadding(key, new byte[16], data);
+    private static byte[] EncryptAes256NoPadding(
+        byte[] key,
+        byte[] data,
+        OfficeIMO.Security.IOfficeAesCryptographyProvider? provider) =>
+        EncryptAesNoPadding(key, new byte[16], data, provider);
 
-    private static byte[] EncryptAesNoPadding(byte[] key, byte[] iv, byte[] data) {
-        using Aes aes = Aes.Create();
-        aes.Mode = CipherMode.CBC;
-        aes.Padding = PaddingMode.None;
-        aes.Key = key;
-        aes.IV = iv;
-        using ICryptoTransform encryptor = aes.CreateEncryptor();
-        return encryptor.TransformFinalBlock(data, 0, data.Length);
-    }
+    private static byte[] EncryptAesNoPadding(
+        byte[] key,
+        byte[] iv,
+        byte[] data,
+        OfficeIMO.Security.IOfficeAesCryptographyProvider? provider) =>
+        PdfAesCryptography.EncryptNoPadding(key, iv, data, provider);
 
-    private static byte[] EncryptPermissions(byte[] fileKey, int permissions, bool encryptMetadata) {
+    private static byte[] EncryptPermissions(
+        byte[] fileKey,
+        int permissions,
+        bool encryptMetadata,
+        OfficeIMO.Security.IOfficeAesCryptographyProvider? provider) {
         byte[] plain = RandomBytes(16);
         unchecked {
             plain[0] = (byte)(permissions & 0xFF);
@@ -115,7 +142,7 @@ internal static partial class PdfStandardSecurityWriter {
         plain[11] = (byte)'b';
 
         // The PDF permissions entry is exactly one AES block, so CBC with a zero IV is equivalent to ECB here.
-        return EncryptAesNoPadding(fileKey, new byte[16], plain);
+        return EncryptAesNoPadding(fileKey, new byte[16], plain, provider);
     }
 
     private static byte[] RandomBytes(int length) {
