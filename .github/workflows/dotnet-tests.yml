@@ -13,8 +13,6 @@ on:
       - '.github/workflows/deploy-website.yml'
       - '.gitignore'
   pull_request:
-    branches:
-      - master
     paths-ignore:
       - '*.md'
       - 'Docs/**'
@@ -31,12 +29,78 @@ concurrency:
 env:
   DOTNET_VERSION: |
     8.0.418
-    10.0.103
+    10.0.112
   BUILD_CONFIGURATION: 'Release'
   TEST_VERBOSITY: minimal # set to 'detailed' to restore full test output
   SUMMARIZE_FAILURES: true # set to 'false' to disable summarizing failing tests
 
 jobs:
+  studio-contracts:
+    name: 'Studio workflows and accessibility / ${{ matrix.os }}'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # Temporary: Avalonia.Headless 12.1.1/12.1.2 session teardown races on Windows.
+    # Upstream fix: https://github.com/AvaloniaUI/Avalonia/pull/22222
+    # The runner suppresses only that exact TRX signature on Windows and fails closed otherwise.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Test Studio
+        shell: pwsh
+        run: ./Build/Invoke-StudioContractTests.ps1 -Configuration ${{ env.BUILD_CONFIGURATION }}
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: studio-tests-${{ matrix.os }}
+          path: TestResults/Studio
+          if-no-files-found: ignore
+
+  studio-locked-restore:
+    name: 'Studio locked restore (${{ matrix.os }})'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Validate the Studio release restore graph
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $config = Get-Content Build/Studio/powerforge.dotnetpublish.json -Raw | ConvertFrom-Json
+          $runtimeProperty = '-p:RuntimeIdentifiers="' + $config.DotNet.MsBuildProperties.RuntimeIdentifiers + '"'
+          dotnet restore $config.Targets[0].ProjectPath --locked-mode -p:OfficeIMOStudioLockedRestore=true -p:SelfContained=true -p:PublishSingleFile=true $runtimeProperty
+          git diff --exit-code -- '**/packages*.lock.json'
+
+  invoice-standards:
+    name: Invoice schema and business rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Validate generated and independent invoices
+        shell: pwsh
+        run: ./Build/Test-InvoicingStandards.ps1
+
   build-matrix:
     name: 'Cross-platform build'
     runs-on: ${{ matrix.os }}
@@ -73,6 +137,12 @@ jobs:
 
       - name: Test optional C2PA process adapter
         run: dotnet test OfficeIMO.Provenance.C2pa.Tests/OfficeIMO.Provenance.C2pa.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --no-restore --logger "console;verbosity=${{ env.TEST_VERBOSITY }}"
+
+      - name: Test electronic invoice contracts
+        run: dotnet test OfficeIMO.Invoicing.Tests/OfficeIMO.Invoicing.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --no-restore --logger "console;verbosity=${{ env.TEST_VERBOSITY }}"
+
+      - name: Test optional invoice PDF adapter
+        run: dotnet test OfficeIMO.Invoicing.Pdf.Tests/OfficeIMO.Invoicing.Pdf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --no-restore --logger "console;verbosity=${{ env.TEST_VERBOSITY }}"
 
       - name: Build public examples
         shell: pwsh
@@ -164,6 +234,8 @@ jobs:
             'OfficeIMO.Markdown/OfficeIMO.Markdown.csproj',
             'OfficeIMO.Rtf/OfficeIMO.Rtf.csproj',
             'OfficeIMO.Email/OfficeIMO.Email.csproj',
+            'OfficeIMO.Html.Core/OfficeIMO.Html.Core.csproj',
+            'OfficeIMO.Html.AngleSharp/OfficeIMO.Html.AngleSharp.csproj',
             'OfficeIMO.Html/OfficeIMO.Html.csproj',
             'OfficeIMO.Html.Rtf/OfficeIMO.Html.Rtf.csproj',
             'OfficeIMO.Email.Html/OfficeIMO.Email.Html.csproj',
@@ -195,6 +267,8 @@ jobs:
           $coreVersion = Get-PackedPackageVersion 'OfficeIMO.Core'
           $markdownVersion = Get-PackedPackageVersion 'OfficeIMO.Markdown'
           $rtfVersion = Get-PackedPackageVersion 'OfficeIMO.Rtf'
+          $htmlCoreVersion = Get-PackedPackageVersion 'OfficeIMO.Html.Core'
+          $htmlAngleSharpVersion = Get-PackedPackageVersion 'OfficeIMO.Html.AngleSharp'
           $htmlVersion = Get-PackedPackageVersion 'OfficeIMO.Html'
           $htmlRtfVersion = Get-PackedPackageVersion 'OfficeIMO.Html.Rtf'
           $markdownHtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Markdown.Html'
@@ -230,6 +304,8 @@ jobs:
             'OfficeIMO.Rtf',
             'OfficeIMO.Email',
             'OfficeIMO.Email.Html',
+            'OfficeIMO.Html.Core',
+            'OfficeIMO.Html.AngleSharp',
             'OfficeIMO.Html',
             'OfficeIMO.Html.Rtf',
             'OfficeIMO.Markdown.Html',
@@ -260,6 +336,8 @@ jobs:
             @{ Id = 'officeimo.core'; Version = $coreVersion },
             @{ Id = 'officeimo.markdown'; Version = $markdownVersion },
             @{ Id = 'officeimo.rtf'; Version = $rtfVersion },
+            @{ Id = 'officeimo.html.core'; Version = $htmlCoreVersion },
+            @{ Id = 'officeimo.html.anglesharp'; Version = $htmlAngleSharpVersion },
             @{ Id = 'officeimo.html'; Version = $htmlVersion },
             @{ Id = 'officeimo.html.rtf'; Version = $htmlRtfVersion },
             @{ Id = 'officeimo.markdown.html'; Version = $markdownHtmlVersion },
@@ -327,6 +405,8 @@ jobs:
           $projects = @(
             'OfficeIMO.Core/OfficeIMO.Core.csproj',
             'OfficeIMO.Markdown/OfficeIMO.Markdown.csproj',
+            'OfficeIMO.Html.Core/OfficeIMO.Html.Core.csproj',
+            'OfficeIMO.Html.AngleSharp/OfficeIMO.Html.AngleSharp.csproj',
             'OfficeIMO.Html/OfficeIMO.Html.csproj',
             'OfficeIMO.Reader.Core/OfficeIMO.Reader.Core.csproj',
             'OfficeIMO.OneNote/OfficeIMO.OneNote.csproj',
@@ -353,6 +433,8 @@ jobs:
           $packageIds = @(
             'OfficeIMO.Core',
             'OfficeIMO.Markdown',
+            'OfficeIMO.Html.Core',
+            'OfficeIMO.Html.AngleSharp',
             'OfficeIMO.Html',
             'OfficeIMO.Reader.Core',
             'OfficeIMO.OneNote',
@@ -1660,10 +1742,10 @@ jobs:
       - name: Run AOT/Trim analyzers (net8.0)
         shell: pwsh
         run: |
-          # The solution includes net10-only products such as Studio. Preserve
+          # Studio and the AI projects target net10 only. Preserve
           # the existing net8 analyzer lane for every compatible solution project.
           $projects = dotnet sln OfficeIMO.sln list | Where-Object {
-            $_ -match '\.csproj$' -and $_ -notmatch '(^|[\\/])OfficeIMO\.Studio(\.Tests)?[\\/]'
+            $_ -match '\.csproj$' -and $_ -notmatch '(^|[\\/])OfficeIMO\.(Studio(\.Tests)?|AI(\.IntelligenceX|\.Tests|\.Example)?)[\\/]'
           } | ForEach-Object {
             (Resolve-Path -LiteralPath $_).Path
           }
@@ -1682,6 +1764,7 @@ jobs:
           # concurrent Avalonia generation through Studio and Studio.Tests.
           dotnet restore OfficeIMO.sln
           $analyzerSolution = Join-Path $env:RUNNER_TEMP 'OfficeIMO.Aot.sln'
+          dotnet sln $analyzerSolution add OfficeIMO.AI/OfficeIMO.AI.csproj OfficeIMO.AI.IntelligenceX/OfficeIMO.AI.IntelligenceX.csproj OfficeIMO.AI.Tests/OfficeIMO.AI.Tests.csproj Examples/OfficeIMO.AI.Example/OfficeIMO.AI.Example.csproj
           dotnet build $analyzerSolution --configuration ${{ env.BUILD_CONFIGURATION }} --framework net10.0 --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true
           dotnet build OfficeIMO.Studio/OfficeIMO.Studio.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net10.0 --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true
 

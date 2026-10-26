@@ -9,7 +9,7 @@ using OfficeIMO.Pdf.Ocr;
 
 namespace OfficeIMO.PdfQualityCorpus;
 
-internal static class MultilingualLayoutCorpus {
+internal static partial class MultilingualLayoutCorpus {
     internal static async Task<int> RunAsync(string[] args) {
         if (args.Length is < 3 or > 4)
             throw new ArgumentException("Usage: layout <MultilingualLayout fixtures> <output> [native]");
@@ -18,6 +18,7 @@ internal static class MultilingualLayoutCorpus {
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(15));
         using JsonDocument manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "manifest.json"), deadline.Token));
         var results = new List<object>();
+        var recognition = new List<object>();
         foreach (JsonElement fixture in manifest.RootElement.GetProperty("cases").EnumerateArray()) {
             string id = fixture.GetProperty("id").GetString()!;
             string[] expected = fixture.GetProperty("readingOrder").EnumerateArray().Select(item => item.GetString()!).ToArray();
@@ -37,13 +38,21 @@ internal static class MultilingualLayoutCorpus {
             int turn = fixture.GetProperty("clockwiseDegrees").GetInt32() / 90;
             PdfSearchableOcrResult searchable = await PdfDocument.Load(scan).MakeSearchableAsync(engine,
                 new PdfOcrMergeOptions {
+#if !PDF_LAYOUT_BASELINE
                     ReconstructLayout = true,
+#endif
                     Dpi = 300, MinimumConfidence = 0, ProviderTimeout = TimeSpan.FromSeconds(50),
                     // The independently labelled rotation is explicit: this lane measures layout,
                     // while the scan-quality corpus measures the provider's orientation detector.
                     ScanProcessing = new OfficeScanProcessingOptions { ClockwiseQuarterTurns = (4 - turn) % 4, Deskew = false }
                 }, deadline.Token);
             await RecordAsync(id, "ocr", searchable.Ocr.Document, expected, expectedTable, caption, output, results, deadline.Token);
+            string providerText = string.Join(" ", searchable.Ocr.Pages.SelectMany(static page => page.Words)
+                .Select(static word => word.Text));
+            await File.WriteAllTextAsync(Path.Combine(output, id + "-provider.txt"), providerText, deadline.Token);
+            recognition.Add(new { Id = id, Provider = searchable.Ocr.Pages[0].Provider,
+                Model = searchable.Ocr.Pages[0].Model, Language = searchable.Ocr.Pages[0].Language,
+                Tokens = MeasureRecognitionTokens(string.Join(" ", expected), providerText) });
             byte[] bytes = searchable.Document.ToBytes();
             await File.WriteAllBytesAsync(Path.Combine(output, id + "-searchable.pdf"), bytes, deadline.Token);
             PdfDocumentReadResult roundTrip = PdfDocument.Load(bytes).Read(new PdfReadOptions { Profile = PdfReadProfile.Structured });
@@ -52,11 +61,29 @@ internal static class MultilingualLayoutCorpus {
         await File.WriteAllTextAsync(Path.Combine(output, "layout-quality.json"), JsonSerializer.Serialize(new {
             Runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
             SourceManifestSha256 = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(root, "manifest.json"), deadline.Token))),
-            Metric = "NFC and collapsed whitespace. Exact labelled segments, correctly ordered segment pairs, code-point CER/token WER, table cells and caption classification are separate observations.",
+            Metric = "NFC and collapsed whitespace. Exact labelled segments, correctly ordered segment pairs, code-point CER/token WER, table rows and caption classification are separate observations. Exact table rows require one detected table, the expected row count, and matching cells at the same row and column positions.",
             Limit = "Controlled Pango/Cairo fixtures, not a population accuracy estimate. OCR uses the labelled rotation and installed language models; recognition errors remain visible.",
+            RecognitionMetric = "Case-sensitive NFC token multiset precision and recall, ignoring order. This separates recognized-token evidence from canonical line/column ordering; it is not a character accuracy score.",
+            ProviderRecognition = recognition,
             Cases = results
         }, new JsonSerializerOptions { WriteIndented = true }), deadline.Token);
         return 0;
+    }
+
+    private static object MeasureRecognitionTokens(string expected, string actual) {
+        string[] expectedTokens = Normalize(expected).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string[] actualTokens = Normalize(actual).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var remaining = expectedTokens.GroupBy(static value => value, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.Ordinal);
+        int matched = 0;
+        foreach (string token in actualTokens) {
+            if (!remaining.TryGetValue(token, out int count) || count == 0) continue;
+            remaining[token] = count - 1;
+            matched++;
+        }
+        return new { ExpectedTokens = expectedTokens.Length, RecognizedTokens = actualTokens.Length,
+            MatchedTokens = matched, Precision = actualTokens.Length == 0 ? 0D : (double)matched / actualTokens.Length,
+            Recall = expectedTokens.Length == 0 ? 0D : (double)matched / expectedTokens.Length };
     }
 
     private static async Task<byte[]> ReadVerifiedAsync(string root, JsonElement fixture, string suffix, CancellationToken token) {
@@ -85,8 +112,7 @@ internal static class MultilingualLayoutCorpus {
             Id = id, Mode = mode, Accuracy = accuracy, ExactSegments = present, ExpectedSegments = expected.Length,
             CorrectReadingOrderPairs = correctPairs, ExpectedReadingOrderPairs = expected.Length * (expected.Length - 1) / 2,
             ExactCaption = captions.Any(value => Normalize(value) == Normalize(caption)), Captions = captions,
-            ExactTableRows = expectedTable.Count(row => tables.Any(table => table.Any(actualRow =>
-                row.Select(Normalize).SequenceEqual(actualRow.Select(Normalize))))),
+            ExactTableRows = CountExactTableRows(expectedTable, tables),
             ExpectedTableRows = expectedTable.Length, Tables = tables,
             Lines = document.Pages.SelectMany(page => page.Analysis.Lines).Select(line => new {
                 line.Text, line.XStart, line.XEnd, line.BaselineY, line.RotationDegrees, line.SourceKind
@@ -96,4 +122,12 @@ internal static class MultilingualLayoutCorpus {
     }
 
     private static string Normalize(string text) => Regex.Replace(text.Normalize(NormalizationForm.FormC), @"\s+", " ").Trim();
+
+    internal static int CountExactTableRows(string[][] expected, string[][][] actual) {
+        if (actual.Length != 1 || actual[0].Length != expected.Length) return 0;
+        int exact = 0;
+        for (int row = 0; row < expected.Length; row++)
+            if (expected[row].Select(Normalize).SequenceEqual(actual[0][row].Select(Normalize))) exact++;
+        return exact;
+    }
 }

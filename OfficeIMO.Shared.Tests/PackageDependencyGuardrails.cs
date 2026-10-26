@@ -373,7 +373,11 @@ public sealed class PackageDependencyGuardrailTests {
         string projectPath = GetRepositoryPath("OfficeIMO.Html/OfficeIMO.Html.csproj");
         string[] references = GetProjectReferences(projectPath);
 
-        Assert.Equal(["../OfficeIMO.Core/OfficeIMO.Core.csproj"], references);
+        Assert.Equal([
+            "../OfficeIMO.Core/OfficeIMO.Core.csproj",
+            "../OfficeIMO.Html.Core/OfficeIMO.Html.Core.csproj",
+            "../OfficeIMO.Html.AngleSharp/OfficeIMO.Html.AngleSharp.csproj"
+        ], references);
         Assert.DoesNotContain(references, static reference => reference.Contains("OfficeIMO.Email", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(references, static reference => reference.Contains("OfficeIMO.Rtf", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(references, static reference => reference.Contains("OfficeIMO.Mhtml", StringComparison.OrdinalIgnoreCase));
@@ -614,7 +618,7 @@ public sealed class PackageDependencyGuardrailTests {
     }
 
     [Fact]
-    public void SharedSource_IsLimitedToDependencySpecificAdaptersAndPolyfills() {
+    public void SharedSource_IsLimitedToApprovedInternalInfrastructure() {
         string sharedSourceRoot = GetRepositoryPath("OfficeIMO.SharedSource");
         string[] files = Directory.EnumerateFiles(sharedSourceRoot, "*.cs", SearchOption.AllDirectories)
             .Select(GetRepositoryRelativePath)
@@ -633,6 +637,12 @@ public sealed class PackageDependencyGuardrailTests {
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundFileReader.Stream.cs",
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundFileWriter.cs",
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundWriterLayout.cs",
+                "OfficeIMO.SharedSource/Invoicing/InvoiceBankAccountIdentity.cs",
+                "OfficeIMO.SharedSource/Invoicing/InvoiceProfile.cs",
+                "OfficeIMO.SharedSource/Invoicing/InvoiceProfileDeclaration.cs",
+                "OfficeIMO.SharedSource/Invoicing/InvoiceProfiles.cs",
+                "OfficeIMO.SharedSource/Invoicing/InvoiceSyntax.cs",
+                "OfficeIMO.SharedSource/Invoicing/InvoiceXml.cs",
                 "OfficeIMO.SharedSource/OpenXml/OfficeOpenXmlContractMappings.cs",
                 "OfficeIMO.SharedSource/OpenXml/OfficeOpenXmlPackagePayload.cs",
                 "OfficeIMO.SharedSource/OpenXml/OfficeOpenXmlThemeColorResolver.cs",

@@ -43,6 +43,8 @@ Switch to **PDF tools** for twelve task-oriented workflows backed by `OfficeIMO.
 
 Successful PDF operations return the result and a JSON report containing browser-local execution evidence, input and output SHA-256 fingerprints, and operation details. The built-in sample is the same [showcase PDF](/downloads/showcase/pdf/showcase-dashboard.pdf) published with the product examples.
 
+PDF results include a page-image preview rendered by OfficeIMO, with previous/next controls for multipage output. **Protect PDF** returns a download without a preview because its output requires the password you supplied. Other previews report rendering limits and failures while keeping the generated file available to download. Download the PDF for selectable text, interactive forms, and review in another viewer.
+
 ## Limits and input policy
 
 The app includes sample inputs for every route. Files are limited to 25 MiB. Multi-file PDF tools accept up to ten PDFs and 75 MiB combined. PDF parsing is capped at 500 pages, split at 100 outputs and 64 MiB of serialized PDFs, visual comparison at 25 pages, and any generated artifact at 96 MiB. Before a DOCX, XLSX, or PPTX file is parsed, the app also rejects packages with more than 5,000 parts, an individual expanded part over 32 MiB, more than 128 MiB expanded in total, or a part compression ratio over 200:1.
@@ -76,3 +78,19 @@ Use `dotnet workload list` to verify the workload on an existing build machine. 
 dotnet build .\Website\Apps\OfficeIMO.Web.Converter\OfficeIMO.Web.Converter.csproj -c Release
 dotnet test .\Website\Apps\OfficeIMO.Web.Converter.Tests\OfficeIMO.Web.Converter.Tests.csproj -c Release
 ```
+
+
+## Continue with a result
+
+The workspace keeps original and working files in memory for the current tab. After an operation, select **Use result as working file**, then choose a compatible tool. **Restore originals** returns to the uploaded source files. **Clear session** removes the session selection; downloaded files remain on your device. Archive bundles and reports are downloadable outputs and cannot become working documents. Use **Focus result** to give the preview more space.
+
+## Inspect and remove provenance
+
+Choose **Provenance** from the tools menu. JPEG, PNG, WebP, PDF, DOCX, XLSX, and PPTX files can be inspected locally. The sample image includes a deliberately added AI source declaration for trying the workflow.
+
+1. Choose a file and inspect its supported provenance carriers.
+2. Select embedded Content Credentials, external credential references, or AI-specific IPTC source declarations.
+3. Create a separate cleaned copy. Review remaining findings and diagnostics from re-inspection.
+4. Download the copy and report, or reuse the copy as the working file.
+
+This is structural inspection, not cryptographic authenticity verification or a verdict about AI authorship. External references are not fetched. Cleanup does not remove visible marks or reconstruct image pixels, and it is not a general personal-metadata scrubber. Ambiguous carriers remain preserved; mutations that would invalidate document signatures are blocked. Input and output are capped at 25 MiB, with additional limits on expanded package data and embedded assets.

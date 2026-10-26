@@ -139,6 +139,8 @@ namespace OfficeIMO.Examples {
         }
 
         static void Main(string[] args) {
+            string? reportSource = GetArgumentValue(args, "--report-source");
+            if (reportSource != null) reportSource = Path.GetFullPath(reportSource);
             string baseFolder = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
             Directory.SetCurrentDirectory(baseFolder);
             string templatesPath = Path.Combine(baseFolder, "Templates");
@@ -174,8 +176,18 @@ namespace OfficeIMO.Examples {
                 return;
             }
 
+            if (HasArgument(args, "--browser-business-sample")) {
+                Showcase.BrowserBusinessSample.Create(folderPath);
+                return;
+            }
+
             if (HasArgument(args, "--showcase-features")) {
                 Showcase.DocumentFeatureShowcase.Example(folderPath, GetArgumentValue(args, "--showcase-group"));
+                return;
+            }
+
+            if (HasArgument(args, "--showcase-workflows")) {
+                Showcase.Workflows.WorkflowShowcase.Run(folderPath, GetArgumentValue(args, "--showcase-example"));
                 return;
             }
 
@@ -236,6 +248,11 @@ namespace OfficeIMO.Examples {
 
             if (HasArgument(args, "--html-feature-showcase")) {
                 Html.Html.Example_HtmlFeatureShowcase(folderPath);
+                return;
+            }
+
+            if (HasArgument(args, "--multi-format-report")) {
+                Html.Html.Example_HtmlMultiFormatReport(folderPath, reportSource);
                 return;
             }
 

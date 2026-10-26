@@ -26,7 +26,7 @@ public sealed class StudioResponsiveLayoutTests {
                 Layout(window, width, 620);
                 var workflow = window.GetVisualDescendants().OfType<SearchablePdfOcrView>().Single();
                 var source = workflow.FindControl<Border>("SourcePanel")!;
-                var information = workflow.FindControl<ScrollViewer>("InformationPanel")!;
+                var information = workflow.FindControl<Control>("InformationPanel")!;
                 Assert.False(source.Bounds.Intersects(information.Bounds));
                 Assert.True(information.Bounds.Right <= workflow.Bounds.Width + 1);
                 if (width == 960) {
@@ -45,7 +45,7 @@ public sealed class StudioResponsiveLayoutTests {
 
     [Theory]
     [InlineData("en", 13)]
-    [InlineData("qps-ploc", 17)]
+    [InlineData("en-XA", 17)]
     public async Task DocumentCommandsStayWithinTheWorkspaceWithExpandedLabels(string culture, int fontSize) {
         using var session = TestAppBuilder.StartSession();
         await session.Dispatch(async () => {

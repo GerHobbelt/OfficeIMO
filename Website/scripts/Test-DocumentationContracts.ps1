@@ -99,6 +99,9 @@ foreach ($publicContentFile in $publicContentFiles) {
     if ($publicContent -match 'github\.com/EvotecIT/OfficeIMO/(?:blob|tree)/main(?:/|")') {
         Add-Failure "'$([System.IO.Path]::GetRelativePath($SiteRoot, $publicContentFile.FullName))' uses the nonexistent OfficeIMO 'main' branch in a public link."
     }
+    if ($publicContent -match 'https://(?:github\.com/EvotecIT/PSWriteOffice/(?:tree|blob)/|raw\.githubusercontent\.com/EvotecIT/PSWriteOffice/)(?:main|master)(?=[/?#\s"''<>)]|$)') {
+        Add-Failure "'$([IO.Path]::GetRelativePath($SiteRoot, $publicContentFile.FullName))' contains a floating PSWriteOffice repository reference."
+    }
 }
 
 $excelProductPath = Join-Path $SiteRoot 'content\products\excel.md'
@@ -319,22 +322,44 @@ $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json
 if ($catalog.repository.productionComponentCount -ne @($catalog.components).Count) {
     Add-Failure 'The OfficeIMO component summary does not match the generated component list.'
 }
+$categoryComponentIndexes = @($catalog.categories | ForEach-Object { @($_.componentIndexes) })
+if ($categoryComponentIndexes.Count -ne @($catalog.components).Count -or
+    @($categoryComponentIndexes | Sort-Object -Unique).Count -ne @($catalog.components).Count) {
+    Add-Failure 'Documentation catalog category indexes must cover every component exactly once.'
+}
+foreach ($category in @($catalog.categories)) {
+    $indexes = @($category.componentIndexes)
+    if ($indexes.Count -ne [int] $category.componentCount) {
+        Add-Failure "Documentation category '$($category.name)' index count does not match its component count."
+        continue
+    }
+    foreach ($index in $indexes) {
+        if ([int] $index -lt 0 -or [int] $index -ge @($catalog.components).Count -or
+            [string] $catalog.components[[int] $index].category -ne [string] $category.name) {
+            Add-Failure "Documentation category '$($category.name)' contains an invalid component index '$index'."
+        }
+    }
+}
 if ([int] $catalog.repository.conceptualPageCount -ne $docs.Count) {
     Add-Failure "The generated conceptual page count is $($catalog.repository.conceptualPageCount); expected $($docs.Count) from the current documentation source."
 }
+$repositoryRoot = Split-Path -Parent (Resolve-Path -LiteralPath $SiteRoot).Path
+$inventory = & (Join-Path $PSScriptRoot 'Get-DocumentationProjectInventory.ps1') -RepositoryRoot $repositoryRoot
 $expectedRepositoryCounts = [ordered]@{
-    projectCount = 220
-    productionComponentCount = 118
-    testProjectCount = 42
-    benchmarkProjectCount = 33
-    validationProjectCount = 28
-    apiReferenceCount = 26
+    projectCount = @($inventory.All).Count
+    productionComponentCount = @($inventory.Production).Count
+    testProjectCount = @($inventory.Tests).Count
+    benchmarkProjectCount = @($inventory.Benchmarks).Count
+    validationProjectCount = @($inventory.Validation).Count
 }
 foreach ($expectedCount in $expectedRepositoryCounts.GetEnumerator()) {
     $actual = [int] $catalog.repository.($expectedCount.Key)
     if ($actual -ne $expectedCount.Value) {
-        Add-Failure "The OfficeIMO $($expectedCount.Key) is $actual; expected $($expectedCount.Value) on every operating system."
+        Add-Failure "The OfficeIMO $($expectedCount.Key) is $actual; expected $($expectedCount.Value) from the current repository inventory."
     }
+}
+if (@(Compare-Object @($catalog.components.name | Sort-Object) @($inventory.Production.BaseName | Sort-Object)).Count -gt 0) {
+    Add-Failure 'The documentation catalog does not cover the current production project inventory.'
 }
 if (@($catalog.components | Where-Object { [string]::IsNullOrWhiteSpace($_.description) }).Count -gt 0) {
     Add-Failure 'One or more OfficeIMO catalog components have no description.'
@@ -365,12 +390,25 @@ foreach ($expectedGuide in $expectedIntegrationGuides.GetEnumerator()) {
 
 $pipelinePath = Join-Path $SiteRoot 'pipeline.json'
 $pipeline = Get-Content -LiteralPath $pipelinePath -Raw | ConvertFrom-Json
+$apiAssemblies = @($pipeline.steps | Where-Object task -eq 'apidocs' | ForEach-Object {
+    [System.IO.Path]::GetFileNameWithoutExtension([string] $_.assembly)
+} | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+$expectedApiReferenceCount = $apiAssemblies.Count
+if (Test-Path -LiteralPath (Join-Path $SiteRoot 'data/apidocs/powershell/command-metadata.json') -PathType Leaf) {
+    $expectedApiReferenceCount++
+}
+if ([int] $catalog.repository.apiReferenceCount -ne $expectedApiReferenceCount) {
+    Add-Failure 'The generated API reference total does not match the configured API sources.'
+}
 $psWriteOfficeSource = @($siteConfiguration.Sources | Where-Object Slug -eq 'pswriteoffice')
+$psWriteOfficeModule = Import-PowerShellDataFile -LiteralPath (Join-Path $SiteRoot 'data/apidocs/powershell/PSWriteOffice.psd1')
+$psWriteOfficeVersion = [string] $psWriteOfficeModule.ModuleVersion
 if ($psWriteOfficeSource.Count -ne 1 -or
     $psWriteOfficeSource[0].Repo -ne 'EvotecIT/PSWriteOffice' -or
     $psWriteOfficeSource[0].Clean -ne $true -or
-    -not [string]::IsNullOrWhiteSpace([string] $psWriteOfficeSource[0].Ref)) {
-    Add-Failure 'The default PSWriteOffice source must cleanly clone the repository default branch.'
+    $psWriteOfficeVersion -notmatch '^\d+\.\d+\.\d+$' -or
+    $psWriteOfficeSource[0].Ref -cne "v$psWriteOfficeVersion") {
+    Add-Failure 'The PSWriteOffice source tag must match the imported three-part module version.'
 }
 $sourceSyncStep = @($pipeline.steps | Where-Object id -eq 'sync-sources')
 if ($sourceSyncStep.Count -ne 1 -or
@@ -407,16 +445,25 @@ $aotMatrix = Get-Content -LiteralPath $aotMatrixPath -Raw | ConvertFrom-Json
 if ($aotMatrix.summary.productionProjectCount -ne $catalog.repository.productionComponentCount) {
     Add-Failure 'The NativeAOT matrix does not account for every production project.'
 }
-if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 114) {
-    Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 114."
+$expectedAotClassifications = [ordered]@{
+    fullyRootedLibraryCount = 'native-full-surface'
+    boundedWorkflowLibraryCount = 'native-bounded-workflow'
+    nativeExecutableCount = 'native-executable'
+    nativeBuildAnalyzerCount = 'native-build-analyzer'
+    managedCrossPlatformProjectCount = 'managed-cross-platform'
+    managedWindowsProjectCount = 'managed-windows'
 }
-if ($aotMatrix.summary.fullyRootedLibraryCount -ne 111 -or
-    $aotMatrix.summary.boundedWorkflowLibraryCount -ne 1 -or
-    $aotMatrix.summary.nativeExecutableCount -ne 1 -or
-    $aotMatrix.summary.nativeBuildAnalyzerCount -ne 1 -or
-    $aotMatrix.summary.managedCrossPlatformProjectCount -ne 3 -or
-    $aotMatrix.summary.managedWindowsProjectCount -ne 1) {
-    Add-Failure 'The NativeAOT classification totals changed without updating the customer-facing contract.'
+foreach ($classification in $expectedAotClassifications.GetEnumerator()) {
+    $expected = @($aotMatrix.components | Where-Object classification -eq $classification.Value).Count
+    if ([int] $aotMatrix.summary.($classification.Key) -ne $expected) {
+        Add-Failure "The NativeAOT $($classification.Key) summary does not match its classified components."
+    }
+}
+if ([int] $aotMatrix.summary.nativeAotValidatedProjectCount -ne @($aotMatrix.components | Where-Object nativeAotValidated -eq $true).Count) {
+    Add-Failure 'The NativeAOT validation total does not match its component evidence.'
+}
+if (@(Compare-Object @($catalog.components.name | Sort-Object) @($aotMatrix.components.name | Sort-Object)).Count -gt 0) {
+    Add-Failure 'The NativeAOT matrix and documentation catalog cover different production components.'
 }
 if (@($aotMatrix.components).Count -ne $catalog.repository.productionComponentCount) {
     Add-Failure 'The NativeAOT component list is incomplete.'
@@ -424,6 +471,18 @@ if (@($aotMatrix.components).Count -ne $catalog.repository.productionComponentCo
 
 $powerShellCatalogPath = Join-Path $SiteRoot 'data\pswriteoffice_command_catalog.json'
 $powerShellCatalog = Get-Content -LiteralPath $powerShellCatalogPath -Raw | ConvertFrom-Json
+if ($powerShellCatalog.module.version -cne $psWriteOfficeVersion) {
+    Add-Failure 'The PSWriteOffice catalog version must match the imported module manifest.'
+}
+$examplesPrefix = "https://github.com/EvotecIT/PSWriteOffice/tree/v$psWriteOfficeVersion/Examples"
+foreach ($family in @($powerShellCatalog.families)) {
+    $examplesUrl = [string] $family.examplesUrl
+    if ($examplesUrl -cne $examplesPrefix -and
+        -not $examplesUrl.StartsWith($examplesPrefix + '/', [StringComparison]::Ordinal)) {
+        Add-Failure "PowerShell family '$($family.id)' must link to examples from the imported release."
+        continue
+    }
+}
 if ($powerShellCatalog.module.commandCount -le 0) {
     Add-Failure 'The PSWriteOffice snapshot must contain at least one exported command.'
 }
@@ -452,6 +511,16 @@ if ($powerShellExample.Count -ne 1) {
 
     $commandMetadataPath = Join-Path $SiteRoot 'data\apidocs\powershell\command-metadata.json'
     $commandMetadata = Get-Content -LiteralPath $commandMetadataPath -Raw | ConvertFrom-Json
+    $sourcePrefix = "https://github.com/EvotecIT/PSWriteOffice/blob/v$psWriteOfficeVersion/"
+    foreach ($command in @($commandMetadata.commands | Where-Object sourcePath)) {
+        $relativeSourcePath = (($command.sourcePath -replace '\\', '/') -split '/' |
+            ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+        $expectedSourceUrl = $sourcePrefix + $relativeSourcePath
+        if ([int] $command.sourceLine -gt 0) { $expectedSourceUrl += "#L$($command.sourceLine)" }
+        if ($command.sourceUrl -cne $expectedSourceUrl) {
+            Add-Failure "PowerShell command '$($command.name)' must link to its source path and line in the imported release."
+        }
+    }
     $commandByName = @{}
     foreach ($command in @($commandMetadata.commands)) {
         $commandByName[[string] $command.name] = [string] $command.name

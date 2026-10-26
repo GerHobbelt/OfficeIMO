@@ -10,7 +10,6 @@ using OfficeIMO.Studio.Features.Workspace;
 namespace OfficeIMO.Studio.Features.Shell;
 
 public sealed partial class MainWindowViewModel {
-    private PdfEditorGesture? _pendingRedaction;
     private PdfRedactionPlan? _pendingRedactionPlan;
     private PdfWorkspace? _pendingRedactionWorkspace;
     private long _pendingRedactionRevision;
@@ -47,8 +46,6 @@ public sealed partial class MainWindowViewModel {
     [NotifyPropertyChangedFor(nameof(HasPendingRedaction))]
     private string? _pendingRedactionSummary;
 
-    [ObservableProperty]
-    private string _watermarkText = "CONFIDENTIAL";
 
     [ObservableProperty]
     private PdfFormFieldViewModel? _selectedFormField;
@@ -184,7 +181,6 @@ public sealed partial class MainWindowViewModel {
 
     partial void OnSelectedEditorToolChoiceChanged(PdfEditorToolChoice value) {
         foreach (PdfPageViewModel page in Pages) page.EditorTool = value.Tool;
-        if (value.Tool != PdfEditorTool.Redact) CancelPendingRedaction();
     }
 
     partial void OnSelectedFormFieldChanged(PdfFormFieldViewModel? oldValue, PdfFormFieldViewModel? newValue) {
@@ -262,7 +258,8 @@ public sealed partial class MainWindowViewModel {
                 ErrorMessage = UiText("Editor.RedactionUnavailable");
                 return;
             }
-            CancelPendingRedaction();
+            if (_pendingRedactionWorkspace is not null &&
+                (!ReferenceEquals(_pendingRedactionWorkspace, workspace) || _pendingRedactionRevision != revision)) CancelPendingRedaction();
             long generation = _redactionPlanGeneration;
             PdfRedactionPlan? plan = null;
             bool succeeded = await RunStandaloneAsync(async token => {
@@ -278,20 +275,11 @@ public sealed partial class MainWindowViewModel {
                 OperationStatus = UiText("Editor.RedactionPreviewStale");
                 return;
             }
-            int textMatches = plan.Matches.Count(static match => match.Kind == PdfRedactionMatchKind.TextBlock);
-            int imageMatches = plan.Matches.Count(static match => match.Kind == PdfRedactionMatchKind.ImagePlacement);
-            int annotationMatches = plan.Matches.Count(static match => match.Kind == PdfRedactionMatchKind.Annotation);
-            _pendingRedaction = gesture;
-            _pendingRedactionPlan = plan;
             _pendingRedactionWorkspace = workspace;
             _pendingRedactionRevision = revision;
-            SetPendingRedactionArea(gesture);
-            PendingRedactionSummary = UiFormat(
-                "Editor.RedactionSummary",
-                gesture.PageNumber,
-                textMatches,
-                imageMatches,
-                annotationMatches);
+            AddRedactionMark(new PdfRedactionMarkViewModel(plan.Areas[0],
+                new Rect(gesture.Left, gesture.Top, gesture.Right - gesture.Left, gesture.Bottom - gesture.Top),
+                _localizer.GetOrDefault("Redaction.DrawnArea", "Drawn area")));
             return;
         }
 
@@ -306,10 +294,9 @@ public sealed partial class MainWindowViewModel {
                 }
             }
             properties = properties with { ImageBytes = imageBytes };
-            bool succeeded = await RunMutationAsync(
+            await RunMutationAsync(
                 token => workspace.ApplyEditorGestureAsync(tool, gesture, properties, token, CreateProgress()),
-                CancellationToken.None).ConfigureAwait(true);
-            if (succeeded) OperationStatus = UiText("Editor.EditAdded");
+                CancellationToken.None, successStatus: UiText("Editor.EditAdded")).ConfigureAwait(true);
         } catch (Exception ex) {
             ErrorMessage = ex.Message;
         }
@@ -321,6 +308,11 @@ public sealed partial class MainWindowViewModel {
             return;
         }
 
+        if (selection.WatermarkId is string watermarkId) {
+            ClearObjectSelection();
+            _ = ReviewWatermarkAsync(watermarkId, CancellationToken.None);
+            return;
+        }
         if (selection.Kind == PdfEditorSelectionKind.FormField) {
             SelectFormWidget(selection);
             return;
@@ -366,12 +358,13 @@ public sealed partial class MainWindowViewModel {
         foreach (PdfPageViewModel page in Pages) {
             page.SelectedObject = page.PageNumber == selection.PageNumber ? selection : null;
         }
+        if (selection.Kind == PdfEditorSelectionKind.Text) _ = BeginInlineTextEditAsync(selection);
+        else ClearTextReview();
     }
 
     [RelayCommand]
     private async Task ApplyPendingRedactionAsync(CancellationToken cancellationToken) {
         if (_workspace is null ||
-            _pendingRedaction is null ||
             _pendingRedactionPlan is null ||
             _pendingRedactionWorkspace is null) return;
         PdfWorkspace workspace = _pendingRedactionWorkspace;
@@ -383,15 +376,20 @@ public sealed partial class MainWindowViewModel {
             return;
         }
         PdfVerifiedRedactionResult? proof = null;
+        PdfSanitizationOptions? sanitization = SanitizeAfterRedaction ? new PdfSanitizationOptions {
+            ContentKindsToRemove = PdfSanitizationContentKind.UserMetadata | PdfSanitizationContentKind.EmbeddedFiles |
+                PdfSanitizationContentKind.Actions | PdfSanitizationContentKind.CommentsAndMarkup
+        } : null;
         bool succeeded = await RunMutationAsync(async token => {
             proof = await workspace.ApplyVerifiedRedactionAsync(
                 plan,
                 revision,
                 RedactionRemovedMarker,
                 token,
-                CreateProgress()).ConfigureAwait(true);
+                CreateProgress(), sanitization).ConfigureAwait(true);
         }, cancellationToken).ConfigureAwait(true);
         if (!succeeded || proof is null) return;
+        LastRedactionSummary = proof.Summary;
         OperationStatus = proof.Evidence.IsVerified
             ? UiFormat(
                 "Editor.RedactionVerified",
@@ -406,19 +404,23 @@ public sealed partial class MainWindowViewModel {
     [RelayCommand]
     private void CancelPendingRedaction() {
         _redactionPlanGeneration++;
-        _pendingRedaction = null;
+        foreach (PdfRedactionMarkViewModel mark in RedactionMarks) mark.PropertyChanged -= OnRedactionMarkChanged;
+        RedactionMarks.Clear();
+        SelectedRedactionMark = null;
         _pendingRedactionPlan = null;
         _pendingRedactionWorkspace = null;
         _pendingRedactionRevision = 0;
         PendingRedactionSummary = null;
-        SetPendingRedactionArea(null);
+        UpdateRedactionOverlays();
+        OnPropertyChanged(nameof(CanReviewRedactions));
+        OnPropertyChanged(nameof(CanApplyReviewedRedactions));
     }
 
-    private void SetPendingRedactionArea(PdfEditorGesture? gesture) {
+    private void UpdateRedactionOverlays() {
         foreach (PdfPageViewModel page in Pages) {
-            page.PendingRedactionArea = gesture is not null && page.PageNumber == gesture.PageNumber
-                ? new Rect(gesture.Left, gesture.Top, gesture.Right - gesture.Left, gesture.Bottom - gesture.Top)
-                : null;
+            Rect[] bounds = RedactionMarks.Where(mark => mark.IsIncluded && mark.PageNumber == page.PageNumber)
+                .Select(mark => mark.Bounds).ToArray();
+            page.PendingRedactionAreas = bounds;
         }
     }
 
@@ -477,12 +479,34 @@ public sealed partial class MainWindowViewModel {
     }
 
     [RelayCommand]
-    private async Task ApplyWatermarkAsync(CancellationToken cancellationToken) {
-        if (_workspace is null) return;
-        await RunMutationAsync(
-            token => _workspace.ApplyWatermarkAsync(WatermarkText, token, CreateProgress()),
-            cancellationToken).ConfigureAwait(true);
+    private Task ApplyWatermarkAsync(CancellationToken cancellationToken) => ReviewWatermarkAsync(null, cancellationToken);
+
+    private async Task ReviewWatermarkAsync(string? watermarkId, CancellationToken cancellationToken) {
+        if (_workspace is null || IsWorkspaceBusy || _reviewingWatermark) return;
+        using var notifications = BeginNotificationScope();
+        var workspace = _workspace;
+        _reviewingWatermark = true;
+        try {
+            var existing = await workspace.ReadWatermarksAsync(cancellationToken).ConfigureAwait(true);
+            if (!ReferenceEquals(workspace, _workspace) || _disposed) return;
+            using var preview = new WatermarkPreviewViewModel(workspace.Pages.Count,
+                SelectedPage?.PageNumber ?? 1, _localizer, workspace.PrepareWatermarkAsync, _pickImage, existing);
+            if (watermarkId is not null) {
+                var choice = preview.Watermarks.FirstOrDefault(item => item.Options?.Id == watermarkId);
+                if (choice is null) return;
+                preview.SelectedWatermark = choice;
+            }
+            if (!await _reviewWatermark(preview).ConfigureAwait(true) || preview.Prepared is not { } prepared) return;
+            if (!ReferenceEquals(workspace, _workspace) || _disposed) return;
+            await RunMutationAsync(token => workspace.ApplyWatermarkAsync(prepared, token, CreateProgress()),
+                cancellationToken).ConfigureAwait(true);
+        } catch (OperationCanceledException) { }
+        catch (Exception error) { ErrorMessage = error.Message; }
+        finally { _reviewingWatermark = false; }
     }
+
+    private readonly Func<WatermarkPreviewViewModel, Task<bool>> _reviewWatermark;
+    private bool _reviewingWatermark;
 
     [RelayCommand]
     private async Task ApplyPageNumbersAsync(CancellationToken cancellationToken) {
@@ -603,6 +627,7 @@ public sealed partial class MainWindowViewModel {
     }
 
     private void ClearObjectSelection() {
+        ClearTextReview();
         SelectedObject = null;
         SelectedObjectSummary = null;
         SelectedAnnotationSummary = null;

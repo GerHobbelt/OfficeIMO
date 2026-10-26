@@ -7,7 +7,7 @@ namespace OfficeIMO.Pdf;
 /// Dependency-free text-selection and hit-test projection for one rendered PDF page.
 /// Coordinates use the visual page's top-left origin after CropBox and page rotation are applied.
 /// </summary>
-public sealed class PdfPageInteractionMap {
+public sealed partial class PdfPageInteractionMap {
     private PdfPageInteractionMap(
         int pageNumber,
         double width,
@@ -63,8 +63,9 @@ public sealed class PdfPageInteractionMap {
         (double Width, double Height) size = page.GetInteractionPageSize();
         PdfPageInfo pageInfo = PdfInspector.Inspect(pdf, readOptions).Pages[pageNumber - 1];
         var regions = new List<PdfPageInteractionRegion>();
-        AddTextRegions(page, size.Width, size.Height, effective, regions);
-        AddImageRegions(document, pdf, page, pageNumber, size.Width, size.Height, effective, regions);
+        var watermarkIdentity = page.CreateWatermarkIdentityResolver();
+        AddTextRegions(page, size.Width, size.Height, effective, regions, watermarkIdentity);
+        AddImageRegions(document, pdf, page, pageNumber, size.Width, size.Height, effective, regions, watermarkIdentity);
         AddLinkRegions(page, pageInfo, size.Height, regions);
         AddAnnotationRegions(page, pageInfo, size.Height, regions);
         AddFormWidgetRegions(page, pageInfo, size.Height, regions);
@@ -79,7 +80,8 @@ public sealed class PdfPageInteractionMap {
         double pageWidth,
         double pageHeight,
         PdfPageInteractionOptions options,
-        List<PdfPageInteractionRegion> regions) {
+        List<PdfPageInteractionRegion> regions,
+        Func<PdfContentOrderKey?, string?> watermarkIdentity) {
         IReadOnlyList<PdfImagePlacement> placements = PdfImageEditor.Placements(document, pdf, pageNumber);
         (double originX, double originY) = page.GetPageBoundaryOrigin();
         int emitted = 0;
@@ -102,7 +104,8 @@ public sealed class PdfPageInteractionMap {
                 quad!,
                 subtype: "Image",
                 objectNumber: placement.ObjectNumber == 0 ? null : placement.ObjectNumber,
-                imagePlacement: placement));
+                imagePlacement: placement,
+                watermarkId: watermarkIdentity(placement.ContentOrderKey)));
             emitted++;
         }
     }
@@ -251,7 +254,8 @@ public sealed class PdfPageInteractionMap {
         double pageWidth,
         double pageHeight,
         PdfPageInteractionOptions options,
-        List<PdfPageInteractionRegion> regions) {
+        List<PdfPageInteractionRegion> regions,
+        Func<PdfContentOrderKey?, string?> watermarkIdentity) {
         IReadOnlyList<PdfTextSpan> spans = page.GetInteractionTextSpans();
         int textIndex = 0;
         for (int spanIndex = 0; spanIndex < spans.Count; spanIndex++) {
@@ -297,7 +301,8 @@ public sealed class PdfPageInteractionMap {
                     PdfInteractionKind.Text,
                     quad,
                     text: element,
-                    textIndex: textIndex));
+                    textIndex: textIndex,
+                    watermarkId: watermarkIdentity(span.ContentOrderKey)));
                 textIndex++;
             }
         }

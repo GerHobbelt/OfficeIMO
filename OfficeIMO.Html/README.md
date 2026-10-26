@@ -7,7 +7,7 @@ It owns the reusable parts that should behave consistently across HTML-to-Markdo
 - trust-aware parsing profiles and shared source, DOM, CSS, selector, responsive-image, and semantic-metadata limits
 - shared HTML, CSS, and data-URI charset handling, including legacy web encodings
 - URL policy evaluation and base URI resolution
-- AngleSharp document parsing helpers
+- owned document snapshots, node queries and edits, with replaceable parser and charset providers
 - DOM traversal facts and node/depth limit tracking
 - image source discovery for `img`, lazy-loading attributes, `srcset`, and `picture/source`
 - image data URI parsing and media-type extension mapping
@@ -23,6 +23,74 @@ It owns the reusable parts that should behave consistently across HTML-to-Markdo
 - fidelity scoring across structure, text, styles, resources, annotations, formulas, charts, geometry, and reopened native artifacts
 
 Markdown, Word, Excel, PowerPoint, RTF, Email, MHTML, and PDF models remain in their owning packages. Those projections are explicit: for example, HTML becomes a `WordDocument` through `OfficeIMO.Word.Html` and a `MarkdownDoc` through `OfficeIMO.Markdown.Html`.
+
+To save a source HTML copy in another directory while retaining its relative resource paths:
+
+```csharp
+HtmlConversionDocument report = HtmlConversionDocument.Load("reports/service-review.html");
+File.WriteAllText("exports/service-review.html", report.ExportSourceHtml());
+```
+
+`ExportSourceHtml()` records the original effective base URI in the document. It preserves source markup; referenced files remain at their original locations. Use `SourceHtml` for the exact original text or `HtmlForConversion` for policy-normalized conversion HTML.
+
+## Inspect and edit owned HTML
+
+```csharp
+using OfficeIMO.Html;
+using OfficeIMO.Html.Dom;
+using OfficeIMO.Markdown.Html;
+
+HtmlConversionDocument source = HtmlConversionDocument.Parse("<h1 id='title'>Draft</h1>");
+HtmlElement title = source.Document.QuerySelector("#title")!;
+HtmlConversionDocument edited = source.Edit(document => {
+    document.GetNode(title.NodeId)!.TextContent = "Approved";
+});
+string markdown = edited.ToMarkdown();
+byte[] preview = edited.ToPng();
+```
+
+`Document` is an immutable source snapshot. `Edit` clones it and freezes the result;
+the original document, retained node handles and cached conversion results remain
+unchanged. `Clone` returns a mutable tree for a single owner, while
+`HtmlConversionDocument.FromDocument` captures the attached tree, including template
+contents, as an immutable conversion snapshot.
+`CreateDocumentForConversion` returns a mutable, policy-normalized owned tree.
+Use `NodeId` within an edit lineage and `SnapshotId` to distinguish tree instances.
+General-purpose `HtmlDocument.Clone` retains detached nodes and original source
+offsets. Conversion capture and conversion edits omit detached editing history;
+attached nodes retain their IDs and source offsets. Edited HTML is serialized
+from the tree; it does not preserve the original spelling of entities or whitespace
+inside tags. Template contents are exposed separately through `TemplateContent`.
+
+The lightweight contracts live in `OfficeIMO.Html.Core`, which has no parser,
+graphics, font or browser dependency. `OfficeIMO.Html.AngleSharp` supplies the
+current parser, selectors, serializer and web charset labels. Applications needing
+only HTML inspection can use those two packages. The conversion/rendering package
+still uses AngleSharp and AngleSharp.Css internally; selecting another parser does
+not remove those runtime dependencies.
+
+Set `HtmlConversionDocumentOptions.ParserProvider` for an alternative inert parser
+and `InputEncodingProvider` for source-byte charset resolution. Explicit `Encoding`
+arguments on `Load` override sniffing. Resource decoding is configured separately:
+`HtmlResourcePipeline.TryDecodeStylesheet` and `HtmlDataUri.DecodeText` accept a charset
+provider. The default provider retains legacy code-page support and its existing
+process-wide .NET code-page registration. HarfBuzz remains an optional typography
+provider through `OfficeIMO.Drawing.HarfBuzz`.
+
+The current structural adapter retains a native tree alongside an owned tree when
+owned nodes are requested. Conversion-only parsing keeps the owned projection lazy.
+Source length is checked before parsing; node/depth limits, including template
+contents, are checked after the native parser constructs its tree. For owned input,
+`MaxInputCharacters` also bounds aggregate attached names, attribute values, text,
+comments and doctype identifiers before copying or native projection. Canonical
+source serialization stops when its expanded output exceeds that limit. These are
+separate checks: an owned tree can contain data that HTML serialization omits, such
+as children of void elements. Cancellation is cooperative, not a hard worker
+memory or execution-time limit. Fragment-context parsing and provider-independent CSS
+execution remain separate work; parsing a string here uses full-document HTML rules.
+
+See [the migration guide](../MIGRATION.md#owned-html-documents-and-callbacks) for the
+replaced public DOM signatures.
 
 ## Shared Office HTML document shell
 
@@ -237,6 +305,23 @@ var styles = conversion.StyleSummary;
 Target packages accept this shared document while keeping target-specific conversion in their owning packages. The prepared DOM can be sent to Word, Markdown, RTF, Excel, PowerPoint, OneNote, PDF, PNG, JPEG, TIFF, SVG, and WebP without inventing adapter-specific parsing rules. Excel and PowerPoint default to their versioned semantic envelopes for round trips and expose generic import mode for ordinary HTML. OneNote imports ordinary document sections directly.
 
 Reuse the same document for analysis too: `HtmlComputedStyleEngine.Compute(conversion)` and `HtmlRoundTripScorer.Compare(source, target)` accept retained conversion documents. Their string overloads enter through the same bounded parser, so low-level helpers do not create competing trust or limit defaults.
+
+## One report, several output formats
+
+Prepare the report once and reuse the same source document with the format adapters:
+
+```csharp
+using OfficeIMO.Html;
+
+var report = HtmlConversionDocument.Load("service-review.html");
+File.WriteAllText("service-review-copy.html", report.SourceHtml);
+```
+
+See the owning packages for [PDF export](../OfficeIMO.Html.Pdf/README.md#html-to-pdf), [editable Word output](../OfficeIMO.Word.Html/README.md#quick-start), and [typed Excel tables](../OfficeIMO.Excel.Html/README.md#typed-values-in-ordinary-report-tables). The [HTML support matrix](../Docs/officeimo.html-support-matrix.md) describes target coverage.
+
+Run the complete [service review example](../OfficeIMO.Examples/Converters/Html/HtmlMultiFormatReport.cs) with `--multi-format-report`. Its [HTML source](../OfficeIMO.Examples/Converters/Html/Content/Reports/service-review.html) includes grouped rows, totals, leading-zero references, dates, approval values, links, and a second table. Report content stays in ordinary HTML; the adapters own conversion behavior.
+
+Use `--report-source <path.html>` to run another source through the same example. The output index links all exported files and every preview page, and records conversion notes. Saved PDF previews are labelled separately from editable Word and Excel layouts. The [conversion consistency tool](../Build/ConversionConsistency/README.md) checks native exports with an independent PDF rasterizer, required content, and page geometry.
 
 ## Semantic IR and target preflight
 

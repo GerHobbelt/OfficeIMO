@@ -2,13 +2,22 @@ name: PDF Compliance Proof
 
 on:
   pull_request:
-    branches:
-      - master
     paths:
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfCiiInvoiceDocumentTests.cs'
+      - 'OfficeIMO.Pdf.Tests/**'
       - 'OfficeIMO.Pdf/**'
+      - 'OfficeIMO.SharedSource/**'
+      - 'OfficeIMO.TestAssets/**'
+      - 'Directory.Build.props'
+      - 'Directory.Build.targets'
+      - 'global.json'
+      - 'OfficeIMO.Invoicing/**'
+      - 'OfficeIMO.Invoicing.Tests/**'
+      - 'OfficeIMO.Invoicing.Pdf/**'
+      - 'OfficeIMO.Invoicing.Pdf.Tests/**'
       - 'OfficeIMO.Core/**'
       - 'OfficeIMO.Html/**'
+      - 'OfficeIMO.Html.Core/**'
+      - 'OfficeIMO.Html.AngleSharp/**'
       - 'OfficeIMO.Html.Pdf/**'
       - 'OfficeIMO.Mhtml/**'
       - 'OfficeIMO.Mhtml.Pdf/**'
@@ -17,9 +26,6 @@ on:
       - 'OfficeIMO.Html.Tests/Html.Rendering.cs'
       - 'Website/Apps/OfficeIMO.Web.Converter/**'
       - 'Website/Apps/OfficeIMO.Web.Converter.Tests/**'
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfCompliance*.cs'
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalValidator.cs'
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalEngineProofTests*.cs'
       - 'Build/Export-PdfComplianceProof.ps1'
       - 'Build/Invoke-CallasPdfXValidator.ps1'
       - 'Docs/pdf-conversion-scenarios.json'
@@ -31,10 +37,21 @@ on:
     branches:
       - master
     paths:
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfCiiInvoiceDocumentTests.cs'
+      - 'OfficeIMO.Pdf.Tests/**'
       - 'OfficeIMO.Pdf/**'
+      - 'OfficeIMO.SharedSource/**'
+      - 'OfficeIMO.TestAssets/**'
+      - 'Directory.Build.props'
+      - 'Directory.Build.targets'
+      - 'global.json'
+      - 'OfficeIMO.Invoicing/**'
+      - 'OfficeIMO.Invoicing.Tests/**'
+      - 'OfficeIMO.Invoicing.Pdf/**'
+      - 'OfficeIMO.Invoicing.Pdf.Tests/**'
       - 'OfficeIMO.Core/**'
       - 'OfficeIMO.Html/**'
+      - 'OfficeIMO.Html.Core/**'
+      - 'OfficeIMO.Html.AngleSharp/**'
       - 'OfficeIMO.Html.Pdf/**'
       - 'OfficeIMO.Mhtml/**'
       - 'OfficeIMO.Mhtml.Pdf/**'
@@ -43,9 +60,6 @@ on:
       - 'OfficeIMO.Html.Tests/Html.Rendering.cs'
       - 'Website/Apps/OfficeIMO.Web.Converter/**'
       - 'Website/Apps/OfficeIMO.Web.Converter.Tests/**'
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfCompliance*.cs'
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalValidator.cs'
-      - 'OfficeIMO.Pdf.Tests/Pdf/PdfExternalEngineProofTests*.cs'
       - 'Build/Export-PdfComplianceProof.ps1'
       - 'Build/Invoke-CallasPdfXValidator.ps1'
       - 'Docs/pdf-conversion-scenarios.json'
@@ -107,7 +121,7 @@ permissions:
 env:
   DOTNET_VERSION: |
     8.0.418
-    10.0.103
+    10.0.112
   BUILD_CONFIGURATION: Release
   PROOF_PATH: artifacts/pdf-compliance-proof
   VERAPDF_VERSION: 1.30.2
@@ -392,6 +406,7 @@ jobs:
             ${{ env.PROOF_PATH }}/proof.json
             ${{ env.PROOF_PATH }}/officeimo-profile-proof-contract.json
             ${{ env.PROOF_PATH }}/*.pdf
+            ${{ env.PROOF_PATH }}/*.xml
             ${{ env.PROOF_PATH }}/*.txt
             ${{ env.PROOF_PATH }}/engine/*.pdf
             ${{ env.PROOF_PATH }}/engine/*.png

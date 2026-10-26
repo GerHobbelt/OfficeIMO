@@ -42,7 +42,7 @@
       "officeimo.pdf": {
         "type": "Project",
         "dependencies": {
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       },
       "officeimo.word": {
@@ -50,7 +50,7 @@
         "dependencies": {
           "DocumentFormat.OpenXml": "[3.5.1, 4.0.0)",
           "Microsoft.Bcl.AsyncInterfaces": "[10.0.9, )",
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       }
     },
@@ -146,7 +146,7 @@
       "officeimo.pdf": {
         "type": "Project",
         "dependencies": {
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       },
       "officeimo.word": {
@@ -154,7 +154,7 @@
         "dependencies": {
           "DocumentFormat.OpenXml": "[3.5.1, 4.0.0)",
           "Microsoft.Bcl.AsyncInterfaces": "[10.0.9, )",
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       }
     },
@@ -165,6 +165,12 @@
     ".NETStandard,Version=v2.0/win-arm64": {},
     ".NETStandard,Version=v2.0/win-x64": {},
     "net10.0": {
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[10.0.12, )",
+        "resolved": "10.0.12",
+        "contentHash": "xi+BDjFpW+Sb+MHFHaH6Y/gV9I8BluFwRXc1QyCdoZbIK26eNiBeFuMTe/FMwc33G1wdHCyDg7CVTmb8OdQrMQ=="
+      },
       "DocumentFormat.OpenXml": {
         "type": "Transitive",
         "resolved": "3.5.1",
@@ -192,14 +198,14 @@
       "officeimo.pdf": {
         "type": "Project",
         "dependencies": {
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       },
       "officeimo.word": {
         "type": "Project",
         "dependencies": {
           "DocumentFormat.OpenXml": "[3.5.1, 4.0.0)",
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       }
     },
@@ -210,6 +216,12 @@
     "net10.0/win-arm64": {},
     "net10.0/win-x64": {},
     "net8.0": {
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[8.0.31, )",
+        "resolved": "8.0.31",
+        "contentHash": "OJdAGATV2QoVWL11zlDLEluA06q8rK+cgZR47ohrO8V+Qj5z9dlvN7bG9/0e5t0IOe+yD8tREC0bpsEgDGrzIQ=="
+      },
       "DocumentFormat.OpenXml": {
         "type": "Transitive",
         "resolved": "3.5.1",
@@ -237,14 +249,14 @@
       "officeimo.pdf": {
         "type": "Project",
         "dependencies": {
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       },
       "officeimo.word": {
         "type": "Project",
         "dependencies": {
           "DocumentFormat.OpenXml": "[3.5.1, 4.0.0)",
-          "OfficeIMO.Core": "[3.4.0, )"
+          "OfficeIMO.Core": "[3.4.3, )"
         }
       }
     },

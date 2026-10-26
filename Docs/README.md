@@ -12,7 +12,7 @@ Use this index to find package guides, cross-package contracts, generated eviden
 - [Website guide](officeimo.website.md) — local build and publication workflow.
 - [Website search and answer-engine operations](officeimo.website-seo-geo-operations.md) — publication and discovery checks.
 - [CI and test strategy](officeimo.ci-test-strategy.md) — test ownership and validation lanes.
-- [Real-world and PDF quality corpus evidence](officeimo.real-world-corpus-evidence.md) — bounded external discovery, strict provenance-bound PDF scorecards, deterministic sampling, isolation, and interpretation limits.
+- [Real-world and PDF quality corpus evidence](officeimo.real-world-corpus-evidence.md) — bounded external discovery, strict provenance-bound PDF scorecards, multilingual native/OCR reconstruction measurements, deterministic sampling, isolation, and interpretation limits.
 - [Excel benchmark notes](officeimo.excel.benchmark-notes.md) — reproducible comparison-suite execution and provenance.
 - [Image engine benchmarks](../OfficeIMO.Drawing.Benchmarks/README.md) — validated identification, decode, encode, resize, and placement-optimization workloads, with isolated opt-in library comparisons.
 
@@ -44,6 +44,9 @@ The package README is the primary usage guide for its public API. These reposito
 
 ### Document and conversion formats
 
+- [Electronic invoice model and CII/UBL conversion](../OfficeIMO.Invoicing/README.md)
+- [Typed invoice PDF generation](../OfficeIMO.Invoicing.Pdf/README.md)
+- [Pinned invoice schema and business-rule validation](../OfficeIMO.Invoicing.Validation/README.md)
 - [PDF current state](officeimo.pdf.current-state.md)
 - [PDF conversion support](officeimo.pdf-conversion-support-matrix.md)
 - [PDF reverse-conversion scorecard](pdf-reverse-conversion-scorecard.json) — executable 56-case producer/target matrix plus scanned, mixed, encrypted, and malformed stress evidence.
@@ -64,6 +67,12 @@ The package README is the primary usage guide for its public API. These reposito
 - [Image export contract](officeimo.image-export.md)
 - [Image export capability matrix](officeimo.image-export-capability-matrix.md)
 - [Browser-local conversion performance and limits](officeimo.blazor-wasm-conversion-proof.md)
+
+## Architecture
+
+- [Owned HTML documents and providers](../OfficeIMO.Html/README.md#inspect-and-edit-owned-html) — current snapshot, edit, parsing and charset contracts; lightweight packages and retained runtime dependencies.
+- [Independent HTML engine design](officeimo.html-engine-design.md) — proposed shared DOM, CSS, layout, conversion and optional web-runtime boundaries, with staged dependency retirement. Open milestones live in the [roadmap](ROADMAP.md#independent-html-engine).
+- [Document assistant design](officeimo.document-assistant-design.md) — headless AI operations, Studio integration, evidence contracts and support limits. [Evidence measurements](../Build/Benchmarks/README.md) cover local preparation and snapshot reuse. Open work lives in the [roadmap](ROADMAP.md#document-assistant).
 
 ## Generated evidence
 

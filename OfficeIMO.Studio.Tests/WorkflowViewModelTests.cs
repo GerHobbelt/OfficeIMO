@@ -27,8 +27,8 @@ public sealed class WorkflowViewModelTests {
             Assert.Equal(2, viewModel.Sheets.Count);
             Assert.Equal(2, viewModel.Sheets[0].Placements.Count);
             Assert.Single(viewModel.Sheets[1].Placements);
-            Assert.All(viewModel.Sheets.SelectMany(sheet => sheet.Placements), placement => Assert.NotNull(placement.Image));
-            Assert.Equal("Print preview ready", viewModel.Status);
+            Assert.All(viewModel.Sheets, sheet => Assert.NotNull(sheet.Image));
+            Assert.StartsWith("Print preview ready", viewModel.Status, StringComparison.Ordinal);
             return true;
         }, CancellationToken.None);
     }
@@ -209,7 +209,7 @@ public sealed class WorkflowViewModelTests {
     }
 
     [Fact]
-    public async Task ConversionWorkbenchSkipsFilesThatDoNotMatchSelectedRoute() {
+    public async Task MismatchedConversionInputRemainsVisibleUntilDismissed() {
         using var scope = new TestDirectory();
         string path = Path.Combine(scope.Path, "notes.txt");
         await File.WriteAllTextAsync(path, "not a Word document");
@@ -221,7 +221,12 @@ public sealed class WorkflowViewModelTests {
         await viewModel.AddFilesCommand.ExecuteAsync(null);
 
         Assert.Empty(viewModel.Jobs);
-        Assert.Contains("No files matched", viewModel.Status, StringComparison.Ordinal);
+        Assert.True(viewModel.HasUnmatchedInputs);
+        Assert.Contains(viewModel.MatchingInputRoutes, route => route.Route.Id == "html-pdf");
+        Assert.Equal(viewModel.UnmatchedInputMessage, viewModel.Status);
+        viewModel.DismissUnmatchedInputsCommand.Execute(null);
+        Assert.False(viewModel.HasUnmatchedInputs);
+        Assert.Empty(viewModel.Jobs);
     }
 
     [Fact]
