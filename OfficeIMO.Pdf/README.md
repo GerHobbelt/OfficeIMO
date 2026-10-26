@@ -56,6 +56,30 @@ For incremental authoring, use `var document = PdfDocument.Create(options)` and
 add blocks through `document.Content`. The same builder supports both ordinary
 statements and fluent chains; callbacks remain useful for grouping and page setup.
 
+Image-file pages and image stamps accept at most 128 MiB of encoded data per
+image by default. Increase the limit for a trusted source when needed:
+
+```csharp
+var images = PdfDocument.CreateFromImages(
+    new[] { "scan-1.png", "scan-2.png" },
+    new PdfImageDocumentOptions { MaximumEncodedImageBytes = 256L * 1024 * 1024 });
+
+using var imageStream = System.IO.File.OpenRead("stamp.png");
+var stamped = PdfDocument.Load("input.pdf").Stamp.Image(
+    imageStream,
+    new PdfImageStampOptions { MaximumEncodedImageBytes = 256L * 1024 * 1024 });
+```
+
+`PdfImageDocumentSource.FromFile(path, maximumEncodedImageBytes)` applies the
+file-read budget when creating a source directly. If that source is passed to
+`CreateFromImages(IEnumerable<PdfImageDocumentSource>, options)`, set
+`PdfImageDocumentOptions.MaximumEncodedImageBytes` to the intended limit too;
+document creation checks every source independently. For edits to existing PDF
+images, set `PdfImageEditOptions.MaximumEncodedImageBytes` when adding, replacing,
+moving, or transforming a larger trusted image. Stamp streams are read from
+their current position. The byte budget applies before image decoding; decoded
+image and PDF output limits remain separate.
+
 ```csharp
 PdfDocument.Create(document => document
     .Settings(options => {
@@ -110,6 +134,16 @@ Add `using OfficeIMO.Drawing;` when applying an `OfficeRenderingProfile`.
 core-Arabic/TrueType subset. Supply a profile containing your embedded font family,
 fallbacks, language, and shaping provider when the document contract requires
 broader scripts or reproducible font selection.
+
+`OfficeDrawing.AddVerticalText(...)` draws native positioned glyphs in PDF when
+the selected shaping provider supplies vertical advances and complete logical
+text coverage, the chosen font is embedded, and an `/ActualText` wrapper owns
+extraction. The writer preserves shaped glyph substitutions and X/Y offsets,
+marks the original text for extraction, and clips paint to the drawing text
+box. Without that font/provider contract it retains searchable stacked text and
+reports `vertical-text-stacked-fallback`; `PdfConversionReport.RequireNoLoss()`
+rejects that approximation. The [vertical PDF reference gate](../OfficeIMO.Pdf.Tests/Pdf/Fixtures/Vertical/SOURCE.md)
+records the tested CJK scope and independent render/extraction checks.
 
 For a complete generated sample, see
 [`Pdf.AuthoringModel.cs`](../OfficeIMO.Examples/Pdf/Pdf.AuthoringModel.cs). The
@@ -818,6 +852,15 @@ mutation policy still applies. Plans describe page positions, so regenerate them
 when the source document changes. `PdfPageSelection.Parse("2-4,7").Resolve(pageCount)`
 resolves ranges with bounds checking and preserves caller order and repeated pages.
 
+When the inputs are already byte payloads, merge them directly instead of opening
+temporary document wrappers. The same merge engine and output validation are used:
+
+```csharp
+byte[][] sources = { File.ReadAllBytes("first.pdf"), File.ReadAllBytes("second.pdf") };
+PdfDocument merged = PdfDocument.MergeBytes(sources);
+merged.Save("merged.pdf");
+```
+
 Encrypted merge inputs keep independent authentication settings. Owner
 authorization is honored automatically. A user password follows the PDF
 permission bits unless the caller explicitly opts into ignoring those
@@ -1397,10 +1440,9 @@ regenerate it with `RegenerateAppearance`.
 ```csharp
 using OfficeIMO.Pdf;
 
-byte[] fontBytes = File.ReadAllBytes("SourceSerif4-Regular.otf");
 var options = new PdfOptions()
     .UsePdfA(PdfComplianceProfile.PdfA2B)
-    .EmbedStandardFont(PdfStandardFont.Helvetica, fontBytes, "Source Serif 4")
+    .EmbedStandardFont(PdfStandardFont.Helvetica, "SourceSerif4-Regular.otf", "Source Serif 4")
     .RequireCompliance(PdfComplianceProfile.PdfA2B);
 
 PdfComplianceArtifact artifact = PdfDocument.Create(pdf => pdf.Content(content => content
@@ -1432,6 +1474,8 @@ if (!proof.CanClaimConformance || !declaredClaims.CanClaimAllDeclaredConformance
 ```
 
 Formal generation gates are available for PDF/A-2a/b/u, PDF/A-3a/b/u, PDF/A-4/4e/4f, PDF/UA-1, PDF/UA-2, PDF/X-1a:2003, PDF/X-4, Factur-X, and ZUGFeRD. `RequireCompliance(...)` rejects incomplete generation settings. PDF/X additionally inspects the complete serialized artifact before any bytes are returned or committed to a destination. A conformance claim still requires a passing external result for the same profile, SHA-256, and byte length; validators are build-time tools and are not runtime dependencies of `OfficeIMO.Pdf`.
+
+PDF authoring accepts font faces up to 128 MiB each. `EmbedStandardFont` and `PdfEmbeddedFontFamily.FromFiles` check file size before reading and recheck while reading, so use their path overloads when loading files. Byte-array inputs are checked before OfficeIMO copies them. An oversized face throws `InvalidDataException` without changing the authoring options.
 
 ### Generate a fail-closed PDF/X artifact
 
@@ -1559,6 +1603,10 @@ carrier configuration. Omit `conformanceLevel` to derive canonical XMP metadata
 from the XML guideline. An explicit conflicting profile, an unknown guideline,
 or an ambiguous declaration is rejected. Generation and exact PDF readback also
 check XML/XMP agreement when metadata and attachments are supplied separately.
+The low-level Factur-X/ZUGFeRD carrier methods accept at most 16 MiB of invoice
+XML, matching `PdfCiiInvoiceDocument.MaximumXmlBytes`. File overloads check
+this limit before buffering. Split or reduce a larger XML payload before
+attaching it; this limit does not establish schema or business-rule validity.
 The XMP `version` is `1.0`, not a Factur-X release number.
 The application must keep visible invoice content and
 XML consistent and validate the resulting invoice/PDF pair for its declared profile.
@@ -1723,6 +1771,8 @@ into a cross-version comparison.
 ## Current state
 
 The PDF engine is useful and broad, but it is still evolving. It has strong first-party coverage for common generated business documents, reusable Unicode line breaking and Latin ligatures, bounded built-in core-Arabic shaping plus an optional HarfBuzz adapter for full GSUB/GPOS shaping, and bounded Type 3 rendering within the documented capability contract. It also supports authored and bounded-synthesized annotation appearances in page images, conservative read/manipulation workflows, password security, optional provider-backed certificate signing/validation, standards-compliant Fast Web View output, and bounded-payload stream saves with runtime serialization evidence. See the [image export capability matrix](../Docs/officeimo.image-export-capability-matrix.md) for the exact Type 3 rendering coverage and current limitations.
+
+Vertical `OfficeDrawing` text retains its logical string through PDF `/ActualText`, but painting still uses stacked horizontal glyphs and reports `vertical-text-stacked-fallback` as an approximation. Strict no-loss profiles reject that result. Native vertical glyph output remains open until shaped vertical advances and substitutions, readable logical text, and strict-profile results pass together against independent CJK producer references.
 
 For the current capability inventory, ownership boundaries, premium conversion
 contract, and remaining general engine work, read

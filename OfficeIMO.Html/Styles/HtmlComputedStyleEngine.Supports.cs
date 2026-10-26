@@ -1,5 +1,11 @@
 namespace OfficeIMO.Html;
 
+internal enum HtmlSupportsConditionEvaluation {
+    False,
+    True,
+    Unknown
+}
+
 public static partial class HtmlComputedStyleEngine {
     private static bool IsSupportsRule(AngleSharp.Css.Dom.ICssRule rule) =>
         rule is AngleSharp.Css.Dom.ICssSupportsRule;
@@ -24,6 +30,65 @@ public static partial class HtmlComputedStyleEngine {
         }
 
         return EvaluateSupportsCondition(conditionText.Trim(), includeProvenanceImageProperties: true);
+    }
+
+    internal static bool TryEvaluateSupports(string conditionText, out bool isApplicable) {
+        HtmlSupportsConditionEvaluation evaluation = EvaluateSupportsConditionStatus(conditionText);
+        isApplicable = evaluation == HtmlSupportsConditionEvaluation.True;
+        return evaluation != HtmlSupportsConditionEvaluation.Unknown;
+    }
+
+    private static HtmlSupportsConditionEvaluation EvaluateSupportsConditionStatus(string conditionText) {
+        string normalized = conditionText.Trim();
+        if (normalized.Length == 0) return HtmlSupportsConditionEvaluation.True;
+
+        if (StartsWithLogicalNot(normalized)) {
+            HtmlSupportsConditionEvaluation nested = EvaluateSupportsConditionStatus(normalized.Substring(3).TrimStart());
+            return nested == HtmlSupportsConditionEvaluation.True
+                ? HtmlSupportsConditionEvaluation.False
+                : nested == HtmlSupportsConditionEvaluation.False
+                    ? HtmlSupportsConditionEvaluation.True
+                    : HtmlSupportsConditionEvaluation.Unknown;
+        }
+
+        List<string> orParts = SplitTopLevelLogical(normalized, "or").ToList();
+        if (orParts.Count > 1) {
+            bool unknown = false;
+            foreach (string part in orParts) {
+                HtmlSupportsConditionEvaluation result = EvaluateSupportsConditionStatus(part);
+                if (result == HtmlSupportsConditionEvaluation.True) return HtmlSupportsConditionEvaluation.True;
+                unknown |= result == HtmlSupportsConditionEvaluation.Unknown;
+            }
+            return unknown ? HtmlSupportsConditionEvaluation.Unknown : HtmlSupportsConditionEvaluation.False;
+        }
+
+        List<string> andParts = SplitTopLevelLogical(normalized, "and").ToList();
+        if (andParts.Count > 1) {
+            bool unknown = false;
+            foreach (string part in andParts) {
+                HtmlSupportsConditionEvaluation result = EvaluateSupportsConditionStatus(part);
+                if (result == HtmlSupportsConditionEvaluation.False) return HtmlSupportsConditionEvaluation.False;
+                unknown |= result == HtmlSupportsConditionEvaluation.Unknown;
+            }
+            return unknown ? HtmlSupportsConditionEvaluation.Unknown : HtmlSupportsConditionEvaluation.True;
+        }
+
+        if (normalized[0] == '(') {
+            int close = FindMatchingParenthesis(normalized, 0);
+            if (close == normalized.Length - 1) {
+                return EvaluateSupportsConditionStatus(normalized.Substring(1, normalized.Length - 2));
+            }
+        }
+
+        int separator = normalized.IndexOf(':');
+        if (separator <= 0) return HtmlSupportsConditionEvaluation.Unknown;
+
+        string propertyName = normalized.Substring(0, separator).Trim();
+        string value = normalized.Substring(separator + 1).Trim();
+        if (IsSupportedSupportsConditionValue(propertyName, value)) return HtmlSupportsConditionEvaluation.True;
+        // A value outside OfficeIMO's bounded model can still be valid in a browser.
+        // Treat it as unknown so negation cannot turn an unmodeled true condition into true here.
+        return HtmlSupportsConditionEvaluation.Unknown;
     }
 
     private static bool EvaluateSupportsCondition(string conditionText) =>
@@ -488,7 +553,8 @@ public static partial class HtmlComputedStyleEngine {
         out HashSet<string> resetProperties,
         out HashSet<string> specifiedProperties,
         out Dictionary<string, HtmlCssCascadePriority> cascadePriorities,
-        IReadOnlyDictionary<string, CustomPropertyRegistration>? customPropertyRegistrations = null) {
+        IReadOnlyDictionary<string, CustomPropertyRegistration>? customPropertyRegistrations = null,
+        bool enforceResolutionLimits = true) {
         var raw = new Dictionary<string, string>(HtmlCssPropertyNameComparer.Instance);
         var deferredFonts = new HashSet<string>(HtmlCssPropertyNameComparer.Instance);
         var inherited = new HashSet<string>(HtmlCssPropertyNameComparer.Instance);
@@ -538,13 +604,13 @@ public static partial class HtmlComputedStyleEngine {
                 reset.Add(pair.Key);
             }
         }
-        ApplyRegisteredCustomPropertyFallbacks(raw, parentProperties, specified, inherited, customPropertyRegistrations);
-        ResolveDeferredFontLonghands(raw, deferredFonts, parentProperties, inherited, reset);
+        ApplyRegisteredCustomPropertyFallbacks(raw, parentProperties, specified, inherited, customPropertyRegistrations, enforceResolutionLimits);
+        ResolveDeferredFontLonghands(raw, deferredFonts, parentProperties, inherited, reset, enforceResolutionLimits);
         bool requiresCustomPropertyResolution = raw.Any(pair =>
             !pair.Key.StartsWith("--", StringComparison.Ordinal)
             && HtmlCssCustomPropertyResolver.ContainsVarFunction(pair.Value));
         Dictionary<string, string> resolved = requiresCustomPropertyResolution
-            ? ResolveCustomPropertyValues(raw, parentProperties)
+            ? ResolveCustomPropertyValues(raw, parentProperties, enforceResolutionLimits)
             : raw;
 
         ExpandResolvedCascadeShorthands(resolved, priorities, inherited, reset, specified);
@@ -571,7 +637,8 @@ public static partial class HtmlComputedStyleEngine {
         IReadOnlyDictionary<string, string>? parentProperties,
         ISet<string> specifiedProperties,
         ISet<string> inheritedProperties,
-        IReadOnlyDictionary<string, CustomPropertyRegistration>? customPropertyRegistrations) {
+        IReadOnlyDictionary<string, CustomPropertyRegistration>? customPropertyRegistrations,
+        bool enforceResolutionLimits) {
         if (customPropertyRegistrations == null || customPropertyRegistrations.Count == 0) return;
         foreach (CustomPropertyRegistration registration in customPropertyRegistrations.Values) {
             bool locallySpecified = specifiedProperties.Contains(registration.Name);
@@ -579,7 +646,7 @@ public static partial class HtmlComputedStyleEngine {
                 bool resolved = HtmlCssCustomPropertyResolver.TryResolve(
                     authoredValue,
                     name => raw.TryGetValue(name, out string? customValue) ? customValue : null,
-                    out string computedValue);
+                    out string computedValue, enforceResolutionLimits);
                 if (resolved && IsRegisteredCustomPropertyValueValid(registration.Syntax, computedValue)) {
                     raw[registration.Name] = computedValue;
                     continue;
@@ -615,7 +682,8 @@ public static partial class HtmlComputedStyleEngine {
 
     private static Dictionary<string, string> ResolveCustomPropertyValues(
         IReadOnlyDictionary<string, string> raw,
-        IReadOnlyDictionary<string, string>? parentProperties) {
+        IReadOnlyDictionary<string, string>? parentProperties,
+        bool enforceResolutionLimits) {
         var resolved = new Dictionary<string, string>(HtmlCssPropertyNameComparer.Instance);
         foreach (KeyValuePair<string, string> pair in raw) {
             if (pair.Key.StartsWith("--", StringComparison.Ordinal)) {
@@ -628,7 +696,7 @@ public static partial class HtmlComputedStyleEngine {
                 name => raw.TryGetValue(name, out string? local)
                     ? local
                     : parentProperties != null && parentProperties.TryGetValue(name, out string? inherited) ? inherited : null,
-                out string value);
+                out string value, enforceResolutionLimits);
             if (success && IsSupportedDeclarationValue(pair.Key, value)) {
                 resolved[pair.Key] = value;
             }

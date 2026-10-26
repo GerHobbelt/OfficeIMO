@@ -89,7 +89,7 @@ using OfficeIMO.ContentSafety;
 using OfficeIMO.Epub;
 
 OfficeContentSafetyReport report = EpubDocument.InspectContentSafety("book.epub");
-OfficeContentSafetyFinding finding = report.Findings.Single(item => item.Text.Contains("ignore previous", StringComparison.OrdinalIgnoreCase));
+OfficeContentSafetyFinding finding = report.Findings.Single(item => item.TextPreview.Contains("ignore previous", StringComparison.OrdinalIgnoreCase));
 
 OfficeContentCleanupResult cleaned = EpubDocument.RemoveSelectedContent(
     "book.epub",
@@ -97,9 +97,9 @@ OfficeContentCleanupResult cleaned = EpubDocument.RemoveSelectedContent(
     new OfficeContentCleanupSelection(new[] { finding.Id }));
 ```
 
-Cleanup replaces only changed content documents, preserves unrelated ZIP entries and the required leading uncompressed `mimetype` entry, then reopens and reinspects the output. Missing, malformed, duplicate, encrypted, ambiguous, external, or over-budget content and stylesheet dependencies fail closed. An empty selection preserves the original bytes.
+Cleanup replaces only changed content documents, preserves unrelated ZIP entries and the required leading uncompressed `mimetype` entry, then reopens and reinspects the output. XHTML inspection retains document-level comments as evidence, requires every local manifest HTML resource, accepts OPF package elements and core attributes only in their defined namespaces, and applies stylesheet links and base URLs only in the XHTML namespace. Rewritten HTML content preserves its declared character encoding. Missing, malformed, duplicate, encrypted, ambiguous, active integrity-qualified, external, or over-budget content and stylesheet dependencies fail closed, as do conflicting preferred titled stylesheet sets and documents with Content Security Policy declarations that the bounded cascade does not model. Foreign-namespace base and stylesheet elements, non-CSS stylesheets, and inactive-media stylesheets remain inert. An empty selection preserves the original bytes.
 
-Package signatures block mutation by default. A caller that accepts invalidation must request removal explicitly:
+Package signatures, including ZIP central-directory signature records, block mutation by default. A caller that accepts invalidation must request removal explicitly:
 
 ```csharp
 var cleanupOptions = new OfficeContentCleanupOptions {
@@ -107,7 +107,7 @@ var cleanupOptions = new OfficeContentCleanupOptions {
 };
 ```
 
-That policy removes only `META-INF/signatures.xml`; it does not claim that a modified package remains signed.
+That policy removes both supported signature carriers during an authorized rewrite: `META-INF/signatures.xml` and any ZIP central-directory digital-signature record. It does not claim that a modified package remains signed.
 
 ### Resolve chapter-relative references
 
@@ -213,8 +213,8 @@ foreach (string warning in book.Warnings) {
 
 ## Dependency footprint
 
-- **External:** None; no third-party EPUB engine.
-- **OfficeIMO:** `OfficeIMO.Core` and `OfficeIMO.Html`. Container, OPF, spine, navigation, chapter, and resource parsing are first-party; the shared HTML owner supplies the bounded concealed-content and stylesheet model.
+- **External:** No third-party EPUB engine. Concealed-content inspection uses `AngleSharp` and `AngleSharp.Css` transitively through the shared `OfficeIMO.Html` owner.
+- **OfficeIMO:** Direct dependencies are `OfficeIMO.Core` and `OfficeIMO.Html`; the HTML dependency also brings `OfficeIMO.Html.Core` and `OfficeIMO.Html.AngleSharp` (including its `System.Text.Encoding.CodePages` runtime dependency). Container, OPF, spine, navigation, chapter, and resource parsing remain first-party; the shared HTML owner supplies the bounded concealed-content and stylesheet model.
 - **Security:** `META-INF/signatures.xml` discovery is structural and provider-free. Creation and validation of the bounded OfficeIMO XML package-manifest profile accept an explicit `IOfficeSecurityProvider`; `OfficeIMO.Security` is not pulled transitively.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

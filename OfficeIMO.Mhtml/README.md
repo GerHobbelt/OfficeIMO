@@ -44,7 +44,7 @@ using OfficeIMO.ContentSafety;
 using OfficeIMO.Mhtml;
 
 OfficeContentSafetyReport report = MhtmlDocument.InspectContentSafety("snapshot.mhtml");
-OfficeContentSafetyFinding finding = report.Findings.Single(item => item.Text.Contains("ignore previous", StringComparison.OrdinalIgnoreCase));
+OfficeContentSafetyFinding finding = report.Findings.Single(item => item.TextPreview.Contains("ignore previous", StringComparison.OrdinalIgnoreCase));
 
 OfficeContentCleanupResult cleaned = MhtmlDocument.RemoveSelectedContent(
     "snapshot.mhtml",
@@ -52,7 +52,7 @@ OfficeContentCleanupResult cleaned = MhtmlDocument.RemoveSelectedContent(
     new OfficeContentCleanupSelection(new[] { finding.Id }));
 ```
 
-Cleanup removes only the selected current findings, preserves embedded resources, writes a bounded deterministic archive, and reopens and reinspects the result. Missing, malformed, ambiguous, external, or over-budget stylesheet dependencies fail closed. An empty selection returns the original bytes. Mutation of a signed or encrypted MIME wrapper is rejected.
+Cleanup removes only the selected current findings, preserves embedded resources and unrelated nested-message payloads, writes a bounded deterministic archive, and reopens and reinspects the result. HTML roots and embedded stylesheets use the same web-compatible charset aliases, including a bounded HTML encoding declaration when a MIME charset is absent, while rewritten parts retain their declared encoding and original BOM. Embedded-resource URI scheme and host matching is case-insensitive, while path and query matching is case-sensitive. Stale outer and part-level payload length or digest headers are removed. Missing, malformed, ambiguously decoded, active integrity-qualified, external, or over-budget stylesheet dependencies fail closed, as do a `multipart/related` `start` value that is missing or selects a non-HTML root, conflicting preferred titled stylesheet sets, and documents with Content Security Policy declarations that the bounded cascade does not model. Non-CSS or inactive-media stylesheets remain inert. An empty selection returns the original bytes. Mutation of a signed or encrypted MIME wrapper is rejected. Body-covering DKIM and ARC transport signatures also block cleanup by default; callers must explicitly choose `RemoveInvalidatedSignatures` to remove the invalidated transport-signature chain, or `PreserveSignatureMarkup` when retaining known-stale signature headers is intentional.
 
 MHTML intentionally connects the HTML engine to the Email MIME engine. Plain HTML and plain Email packages do not depend on this bridge.
 

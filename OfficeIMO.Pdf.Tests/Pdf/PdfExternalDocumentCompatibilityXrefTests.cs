@@ -48,6 +48,29 @@ public partial class PdfExternalDocumentCompatibilityTests {
     }
 
     [Fact]
+    public void ExtractText_UsesClassicXrefWithTabsAndCrLfInsteadOfTrailingStaleObjects() {
+        byte[] pdf = BuildClassicXrefPdfWithTrailingStaleObjectStreamPage();
+        string decoded = Encoding.ASCII.GetString(pdf);
+        int xrefStart = decoded.IndexOf("xref\n", StringComparison.Ordinal);
+        int trailerStart = decoded.IndexOf("trailer\n", xrefStart, StringComparison.Ordinal);
+        Assert.True(xrefStart >= 0 && trailerStart > xrefStart);
+
+        string xrefSection = decoded.Substring(xrefStart, trailerStart - xrefStart)
+            .Replace(" ", "\t")
+            .Replace("\n", "\r\n");
+        using var rewritten = new MemoryStream();
+        rewritten.Write(pdf, 0, xrefStart);
+        byte[] xrefBytes = Encoding.ASCII.GetBytes(xrefSection);
+        rewritten.Write(xrefBytes, 0, xrefBytes.Length);
+        rewritten.Write(pdf, trailerStart, pdf.Length - trailerStart);
+
+        string text = Normalize(PdfTextExtractor.ExtractAllText(rewritten.ToArray()));
+
+        Assert.Contains("Active classic xref page", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Stale classic object stream page", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExtractText_IgnoresClassicXrefEntryWhenObjectGenerationDoesNotMatch() {
         byte[] pdf = BuildIncrementalClassicXrefPdfWithWrongGenerationReplacementPage();
 
@@ -126,6 +149,27 @@ public partial class PdfExternalDocumentCompatibilityTests {
 
         Assert.Contains("Hybrid xref stream page", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Stale hybrid trailing page", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExtractText_HybridClassicTableOverridesStaleCompressedEntryForSameObject() {
+        byte[] pdf = BuildHybridClassicXrefWithDirectReplacementOfCompressedPage();
+
+        string text = Normalize(PdfTextExtractor.ExtractAllText(pdf));
+
+        Assert.Contains("Active direct page", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Stale compressed page", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadObjectMap_ResolvesCompressedObjectFromHybridPredecessorOfActiveXrefStream() {
+        byte[] pdf = BuildXrefStreamWithHybridCompressedPredecessor();
+
+        PdfReadDocument document = PdfReadDocument.Open(pdf);
+
+        Assert.True(document.Objects.TryGetValue(7, out PdfIndirectObject? font));
+        Assert.IsType<PdfDictionary>(font!.Value);
+        Assert.Contains("Hybrid predecessor", document.ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]

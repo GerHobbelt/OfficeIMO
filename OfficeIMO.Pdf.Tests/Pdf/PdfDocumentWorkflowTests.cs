@@ -1184,6 +1184,10 @@ public class PdfDocumentWorkflowTests {
         Assert.Equal(PdfMerger.Merge(source, appendix), bulkMerged.ToBytes());
         Assert.Equal(4, bulkMerged.Inspect().PageCount);
 
+        PdfDocument byteMerged = PdfDocument.MergeBytes(new[] { source, appendix });
+        Assert.Equal(PdfMerger.Merge(source, appendix), byteMerged.ToBytes());
+        Assert.Equal(4, byteMerged.Inspect().PageCount);
+
         PdfDocument metadata = merged.UpdateMetadata(title: "Workflow updated", author: "OfficeIMO Tests");
         Assert.Equal(
             PdfMetadataEditor.UpdateMetadata(merged.ToBytes(), title: "Workflow updated", author: "OfficeIMO Tests"),
@@ -1480,6 +1484,13 @@ public class PdfDocumentWorkflowTests {
         Assert.Equal(diagnostic.Code, warning.Code);
         Assert.Equal(diagnostic.Message, warning.Message);
         Assert.Equal(PdfConversionWarningSeverity.Error, warning.Severity);
+        Assert.Same(result.Report, Assert.Single(result.ConversionReports));
+        OfficeConversionFidelityDiagnostic failure = Assert.Single(result.FidelityDiagnostics);
+        Assert.Equal(OfficeConversionLossKind.Failure, failure.LossKind);
+        Assert.Equal(warning.Code, failure.Code);
+        Assert.Equal("PdfParagraph", failure.Location);
+        Assert.True(result.HasLoss);
+        Assert.Throws<InvalidOperationException>(result.RequireNoLoss);
         Assert.Equal("U+2603", warning.Details["codePoint"]);
         Assert.Equal("PdfParagraph[0].Run[0]", warning.Details["location"]);
         Assert.Equal("0", warning.Details["runIndex"]);
@@ -1806,6 +1817,27 @@ public class PdfDocumentWorkflowTests {
             yield return PdfDocument.Create().Paragraph(p => p.Text("First"));
             cancellation.Cancel();
             yield return PdfDocument.Create().Paragraph(p => p.Text("Second"));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BulkByteMergeHonorsCancellationWhileEnumeratingPayloads(bool returnBytes) {
+        using var cancellation = new CancellationTokenSource();
+
+        Assert.Throws<OperationCanceledException>(() => {
+            if (returnBytes) {
+                PdfDocument.MergeToBytes(EnumeratePayloads(cancellation), cancellation.Token);
+            } else {
+                PdfDocument.MergeBytes(EnumeratePayloads(cancellation), cancellation.Token);
+            }
+        });
+
+        static IEnumerable<byte[]> EnumeratePayloads(CancellationTokenSource cancellation) {
+            yield return BuildPdf("First", "First page");
+            cancellation.Cancel();
+            yield return BuildPdf("Second", "Second page");
         }
     }
 

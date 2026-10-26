@@ -28,7 +28,8 @@ internal static partial class PdfWriter {
                 underlineStyle: run.UnderlineStyle,
                 strikeStyle: run.StrikeStyle,
                 decorationColor: run.DecorationColor)
-                .WithFeatureSettings(run.FeatureSettings));
+                .WithFeatureSettings(run.FeatureSettings)
+                .WithTextDirection(run.TextDirection));
         }
 
         return stripped;
@@ -115,11 +116,7 @@ internal static partial class PdfWriter {
         return GetHeadingBold(style) ? "F2" : "F1";
     }
 
-    private static PdfListStyle? ResolveListStyle(BulletListBlock block, PdfOptions options) {
-        return block.Style ?? options.DefaultListStyleSnapshot;
-    }
-
-    private static PdfListStyle? ResolveListStyle(NumberedListBlock block, PdfOptions options) {
+    private static PdfListStyle? ResolveListStyle(PdfListBlock block, PdfOptions options) {
         return block.Style ?? options.DefaultListStyleSnapshot;
     }
 

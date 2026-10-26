@@ -49,6 +49,7 @@ public sealed class PdfLoadOptions {
 
     internal static PdfLoadOptions WithMinimumInputBytes(PdfLoadOptions? options, long minimumInputBytes) {
         PdfLoadOptions effective = Resolve(options);
+        if (minimumInputBytes <= effective.Limits.MaxInputBytes) return effective;
         return new PdfLoadOptions {
             ParsingMode = effective.ParsingMode,
             Limits = effective.Limits.WithMinimumInputBytes(minimumInputBytes),
@@ -93,7 +94,9 @@ public sealed class PdfLoadOptions {
             minimumObjectNestingDepth: growth.MinimumObjectNestingDepth,
             additionalContentOperations: growth.AdditionalContentOperations,
             additionalContentOperands: growth.AdditionalContentOperands,
-            additionalContentNestingDepth: growth.AdditionalContentNestingDepth);
+            additionalContentNestingDepth: growth.AdditionalContentNestingDepth,
+            additionalPrintProductionContexts: Math.Max(growth.AdditionalPrintProductionContexts, addedHeaders),
+            additionalPrintProductionOperations: growth.AdditionalPrintProductionOperations);
 
         return new PdfLoadOptions {
             ParsingMode = source.ParsingMode,

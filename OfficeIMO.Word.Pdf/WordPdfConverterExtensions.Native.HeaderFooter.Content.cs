@@ -468,7 +468,7 @@ namespace OfficeIMO.Word.Pdf {
             }
 
             var images = new List<NativeHeaderFooterImage>();
-            foreach (WordElement element in headerFooter.Elements) {
+            foreach (WordElement element in CollapseNativeParagraphElements(headerFooter.Elements)) {
                 switch (element) {
                     case WordParagraph paragraph:
                         AddNativeHeaderFooterParagraphImage(images, paragraph, null, options, source);
@@ -724,7 +724,7 @@ namespace OfficeIMO.Word.Pdf {
             foreach (WordTableRow row in table.Rows) {
                 IReadOnlyList<WordTableCell> cells = row.Cells;
                 if (cells.Count == 1) {
-                    foreach (WordParagraph paragraph in GetNativeCellParagraphs(cells[0])) {
+                    foreach (WordParagraph paragraph in EnumerateNativeTableCellParagraphs(cells[0])) {
                         AddNativeHeaderFooterParagraphImage(images, paragraph, null, options, source);
                     }
 
@@ -738,7 +738,7 @@ namespace OfficeIMO.Word.Pdf {
                             ? PdfCore.PdfAlign.Right
                             : PdfCore.PdfAlign.Center;
 
-                    foreach (WordParagraph paragraph in GetNativeCellParagraphs(cells[cellIndex])) {
+                    foreach (WordParagraph paragraph in EnumerateNativeTableCellParagraphs(cells[cellIndex])) {
                         AddNativeHeaderFooterParagraphImage(images, paragraph, align, options, source);
                     }
                 }
@@ -747,19 +747,17 @@ namespace OfficeIMO.Word.Pdf {
 
         private static void AddNativeHeaderFooterParagraphImage(List<NativeHeaderFooterImage> images, WordParagraph paragraph, PdfCore.PdfAlign? alignOverride, WordToPdfOptions? options, string source) {
             PdfCore.PdfAlign align = alignOverride ?? ResolveNativeParagraphAlign(paragraph, allowJustify: false);
-            if (paragraph.Image != null) {
-                AddNativeHeaderFooterImage(images, paragraph.Image, align, options, source);
+            int imageLimit = options?.MaxImagesPerParagraph ?? 1_000;
+            if (imageLimit <= 0) throw new ArgumentOutOfRangeException(nameof(WordToPdfOptions.MaxImagesPerParagraph));
+            int imageCount = 0;
+            void AddImage(WordImage image) {
+                options?.CancellationToken.ThrowIfCancellationRequested();
+                if (++imageCount > imageLimit)
+                    throw new InvalidDataException("Word paragraph image count exceeds the PDF export limit.");
+                AddNativeHeaderFooterImage(images, image, align, options, source);
             }
-
-            foreach (W.SdtRun pictureControl in GetNativePictureControls(paragraph)) {
-                var pictureParagraph = new WordParagraph(paragraph._document, paragraph._paragraph!, pictureControl);
-                WordImage? pictureControlImage = pictureParagraph.PictureControl?.Image;
-                if (pictureControlImage == null) {
-                    continue;
-                }
-
-                AddNativeHeaderFooterImage(images, pictureControlImage, align, options, source);
-            }
+            foreach (WordImage image in EnumerateNativeParagraphImages(paragraph, options?.CancellationToken ?? default))
+                AddImage(image);
         }
 
         private static void AddNativeHeaderFooterImage(List<NativeHeaderFooterImage> images, WordImage image, PdfCore.PdfAlign align, WordToPdfOptions? options, string source) {
@@ -785,7 +783,7 @@ namespace OfficeIMO.Word.Pdf {
             foreach (WordTableRow row in table.Rows) {
                 IReadOnlyList<WordTableCell> cells = row.Cells;
                 if (cells.Count == 1) {
-                    foreach (WordParagraph paragraph in GetNativeCellParagraphs(cells[0])) {
+                    foreach (WordParagraph paragraph in EnumerateNativeTableCellParagraphs(cells[0])) {
                         AddNativeHeaderFooterParagraphShape(shapes, paragraph, null);
                     }
 
@@ -799,7 +797,7 @@ namespace OfficeIMO.Word.Pdf {
                             ? PdfCore.PdfAlign.Right
                             : PdfCore.PdfAlign.Center;
 
-                    foreach (WordParagraph paragraph in GetNativeCellParagraphs(cells[cellIndex])) {
+                    foreach (WordParagraph paragraph in EnumerateNativeTableCellParagraphs(cells[cellIndex])) {
                         AddNativeHeaderFooterParagraphShape(shapes, paragraph, align);
                     }
                 }
@@ -1343,7 +1341,7 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static void AddNativeHeaderFooterTableCellText(NativeHeaderFooterText parts, WordTableCell cell, NativeHeaderFooterZone zone, IReadOnlyDictionary<WordParagraph, (int Level, string Marker)> listMarkers, NativeFontMap? nativeFontMap) {
-            List<WordParagraph> paragraphs = GetNativeCellParagraphs(cell).ToList();
+            List<WordParagraph> paragraphs = EnumerateNativeTableCellParagraphs(cell).ToList();
             int lastContentIndex = -1;
             for (int index = 0; index < paragraphs.Count; index++) {
                 string? text = GetNativeHeaderFooterParagraphText(paragraphs[index], listMarkers, out _);

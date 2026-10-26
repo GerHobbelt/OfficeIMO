@@ -58,17 +58,59 @@ public sealed partial class MhtmlDocument {
             throw new InvalidOperationException(
                 "MHTML cleanup cannot mutate a signed or encrypted MIME wrapper. Verify and unwrap or decrypt it before cleanup.");
         }
+        ApplyTransportSignatureMutationPolicy(document._mimeDocument, options.SignatureMutationPolicy);
+        RemoveOuterPayloadDependentHeaders(document._mimeDocument);
 
-        var rewritten = new MhtmlDocument(
-            cleaned.Parts["root"],
-            document.Resources,
-            document.ContentLocation,
-            document.RootContentId,
-            document.Subject);
-        byte[] output = rewritten.ToBytes(new EmailWriterOptions(maxOutputBytes: options.Inspection.MaxExpandedPackageBytes));
+        document._mimeDocument.Body.Html = cleaned.Parts["root"];
+        document._mimeDocument.Body.PreserveHtmlMimeHeadersOnWrite = true;
+        foreach (EmailAttachment attachment in document._mimeDocument.Attachments) {
+            attachment.PreserveMimeHeadersOnWrite = true;
+        }
+        long outputLimit = Math.Min(options.Inspection.MaxInputBytes, options.Inspection.MaxExpandedPackageBytes);
+        byte[] output = document.ToBytes(new EmailWriterOptions(maxOutputBytes: outputLimit));
         OfficeContentSafetyReport after = InspectContentSafety(output, options.Inspection, mimeOptions, cancellationToken);
         return new OfficeContentCleanupResult(output, cleaned.Before, after, cleaned.Changes);
     }
+
+    private static void ApplyTransportSignatureMutationPolicy(
+        EmailDocument document,
+        OfficeSignatureMutationPolicy policy) {
+        bool hasBodyCoveringSignature = document.Headers.Any(header =>
+            IsBodyCoveringTransportSignatureHeader(header.Name));
+        if (!hasBodyCoveringSignature) return;
+        if (policy == OfficeSignatureMutationPolicy.BlockSave) {
+            throw new InvalidOperationException(
+                "MHTML cleanup cannot retain a DKIM or ARC signature after mutating the signed body. " +
+                "Use RemoveInvalidatedSignatures to remove the invalidated transport-signature headers explicitly.");
+        }
+        if (policy != OfficeSignatureMutationPolicy.RemoveInvalidatedSignatures) return;
+        for (int index = document.Headers.Count - 1; index >= 0; index--) {
+            if (IsTransportSignatureChainHeader(document.Headers[index].Name)) document.Headers.RemoveAt(index);
+        }
+    }
+
+    private static void RemoveOuterPayloadDependentHeaders(EmailDocument document) {
+        for (int index = document.Headers.Count - 1; index >= 0; index--) {
+            string name = document.Headers[index].Name;
+            if (string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "Content-MD5", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "Content-Digest", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "Repr-Digest", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "Digest", StringComparison.OrdinalIgnoreCase)) {
+                document.Headers.RemoveAt(index);
+            }
+        }
+    }
+
+    private static bool IsBodyCoveringTransportSignatureHeader(string name) =>
+        string.Equals(name, "DKIM-Signature", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, "DomainKey-Signature", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, "ARC-Message-Signature", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, "ARC-Seal", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTransportSignatureChainHeader(string name) =>
+        IsBodyCoveringTransportSignatureHeader(name)
+        || string.Equals(name, "ARC-Authentication-Results", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Atomically writes an explicitly cleaned MHTML artifact.</summary>
     public static OfficeContentCleanupResult RemoveSelectedContent(
@@ -95,8 +137,56 @@ public sealed partial class MhtmlDocument {
         CancellationToken cancellationToken) {
         EmailReaderOptions readerOptions = IntersectReaderOptions(mimeOptions ?? EmailReaderOptions.Default, options);
         using var stream = new MemoryStream(archiveBytes, writable: false);
-        return Load(stream, readerOptions, cancellationToken: cancellationToken);
+        MhtmlDocument document = Load(stream, readerOptions, cancellationToken: cancellationToken);
+        if (document._mimeDocument.Body.HtmlMimeHeaders.Any(header => IsActiveContentSecurityPolicyHeader(header.Name))) {
+            throw new InvalidDataException(
+                "MHTML content-safety inspection cannot model an active Content Security Policy on the selected HTML root.");
+        }
+        if (!MimeTextCodec.IsSupportedTransferEncoding(document._mimeDocument.Body.HtmlTransferEncoding)
+            || document._mimeDocument.Body.HtmlMimeTransferDecodingWasAmbiguous
+            || (!string.IsNullOrWhiteSpace(document._mimeDocument.Body.HtmlCharset)
+                && document._mimeDocument.Body.HtmlMimeDecodingWasAmbiguous)
+            || document._mimeDocument.Body.HtmlWebDecodingWasAmbiguous) {
+            throw new InvalidDataException(
+                "MHTML content-safety inspection requires the selected HTML root to use an unambiguous supported MIME encoding.");
+        }
+        EmailDiagnostic? ambiguous = document.MimeDiagnostics.FirstOrDefault(diagnostic =>
+            !IsOpaqueNestedMessageDiagnostic(diagnostic)
+            && (diagnostic.Code == MhtmlDiagnosticCodes.DuplicateContentId
+            || diagnostic.Code == MhtmlDiagnosticCodes.DuplicateContentLocation
+            || diagnostic.Code == MhtmlDiagnosticCodes.DuplicateResourceIdentity
+            || diagnostic.Code == MhtmlDiagnosticCodes.InvalidContentLocation
+            || diagnostic.Code == MimeHeaderParser.DuplicateSingletonHeaderDiagnosticCode
+            || diagnostic.Code == MimeHeaderParser.InvalidUtf8HeaderDiagnosticCode
+            || diagnostic.Code == MimeHeaderParser.EncodedWordInStructuredHeaderDiagnosticCode
+            || diagnostic.Code == MimeHeaderParser.InvalidFieldNameDiagnosticCode
+            || diagnostic.Code == MimeValueParser.DuplicateSecurityParameterDiagnosticCode
+            || diagnostic.Code == MimeValueParser.ParameterContinuationGapDiagnosticCode
+            || diagnostic.Code == MimeValueParser.InvalidExtendedParameterDiagnosticCode
+            || diagnostic.Code == MimeParser.MultipleHtmlBodyDiagnosticCode
+            || diagnostic.Code == MimeParser.RelatedRootMissingDiagnosticCode
+            || diagnostic.Code == MimeParser.RelatedRootNotHtmlDiagnosticCode
+            || diagnostic.Code == MimeParser.RelatedRootTypeMismatchDiagnosticCode
+            || diagnostic.Code == MimeParser.EmptyBoundaryDiagnosticCode
+            || diagnostic.Code == MimeParser.InvalidBoundaryDiagnosticCode
+            || diagnostic.Code == MimeParser.InvalidContentIdentifierDiagnosticCode
+            || diagnostic.Code == MimeParser.UnmodeledAlternativeDiagnosticCode
+            || diagnostic.Code == MimeParser.BoundaryNotClosedDiagnosticCode));
+        if (ambiguous != null) {
+            throw new InvalidDataException(
+                "MHTML content-safety inspection requires unambiguous MIME content headers and embedded resource identities. " +
+                ambiguous.Code + ": " + ambiguous.Message);
+        }
+        return document;
     }
+
+    private static bool IsActiveContentSecurityPolicyHeader(string name) =>
+        string.Equals(name, "Content-Security-Policy", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, "X-Content-Security-Policy", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, "X-WebKit-CSP", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOpaqueNestedMessageDiagnostic(EmailDiagnostic diagnostic) =>
+        diagnostic.Location?.IndexOf("/message", StringComparison.Ordinal) >= 0;
 
     private static async Task<OfficeContentSafetyReport> InspectDocumentContentSafetyAsync(
         MhtmlDocument document,

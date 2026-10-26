@@ -108,6 +108,13 @@ public sealed partial class PdfDocument {
         return PdfInspector.Inspect(snapshot.Bytes, snapshot.Document, cancellationToken);
     }
 
+    internal PdfDocumentInfo InspectSelectedPages(IReadOnlyList<int> pageNumbers, CancellationToken cancellationToken) {
+        Guard.NotNull(pageNumbers, nameof(pageNumbers));
+        var snapshot = GetReadSnapshot(ReadOptions, cancellationToken);
+        snapshot.Document.DemandContentExtraction("logical object");
+        return PdfInspector.InspectSelectedPages(snapshot.Bytes, snapshot.Document, pageNumbers.ToArray(), cancellationToken);
+    }
+
     /// <summary>
     /// Reports read and rewrite capabilities for this PDF.
     /// </summary>
@@ -227,13 +234,23 @@ public sealed partial class PdfDocument {
     /// Type 3/CFF substitution, ICC, pattern, annotation-appearance, blend, mask, and resource gaps
     /// tied to one registry rather than a duplicate compatibility table.
     /// </remarks>
-    public PdfRenderCompatibilityReport AssessRenderCompatibility(PdfLoadOptions? options = null) {
+    public PdfRenderCompatibilityReport AssessRenderCompatibility(PdfLoadOptions? options = null) =>
+        AssessRenderCompatibility(options, null);
+
+    /// <summary>Assesses managed page-render fidelity with configurable per-page diagnostic limits.</summary>
+    public PdfRenderCompatibilityReport AssessRenderCompatibility(
+        PdfLoadOptions? options, PdfPageRenderOptions? renderOptions) {
+        var diagnosticOptions = renderOptions ?? new PdfPageRenderOptions();
+        diagnosticOptions.Validate();
         var snapshot = GetReadSnapshot(options);
         var pages = new PdfRenderCompatibilityPage[snapshot.Document.Pages.Count];
         for (int index = 0; index < pages.Length; index++) {
             pages[index] = new PdfRenderCompatibilityPage(
                 index + 1,
-                snapshot.Document.Pages[index].GetRenderCapabilityDiagnostics());
+                snapshot.Document.Pages[index].GetRenderCapabilityDiagnostics(
+                    diagnosticOptions.MaxDiagnosticsPerPage,
+                    diagnosticOptions.MaxDiagnosticCharactersPerPage,
+                    default));
         }
         return new PdfRenderCompatibilityReport(Array.AsReadOnly(pages));
     }
@@ -494,6 +511,79 @@ public sealed partial class PdfDocument {
         return Merge(documents, CancellationToken.None);
     }
 
+    /// <summary>
+    /// Creates one PDF by merging the supplied caller-owned PDF byte payloads in order.
+    /// The inputs are consumed synchronously and are not retained by the returned document.
+    /// </summary>
+    public static PdfDocument MergeBytes(IEnumerable<byte[]> pdfs) {
+        return MergeBytes(pdfs, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Creates one PDF by merging the supplied caller-owned PDF byte payloads in order through a cancellable single merge pass.
+    /// The inputs are consumed synchronously and are not retained by the returned document.
+    /// </summary>
+    public static PdfDocument MergeBytes(
+        IEnumerable<byte[]> pdfs,
+        CancellationToken cancellationToken) {
+        PdfMergeResult result = MergeByteSources(pdfs, cancellationToken);
+        return LoadOwned(result.OwnedBytes, result.ReadOptions, result.ReadDocument);
+    }
+
+    /// <summary>
+    /// Merges the supplied caller-owned PDF byte payloads and returns the merged artifact directly.
+    /// The inputs are consumed synchronously and are not retained; the returned array is owned by the caller.
+    /// </summary>
+    public static byte[] MergeToBytes(params byte[][] pdfs) =>
+        MergeToBytes((IEnumerable<byte[]>)pdfs, CancellationToken.None);
+
+    /// <summary>
+    /// Merges the supplied caller-owned PDF byte payloads and returns the merged artifact directly.
+    /// The inputs are consumed synchronously and are not retained; the returned array is owned by the caller.
+    /// </summary>
+    public static byte[] MergeToBytes(IEnumerable<byte[]> pdfs) =>
+        MergeToBytes(pdfs, CancellationToken.None);
+
+    /// <summary>
+    /// Merges the supplied caller-owned PDF byte payloads through a cancellable single pass and returns the merged artifact directly.
+    /// The inputs are consumed synchronously and are not retained; the returned array is owned by the caller.
+    /// </summary>
+    public static byte[] MergeToBytes(
+        IEnumerable<byte[]> pdfs,
+        CancellationToken cancellationToken) =>
+        MergeByteSources(pdfs, cancellationToken).OwnedBytes;
+
+    private static PdfMergeResult MergeByteSources(
+        IEnumerable<byte[]> pdfs,
+        CancellationToken cancellationToken) {
+        List<byte[]> sources = CollectMergeByteSources(pdfs, cancellationToken);
+        var readOptions = new PdfLoadOptions[sources.Count];
+        var readDocumentFactories = new Func<PdfReadDocument>?[sources.Count];
+        for (int index = 0; index < readOptions.Length; index++) {
+            readOptions[index] = PdfLoadOptions.Default;
+        }
+        return PdfMerger.MergeOwned(sources, readOptions, readDocumentFactories, cancellationToken);
+    }
+
+    private static List<byte[]> CollectMergeByteSources(
+        IEnumerable<byte[]> pdfs,
+        CancellationToken cancellationToken) {
+        Guard.NotNull(pdfs, nameof(pdfs));
+        cancellationToken.ThrowIfCancellationRequested();
+        var sources = new List<byte[]>();
+        foreach (byte[] source in pdfs) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (source is null) {
+                throw new ArgumentException("PDF byte payloads cannot contain null entries.", nameof(pdfs));
+            }
+            sources.Add(source);
+        }
+        if (sources.Count == 0) {
+            throw new ArgumentException("At least one PDF byte payload must be supplied.", nameof(pdfs));
+        }
+        return sources;
+    }
+
     /// <summary>Creates one PDF by merging all supplied documents in order through a cancellable single merge pass.</summary>
     public static PdfDocument Merge(
         IEnumerable<PdfDocument> documents,
@@ -524,6 +614,14 @@ public sealed partial class PdfDocument {
             readOptions[index] = source.ReadOptions;
             readDocumentFactories[index] = source.GetOpenedReadDocumentFactory(cancellationToken);
         }
+        return MergePreparedSources(bytes, readOptions, readDocumentFactories, cancellationToken);
+    }
+
+    private static PdfDocument MergePreparedSources(
+        IReadOnlyList<byte[]> bytes,
+        IReadOnlyList<PdfLoadOptions> readOptions,
+        IReadOnlyList<Func<PdfReadDocument>?> readDocumentFactories,
+        CancellationToken cancellationToken) {
         PdfMergeResult mergeResult = PdfMerger.MergeOwned(bytes, readOptions, readDocumentFactories, cancellationToken);
         return LoadOwned(mergeResult.OwnedBytes, mergeResult.ReadOptions, mergeResult.ReadDocument);
     }
@@ -540,8 +638,9 @@ public sealed partial class PdfDocument {
         byte[] input = GetBytesForOperation();
         PdfMergeResult result = PdfMerger.MergeOwned(
             new[] { input, document.GetBytesForOperation() },
-            new[] { targetReadOptions, document.ReadOptions });
-        return WithBytes(input, result.OwnedBytes, result.ReadOptions, nameof(MergeWith));
+            new[] { targetReadOptions, document.ReadOptions },
+            new[] { GetOpenedReadDocumentFactory(targetReadOptions), document.GetOpenedReadDocumentFactory() });
+        return WithBytes(input, result.OwnedBytes, result.ReadOptions, nameof(MergeWith), result.ReadDocument);
     }
 
     /// <summary>
@@ -554,6 +653,7 @@ public sealed partial class PdfDocument {
 
     /// <summary>
     /// Creates a new PDF by merging this PDF with another PDF byte payload.
+    /// The input is consumed synchronously and is not retained by the returned document.
     /// </summary>
     public PdfDocument MergeWith(byte[] pdf) {
         Guard.NotNull(pdf, nameof(pdf));
@@ -564,12 +664,14 @@ public sealed partial class PdfDocument {
         byte[] input = GetBytesForOperation();
         PdfMergeResult result = PdfMerger.MergeOwned(
             new[] { input, pdf },
-            new[] { targetReadOptions, PdfLoadOptions.Default });
-        return WithBytes(input, result.OwnedBytes, result.ReadOptions, nameof(MergeWith));
+            new[] { targetReadOptions, PdfLoadOptions.Default },
+            new Func<PdfReadDocument>?[] { GetOpenedReadDocumentFactory(targetReadOptions), null });
+        return WithBytes(input, result.OwnedBytes, result.ReadOptions, nameof(MergeWith), result.ReadDocument);
     }
 
     /// <summary>
     /// Attempts to merge this PDF with another PDF byte payload, returning diagnostics when blocked or failed.
+    /// The input is consumed synchronously and is not retained by the result.
     /// </summary>
     public PdfOperationResult<PdfDocument> MergeWithResult(byte[] pdf, PdfLoadOptions? options = null) {
         Guard.NotNull(pdf, nameof(pdf));
@@ -585,7 +687,7 @@ public sealed partial class PdfDocument {
     }
 
     private PdfDocument MergeWith(string path, PdfLoadOptions targetReadOptions) {
-        return MergeWith(File.ReadAllBytes(path), targetReadOptions);
+        return MergeWith(PdfDocumentSource.FromPath(path, options: null).Bytes, targetReadOptions);
     }
 
     /// <summary>
@@ -609,9 +711,7 @@ public sealed partial class PdfDocument {
             throw new ArgumentException("Stream must be readable.", nameof(stream));
         }
 
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return MergeWith(buffer.ToArray(), targetReadOptions);
+        return MergeWith(PdfDocumentSource.FromRemainingStream(stream, options: null).Bytes, targetReadOptions);
     }
 
     /// <summary>

@@ -32,6 +32,25 @@ internal sealed class HtmlTextEncodingResolver {
         }
     }
 
+    internal Encoding ResolveHtmlTransportEncoding(Stream stream, string transportCharset) {
+        if (stream == null) throw new ArgumentNullException(nameof(stream));
+        if (string.IsNullOrWhiteSpace(transportCharset)) {
+            throw new ArgumentException("A transport charset is required.", nameof(transportCharset));
+        }
+        if (!stream.CanSeek) return NormalizeHtmlDeclaredEncoding(GetEncoding(transportCharset));
+
+        long position = stream.Position;
+        try {
+            stream.Position = 0;
+            var prefix = new byte[HtmlPrescanLength];
+            int count = ReadPrefix(stream, prefix);
+            return ResolveBomEncoding(prefix, count)
+                ?? NormalizeHtmlDeclaredEncoding(GetEncoding(transportCharset));
+        } finally {
+            stream.Position = position;
+        }
+    }
+
     internal Stream PrepareHtmlStream(Stream stream, Encoding? explicitEncoding, out Encoding encoding) {
         if (stream == null) throw new ArgumentNullException(nameof(stream));
         if (explicitEncoding != null || stream.CanSeek) {
@@ -73,6 +92,8 @@ internal sealed class HtmlTextEncodingResolver {
         string? charset = ReadContentTypeCharset(metadata);
         return charset == null ? Utf8 : GetEncoding(charset);
     }
+
+    internal bool HasDataUriCharset(string metadata) => ReadContentTypeCharset(metadata) != null;
 
     internal bool TryDecodeCss(byte[] bytes, string? contentType, out string css) {
         if (bytes == null) throw new ArgumentNullException(nameof(bytes));

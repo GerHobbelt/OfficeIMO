@@ -71,11 +71,8 @@ public sealed partial class PdfDocument {
             case HeadingBlock heading:
                 AddText(diagnostics, heading.Text, options, GetHeadingFont(heading, options), "PdfHeading", location);
                 break;
-            case BulletListBlock list:
-                AnalyzeListItems(list.RichItems, list.Style ?? options.DefaultListStyleSnapshot, options, defaultFont, diagnostics, location, numbered: false, startNumber: 1);
-                break;
-            case NumberedListBlock list:
-                AnalyzeListItems(list.RichItems, list.Style ?? options.DefaultListStyleSnapshot, options, defaultFont, diagnostics, location, numbered: true, list.StartNumber);
+            case PdfListBlock list:
+                AnalyzeListItems(list.RichItems, list.Style ?? options.DefaultListStyleSnapshot, options, defaultFont, diagnostics, location, list.IsNumbered, list.StartingNumber);
                 break;
             case TableBlock table:
                 AnalyzeTable(table, options, defaultFont, diagnostics, "PdfTableCell", location);
@@ -372,7 +369,8 @@ public sealed partial class PdfDocument {
             underlineStyle: run.UnderlineStyle,
             strikeStyle: run.StrikeStyle,
             decorationColor: run.DecorationColor)
-            .WithFeatureSettings(run.FeatureSettings);
+            .WithFeatureSettings(run.FeatureSettings)
+            .WithTextDirection(run.TextDirection);
         AddRuns(diagnostics, new[] { effectiveRun }, options, font, source, location, pageNumber: pageNumber);
     }
 
