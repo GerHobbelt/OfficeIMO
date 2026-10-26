@@ -30,11 +30,11 @@ public static partial class HtmlComputedStyleEngine {
                 continue;
             }
 
+            IReadOnlyDictionary<int, int> rawRuleClosures = HtmlCssRuleBlockScanner.Scan(css, budget);
             var stylesheet = parser.ParseStyleSheet(css);
             foreach (var rule in stylesheet.Rules) {
                 AddStyleRules(rule, rules, parsedRuleMatches, environment, budget, 1);
             }
-            IReadOnlyDictionary<int, int> rawRuleClosures = BuildRawRuleClosures(css, budget);
             AddRawRetainedStyleRules(css, 0, css.Length, rawRuleClosures, rules, parsedRuleMatches, environment, budget);
         }
 
@@ -103,7 +103,9 @@ public static partial class HtmlComputedStyleEngine {
         ICollection<StyleRule> rules,
         IDictionary<string, int> parsedRuleMatches,
         HtmlCssProcessingBudget budget) {
-        string[] selectors = SplitSelectorList(styleRule.SelectorText)
+        string selectorText = styleRule.SelectorText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(selectorText)) return;
+        string[] selectors = SplitSelectorList(selectorText)
             .Select(selector => selector.Trim())
             .Where(selector => selector.Length > 0)
             .ToArray();
@@ -202,7 +204,7 @@ public static partial class HtmlComputedStyleEngine {
             string value = declaration.Substring(separator + 1).Trim();
             value = StripTrailingImportant(value, out bool important);
             if (value.Length > 0 && IsSupportedDeclarationValue(propertyName, value)) {
-                declarations[propertyName] = new StyleDeclaration(value, important);
+                SetDeclarationInSourceOrder(declarations, propertyName, value, important);
             }
         }
         if (declarations.Count == 0) return;
@@ -251,37 +253,10 @@ public static partial class HtmlComputedStyleEngine {
                 index = css.IndexOf("*/", index + 2, StringComparison.Ordinal);
                 if (index < 0 || index >= end) return -1;
                 index++;
-            } else if (current == '{') return index;
-            else if (current == ';') return ~index;
+            } else if (current == '{' && !IsEscaped(css, index)) return index;
+            else if (current == ';' && !IsEscaped(css, index)) return ~index;
         }
         return -1;
-    }
-
-    private static IReadOnlyDictionary<int, int> BuildRawRuleClosures(
-        string css,
-        HtmlCssProcessingBudget budget) {
-        var closures = new Dictionary<int, int>();
-        var opens = new Stack<int>();
-        char quote = '\0';
-        for (int index = 0; index < css.Length; index++) {
-            char current = css[index];
-            if (quote != '\0') {
-                if (current == quote && !IsEscaped(css, index)) quote = '\0';
-                continue;
-            }
-            if (current == '\'' || current == '"') quote = current;
-            else if (current == '/' && index + 1 < css.Length && css[index + 1] == '*') {
-                index = css.IndexOf("*/", index + 2, StringComparison.Ordinal);
-                if (index < 0) break;
-                index++;
-            } else if (current == '{') {
-                opens.Push(index);
-                budget.RecordNestingDepth(opens.Count);
-            } else if (current == '}' && opens.Count > 0) {
-                closures[opens.Pop()] = index;
-            }
-        }
-        return closures;
     }
 
     private static void SkipRawWhitespaceAndComments(string css, ref int cursor, int end) {
@@ -306,17 +281,31 @@ public static partial class HtmlComputedStyleEngine {
         int close = cssText.LastIndexOf('}');
         if (open < 0 || close <= open) return;
         string body = StripCssCommentsOutsideStrings(cssText.Substring(open + 1, close - open - 1));
+        var parsedProperties = new HashSet<string>(declarations.Keys, StringComparer.OrdinalIgnoreCase);
         foreach (string declaration in SplitCssDeclarations(body)) {
             int separator = declaration.IndexOf(':');
             if (separator <= 0) continue;
             string propertyName = declaration.Substring(0, separator).Trim();
-            if (declarations.ContainsKey(propertyName)
+            if (parsedProperties.Contains(propertyName)
                 || (!SupportedProperties.Contains(propertyName) && !propertyName.StartsWith("--", StringComparison.Ordinal))) continue;
             string value = declaration.Substring(separator + 1).Trim();
             value = StripTrailingImportant(value, out bool important);
             if (value.Length > 0 && IsSupportedDeclarationValue(propertyName, value)) {
-                declarations[propertyName] = new StyleDeclaration(value, important);
+                SetDeclarationInSourceOrder(declarations, propertyName, value, important);
             }
         }
+    }
+
+    private static void SetDeclarationInSourceOrder(
+        IDictionary<string, StyleDeclaration> declarations,
+        string propertyName,
+        string value,
+        bool important) {
+        if (declarations.TryGetValue(propertyName, out StyleDeclaration? existing)
+            && existing.IsImportant
+            && !important) {
+            return;
+        }
+        declarations[propertyName] = new StyleDeclaration(value, important);
     }
 }

@@ -122,6 +122,51 @@ public sealed partial class HtmlRenderingTests {
             new HtmlRenderMediaFeatures()));
     }
 
+    [Theory]
+    [InlineData("(prefers-color-scheme:dark) or (prefers-reduced-motion:reduce)", true)]
+    [InlineData("(prefers-reduced-motion:reduce) or (prefers-color-scheme:dark)", true)]
+    [InlineData("(prefers-color-scheme:light) or (prefers-reduced-motion:reduce)", false)]
+    [InlineData("(prefers-color-scheme:dark) and (prefers-reduced-motion:reduce)", false)]
+    [InlineData("or (prefers-color-scheme:dark)", false)]
+    [InlineData("(prefers-color-scheme:dark) or", false)]
+    [InlineData("(max-resolution:1e2dpi)", true)]
+    [InlineData("(resolution:9.6E1dpi)", true)]
+    [InlineData("(min-resolution:9.7e1dpi)", false)]
+    [InlineData("(color) and not (hover)", true)]
+    [InlineData("(color) and not (hover:none)", false)]
+    public void HtmlRender_MediaQueriesHonorLogicalOrAndResolutionExponents(
+        string mediaQuery,
+        bool expected) {
+        var features = new HtmlRenderMediaFeatures {
+            PreferredColorScheme = HtmlPreferredColorScheme.Dark
+        };
+
+        Assert.Equal(
+            expected,
+            HtmlComputedStyleEngine.IsApplicableMedia(
+                mediaQuery,
+                HtmlCssMediaContext.Screen,
+                400D,
+                200D,
+                features));
+    }
+
+    [Theory]
+    [InlineData("(max-width:4e2px)", true)]
+    [InlineData("(width:4.0E+2px)", true)]
+    [InlineData("(min-height:2e2px)", true)]
+    [InlineData("(max-width:3.99e2px)", false)]
+    [InlineData("(width:4e+px)", false)]
+    public void HtmlRender_MediaLengthsHonorExponentNotation(string mediaQuery, bool expected) {
+        Assert.Equal(
+            expected,
+            HtmlComputedStyleEngine.IsApplicableMedia(
+                mediaQuery,
+                HtmlCssMediaContext.Screen,
+                400D,
+                200D));
+    }
+
     [Fact]
     public void HtmlRender_AdditionalStylesheetsParticipateInTheBoundedAuthorCascade() {
         var options = new HtmlRenderOptions {

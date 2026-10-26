@@ -1,4 +1,5 @@
 using DocumentFormat.OpenXml.Wordprocessing;
+using OfficeIMO.Drawing;
 using OfficeIMO.Word.Pdf;
 using OfficeIMO.Word;
 using System.Globalization;
@@ -10,12 +11,41 @@ using Xunit;
 namespace OfficeIMO.Tests {
     public partial class Word {
         [Fact]
-        public void SaveAsPdf_DefaultsDoNotReadInstalledHostFonts() {
-            var options = new PdfSaveOptions();
+        public void SaveAsPdf_DefaultsEmbedDocumentFontsWithoutAllowingArbitraryResourceReads() {
+            var options = new WordPdfSaveOptions();
 
-            Assert.False(options.ResourcePolicy.AllowSystemFontEmbedding);
+            Assert.True(options.ResourcePolicy.AllowSystemFontEmbedding);
+            Assert.True(options.ResourcePolicy.AllowDocumentFontEmbedding);
             Assert.False(options.ResourcePolicy.AllowLocalFileAccess);
             Assert.False(options.ResourcePolicy.AllowRemoteResourceResolution);
+        }
+
+        [Fact]
+        public void SaveAsPdf_ShapingOnlyProfileDetectsLaterDirectFontConfiguration() {
+            var options = new WordPdfSaveOptions()
+                .UseRenderingProfile(new OfficeRenderingProfile("shaping-only"));
+
+            Assert.False(options.HasExplicitPdfFontConfiguration);
+
+            options.PdfOptions!.DefaultFontSize = 13;
+
+            Assert.True(options.HasExplicitPdfFontConfiguration);
+            Assert.True(options.CloneForConversion().HasExplicitPdfFontConfiguration);
+        }
+
+        [Fact]
+        public void SaveAsPdf_InvalidRenderingProfileDoesNotCreatePdfOptions() {
+            var options = new WordPdfSaveOptions();
+
+            Assert.Throws<ArgumentNullException>(
+                () => options.UseRenderingProfile(null!));
+            Assert.Null(options.PdfOptions);
+
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => options.UseRenderingProfile(
+                    new OfficeRenderingProfile("invalid-mode"),
+                    (OfficeRenderingProfileApplyMode)999));
+            Assert.Null(options.PdfOptions);
         }
 
         [Fact]
@@ -26,7 +56,7 @@ namespace OfficeIMO.Tests {
             using (WordDocument document = WordDocument.Create(docPath)) {
                 document.AddParagraph("Hello World");
                 document.Save();
-                document.SaveAsPdf(pdfPath, new PdfSaveOptions {
+                document.SaveAsPdf(pdfPath, new WordPdfSaveOptions {
                     DefaultOrientation = PageOrientationValues.Landscape,
                     DefaultPageSize = WordPageSize.A4
                 });

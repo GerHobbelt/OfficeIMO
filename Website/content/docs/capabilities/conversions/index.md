@@ -1,6 +1,6 @@
 ---
 title: "Conversion and Rendering Map"
-description: "Choose the owning model, focused adapter, diagnostic policy, and deployment path for OfficeIMO conversions."
+description: "Choose the owning model, focused adapter, diagnostic policy, and deployment path for OfficeIMO conversions. Includes examples and API links."
 layout: docs
 ---
 
@@ -21,7 +21,7 @@ OfficeIMO keeps document models and conversion adapters separate. That lets an a
 | Markdown | HTML or PDF | `OfficeIMO.Markdown.Html`, `OfficeIMO.Markdown.Pdf` | Typed text publishing and portable output |
 | HTML | PDF | `OfficeIMO.Html.Pdf` | Managed web-to-PDF workflows without a browser process |
 | OneNote | HTML, Markdown, or PDF | `OfficeIMO.OneNote.Html`, `OfficeIMO.OneNote.Markdown`, `OfficeIMO.OneNote.Pdf` | Notebook extraction and publishing |
-| OpenDocument | PDF | `OfficeIMO.OpenDocument.Pdf` | ODT, ODS, and ODP delivery |
+| OpenDocument | PDF and back | `OfficeIMO.OpenDocument.Odt.Pdf`, `.Ods.Pdf`, `.Odp.Pdf` | Focused ODT, ODS, and ODP routes without unrelated Office dependencies |
 | AsciiDoc, LaTeX, or RTF | Markdown or PDF | format-specific `.Markdown` and `.Pdf` adapters | Bounded text-format bridges with explicit loss handling |
 
 ## Preserve the source model
@@ -38,7 +38,7 @@ Do not treat “a file was written” as proof that the conversion preserved eve
 
 ## Browser-local routes
 
-The [browser converter](/playground/) exposes only routes that can execute safely inside the WebAssembly application. That is intentionally smaller than the managed server-side conversion surface. A missing browser route does not mean that no .NET adapter exists; consult the [complete component index](/docs/capabilities/packages/) and the adapter API.
+The [browser converter](/convert/) exposes only routes that can execute safely inside the WebAssembly application. That is intentionally smaller than the managed server-side conversion surface. A missing browser route does not mean that no .NET adapter exists; consult the [complete component index](/docs/capabilities/packages/) and the adapter API.
 
 ## Loss policy
 

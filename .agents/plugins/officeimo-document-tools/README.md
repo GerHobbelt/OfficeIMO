@@ -1,13 +1,21 @@
 # OfficeIMO Document Tools Plugin
 
-This repo-local Codex plugin exposes OfficeIMO operating skills for conversion, PDF, website/WASM, and PSWritePDF retirement work.
+This repo-local Codex plugin exposes compact OfficeIMO tools for working with local documents and mailboxes, plus contributor skills for conversion, PDF, website/WASM, builds, releases, and PSWritePDF retirement.
 
-The plugin intentionally does not declare an MCP server yet. The OfficeIMO MCP server should be added only when the CLI/server entrypoint exists, so plugin installation does not advertise a dead command.
-
-Planned MCP entrypoint:
+The bundled STDIO MCP server runs from the versioned `OfficeIMO.Tool` package:
 
 ```powershell
-officeimo mcp serve
+dotnet dnx OfficeIMO.Tool@3.1.0 mcp serve --stdio
 ```
 
-The MCP server should wrap reusable OfficeIMO APIs and expose tools such as `convert_document`, `inspect_document`, `compare_pdf_outputs`, `list_supported_formats`, and `run_conversion_fixture`.
+It exposes five bounded tools:
+
+- `officeimo_inspect`
+- `officeimo_search`
+- `officeimo_fetch`
+- `officeimo_convert`
+- `officeimo_capabilities`
+
+The intended agent flow is inspect or search first, then fetch selected content. PST, OST, OLM, EMLX, Mbox, MBX, and message directories are query-first; whole-store conversion is intentionally unavailable.
+
+The server defaults filesystem access to the working directory inherited from Codex, which normally scopes it to the current workspace. Paths outside that directory are rejected. Set `OFFICEIMO_MCP_ALLOWED_ROOTS` to an exact-cased, platform path-separator-delimited replacement list only when the server should use different local roots; include the working directory explicitly when it should remain available.

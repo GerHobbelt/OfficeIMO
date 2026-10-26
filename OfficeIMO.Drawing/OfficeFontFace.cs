@@ -14,12 +14,13 @@ public sealed class OfficeFontFace {
         byte[] data,
         OfficeFontStyle style,
         OfficeFontUnicodeRangeSet unicodeRanges,
-        OfficeTrueTypeFont parsedFont) {
+        OfficeTrueTypeFont parsedFont,
+        bool useDataSnapshot = false) {
         FamilyName = familyName;
         ResourceFamilyName = resourceFamilyName;
         Style = NormalizeStyle(style);
         UnicodeRanges = unicodeRanges;
-        _data = (byte[])data.Clone();
+        _data = useDataSnapshot ? data : (byte[])data.Clone();
         ParsedFont = parsedFont;
     }
 
@@ -43,9 +44,14 @@ public sealed class OfficeFontFace {
     internal OfficeTrueTypeFont ParsedFont { get; }
 
     internal OfficeFontFace Clone() =>
-        new OfficeFontFace(FamilyName, ResourceFamilyName, _data, Style, UnicodeRanges, ParsedFont);
+        new OfficeFontFace(FamilyName, ResourceFamilyName, _data, Style, UnicodeRanges, ParsedFont, useDataSnapshot: true);
+
+    internal OfficeFontFace CreateAlias(string familyName, string resourceFamilyName) =>
+        new OfficeFontFace(familyName, resourceFamilyName, _data, Style, UnicodeRanges, ParsedFont, useDataSnapshot: true);
 
     internal bool Covers(string text) => UnicodeRanges.ContainsText(text) && ParsedFont.HasGlyphs(text);
+
+    internal bool HasGlyphs(string text) => ParsedFont.HasGlyphs(text);
 
     internal static OfficeFontStyle NormalizeStyle(OfficeFontStyle style) =>
         style & (OfficeFontStyle.Bold | OfficeFontStyle.Italic);

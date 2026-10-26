@@ -63,20 +63,14 @@ public sealed class PublicApiNamingContracts {
     }
 
     [Fact]
-    public void ExcelRemoteLoadsAreAsyncOnly() {
+    public void ExcelDocumentRemoteLoadsAreAsyncOnly() {
         MethodInfo[] documentMethods = typeof(ExcelDocument).GetMethods(
-            BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly);
-        MethodInfo[] readerMethods = typeof(ExcelDocumentReader).GetMethods(
             BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly);
 
         Assert.Contains(documentMethods, static method =>
             method.Name == "LoadAsync" && method.GetParameters().FirstOrDefault()?.ParameterType == typeof(Uri));
         Assert.DoesNotContain(documentMethods, static method =>
             method.Name == "Load" && method.GetParameters().FirstOrDefault()?.ParameterType == typeof(Uri));
-        Assert.Contains(readerMethods, static method =>
-            method.Name == "OpenAsync" && method.GetParameters().FirstOrDefault()?.ParameterType == typeof(Uri));
-        Assert.DoesNotContain(readerMethods, static method =>
-            method.Name == "Open" && method.GetParameters().FirstOrDefault()?.ParameterType == typeof(Uri));
     }
 
     [Fact]
@@ -159,6 +153,60 @@ public sealed class PublicApiNamingContracts {
             .ToArray();
 
         Assert.Empty(launchProperties);
+    }
+
+    [Fact]
+    public void OfficeImageApisUseCanonicalVerbAndCardinalityVocabulary() {
+        Assembly[] assemblies = {
+            typeof(WordDocument).Assembly,
+            typeof(ExcelDocument).Assembly,
+            typeof(OfficeIMO.PowerPoint.PowerPointPresentation).Assembly
+        };
+        MethodInfo[] methods = assemblies
+            .SelectMany(static assembly => assembly.GetExportedTypes())
+            .SelectMany(static type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            .ToArray();
+
+        Assert.DoesNotContain(methods, static method =>
+            method.Name is "SaveImage" or "SaveAsImage");
+
+        Assert.NotNull(typeof(WordDocument).GetMethod("ToImage", Type.EmptyTypes));
+        Assert.NotNull(typeof(WordDocument).GetMethods().SingleOrDefault(static method =>
+            method.Name == "ExportImage" && method.GetParameters().Length > 0));
+        Assert.Contains(typeof(WordDocument).GetMethods(), static method => method.Name == "SaveAsImages");
+
+        Assert.NotNull(typeof(ExcelSheet).GetMethod("ToImage", Type.EmptyTypes));
+        Assert.Contains(typeof(ExcelSheet).GetMethods(), static method => method.Name == "ExportImage");
+        Assert.Contains(typeof(ExcelDocument).GetMethods(), static method => method.Name == "SaveAsImages");
+
+        Assert.NotNull(typeof(OfficeIMO.PowerPoint.PowerPointSlide).GetMethod("ToImage", Type.EmptyTypes));
+        Assert.Contains(typeof(OfficeIMO.PowerPoint.PowerPointSlide).GetMethods(), static method => method.Name == "ExportImage");
+        Assert.Contains(typeof(OfficeIMO.PowerPoint.PowerPointPresentation).GetMethods(), static method => method.Name == "SaveAsImages");
+    }
+
+    [Fact]
+    public void ConversionTargetNamesUseDotNetAcronymCasing() {
+        Assembly[] assemblies = {
+            typeof(WordDocument).Assembly,
+            typeof(ExcelDocument).Assembly,
+            typeof(OfficeIMO.PowerPoint.PowerPointPresentation).Assembly,
+            typeof(HtmlConversionDocument).Assembly,
+            typeof(PdfDocument).Assembly
+        };
+        string[] methodNames = assemblies
+            .SelectMany(static assembly => assembly.GetExportedTypes())
+            .SelectMany(static type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            .Select(static method => method.Name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.DoesNotContain(methodNames, static name =>
+            name.Contains("PDF", StringComparison.Ordinal) ||
+            name.Contains("HTML", StringComparison.Ordinal) ||
+            name.Contains("RTF", StringComparison.Ordinal) ||
+            name.Contains("ODT", StringComparison.Ordinal) ||
+            name.Contains("ODS", StringComparison.Ordinal) ||
+            name.Contains("ODP", StringComparison.Ordinal));
     }
 
     [Fact]

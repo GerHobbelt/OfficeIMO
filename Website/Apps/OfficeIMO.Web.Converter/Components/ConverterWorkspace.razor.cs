@@ -58,27 +58,26 @@ This **Markdown** becomes a browser preview or an editable Word document.
     private bool PreviewOutput { get; set; } = true;
     private bool IsBusy { get; set; }
     private long ElapsedMilliseconds { get; set; }
-    private List<ConversionDiagnostic> Diagnostics { get; } = [ReadyDiagnostic()];
+    private List<ConversionDiagnostic> Diagnostics { get; } = [];
 
     private static IReadOnlyList<ConversionRoute> Routes => ConversionRouteCatalog.All;
     private static IReadOnlyList<BrowserPdfProfile> PdfProfiles => BrowserPdfProfileCatalog.All;
     private BrowserPdfProfile SelectedProfile => BrowserPdfProfileCatalog.Find(SelectedProfileId);
     private bool IsPdfRoute => string.Equals(ActiveRoute.Target, "PDF", StringComparison.OrdinalIgnoreCase);
-    private IEnumerable<IGrouping<string, ConversionWarningView>> WarningGroups {
-        get {
-            if (Output is null) {
-                return Enumerable.Empty<IGrouping<string, ConversionWarningView>>();
-            }
-
-            return Output.StructuredWarnings
-                .GroupBy(
-                    static warning => warning.PageNumber.HasValue
-                        ? $"Page {warning.PageNumber.Value} · {warning.Construct}"
-                        : $"Document · {warning.Construct}",
-                    StringComparer.Ordinal)
-                .OrderBy(static group => group.Key, StringComparer.Ordinal);
-        }
-    }
+    private IReadOnlyList<ConversionWarningView> ReviewWarnings =>
+        Output?.StructuredWarnings
+            .Where(static warning =>
+                !string.Equals(warning.Severity, "Information", StringComparison.OrdinalIgnoreCase))
+            .ToArray()
+        ?? [];
+    private IEnumerable<IGrouping<string, ConversionWarningView>> WarningGroups =>
+        GroupWarnings(ReviewWarnings);
+    private IEnumerable<IGrouping<string, ConversionWarningView>> InformationGroups =>
+        GroupWarnings(
+            Output?.StructuredWarnings
+                .Where(static warning =>
+                    string.Equals(warning.Severity, "Information", StringComparison.OrdinalIgnoreCase))
+            ?? Enumerable.Empty<ConversionWarningView>());
     private bool CanConvert => !IsBusy && (ActiveRoute.InputKind == ConversionInputKind.File ? SelectedFile is not null : !string.IsNullOrWhiteSpace(TextInput));
     private string OutputHeading => Output?.FileName ?? $"{ActiveRoute.Target} output";
     private string ElapsedLabel => ElapsedMilliseconds < 1000 ? $"{ElapsedMilliseconds} ms" : $"{ElapsedMilliseconds / 1000d:0.0} s";
@@ -100,7 +99,6 @@ This **Markdown** becomes a browser preview or an editable Word document.
         GenerateDebugOverlay = false;
         IncludeDocumentContentInSupportBundle = false;
         Diagnostics.Clear();
-        Diagnostics.Add(ReadyDiagnostic());
         Navigation.NavigateTo($"?route={Uri.EscapeDataString(route.Id)}", replace: true);
     }
 
@@ -292,8 +290,15 @@ This **Markdown** becomes a browser preview or an editable Word document.
             ? "This document uses text that needs an embedded font not available to the browser conversion. " + ex.Message
             : ex.Message;
 
-    private static ConversionDiagnostic ReadyDiagnostic() =>
-        new("Ready", "Choose a source and run the conversion. Nothing is uploaded.", "ocx-dot--good");
+    private static IEnumerable<IGrouping<string, ConversionWarningView>> GroupWarnings(
+        IEnumerable<ConversionWarningView> warnings) =>
+        warnings
+            .GroupBy(
+                static warning => warning.PageNumber.HasValue
+                    ? $"Page {warning.PageNumber.Value} · {warning.Construct}"
+                    : $"Document · {warning.Construct}",
+                StringComparer.Ordinal)
+            .OrderBy(static group => group.Key, StringComparer.Ordinal);
 
     public async ValueTask DisposeAsync() {
         if (_interop is not null) {

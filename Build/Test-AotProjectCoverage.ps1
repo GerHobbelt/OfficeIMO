@@ -27,16 +27,8 @@ $boundedLibraries = @($referencedLibraries | Where-Object { $_ -notin $rootedLib
 
 $nativeTools = @(
     [ordered]@{
-        name = 'OfficeIMO.Markup.Cli'
-        evidence = 'Native executable starts and returns its command and export help.'
-    },
-    [ordered]@{
-        name = 'OfficeIMO.Reader.Tool'
-        evidence = 'Native executable starts and returns its read, folder, and capabilities help.'
-    },
-    [ordered]@{
-        name = 'OfficeIMO.Html.Tool'
-        evidence = 'Native executable starts and returns its conversion and renderer-capability help.'
+        name = 'OfficeIMO.Tool'
+        evidence = 'The unified native executable starts and exposes namespaced HTML, Reader, and Markup commands.'
     }
 )
 $managedOnly = @(
@@ -46,8 +38,8 @@ $managedOnly = @(
     }
 )
 
-if ($rootedLibraries.Count -ne 86) {
-    throw "Expected 86 fully rooted production libraries, found $($rootedLibraries.Count)."
+if ($rootedLibraries.Count -ne 88) {
+    throw "Expected 88 fully rooted production libraries, found $($rootedLibraries.Count)."
 }
 if ($boundedLibraries.Count -ne 1 -or $boundedLibraries[0] -ne 'OfficeIMO.GoogleWorkspace.Auth.GoogleApis') {
     throw "The bounded NativeAOT library set changed: $($boundedLibraries -join ', ')."

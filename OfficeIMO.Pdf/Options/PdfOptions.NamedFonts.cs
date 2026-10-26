@@ -30,15 +30,29 @@ public sealed partial class PdfOptions {
     /// </summary>
     public PdfOptions RegisterNamedFontFamily(PdfEmbeddedFontFamily fontFamily) {
         Guard.NotNull(fontFamily, nameof(fontFamily));
-        string key = NormalizeNamedFontFamilyKey(fontFamily.FamilyName);
-        if ((_namedFontFamilies?.Count ?? 0) >= MaximumNamedFontFamilies
-            && _namedFontFamilies?.ContainsKey(key) != true) {
+        ReleaseRenderingProfileFontOwnership(fontFamily.FamilyName);
+        if (!TryRegisterNamedFontFamily(fontFamily)) {
             throw new InvalidOperationException(
                 $"No more than {MaximumNamedFontFamilies} named font families can be registered.");
         }
+        return this;
+    }
+
+    /// <summary>
+    /// Registers or replaces a named family without throwing when the distinct-family budget is exhausted.
+    /// </summary>
+    /// <returns>True when the family was registered or replaced; otherwise false.</returns>
+    internal bool TryRegisterNamedFontFamily(PdfEmbeddedFontFamily fontFamily) {
+        Guard.NotNull(fontFamily, nameof(fontFamily));
+        string key = NormalizeNamedFontFamilyKey(fontFamily.FamilyName);
+        if ((_namedFontFamilies?.Count ?? 0) >= MaximumNamedFontFamilies
+            && _namedFontFamilies?.ContainsKey(key) != true) {
+            return false;
+        }
         (_namedFontFamilies ??= new Dictionary<string, PdfEmbeddedFontFamily>(StringComparer.Ordinal))[key] = fontFamily.Clone();
         RemoveNamedFontProgramCache(key);
-        return this;
+        MarkFontConfigurationChanged();
+        return true;
     }
 
     /// <summary>
@@ -61,11 +75,7 @@ public sealed partial class PdfOptions {
             registeredFamilyName = registered.FamilyName;
             return true;
         }
-        if ((_namedFontFamilies?.Count ?? 0) >= MaximumNamedFontFamilies) {
-            return false;
-        }
-
-        RegisterNamedFontFamily(family);
+        if (!TryRegisterNamedFontFamily(family)) return false;
         registeredFamilyName = family.FamilyName;
         return true;
     }
@@ -74,12 +84,28 @@ public sealed partial class PdfOptions {
     public bool HasNamedFontFamily(string? familyName) =>
         TryGetNamedFontFamily(familyName, out _);
 
+    internal bool TryResolveNamedOfficeFontFamily(string? familyNames, out string? registeredFamilyName) {
+        registeredFamilyName = null;
+        if (!TryGetNamedFontFamily(familyNames, out PdfEmbeddedFontFamily? family) || family == null) {
+            return false;
+        }
+
+        registeredFamilyName = family.FamilyName;
+        return true;
+    }
+
     /// <summary>Removes every embedded named family and its parsed program cache.</summary>
     public PdfOptions ClearNamedFontFamilies() {
         _namedFontFamilies?.Clear();
         _namedFontPrograms?.Clear();
         _namedOpenTypeCffFontPrograms?.Clear();
         _namedFontProgramFailures?.Clear();
+        if (_embeddedFontFallbacks?.UsesNamedFontFamilies == true) {
+            _embeddedFontFallbacks = null;
+        }
+        _renderingProfileFamilyFallbacks?.Clear();
+        _renderingProfileDeclaredFallbackCandidates = null;
+        _renderingProfileOwnedNamedFamilyNames?.Clear();
         return this;
     }
 
@@ -221,12 +247,23 @@ public sealed partial class PdfOptions {
         }
 
         foreach (string candidate in EnumerateOfficeFontFamilyCandidates(familyName!)) {
-            if (_namedFontFamilies.TryGetValue(NormalizeNamedFontFamilyKey(candidate), out family)) {
+            if (TryGetFontFamilySubstitution(candidate, out PdfFontFamilySubstitution? substitution) &&
+                substitution != null &&
+                TryGetNamedFontFamilyDirect(substitution.TargetFontFamily, out family)) {
+                return true;
+            }
+            if (TryGetNamedFontFamilyDirect(candidate, out family)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private bool TryGetNamedFontFamilyDirect(string familyName, out PdfEmbeddedFontFamily? family) {
+        family = null;
+        return _namedFontFamilies != null &&
+               _namedFontFamilies.TryGetValue(NormalizeNamedFontFamilyKey(familyName), out family);
     }
 
     internal bool TryGetNamedFontData(PdfNamedFontFace face, out byte[]? data, out string? fontName) {

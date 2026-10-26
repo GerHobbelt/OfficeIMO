@@ -10,6 +10,15 @@ public static partial class HtmlComputedStyleEngine {
     public static bool IsApplicableMedia(string mediaText, HtmlCssMediaContext mediaContext) =>
         IsApplicableMedia(mediaText, MediaEnvironment.CreateDefault(mediaContext));
 
+    internal static bool IsApplicableMedia(
+        string mediaText,
+        HtmlCssMediaContext mediaContext,
+        HtmlRenderMediaFeatures mediaFeatures) {
+        if (mediaFeatures == null) throw new ArgumentNullException(nameof(mediaFeatures));
+        mediaFeatures.Validate();
+        return IsApplicableMedia(mediaText, MediaEnvironment.CreateDefault(mediaContext, mediaFeatures));
+    }
+
     /// <summary>
     /// Evaluates whether a CSS media query list applies to a media context and surface size.
     /// </summary>
@@ -58,8 +67,63 @@ public static partial class HtmlComputedStyleEngine {
     }
 
     private static bool IsPositiveMediaQueryApplicable(string mediaQuery, string activeType, MediaEnvironment environment) {
-        return AreMediaFeaturesApplicable(mediaQuery, environment)
-            && (ContainsMediaType(mediaQuery, "all") || ContainsMediaType(mediaQuery, activeType) || !ContainsExplicitMediaType(mediaQuery));
+        bool anyBranchApplies = false;
+        foreach (string branch in SplitTopLevelMediaOrBranches(mediaQuery)) {
+            if (branch.Length == 0) return false;
+            if (AreMediaFeaturesApplicable(branch, environment)
+                && (ContainsMediaType(branch, "all") || ContainsMediaType(branch, activeType) || !ContainsExplicitMediaType(branch))) {
+                anyBranchApplies = true;
+            }
+        }
+
+        return anyBranchApplies;
+    }
+
+    private static IEnumerable<string> SplitTopLevelMediaOrBranches(string mediaQuery) {
+        int depth = 0;
+        char quote = '\0';
+        int start = 0;
+        for (int index = 0; index < mediaQuery.Length; index++) {
+            char current = mediaQuery[index];
+            if (quote != '\0') {
+                if (current == quote && !IsEscaped(mediaQuery, index)) quote = '\0';
+                continue;
+            }
+
+            if (current == '\'' || current == '"') {
+                quote = current;
+                continue;
+            }
+            if (current == '(') {
+                depth++;
+                continue;
+            }
+            if (current == ')') {
+                if (depth > 0) depth--;
+                continue;
+            }
+            if (depth != 0 || !IsMediaLogicalOperatorAt(mediaQuery, index, "or")) continue;
+
+            yield return mediaQuery.Substring(start, index - start).Trim();
+            index++;
+            start = index + 1;
+        }
+
+        yield return mediaQuery.Substring(start).Trim();
+    }
+
+    private static bool IsMediaLogicalOperatorAt(string mediaQuery, int index, string logicalOperator) {
+        if (index < 0
+            || index + logicalOperator.Length > mediaQuery.Length
+            || !string.Equals(mediaQuery.Substring(index, logicalOperator.Length), logicalOperator, StringComparison.OrdinalIgnoreCase)
+            || IsEscaped(mediaQuery, index)) {
+            return false;
+        }
+
+        int before = index - 1;
+        int after = index + logicalOperator.Length;
+        return (before < 0 || !IsIdentifierCharacter(mediaQuery[before]))
+            && (after >= mediaQuery.Length || !IsIdentifierCharacter(mediaQuery[after]));
     }
 
     private static bool ContainsMediaType(string mediaQuery, string mediaType) {
@@ -119,11 +183,22 @@ public static partial class HtmlComputedStyleEngine {
 
             foundFeature = true;
             string feature = mediaQuery.Substring(open + 1, close - open - 1).Trim().ToLowerInvariant();
-            if (!IsMediaFeatureApplicable(feature, environment)) return false;
+            bool negated = IsTrailingMediaNotOperator(mediaQuery, index, open);
+            if (IsMediaFeatureApplicable(feature, environment) == negated) return false;
             index = close + 1;
         }
 
         return foundFeature || !HasMediaFeatureConstraint(mediaQuery);
+    }
+
+    private static bool IsTrailingMediaNotOperator(string mediaQuery, int start, int end) {
+        int cursor = end - 1;
+        while (cursor >= start && char.IsWhiteSpace(mediaQuery[cursor])) cursor--;
+        int tokenEnd = cursor + 1;
+        while (cursor >= start && IsIdentifierCharacter(mediaQuery[cursor])) cursor--;
+        int tokenStart = cursor + 1;
+        return tokenEnd - tokenStart == 3
+            && IsMediaLogicalOperatorAt(mediaQuery, tokenStart, "not");
     }
 
     private static bool IsMediaFeatureApplicable(string feature, MediaEnvironment environment) {
@@ -232,14 +307,14 @@ public static partial class HtmlComputedStyleEngine {
             return true;
         }
         string value = feature.Substring(colon + 1).Trim();
-        int unitStart = 0;
-        while (unitStart < value.Length
-               && (char.IsDigit(value[unitStart]) || value[unitStart] == '.' || value[unitStart] == '+' || value[unitStart] == '-')) {
-            unitStart++;
-        }
-        if (unitStart == 0
-            || !double.TryParse(value.Substring(0, unitStart), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
-            || parsed < 0D) {
+        int unitStart = value.Length;
+        while (unitStart > 0 && char.IsLetter(value[unitStart - 1])) unitStart--;
+        string number = value.Substring(0, unitStart).Trim();
+        if (number.Length == 0
+            || !double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            || parsed < 0D
+            || double.IsNaN(parsed)
+            || double.IsInfinity(parsed)) {
             return true;
         }
         string unit = value.Substring(unitStart).Trim();
@@ -326,6 +401,13 @@ public static partial class HtmlComputedStyleEngine {
             }
         }
         if (!hasDigit) return false;
+        if (cursor < value.Length && (value[cursor] == 'e' || value[cursor] == 'E')) {
+            cursor++;
+            if (cursor < value.Length && (value[cursor] == '+' || value[cursor] == '-')) cursor++;
+            int exponentStart = cursor;
+            while (cursor < value.Length && char.IsDigit(value[cursor])) cursor++;
+            if (cursor == exponentStart) return false;
+        }
 
         string number = value.Substring(0, cursor);
         string unit = value.Substring(cursor).Trim().ToLowerInvariant();
@@ -374,15 +456,18 @@ public static partial class HtmlComputedStyleEngine {
         internal double Height { get; }
         internal HtmlRenderMediaFeatures Features { get; }
 
-        internal static MediaEnvironment CreateDefault(HtmlCssMediaContext context) {
+        internal static MediaEnvironment CreateDefault(
+            HtmlCssMediaContext context,
+            HtmlRenderMediaFeatures? features = null) {
             if (context == HtmlCssMediaContext.Print) {
                 return new MediaEnvironment(
                     context,
                     OfficePageSizes.A4.WidthInches * HtmlRenderOptions.CssPixelsPerInch,
-                    OfficePageSizes.A4.HeightInches * HtmlRenderOptions.CssPixelsPerInch);
+                    OfficePageSizes.A4.HeightInches * HtmlRenderOptions.CssPixelsPerInch,
+                    features);
             }
 
-            return new MediaEnvironment(context, 816D, 1056D);
+            return new MediaEnvironment(context, 816D, 1056D, features);
         }
     }
 }

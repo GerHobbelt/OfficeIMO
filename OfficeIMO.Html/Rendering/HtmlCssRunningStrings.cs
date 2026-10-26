@@ -4,18 +4,29 @@ using AngleSharp.Dom;
 namespace OfficeIMO.Html;
 
 internal sealed class HtmlCssRunningStringAssignment {
-    internal HtmlCssRunningStringAssignment(string name, string value, double offset) {
+    internal HtmlCssRunningStringAssignment(
+        string name,
+        string value,
+        double offset,
+        double? orderOffset = null) {
         Name = name;
         Value = value;
         Offset = offset;
+        OrderOffset = orderOffset ?? offset;
     }
 
     internal string Name { get; }
     internal string Value { get; }
+    /// <summary>Visual block offset used for fragmentation and page placement.</summary>
     internal double Offset { get; }
+    /// <summary>Monotonic document-flow offset used to resolve first and last assignments.</summary>
+    internal double OrderOffset { get; }
 
     internal HtmlCssRunningStringAssignment Translate(double offset) =>
-        new HtmlCssRunningStringAssignment(Name, Value, Offset + offset);
+        new HtmlCssRunningStringAssignment(Name, Value, Offset + offset, OrderOffset + offset);
+
+    internal HtmlCssRunningStringAssignment Place(double offset, double orderOffset) =>
+        new HtmlCssRunningStringAssignment(Name, Value, offset, orderOffset);
 }
 
 internal sealed class HtmlCssRunningStringPageContext {
@@ -64,6 +75,7 @@ internal static class HtmlCssRunningStringParser {
         string? declaration,
         int maximumValueCharacters,
         Action<long> chargeOperations,
+        Func<IElement, int, Action<long>, string?> resolveContentText,
         out bool limitExceeded) {
         limitExceeded = false;
         if (string.IsNullOrWhiteSpace(declaration)) {
@@ -77,7 +89,7 @@ internal static class HtmlCssRunningStringParser {
         foreach (string item in HtmlRenderCssValues.SplitTopLevelCommas(declaration!)) {
             int cursor = 0;
             SkipWhitespace(item, ref cursor);
-            if (!TryReadIdentifier(item, ref cursor, out string name)) continue;
+            if (!HtmlCssIdentifierParser.TryRead(item, ref cursor, out string name)) continue;
             SkipWhitespace(item, ref cursor);
             if (cursor >= item.Length) continue;
             if (!TryResolveContentList(
@@ -86,6 +98,7 @@ internal static class HtmlCssRunningStringParser {
                 ref cursor,
                 maximumValueCharacters,
                 chargeOperations,
+                resolveContentText,
                 out string value,
                 out bool itemLimitExceeded)) {
                 limitExceeded |= itemLimitExceeded;
@@ -107,6 +120,7 @@ internal static class HtmlCssRunningStringParser {
         ref int cursor,
         int maximumValueCharacters,
         Action<long> chargeOperations,
+        Func<IElement, int, Action<long>, string?> resolveContentText,
         out string value,
         out bool limitExceeded) {
         var result = new StringBuilder();
@@ -141,11 +155,11 @@ internal static class HtmlCssRunningStringParser {
                     value = string.Empty;
                     return false;
                 }
-                if (!TryAppendNormalizedElementText(
+                string? content = resolveContentText(
                     element,
-                    result,
-                    maximumValueCharacters,
-                    chargeOperations)) {
+                    maximumValueCharacters - result.Length,
+                    chargeOperations);
+                if (content == null || !TryAppendBounded(result, content, maximumValueCharacters)) {
                     value = string.Empty;
                     limitExceeded = true;
                     return false;
@@ -155,8 +169,8 @@ internal static class HtmlCssRunningStringParser {
             }
 
             if (TryReadFunction(text, ref cursor, "attr", out string attributeName)
-                && IsIdentifier(attributeName.Trim())) {
-                string attributeValue = element.GetAttribute(attributeName.Trim()) ?? string.Empty;
+                && HtmlCssIdentifierParser.TryParse(attributeName.Trim(), out string decodedAttributeName)) {
+                string attributeValue = element.GetAttribute(decodedAttributeName) ?? string.Empty;
                 chargeOperations(attributeValue.Length);
                 if (!TryAppendBounded(
                     result,
@@ -178,50 +192,6 @@ internal static class HtmlCssRunningStringParser {
         return found;
     }
 
-    private static bool TryAppendNormalizedElementText(
-        IElement element,
-        StringBuilder result,
-        int maximumValueCharacters,
-        Action<long> chargeOperations) {
-        var pending = new Stack<INode>();
-        for (int index = element.ChildNodes.Length - 1; index >= 0; index--) {
-            pending.Push(element.ChildNodes[index]);
-        }
-        bool whitespace = false;
-        int pendingCharge = 0;
-        while (pending.Count > 0) {
-            INode node = pending.Pop();
-            chargeOperations(1L);
-            if (node is IText textNode) {
-                foreach (char current in textNode.Data) {
-                    pendingCharge++;
-                    if (pendingCharge == 256) {
-                        chargeOperations(pendingCharge);
-                        pendingCharge = 0;
-                    }
-                    if (char.IsWhiteSpace(current)) {
-                        whitespace = result.Length > 0;
-                        continue;
-                    }
-                    int required = whitespace ? 2 : 1;
-                    if (result.Length > maximumValueCharacters - required) {
-                        if (pendingCharge > 0) chargeOperations(pendingCharge);
-                        return false;
-                    }
-                    if (whitespace) result.Append(' ');
-                    result.Append(current);
-                    whitespace = false;
-                }
-            } else {
-                for (int index = node.ChildNodes.Length - 1; index >= 0; index--) {
-                    pending.Push(node.ChildNodes[index]);
-                }
-            }
-        }
-        if (pendingCharge > 0) chargeOperations(pendingCharge);
-        return true;
-    }
-
     private static bool TryAppendBounded(StringBuilder result, string value, int maximumValueCharacters) {
         if (value.Length > maximumValueCharacters - result.Length) return false;
         result.Append(value);
@@ -234,15 +204,14 @@ internal static class HtmlCssRunningStringParser {
         if (cursor + name.Length + 2 > text.Length
             || !string.Equals(text.Substring(cursor, name.Length), name, StringComparison.OrdinalIgnoreCase)
             || text[cursor + name.Length] != '(') return false;
-        cursor += name.Length + 1;
-        int argumentStart = cursor;
-        while (cursor < text.Length && text[cursor] != ')') cursor++;
-        if (cursor >= text.Length) {
+        int open = cursor + name.Length;
+        int close = HtmlRenderCssValues.FindMatchingParenthesis(text, open);
+        if (close < 0) {
             cursor = start;
             return false;
         }
-        argument = text.Substring(argumentStart, cursor - argumentStart);
-        cursor++;
+        argument = text.Substring(open + 1, close - open - 1);
+        cursor = close + 1;
         return true;
     }
 
@@ -262,41 +231,32 @@ internal static class HtmlCssRunningStringParser {
                 value = result.ToString();
                 return true;
             }
-            if (current == '\\' && cursor < text.Length) current = text[cursor++];
+            if (current == '\\') {
+                int backslashIndex = cursor - 1;
+                HtmlCssEscapeDecoder.TryDecodeEscape(
+                    text,
+                    backslashIndex,
+                    out string decoded,
+                    out int consumedCharacters);
+                cursor = backslashIndex + consumedCharacters;
+                chargeOperations(consumedCharacters);
+                if (!TryAppendBounded(result, decoded, maximumCharacters)) {
+                    value = string.Empty;
+                    limitExceeded = true;
+                    return false;
+                }
+                continue;
+            }
             chargeOperations(1L);
-            if (result.Length >= maximumCharacters) {
+            if (!TryAppendBounded(result, current.ToString(), maximumCharacters)) {
                 value = string.Empty;
                 limitExceeded = true;
                 return false;
             }
-            result.Append(current);
         }
         value = string.Empty;
         return false;
     }
-
-    private static bool TryReadIdentifier(string text, ref int cursor, out string value) {
-        int start = cursor;
-        if (cursor >= text.Length || !IsIdentifierStart(text[cursor])) {
-            value = string.Empty;
-            return false;
-        }
-        cursor++;
-        while (cursor < text.Length && IsIdentifierCharacter(text[cursor])) cursor++;
-        value = text.Substring(start, cursor - start);
-        return true;
-    }
-
-    private static bool IsIdentifier(string value) {
-        if (value.Length == 0 || !IsIdentifierStart(value[0])) return false;
-        for (int index = 1; index < value.Length; index++) {
-            if (!IsIdentifierCharacter(value[index])) return false;
-        }
-        return true;
-    }
-
-    private static bool IsIdentifierStart(char value) => char.IsLetter(value) || value == '_' || value == '-';
-    private static bool IsIdentifierCharacter(char value) => char.IsLetterOrDigit(value) || value == '_' || value == '-';
 
     private static void SkipWhitespace(string text, ref int cursor) {
         while (cursor < text.Length && char.IsWhiteSpace(text[cursor])) cursor++;

@@ -2,27 +2,27 @@
   "schemaVersion": 1,
   "format": "officeimo.documentation-catalog",
   "repository": {
-    "projectCount": 149,
+    "projectCount": 150,
     "productionComponentCount": 91,
-    "testProjectCount": 30,
+    "testProjectCount": 31,
     "benchmarkProjectCount": 12,
     "validationProjectCount": 17,
     "apiReferenceCount": 17,
-    "conceptualPageCount": 89,
-    "conceptualWordCount": 35792
+    "conceptualPageCount": 96,
+    "conceptualWordCount": 39800
   },
   "categories": [
     {
       "name": "Extraction and ingestion",
-      "componentCount": 28
+      "componentCount": 27
     },
     {
       "name": "Formats and interoperability",
-      "componentCount": 11
+      "componentCount": 13
     },
     {
       "name": "Foundations and integrations",
-      "componentCount": 12
+      "componentCount": 11
     },
     {
       "name": "Google Workspace",
@@ -34,11 +34,15 @@
     },
     {
       "name": "Publishing and conversion",
-      "componentCount": 16
+      "componentCount": 15
     },
     {
       "name": "Rendering surfaces",
       "componentCount": 3
+    },
+    {
+      "name": "Specialized components",
+      "componentCount": 1
     }
   ],
   "components": [
@@ -114,7 +118,7 @@
       "description": "A fluent, strongly-typed CSV document model for OfficeIMO.",
       "kind": "package",
       "projectPath": "OfficeIMO.CSV/OfficeIMO.CSV.csproj",
-      "sourceFileCount": 60,
+      "sourceFileCount": 61,
       "referencingTestProjectCount": 1,
       "docsUrl": "/docs/csv/",
       "apiUrl": "/api/csv/",
@@ -127,8 +131,8 @@
       "description": "Shared zero-dependency document, drawing, color, image, and font primitives for OfficeIMO projects.",
       "kind": "package",
       "projectPath": "OfficeIMO.Drawing/OfficeIMO.Drawing.csproj",
-      "sourceFileCount": 316,
-      "referencingTestProjectCount": 10,
+      "sourceFileCount": 323,
+      "referencingTestProjectCount": 11,
       "docsUrl": "/docs/capabilities/packages/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Drawing"
@@ -153,7 +157,7 @@
       "description": "Optional HarfBuzz text-shaping provider for OfficeIMO.Drawing and OfficeIMO.Pdf.",
       "kind": "package",
       "projectPath": "OfficeIMO.Drawing.HarfBuzz/OfficeIMO.Drawing.HarfBuzz.csproj",
-      "sourceFileCount": 1,
+      "sourceFileCount": 2,
       "referencingTestProjectCount": 1,
       "docsUrl": "/docs/capabilities/packages/",
       "apiUrl": null,
@@ -166,7 +170,7 @@
       "description": "Managed email and Outlook data engine for EML, MSG/OFT, TNEF, ICS, vCard, Mbox, PST/OST, OLM, EMLX, Maildir, and Offline Address Book artifacts.",
       "kind": "package",
       "projectPath": "OfficeIMO.Email/OfficeIMO.Email.csproj",
-      "sourceFileCount": 398,
+      "sourceFileCount": 400,
       "referencingTestProjectCount": 3,
       "docsUrl": "/docs/email/",
       "apiUrl": "/api/email/",
@@ -202,10 +206,10 @@
       "name": "OfficeIMO.Excel",
       "packageId": "OfficeIMO.Excel",
       "category": "Office documents",
-      "description": "An Open Source cross-platform .NET library providing an easy way to create\n            Excel documents.",
+      "description": "Open-source, cross-platform .NET library for creating, reading, editing, and converting Microsoft Excel XLS, XLSX, XLSB, XLSM, and XLTX workbooks without Microsoft Office; legacy XLT templates are supported for classification and import.",
       "kind": "package",
       "projectPath": "OfficeIMO.Excel/OfficeIMO.Excel.csproj",
-      "sourceFileCount": 876,
+      "sourceFileCount": 900,
       "referencingTestProjectCount": 8,
       "docsUrl": "/docs/excel/",
       "apiUrl": "/api/excel/",
@@ -257,7 +261,7 @@
       "description": "PDF converter for OfficeIMO.Excel - Export Excel workbooks to PDF using the first-party OfficeIMO.Pdf engine.",
       "kind": "package",
       "projectPath": "OfficeIMO.Excel.Pdf/OfficeIMO.Excel.Pdf.csproj",
-      "sourceFileCount": 22,
+      "sourceFileCount": 23,
       "referencingTestProjectCount": 3,
       "docsUrl": "/docs/excel/",
       "apiUrl": null,
@@ -322,8 +326,8 @@
       "description": "Shared HTML and MHTML parsing, resource policy, layout, diagnostics, and direct rendering for OfficeIMO converters.",
       "kind": "package",
       "projectPath": "OfficeIMO.Html/OfficeIMO.Html.csproj",
-      "sourceFileCount": 326,
-      "referencingTestProjectCount": 5,
+      "sourceFileCount": 329,
+      "referencingTestProjectCount": 6,
       "docsUrl": "/docs/html/",
       "apiUrl": "/api/html/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Html"
@@ -336,23 +340,10 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Html.Pdf/OfficeIMO.Html.Pdf.csproj",
       "sourceFileCount": 18,
-      "referencingTestProjectCount": 3,
+      "referencingTestProjectCount": 4,
       "docsUrl": "/docs/html/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Html.Pdf"
-    },
-    {
-      "name": "OfficeIMO.Html.Tool",
-      "packageId": "OfficeIMO.Html.Tool",
-      "category": "Publishing and conversion",
-      "description": "Dependency-bounded command-line HTML and MHTML to PDF conversion using OfficeIMO.",
-      "kind": "tool",
-      "projectPath": "OfficeIMO.Html.Tool/OfficeIMO.Html.Tool.csproj",
-      "sourceFileCount": 3,
-      "referencingTestProjectCount": 1,
-      "docsUrl": "/docs/html/",
-      "apiUrl": null,
-      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Html.Tool"
     },
     {
       "name": "OfficeIMO.Latex",
@@ -485,19 +476,6 @@
       "packageUrl": null
     },
     {
-      "name": "OfficeIMO.Markup.Cli",
-      "packageId": "OfficeIMO.Markup.Cli",
-      "category": "Foundations and integrations",
-      "description": "Command-line tooling for OfficeIMO Markup parsing, validation, preview JSON, and code emission.",
-      "kind": "tool",
-      "projectPath": "OfficeIMO.Markup.Cli/OfficeIMO.Markup.Cli.csproj",
-      "sourceFileCount": 1,
-      "referencingTestProjectCount": 0,
-      "docsUrl": "/docs/capabilities/packages/",
-      "apiUrl": null,
-      "packageUrl": null
-    },
-    {
       "name": "OfficeIMO.Markup.Excel",
       "packageId": "OfficeIMO.Markup.Excel",
       "category": "Foundations and integrations",
@@ -602,17 +580,43 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OpenDocument"
     },
     {
-      "name": "OfficeIMO.OpenDocument.Pdf",
-      "packageId": "OfficeIMO.OpenDocument.Pdf",
+      "name": "OfficeIMO.OpenDocument.Odp.Pdf",
+      "packageId": "OfficeIMO.OpenDocument.Odp.Pdf",
       "category": "Formats and interoperability",
-      "description": "Direct loss-aware OpenDocument text, spreadsheet, and presentation to PDF adapters.",
+      "description": "Bidirectional, loss-aware ODP and PDF conversion through the PowerPoint semantic engine.",
       "kind": "package",
-      "projectPath": "OfficeIMO.OpenDocument.Pdf/OfficeIMO.OpenDocument.Pdf.csproj",
-      "sourceFileCount": 4,
-      "referencingTestProjectCount": 1,
+      "projectPath": "OfficeIMO.OpenDocument.Odp.Pdf/OfficeIMO.OpenDocument.Odp.Pdf.csproj",
+      "sourceFileCount": 2,
+      "referencingTestProjectCount": 2,
       "docsUrl": "/docs/open-document/",
       "apiUrl": null,
-      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OpenDocument.Pdf"
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OpenDocument.Odp.Pdf"
+    },
+    {
+      "name": "OfficeIMO.OpenDocument.Ods.Pdf",
+      "packageId": "OfficeIMO.OpenDocument.Ods.Pdf",
+      "category": "Formats and interoperability",
+      "description": "Bidirectional, loss-aware ODS and PDF conversion through the Excel semantic engine.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.OpenDocument.Ods.Pdf/OfficeIMO.OpenDocument.Ods.Pdf.csproj",
+      "sourceFileCount": 2,
+      "referencingTestProjectCount": 2,
+      "docsUrl": "/docs/open-document/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OpenDocument.Ods.Pdf"
+    },
+    {
+      "name": "OfficeIMO.OpenDocument.Odt.Pdf",
+      "packageId": "OfficeIMO.OpenDocument.Odt.Pdf",
+      "category": "Formats and interoperability",
+      "description": "Bidirectional, loss-aware ODT and PDF conversion through the Word semantic engine.",
+      "kind": "package",
+      "projectPath": "OfficeIMO.OpenDocument.Odt.Pdf/OfficeIMO.OpenDocument.Odt.Pdf.csproj",
+      "sourceFileCount": 2,
+      "referencingTestProjectCount": 2,
+      "docsUrl": "/docs/open-document/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.OpenDocument.Odt.Pdf"
     },
     {
       "name": "OfficeIMO.Pdf",
@@ -621,8 +625,8 @@
       "description": "First-party PDF builder, reader, editor, renderer, and signature workflow for .NET.",
       "kind": "package",
       "projectPath": "OfficeIMO.Pdf/OfficeIMO.Pdf.csproj",
-      "sourceFileCount": 925,
-      "referencingTestProjectCount": 9,
+      "sourceFileCount": 929,
+      "referencingTestProjectCount": 10,
       "docsUrl": "/docs/pdf/",
       "apiUrl": "/api/pdf/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Pdf"
@@ -631,10 +635,10 @@
       "name": "OfficeIMO.PowerPoint",
       "packageId": "OfficeIMO.PowerPoint",
       "category": "Office documents",
-      "description": "An Open Source cross-platform .NET library for creating, reading, editing,\n            and writing Microsoft PowerPoint PPTX/PPTM and PPT/POT/PPS presentations.",
+      "description": "Open-source, cross-platform .NET library for creating, reading, editing, and converting Microsoft PowerPoint PPT, PPTX, PPTM, POT, PPS, and related presentations without Microsoft Office.",
       "kind": "package",
       "projectPath": "OfficeIMO.PowerPoint/OfficeIMO.PowerPoint.csproj",
-      "sourceFileCount": 434,
+      "sourceFileCount": 439,
       "referencingTestProjectCount": 7,
       "docsUrl": "/docs/powerpoint/",
       "apiUrl": "/api/powerpoint/",
@@ -660,7 +664,7 @@
       "description": "HTML converter for OfficeIMO.PowerPoint - Export presentations to semantic or positioned review HTML.",
       "kind": "package",
       "projectPath": "OfficeIMO.PowerPoint.Html/OfficeIMO.PowerPoint.Html.csproj",
-      "sourceFileCount": 14,
+      "sourceFileCount": 15,
       "referencingTestProjectCount": 3,
       "docsUrl": "/docs/powerpoint/",
       "apiUrl": null,
@@ -726,7 +730,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Reader.Core/OfficeIMO.Reader.Core.csproj",
       "sourceFileCount": 111,
-      "referencingTestProjectCount": 4,
+      "referencingTestProjectCount": 5,
       "docsUrl": "/docs/reader/",
       "apiUrl": "/api/reader/",
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Core"
@@ -843,7 +847,7 @@
       "kind": "package",
       "projectPath": "OfficeIMO.Reader.Markdown/OfficeIMO.Reader.Markdown.csproj",
       "sourceFileCount": 3,
-      "referencingTestProjectCount": 1,
+      "referencingTestProjectCount": 2,
       "docsUrl": "/docs/reader/",
       "apiUrl": null,
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Markdown"
@@ -966,19 +970,6 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Subtitles"
     },
     {
-      "name": "OfficeIMO.Reader.Tool",
-      "packageId": "OfficeIMO.Reader.Tool",
-      "category": "Extraction and ingestion",
-      "description": "Dependency-bounded command-line tool for OfficeIMO.Reader document extraction.",
-      "kind": "tool",
-      "projectPath": "OfficeIMO.Reader.Tool/OfficeIMO.Reader.Tool.csproj",
-      "sourceFileCount": 7,
-      "referencingTestProjectCount": 1,
-      "docsUrl": "/docs/reader/",
-      "apiUrl": null,
-      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Reader.Tool"
-    },
-    {
       "name": "OfficeIMO.Reader.Visio",
       "packageId": "OfficeIMO.Reader.Visio",
       "category": "Extraction and ingestion",
@@ -1089,7 +1080,7 @@
       "description": "Bidirectional semantic RTF/PDF converter with shared fidelity diagnostics and managed image handling.",
       "kind": "package",
       "projectPath": "OfficeIMO.Rtf.Pdf/OfficeIMO.Rtf.Pdf.csproj",
-      "sourceFileCount": 13,
+      "sourceFileCount": 14,
       "referencingTestProjectCount": 3,
       "docsUrl": "/docs/rtf/",
       "apiUrl": null,
@@ -1109,6 +1100,19 @@
       "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Security"
     },
     {
+      "name": "OfficeIMO.Tool",
+      "packageId": "OfficeIMO.Tool",
+      "category": "Specialized components",
+      "description": "Unified command-line interface for OfficeIMO document conversion, extraction, markup, and capability discovery.",
+      "kind": "tool",
+      "projectPath": "OfficeIMO.Tool/OfficeIMO.Tool.csproj",
+      "sourceFileCount": 27,
+      "referencingTestProjectCount": 1,
+      "docsUrl": "/docs/capabilities/packages/",
+      "apiUrl": null,
+      "packageUrl": "https://www.nuget.org/packages/OfficeIMO.Tool"
+    },
+    {
       "name": "OfficeIMO.Visio",
       "packageId": "OfficeIMO.Visio",
       "category": "Formats and interoperability",
@@ -1125,10 +1129,10 @@
       "name": "OfficeIMO.Word",
       "packageId": "OfficeIMO.Word",
       "category": "Office documents",
-      "description": "An Open Source cross-platform .NET library providing an easy way to create\n            Microsoft Word (DocX) documents.",
+      "description": "Open-source, cross-platform .NET library for creating, reading, editing, and converting Microsoft Word DOC, DOCX, DOCM, DOT, DOTX, and DOTM documents without Microsoft Office.",
       "kind": "package",
       "projectPath": "OfficeIMO.Word/OfficeIMO.Word.csproj",
-      "sourceFileCount": 612,
+      "sourceFileCount": 614,
       "referencingTestProjectCount": 11,
       "docsUrl": "/docs/word/",
       "apiUrl": "/api/word/",
@@ -1154,7 +1158,7 @@
       "description": "HTML converter for OfficeIMO.Word - Convert Word documents to/from HTML using AngleSharp",
       "kind": "package",
       "projectPath": "OfficeIMO.Word.Html/OfficeIMO.Word.Html.csproj",
-      "sourceFileCount": 53,
+      "sourceFileCount": 64,
       "referencingTestProjectCount": 3,
       "docsUrl": "/docs/word/",
       "apiUrl": null,

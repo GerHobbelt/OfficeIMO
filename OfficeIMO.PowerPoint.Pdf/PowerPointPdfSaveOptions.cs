@@ -18,9 +18,25 @@ public enum PowerPointPdfPageLayout {
 /// </summary>
 public sealed class PowerPointPdfSaveOptions {
     private int _handoutSlidesPerPage = 6;
+    private PdfCore.PdfOptions? _pdfOptions;
+    private bool _pdfOptionsCreatedByRenderingProfile;
+    private long? _renderingProfileFontConfigurationState;
     private PdfCore.PdfResourcePolicy _resourcePolicy = PdfCore.PdfResourcePolicy.CreateDefault();
     /// <summary>PDF creation options passed to the first-party PDF engine.</summary>
-    public PdfCore.PdfOptions? PdfOptions { get; set; }
+    public PdfCore.PdfOptions? PdfOptions {
+        get => _pdfOptions;
+        set {
+            _pdfOptions = value;
+            _pdfOptionsCreatedByRenderingProfile = false;
+            _renderingProfileFontConfigurationState = null;
+        }
+    }
+
+    internal bool HasExplicitPdfFontConfiguration =>
+        _pdfOptions != null
+        && (!_renderingProfileFontConfigurationState.HasValue
+            || _pdfOptions.FontConfigurationState
+                != _renderingProfileFontConfigurationState.Value);
 
     /// <summary>Optional PowerPoint-style font family used as the first-party PDF default font.</summary>
     public string? FontFamily { get; set; }
@@ -104,6 +120,43 @@ public sealed class PowerPointPdfSaveOptions {
 
     /// <summary>Optional shared chart layout applied to supported slide chart snapshots.</summary>
     public DrawingCore.OfficeChartLayout? ChartLayout { get; set; }
+
+    /// <summary>
+    /// Applies shared deterministic typography resources to the first-party PDF engine.
+    /// Slide composition and feature switches remain owned by this converter.
+    /// </summary>
+    public PowerPointPdfSaveOptions UseRenderingProfile(
+        DrawingCore.OfficeRenderingProfile profile,
+        DrawingCore.OfficeRenderingProfileApplyMode mode = DrawingCore.OfficeRenderingProfileApplyMode.Replace) {
+        if (profile == null) {
+            throw new ArgumentNullException(nameof(profile));
+        }
+        if (mode != DrawingCore.OfficeRenderingProfileApplyMode.Replace
+            && mode != DrawingCore.OfficeRenderingProfileApplyMode.Overlay) {
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+
+        bool createdPdfOptions = _pdfOptions == null;
+        bool profileOwnsCurrentFontConfiguration =
+            _pdfOptions != null
+            && _renderingProfileFontConfigurationState.HasValue
+            && _pdfOptions.FontConfigurationState
+                == _renderingProfileFontConfigurationState.Value;
+        PdfCore.PdfOptions target = _pdfOptions ?? new PdfCore.PdfOptions();
+        target.UseRenderingProfile(profile, mode);
+        if (createdPdfOptions) {
+            _pdfOptions = target;
+            _pdfOptionsCreatedByRenderingProfile = true;
+        }
+        _renderingProfileFontConfigurationState =
+            profile.Fonts.Faces.Count == 0
+            && _pdfOptionsCreatedByRenderingProfile
+            && (mode == DrawingCore.OfficeRenderingProfileApplyMode.Replace
+                || profileOwnsCurrentFontConfiguration)
+                ? target.FontConfigurationState
+                : null;
+        return this;
+    }
 
     /// <summary>
     /// Applies a high-level export profile by setting the PowerPoint PDF options that correspond to that profile.

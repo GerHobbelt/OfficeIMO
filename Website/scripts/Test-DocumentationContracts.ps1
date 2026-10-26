@@ -279,13 +279,13 @@ if ($catalog.repository.productionComponentCount -ne @($catalog.components).Coun
     Add-Failure 'The OfficeIMO component summary does not match the generated component list.'
 }
 $expectedRepositoryCounts = [ordered]@{
-    projectCount = 149
+    projectCount = 150
     productionComponentCount = 91
-    testProjectCount = 30
+    testProjectCount = 31
     benchmarkProjectCount = 12
     validationProjectCount = 17
     apiReferenceCount = 17
-    conceptualPageCount = 89
+    conceptualPageCount = 96
 }
 foreach ($expectedCount in $expectedRepositoryCounts.GetEnumerator()) {
     $actual = [int] $catalog.repository.($expectedCount.Key)
@@ -315,9 +315,9 @@ if ($aotMatrix.summary.productionProjectCount -ne $catalog.repository.production
 if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 90) {
     Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 90."
 }
-if ($aotMatrix.summary.fullyRootedLibraryCount -ne 86 -or
+if ($aotMatrix.summary.fullyRootedLibraryCount -ne 88 -or
     $aotMatrix.summary.boundedWorkflowLibraryCount -ne 1 -or
-    $aotMatrix.summary.nativeExecutableCount -ne 3 -or
+    $aotMatrix.summary.nativeExecutableCount -ne 1 -or
     $aotMatrix.summary.managedWindowsProjectCount -ne 1) {
     Add-Failure 'The NativeAOT classification totals changed without updating the customer-facing contract.'
 }
@@ -327,14 +327,14 @@ if (@($aotMatrix.components).Count -ne $catalog.repository.productionComponentCo
 
 $powerShellCatalogPath = Join-Path $SiteRoot 'data\pswriteoffice_command_catalog.json'
 $powerShellCatalog = Get-Content -LiteralPath $powerShellCatalogPath -Raw | ConvertFrom-Json
-if ($powerShellCatalog.module.commandCount -ne 464) {
-    Add-Failure "The PSWriteOffice snapshot has $($powerShellCatalog.module.commandCount) commands; expected the authoritative 464-command surface."
+if ($powerShellCatalog.module.commandCount -ne 477) {
+    Add-Failure "The PSWriteOffice snapshot has $($powerShellCatalog.module.commandCount) commands; expected the authoritative 477-command surface."
 }
 if ((@($powerShellCatalog.families | Measure-Object commandCount -Sum).Sum) -ne $powerShellCatalog.module.commandCount) {
     Add-Failure 'The PSWriteOffice family totals do not cover each command exactly once.'
 }
-if ($powerShellCatalog.module.aliasCount -ne 354) {
-    Add-Failure "The PSWriteOffice snapshot has $($powerShellCatalog.module.aliasCount) aliases; expected 354."
+if ($powerShellCatalog.module.aliasCount -ne 360) {
+    Add-Failure "The PSWriteOffice snapshot has $($powerShellCatalog.module.aliasCount) aliases; expected 360."
 }
 
 if ($failures.Count -gt 0) {

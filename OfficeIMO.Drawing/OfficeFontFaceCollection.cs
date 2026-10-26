@@ -12,14 +12,22 @@ namespace OfficeIMO.Drawing;
 public sealed class OfficeFontFaceCollection {
     private readonly List<OfficeFontFace> _faces = new List<OfficeFontFace>();
     private readonly ReadOnlyCollection<OfficeFontFace> _facesView;
+    private readonly List<string> _fallbackFamilies = new List<string>();
+    private readonly ReadOnlyCollection<string> _fallbackFamiliesView;
 
     /// <summary>Creates an empty scoped font collection.</summary>
     public OfficeFontFaceCollection() {
         _facesView = new ReadOnlyCollection<OfficeFontFace>(_faces);
+        _fallbackFamiliesView = new ReadOnlyCollection<string>(_fallbackFamilies);
     }
 
     /// <summary>Registered faces in registration order.</summary>
     public IReadOnlyList<OfficeFontFace> Faces => _facesView;
+
+    /// <summary>
+    /// Registered fallback families considered after the families requested by a text run.
+    /// </summary>
+    public IReadOnlyList<string> FallbackFamilies => _fallbackFamiliesView;
 
     /// <summary>Adds or replaces one family/style face. Invalid or unsupported font bytes throw.</summary>
     public OfficeFontFaceCollection Add(string familyName, byte[] data, OfficeFontStyle style = OfficeFontStyle.Regular) {
@@ -48,6 +56,86 @@ public sealed class OfficeFontFaceCollection {
             throw new ArgumentException("The supplied bytes are not a supported TrueType outline font container.", nameof(data));
         }
 
+        return this;
+    }
+
+    /// <summary>
+    /// Adds another family name for all faces already registered under an existing family.
+    /// The alias reuses the immutable decoded font programs without decoding or copying them again.
+    /// </summary>
+    /// <param name="aliasFamilyName">Additional family name accepted by measurement and export.</param>
+    /// <param name="sourceFamilyName">Existing family whose faces and unicode ranges are reused.</param>
+    /// <returns>This collection for fluent configuration.</returns>
+    public OfficeFontFaceCollection AddAlias(string aliasFamilyName, string sourceFamilyName) {
+        if (string.IsNullOrWhiteSpace(aliasFamilyName)) {
+            throw new ArgumentException("A font alias family name is required.", nameof(aliasFamilyName));
+        }
+        if (string.IsNullOrWhiteSpace(sourceFamilyName)) {
+            throw new ArgumentException("A source font family name is required.", nameof(sourceFamilyName));
+        }
+
+        string normalizedAlias = aliasFamilyName.Trim();
+        string normalizedSource = sourceFamilyName.Trim();
+        var sourceFaces = new List<OfficeFontFace>();
+        foreach (OfficeFontFace face in _faces) {
+            if (string.Equals(face.FamilyName, normalizedSource, StringComparison.OrdinalIgnoreCase)) {
+                sourceFaces.Add(face);
+            }
+        }
+        if (sourceFaces.Count == 0) {
+            throw new ArgumentException(
+                $"The source font family '{normalizedSource}' is not registered.",
+                nameof(sourceFamilyName));
+        }
+        if (string.Equals(normalizedAlias, normalizedSource, StringComparison.OrdinalIgnoreCase)) {
+            return this;
+        }
+
+        for (int index = _faces.Count - 1; index >= 0; index--) {
+            if (string.Equals(_faces[index].FamilyName, normalizedAlias, StringComparison.OrdinalIgnoreCase)) {
+                _faces.RemoveAt(index);
+            }
+        }
+        foreach (OfficeFontFace sourceFace in sourceFaces) {
+            string resourceFamilyName = sourceFace.UnicodeRanges.IsAll
+                ? normalizedAlias
+                : CreateResourceFamilyName(normalizedAlias, sourceFace.Style, sourceFace.UnicodeRanges);
+            _faces.Add(sourceFace.CreateAlias(normalizedAlias, resourceFamilyName));
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Appends one registered family to the fallback chain used when requested faces do not cover a text element.
+    /// </summary>
+    /// <param name="familyName">Registered family or resource family name to append.</param>
+    /// <returns>This collection for fluent configuration.</returns>
+    public OfficeFontFaceCollection AddFallbackFamily(string familyName) {
+        if (string.IsNullOrWhiteSpace(familyName)) {
+            throw new ArgumentException("A fallback font family name is required.", nameof(familyName));
+        }
+
+        string normalizedFamily = familyName.Trim();
+        bool registered = false;
+        foreach (OfficeFontFace face in _faces) {
+            if (MatchesFamily(face, normalizedFamily)) {
+                registered = true;
+                break;
+            }
+        }
+        if (!registered) {
+            throw new ArgumentException(
+                $"The fallback font family '{normalizedFamily}' is not registered.",
+                nameof(familyName));
+        }
+
+        foreach (string existing in _fallbackFamilies) {
+            if (string.Equals(existing, normalizedFamily, StringComparison.OrdinalIgnoreCase)) {
+                return this;
+            }
+        }
+        _fallbackFamilies.Add(normalizedFamily);
         return this;
     }
 
@@ -178,15 +266,55 @@ public sealed class OfficeFontFaceCollection {
         }
 
         foreach (OfficeFontFace face in fonts.Faces) {
-            TryAddCore(
-                face.FamilyName,
-                face.DataSnapshot,
-                face.Style,
-                face.UnicodeRanges,
-                face.ResourceFamilyName,
-                maximumDecodedBytes: null,
-                out _,
-                out _);
+            OfficeFontFace copy = face.Clone();
+            bool replaced = false;
+            for (int index = _faces.Count - 1; index >= 0; index--) {
+                OfficeFontFace existing = _faces[index];
+                if (existing.Style == copy.Style
+                    && string.Equals(existing.FamilyName, copy.FamilyName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(existing.ResourceFamilyName, copy.ResourceFamilyName, StringComparison.OrdinalIgnoreCase)) {
+                    _faces[index] = copy;
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                _faces.Add(copy);
+            }
+        }
+        foreach (string fallbackFamily in fonts.FallbackFamilies) {
+            bool exists = false;
+            foreach (string existing in _fallbackFamilies) {
+                if (!string.Equals(existing, fallbackFamily, StringComparison.OrdinalIgnoreCase)) continue;
+                exists = true;
+                break;
+            }
+            if (!exists) _fallbackFamilies.Add(fallbackFamily);
+        }
+
+        return this;
+    }
+
+    internal OfficeFontFaceCollection AddRangePreservingExisting(OfficeFontFaceCollection? fonts) {
+        if (fonts == null || ReferenceEquals(fonts, this)) {
+            return this;
+        }
+
+        foreach (OfficeFontFace face in fonts.Faces) {
+            bool exists = _faces.Exists(existing =>
+                existing.Style == face.Style
+                && string.Equals(existing.FamilyName, face.FamilyName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(existing.ResourceFamilyName, face.ResourceFamilyName, StringComparison.OrdinalIgnoreCase));
+            if (!exists) {
+                _faces.Add(face.Clone());
+            }
+        }
+
+        foreach (string fallbackFamily in fonts.FallbackFamilies) {
+            if (!_fallbackFamilies.Exists(existing =>
+                    string.Equals(existing, fallbackFamily, StringComparison.OrdinalIgnoreCase))) {
+                _fallbackFamilies.Add(fallbackFamily);
+            }
         }
 
         return this;
@@ -198,6 +326,7 @@ public sealed class OfficeFontFaceCollection {
         foreach (OfficeFontFace face in _faces) {
             clone._faces.Add(face.Clone());
         }
+        clone._fallbackFamilies.AddRange(_fallbackFamilies);
 
         return clone;
     }
@@ -253,6 +382,9 @@ public sealed class OfficeFontFaceCollection {
 
         string requestedFamilies = familyNames?.Trim() ?? string.Empty;
         IReadOnlyList<OfficeFontFace> candidates = ResolveFallbackCandidates(requestedFamilies, style);
+        var explicitlySelectedFaces = new HashSet<string>(
+            OfficeFontFamilyParser.Parse(requestedFamilies),
+            StringComparer.OrdinalIgnoreCase);
         var resolvedFamilies = new Dictionary<string, string>(StringComparer.Ordinal);
         var runs = new List<OfficeFontFallbackRun>();
         var currentText = new StringBuilder();
@@ -265,8 +397,10 @@ public sealed class OfficeFontFaceCollection {
                 if (!resolvedFamilies.TryGetValue(element, out string? resolvedFamily)) {
                     OfficeFontFace? face = null;
                     for (int candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++) {
-                        if (!candidates[candidateIndex].Covers(element)) continue;
-                        face = candidates[candidateIndex];
+                        OfficeFontFace candidate = candidates[candidateIndex];
+                        bool explicitlySelected = explicitlySelectedFaces.Contains(candidate.ResourceFamilyName);
+                        if (!(explicitlySelected ? candidate.HasGlyphs(element) : candidate.Covers(element))) continue;
+                        face = candidate;
                         break;
                     }
                     resolvedFamily = face?.ResourceFamilyName ?? requestedFamilies;
@@ -288,12 +422,20 @@ public sealed class OfficeFontFaceCollection {
     }
 
     private IReadOnlyList<OfficeFontFace> ResolveFallbackCandidates(string familyNames, OfficeFontStyle style) {
-        if (string.IsNullOrWhiteSpace(familyNames) || _faces.Count == 0) return Array.Empty<OfficeFontFace>();
+        if (_faces.Count == 0) return Array.Empty<OfficeFontFace>();
 
         OfficeFontStyle normalizedStyle = OfficeFontFace.NormalizeStyle(style);
         var result = new List<OfficeFontFace>();
         var added = new HashSet<OfficeFontFace>();
+        var families = new List<string>();
+        var addedFamilies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string family in OfficeFontFamilyParser.Parse(familyNames)) {
+            if (addedFamilies.Add(family)) families.Add(family);
+        }
+        foreach (string family in _fallbackFamilies) {
+            if (addedFamilies.Add(family)) families.Add(family);
+        }
+        foreach (string family in families) {
             var exact = new List<OfficeFontFace>();
             var regular = new List<OfficeFontFace>();
             var available = new List<OfficeFontFace>();
@@ -379,7 +521,9 @@ public sealed class OfficeFontFaceCollection {
             OfficeFontFace? first = null;
             for (int index = _faces.Count - 1; index >= 0; index--) {
                 OfficeFontFace face = _faces[index];
-                if (!MatchesFamily(face, family) || !CoversPlannedText(face, text)) continue;
+                bool explicitlySelected = string.Equals(face.ResourceFamilyName, family, StringComparison.OrdinalIgnoreCase);
+                if (!MatchesFamily(face, family)
+                    || !CoversPlannedText(face, text, requireUnicodeRange: !explicitlySelected)) continue;
                 first ??= face;
                 if (face.Style == normalizedStyle) exact ??= face;
                 if (face.Style == OfficeFontStyle.Regular) regular ??= face;
@@ -401,12 +545,15 @@ public sealed class OfficeFontFaceCollection {
         return value.Length > 0;
     }
 
-    private static bool CoversPlannedText(OfficeFontFace face, string text) {
+    private static bool CoversPlannedText(
+        OfficeFontFace face,
+        string text,
+        bool requireUnicodeRange) {
         bool hasNonWhitespace = false;
         foreach (string element in OfficeTextElements.Enumerate(text)) {
             if (IsWhitespace(element)) continue;
             hasNonWhitespace = true;
-            if (!face.Covers(element)) return false;
+            if (!(requireUnicodeRange ? face.Covers(element) : face.HasGlyphs(element))) return false;
         }
         return hasNonWhitespace || text.Length > 0;
     }

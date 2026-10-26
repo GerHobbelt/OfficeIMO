@@ -64,9 +64,24 @@ public sealed class BrowserConversionServiceTests {
     [Fact]
     public void HtmlPdfProfile_UsesThePinnedFacesForLayoutAndPdfPainting() {
         var options = BrowserPortablePdfProfile.CreateHtmlOptions(BrowserPdfProfileCatalog.Faithful);
+        string[] aliases = [
+            "Arial",
+            "Helvetica",
+            "Calibri",
+            "Aptos",
+            "Segoe UI",
+            "Tahoma",
+            "Verdana",
+            "sans",
+            "sans-serif",
+            "ui-sans-serif",
+            "system-ui",
+            "-apple-system",
+            "BlinkMacSystemFont"
+        ];
 
         Assert.Equal(BrowserPortablePdfProfile.DefaultLayoutFontFamilies, options.DefaultFontFamily);
-        Assert.Equal(6, options.Fonts.Faces.Count);
+        Assert.Equal(6 + aliases.Length * 4, options.Fonts.Faces.Count);
         Assert.Equal(4, options.Fonts.Faces.Count(face => face.FamilyName == BrowserPortablePdfProfile.DefaultFontFamily));
         Assert.Single(options.Fonts.Faces, face => face.FamilyName == BrowserPortablePdfProfile.ArabicFallbackFontFamily);
         Assert.Single(options.Fonts.Faces, face => face.FamilyName == BrowserPortablePdfProfile.SymbolFallbackFontFamily);
@@ -81,14 +96,32 @@ public sealed class BrowserConversionServiceTests {
             16D,
             options.DefaultFontFamily,
             OfficeFontStyle.Regular,
-            out double width));
-        Assert.True(width > 0D);
+            out double defaultWidth));
+        Assert.True(defaultWidth > 0D);
+        foreach (string alias in aliases) {
+            Assert.Equal(4, options.Fonts.Faces.Count(face => face.FamilyName == alias));
+            Assert.True(options.Fonts.TryMeasureText(
+                "Layout boundary",
+                16D,
+                alias,
+                OfficeFontStyle.Regular,
+                out double aliasWidth));
+            Assert.Equal(defaultWidth, aliasWidth, 10);
+        }
         IReadOnlyList<OfficeFontFallbackRun> fallbackRuns = options.Fonts.PlanFallbackRuns(
             "Latin العربية ⌚",
             options.DefaultFontFamily,
             OfficeFontStyle.Regular);
         Assert.Contains(fallbackRuns, run => run.FamilyName == BrowserPortablePdfProfile.ArabicFallbackFontFamily);
         Assert.Contains(fallbackRuns, run => run.FamilyName == BrowserPortablePdfProfile.SymbolFallbackFontFamily);
+        foreach (string alias in aliases) {
+            IReadOnlyList<OfficeFontFallbackRun> aliasFallbackRuns = options.Fonts.PlanFallbackRuns(
+                "Latin العربية ⌚",
+                alias,
+                OfficeFontStyle.Regular);
+            Assert.Contains(aliasFallbackRuns, run => run.FamilyName == BrowserPortablePdfProfile.ArabicFallbackFontFamily);
+            Assert.Contains(aliasFallbackRuns, run => run.FamilyName == BrowserPortablePdfProfile.SymbolFallbackFontFamily);
+        }
         Assert.Equal(BrowserPortablePdfProfile.DefaultFontFamily, options.FontFamily?.FamilyName);
     }
 
@@ -144,6 +177,55 @@ public sealed class BrowserConversionServiceTests {
     }
 
     [Fact]
+    public void BrowserPackageSecurity_RejectsExpandedWorksheetBeyondBrowserPartLimit() {
+        byte[] bytes = CreateExpandedWorksheetPackage();
+        OfficePackageSecurityOptions options = BrowserConversionService.CreateBrowserPackageSecurity();
+
+        OfficePackageSecurityException exception = Assert.Throws<OfficePackageSecurityException>(() =>
+            OfficePackageSecurityInspector.Validate(bytes, options));
+
+        Assert.True(bytes.LongLength < BrowserConversionService.MaxPackageBytes);
+        Assert.Equal(32L * 1024L * 1024L, options.MaxPartUncompressedBytes);
+        Assert.Equal(128L * 1024L * 1024L, options.MaxTotalUncompressedBytes);
+        Assert.Equal(OfficePackageSecurityRule.PartSize, exception.Rule);
+    }
+
+    [Fact]
+    public void ExcelBrowserReadPlan_AutomaticallyBoundsSparseWorksheetBeyondBrowserCellBudget() {
+        using ExcelDocument document = ExcelDocument.Create();
+        ExcelSheet sheet = document.AddWorksheet("Data");
+        sheet.CellValue(1, 1, "First");
+        sheet.CellValue(300, 200, "Last");
+
+        BrowserConversionService.ExcelBrowserReadPlan plan =
+            BrowserConversionService.CreateExcelBrowserReadPlan(document, previewRequested: false);
+
+        Assert.True(plan.UsesBoundedRead);
+        Assert.True(plan.WasAutomaticallyBounded);
+        Assert.Equal(250, plan.MaxRowsPerSheet);
+    }
+
+    [Fact]
+    public void ExcelBrowserReadPlan_LeavesNormalWorksheetUnboundedUnlessPreviewIsRequested() {
+        using ExcelDocument document = ExcelDocument.Create();
+        ExcelSheet sheet = document.AddWorksheet("Data");
+        sheet.CellValue(1, 1, "Name");
+        sheet.CellValue(2, 2, "Value");
+
+        BrowserConversionService.ExcelBrowserReadPlan fullPlan =
+            BrowserConversionService.CreateExcelBrowserReadPlan(document, previewRequested: false);
+        BrowserConversionService.ExcelBrowserReadPlan previewPlan =
+            BrowserConversionService.CreateExcelBrowserReadPlan(document, previewRequested: true);
+
+        Assert.False(fullPlan.UsesBoundedRead);
+        Assert.False(fullPlan.WasAutomaticallyBounded);
+        Assert.Null(fullPlan.MaxRowsPerSheet);
+        Assert.True(previewPlan.UsesBoundedRead);
+        Assert.False(previewPlan.WasAutomaticallyBounded);
+        Assert.Equal(250, previewPlan.MaxRowsPerSheet);
+    }
+
+    [Fact]
     public void WordConversion_UsesFullBrowserShapingWithoutFalseDegradationWarnings() {
         using WordDocument source = WordDocument.Create();
         source.AddParagraph("مرحبا");
@@ -186,13 +268,88 @@ public sealed class BrowserConversionServiceTests {
         JsonElement root = manifest.RootElement;
         Assert.Equal("officeimo-browser-compact-2026.07", root.GetProperty("fontPack").GetProperty("id").GetString());
         Assert.Equal(
-            "99fe9605fae25324712287bc2212236771b67515ec77dab263a35fc48079e72f",
+            "58d48fe49e16ffa209a594a905260e81c7bcd5fb10aaced1e76601d2f18cea68",
             root.GetProperty("fontPack").GetProperty("fingerprint").GetString());
+        JsonElement substitutions = root.GetProperty("fontPack").GetProperty("substitutions");
+        Assert.Contains(
+            substitutions.EnumerateArray(),
+            substitution =>
+                substitution.GetProperty("source").GetString() == "Calibri Light" &&
+                substitution.GetProperty("target").GetString() == "Carlito" &&
+                substitution.GetProperty("impact").GetString() == "Compatible");
+        Assert.Contains(
+            substitutions.EnumerateArray(),
+            substitution =>
+                substitution.GetProperty("source").GetString() == "Symbol" &&
+                substitution.GetProperty("target").GetString() == "Noto Sans Symbols 2" &&
+                substitution.GetProperty("impact").GetString() == "LayoutSensitive");
         Assert.True(root.GetProperty("output").GetProperty("tagged").GetBoolean());
         Assert.Equal(result.FidelityStatus, root.GetProperty("fidelityStatus").GetString());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("conversionId").GetString()));
-        Assert.Empty(root.GetProperty("warnings").EnumerateArray());
-        Assert.Empty(result.Warnings);
+        Assert.DoesNotContain(
+            root.GetProperty("warnings").EnumerateArray(),
+            warning => warning.GetProperty("severity").GetString() != "Information");
+        Assert.DoesNotContain(
+            result.StructuredWarnings,
+            warning => warning.Severity != "Information");
+    }
+
+    [Fact]
+    public void WordConversion_ClassifiesCompatibleAndLayoutSensitiveFontSubstitutions() {
+        using WordDocument source = WordDocument.Create();
+        source.AddParagraph("Compatible business text").FontFamily = "Calibri Light";
+        source.AddParagraph("✓").FontFamily = "Symbol";
+        byte[] bytes = source.ToBytes();
+        var document = new SelectedDocument("substitutions.docx", ".docx", "DOCX", bytes.LongLength, bytes);
+
+        ConversionResult result = _service.ConvertFile(
+            ConversionRouteCatalog.Find("docx-pdf"),
+            document,
+            limitExcelRows: false);
+
+        ConversionWarningView compatible = Assert.Single(
+            result.StructuredWarnings,
+            warning =>
+                warning.Code == "NativeFontFamilySubstituted" &&
+                warning.Message.Contains("'Calibri Light'", StringComparison.Ordinal));
+        ConversionWarningView symbol = Assert.Single(
+            result.StructuredWarnings,
+            warning =>
+                warning.Code == "NativeFontFamilySubstituted" &&
+                warning.Message.Contains("'Symbol'", StringComparison.Ordinal));
+
+        Assert.Equal("Information", compatible.Severity);
+        Assert.False(compatible.CanChangePagination);
+        Assert.Contains("'Carlito'", compatible.Message, StringComparison.Ordinal);
+        Assert.Equal("Warning", symbol.Severity);
+        Assert.True(symbol.CanChangePagination);
+        Assert.Contains("'Noto Sans Symbols 2'", symbol.Message, StringComparison.Ordinal);
+        Assert.Equal("FaithfulWithSubstitutions", result.FidelityStatus);
+        Assert.Contains("NotoSansSymbols2", Encoding.ASCII.GetString(result.Bytes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WordConversion_CompatibleSubstitutionRemainsFaithful() {
+        using WordDocument source = WordDocument.Create();
+        source.AddParagraph("Compatible business text").FontFamily = "Calibri";
+        byte[] bytes = source.ToBytes();
+        var document = new SelectedDocument("compatible.docx", ".docx", "DOCX", bytes.LongLength, bytes);
+
+        ConversionResult result = _service.ConvertFile(
+            ConversionRouteCatalog.Find("docx-pdf"),
+            document,
+            limitExcelRows: false);
+
+        ConversionWarningView warning = Assert.Single(result.StructuredWarnings);
+        Assert.Equal("NativeFontFamilySubstituted", warning.Code);
+        Assert.Equal("Information", warning.Severity);
+        Assert.False(warning.CanChangePagination);
+        Assert.Equal("Faithful", result.FidelityStatus);
+        Assert.Contains("Carlito", Encoding.ASCII.GetString(result.Bytes), StringComparison.Ordinal);
+        using JsonDocument manifest = JsonDocument.Parse(result.CompanionReport!.Bytes);
+        JsonElement manifestWarning = Assert.Single(manifest.RootElement.GetProperty("warnings").EnumerateArray());
+        Assert.Equal("Information", manifestWarning.GetProperty("severity").GetString());
+        Assert.False(manifestWarning.GetProperty("canChangePagination").GetBoolean());
     }
 
     [Fact]
@@ -357,11 +514,17 @@ public sealed class BrowserConversionServiceTests {
     public void ExcelConversion_UsesThePortableTaggedPdfProfile() {
         using ExcelDocument workbook = ExcelDocument.Create();
         var sheet = workbook.AddWorksheet("Delivery");
-        sheet.CellValue(1, 1, "Workstream");
+        sheet.CellAt(1, 1).SetValue("Workstream").SetFontName("Calibri Light");
         sheet.CellValue(1, 2, "Status");
         sheet.CellValue(2, 1, "Platform");
         sheet.CellValue(2, 2, "Ready");
+        Assert.Equal("Calibri Light", sheet.CellAt(1, 1).GetStyle().FontName);
+        Assert.True(sheet.CellAt(1, 1).GetStyle().IsFontFamilyExplicit);
         byte[] bytes = workbook.ToBytes();
+        using (ExcelDocument reloaded = ExcelDocument.Load(new MemoryStream(bytes))) {
+            Assert.Equal("Calibri Light", reloaded.Sheets[0].CellAt(1, 1).GetStyle().FontName);
+            Assert.True(reloaded.Sheets[0].CellAt(1, 1).GetStyle().IsFontFamilyExplicit);
+        }
         var document = new SelectedDocument("delivery.xlsx", ".xlsx", "XLSX", bytes.LongLength, bytes);
 
         ConversionResult result = _service.ConvertFile(
@@ -373,6 +536,14 @@ public sealed class BrowserConversionServiceTests {
         Assert.True(pdf.HasTaggedContent);
         Assert.Contains("Workstream", pdf.ExtractText(), StringComparison.Ordinal);
         Assert.Contains("Platform", pdf.ExtractText(), StringComparison.Ordinal);
+        ConversionWarningView fontSubstitution = Assert.Single(
+            result.StructuredWarnings,
+            warning =>
+                warning.Code == "WorksheetFontFamilySubstituted" &&
+                warning.Message.Contains("'Calibri Light'", StringComparison.Ordinal));
+        Assert.Equal("Information", fontSubstitution.Severity);
+        Assert.False(fontSubstitution.CanChangePagination);
+        Assert.Contains("'Carlito'", fontSubstitution.Message, StringComparison.Ordinal);
         BrowserConversionArtifact report = Assert.IsType<BrowserConversionArtifact>(result.CompanionReport);
         Assert.Equal("delivery.conversion.json", report.FileName);
         Assert.Contains("OfficeIMO.Excel.Pdf", Encoding.UTF8.GetString(report.Bytes), StringComparison.Ordinal);
@@ -390,14 +561,15 @@ public sealed class BrowserConversionServiceTests {
             "maxRowsPerSheet=unlimited",
             unlimitedManifest.RootElement.GetProperty("engine").GetProperty("optionProfile").GetString());
         Assert.Equal(
-            "maxRowsPerSheet=250",
+            "maxRowsPerSheet=250;mode=requested-browser-preview",
             limitedManifest.RootElement.GetProperty("engine").GetProperty("optionProfile").GetString());
     }
 
     [Fact]
     public void PowerPointConversion_UsesThePortableTaggedPdfProfile() {
         using PowerPointPresentation presentation = PowerPointPresentation.Create();
-        presentation.AddSlide().AddTextBoxPoints("Delivery readiness", 36, 36, 320, 64);
+        PowerPointTextBox textBox = presentation.AddSlide().AddTextBoxPoints("Delivery readiness", 36, 36, 320, 64);
+        textBox.FontName = "Calibri";
         byte[] bytes = presentation.ToBytes();
         var document = new SelectedDocument("readiness.pptx", ".pptx", "PPTX", bytes.LongLength, bytes);
 
@@ -409,6 +581,14 @@ public sealed class BrowserConversionServiceTests {
         PdfReadDocument pdf = PdfReadDocument.Open(result.Bytes);
         Assert.True(pdf.HasTaggedContent);
         Assert.Contains("Delivery readiness", pdf.ExtractText(), StringComparison.Ordinal);
+        ConversionWarningView fontSubstitution = Assert.Single(
+            result.StructuredWarnings,
+            warning =>
+                warning.Code == "font-family-substitution" &&
+                warning.Message.Contains("'Calibri'", StringComparison.Ordinal));
+        Assert.Equal("Information", fontSubstitution.Severity);
+        Assert.False(fontSubstitution.CanChangePagination);
+        Assert.Contains("'Carlito'", fontSubstitution.Message, StringComparison.Ordinal);
         BrowserConversionArtifact report = Assert.IsType<BrowserConversionArtifact>(result.CompanionReport);
         Assert.Equal("readiness.conversion.json", report.FileName);
         Assert.Contains("OfficeIMO.PowerPoint.Pdf", Encoding.UTF8.GetString(report.Bytes), StringComparison.Ordinal);
@@ -443,6 +623,29 @@ public sealed class BrowserConversionServiceTests {
             byte[] repeated = new byte[2 * 1024 * 1024];
             Array.Fill(repeated, (byte)'A');
             stream.Write(repeated);
+        }
+        return buffer.ToArray();
+    }
+
+    private static byte[] CreateExpandedWorksheetPackage() {
+        using var buffer = new MemoryStream();
+        using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true)) {
+            ZipArchiveEntry contentTypes = archive.CreateEntry("[Content_Types].xml", CompressionLevel.Optimal);
+            using (var writer = new StreamWriter(contentTypes.Open())) {
+                writer.Write("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\" />");
+            }
+
+            ZipArchiveEntry worksheet = archive.CreateEntry("xl/worksheets/sheet1.xml", CompressionLevel.Optimal);
+            using Stream stream = worksheet.Open();
+            var random = new Random(1729);
+            byte[] block = new byte[64 * 1024];
+            for (int blockIndex = 0; blockIndex < 640; blockIndex++) {
+                random.NextBytes(block);
+                for (int index = 0; index < block.Length; index++) {
+                    block[index] = (byte)('A' + (block[index] & 0x07));
+                }
+                stream.Write(block);
+            }
         }
         return buffer.ToArray();
     }

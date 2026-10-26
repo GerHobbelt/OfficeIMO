@@ -1,6 +1,6 @@
 ---
 title: "Render and Convert HTML"
-description: "Parse HTML or MHTML, control resource access, render images, and convert web content into Office and PDF artifacts."
+description: "Parse HTML or MHTML, control resource access, render images, and convert web content into Office and PDF artifacts. Includes examples and API links."
 order: 42
 meta.seo_title: "Convert HTML to PDF, Word and images in .NET"
 ---
@@ -44,10 +44,10 @@ The [generated output gallery](/showcase/) includes a runnable invoice workflow 
 ## Convert from the command line
 
 ```shell
-dotnet tool install --global OfficeIMO.Html.Tool
-officeimo-html convert report.html --output report.pdf
-officeimo-html convert archive.mhtml --output archive.pdf
-officeimo-html capabilities --format json
+dotnet tool install --global OfficeIMO.Tool
+officeimo html convert report.html --output report.pdf
+officeimo html convert archive.mhtml --output archive.pdf
+officeimo html capabilities --format json
 ```
 
 The tool accepts files or standard input, writes files atomically, and defaults to no local or remote resource reads. Embedded data and bounded MHTML resources remain available. Its capability output is generated from the same executable contract as the .NET API and checked-in support matrix.
@@ -60,14 +60,14 @@ using OfficeIMO.Pdf;
 
 var options = new HtmlPdfSaveOptions {
     MaxPageCount = 200,
-    DocumentOptions = new PdfOptions().EnableTaggedPdfCatalogMarkers()
+    PdfOptions = new PdfOptions().EnableTaggedPdfCatalogMarkers()
 };
 options.AdditionalStylesheets.Add("@page { margin: 18mm } body { color: hsl(215 35% 20%) }");
 
 byte[] pdf = HtmlConversionDocument.Parse(html).ToPdf(options);
 ```
 
-PDF writer settings are snapshotted through `DocumentOptions`; HTML layout and safety settings remain on the shared `HtmlRenderOptions` base type.
+PDF writer settings are snapshotted through `PdfOptions`; HTML layout and safety settings remain on the shared `HtmlRenderOptions` base type.
 
 ## Control resources
 

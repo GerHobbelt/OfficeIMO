@@ -6,9 +6,23 @@ namespace OfficeIMO.Tests.Pdf;
 
 public sealed class PdfConverterOptionsApiTests {
     [Fact]
+    public void DirectAndComposedPdfOptionsUseUnambiguousStageNames() {
+        Type html = typeof(OfficeIMO.Html.Pdf.HtmlPdfSaveOptions);
+        Type asciiDoc = typeof(OfficeIMO.AsciiDoc.Pdf.AsciiDocPdfSaveOptions);
+        Type latex = typeof(OfficeIMO.Latex.Pdf.LatexPdfSaveOptions);
+
+        Assert.Equal(typeof(PdfOptions), html.GetProperty("PdfOptions")?.PropertyType);
+        Assert.Null(html.GetProperty("DocumentOptions"));
+        Assert.Equal(typeof(MarkdownPdfSaveOptions), asciiDoc.GetProperty("MarkdownOptions")?.PropertyType);
+        Assert.Equal(typeof(MarkdownPdfSaveOptions), latex.GetProperty("MarkdownOptions")?.PropertyType);
+        Assert.Null(asciiDoc.GetProperty("PdfOptions"));
+        Assert.Null(latex.GetProperty("PdfOptions"));
+    }
+
+    [Fact]
     public void ConverterOptionsExposeExpectedResourceDefaults() {
         var markdown = new MarkdownPdfSaveOptions();
-        var word = new OfficeIMO.Word.Pdf.PdfSaveOptions();
+        var word = new OfficeIMO.Word.Pdf.WordPdfSaveOptions();
         var excel = new OfficeIMO.Excel.Pdf.ExcelPdfSaveOptions();
         var powerPoint = new OfficeIMO.PowerPoint.Pdf.PowerPointPdfSaveOptions();
         var html = new OfficeIMO.Html.Pdf.HtmlPdfSaveOptions();
@@ -21,13 +35,13 @@ public sealed class PdfConverterOptionsApiTests {
         Assert.Equal(PdfTextFallbackFeatures.Default, excel.TextFallbacks);
         Assert.Equal(PdfTextFallbackFeatures.Default, powerPoint.TextFallbacks);
         AssertBalancedDefault(markdown.ResourcePolicy);
-        AssertPortable(word.ResourcePolicy);
+        AssertBalancedDefault(word.ResourcePolicy);
         AssertBalancedDefault(excel.ResourcePolicy);
         AssertBalancedDefault(powerPoint.ResourcePolicy);
         AssertBalancedDefault(html.ResourcePolicy);
         AssertBalancedDefault(rtf.ResourcePolicy);
-        AssertBalancedDefault(asciiDoc.PdfOptions.ResourcePolicy);
-        AssertBalancedDefault(latex.PdfOptions.ResourcePolicy);
+        AssertBalancedDefault(asciiDoc.MarkdownOptions.ResourcePolicy);
+        AssertBalancedDefault(latex.MarkdownOptions.ResourcePolicy);
         AssertPortable(PdfResourcePolicy.CreatePortableDeterministic());
     }
 
@@ -64,12 +78,12 @@ public sealed class PdfConverterOptionsApiTests {
 
     [Fact]
     public void WordProfileMapsPrintReadyChoices() {
-        var options = new OfficeIMO.Word.Pdf.PdfSaveOptions {
+        var options = new OfficeIMO.Word.Pdf.WordPdfSaveOptions {
             IncludePageNumbers = false,
             DefaultTableBorders = false
         };
 
-        OfficeIMO.Word.Pdf.PdfSaveOptions returned = options.UseProfile(PdfExportProfile.PrintReady);
+        OfficeIMO.Word.Pdf.WordPdfSaveOptions returned = options.UseProfile(PdfExportProfile.PrintReady);
 
         Assert.Same(options, returned);
         Assert.False(options.IncludePageNumbers);
@@ -126,7 +140,7 @@ public sealed class PdfConverterOptionsApiTests {
         var profile = (PdfExportProfile)999;
 
         Assert.Throws<ArgumentOutOfRangeException>(() => new MarkdownPdfSaveOptions().UseProfile(profile));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeIMO.Word.Pdf.PdfSaveOptions().UseProfile(profile));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeIMO.Word.Pdf.WordPdfSaveOptions().UseProfile(profile));
         Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeIMO.Excel.Pdf.ExcelPdfSaveOptions().UseProfile(profile));
         Assert.Throws<ArgumentOutOfRangeException>(() => new OfficeIMO.PowerPoint.Pdf.PowerPointPdfSaveOptions().UseProfile(profile));
     }
@@ -158,6 +172,93 @@ public sealed class PdfConverterOptionsApiTests {
         Assert.True(configuredClone.HasExplicitFooterFont);
     }
 
+    [Fact]
+    public void PdfOptionsExposeAndClonePlannedFontFamilySubstitutions() {
+        var options = new PdfOptions()
+            .RegisterNamedFontFamily(new PdfEmbeddedFontFamily("Portable Latin", [1]))
+            .RegisterFontFamilySubstitution(
+                "Source Sans",
+                "Portable Latin",
+                PdfFontFamilySubstitutionImpact.Compatible);
+
+        PdfOptions clone = options.Clone();
+        PdfFontFamilySubstitution substitution = Assert.Single(options.FontFamilySubstitutions);
+        PdfFontFamilySubstitution clonedSubstitution = Assert.Single(clone.FontFamilySubstitutions);
+
+        Assert.Equal("Source Sans", substitution.SourceFontFamily);
+        Assert.Equal("Portable Latin", substitution.TargetFontFamily);
+        Assert.Equal(PdfFontFamilySubstitutionImpact.Compatible, substitution.Impact);
+        Assert.True(options.HasNamedFontFamily("Source Sans"));
+        Assert.True(clone.HasNamedFontFamily("Source Sans"));
+        Assert.Equal(substitution.SourceFontFamily, clonedSubstitution.SourceFontFamily);
+        Assert.Equal(substitution.TargetFontFamily, clonedSubstitution.TargetFontFamily);
+        Assert.Equal(substitution.Impact, clonedSubstitution.Impact);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            options.RegisterFontFamilySubstitution(
+                "Unknown impact source",
+                "Portable Latin",
+                (PdfFontFamilySubstitutionImpact)999));
+
+        options.RegisterNamedFontFamily(new PdfEmbeddedFontFamily("Source Sans", [2]));
+        Assert.True(options.TryResolveNamedFontFace("Source Sans", bold: false, italic: false, out PdfNamedFontFace face));
+        Assert.Equal("Portable Latin", face.FamilyName);
+    }
+
+    [Fact]
+    public void UnresolvedFontFamilySubstitutionRemainsAWarning() {
+        var options = new PdfOptions()
+            .RegisterFontFamilySubstitution(
+                "Source Sans",
+                "Missing Portable Latin",
+                PdfFontFamilySubstitutionImpact.Compatible);
+
+        PdfConversionWarning warning = options.CreateFontFamilySubstitutionWarning(
+            "OfficeIMO.Tests",
+            "FontFamilySubstituted",
+            "document",
+            "Source Sans",
+            PdfStandardFont.Helvetica,
+            resolvedFontFamily: null);
+
+        Assert.Equal(PdfConversionWarningSeverity.Warning, warning.Severity);
+        Assert.False(warning.Details.ContainsKey("plannedSubstitution"));
+        Assert.DoesNotContain("Missing Portable Latin", warning.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResolvedFallbackListSubstitutionUsesItsOwnImpactClassification() {
+        const string resolvedFamily = "Portable Calibri";
+        var options = new PdfOptions()
+            .RegisterNamedFontFamily(new PdfEmbeddedFontFamily(resolvedFamily, [1]))
+            .RegisterFontFamilySubstitution(
+                "Primary",
+                "Missing Primary",
+                PdfFontFamilySubstitutionImpact.LayoutSensitive)
+            .RegisterFontFamilySubstitution(
+                "Calibri",
+                resolvedFamily,
+                PdfFontFamilySubstitutionImpact.Compatible);
+
+        Assert.True(options.TryResolveFontFamilySubstitution(
+            "Primary, Calibri",
+            out PdfFontFamilySubstitution? substitution));
+        Assert.Equal("Calibri", substitution!.SourceFontFamily);
+
+        PdfConversionWarning warning = options.CreateFontFamilySubstitutionWarning(
+            "OfficeIMO.Tests",
+            "FontFamilySubstituted",
+            "document",
+            "Primary, Calibri",
+            fallbackSlot: null,
+            resolvedFontFamily: resolvedFamily);
+
+        Assert.Equal(PdfConversionWarningSeverity.Information, warning.Severity);
+        Assert.Equal(bool.TrueString, warning.Details["plannedSubstitution"]);
+        Assert.Equal(PdfFontFamilySubstitutionImpact.Compatible.ToString(), warning.Details["substitutionImpact"]);
+        Assert.Contains(resolvedFamily, warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Missing Primary", warning.Message, StringComparison.Ordinal);
+    }
+
     private static void AssertPortable(PdfResourcePolicy policy) {
         Assert.False(policy.AllowSystemFontEmbedding);
         Assert.False(policy.AllowDocumentFontEmbedding);
@@ -169,7 +270,7 @@ public sealed class PdfConverterOptionsApiTests {
 
     private static void AssertBalancedDefault(PdfResourcePolicy policy) {
         Assert.True(policy.AllowSystemFontEmbedding);
-        Assert.False(policy.AllowDocumentFontEmbedding);
+        Assert.True(policy.AllowDocumentFontEmbedding);
         Assert.False(policy.AllowLocalFileAccess);
         Assert.False(policy.AllowRemoteResourceResolution);
         Assert.True(policy.AllowDataUris);

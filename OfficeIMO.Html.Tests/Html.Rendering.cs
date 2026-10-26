@@ -305,11 +305,28 @@ public sealed partial class HtmlRenderingTests {
     [Fact]
     public async Task HtmlRenderAsync_CancelsLargeRenderOperation() {
         string html = "<main>" + string.Concat(Enumerable.Repeat("<div><span>Cancellation marker</span></div>", 20000)) + "</main>";
+        HtmlConversionDocument document = HtmlConversionDocument.Parse(html);
         using var cancellation = new CancellationTokenSource();
-        cancellation.CancelAfter(TimeSpan.FromMilliseconds(1D));
+        var cancellationThread = new Thread(() => {
+            Thread.Sleep(1);
+            cancellation.Cancel();
+        }) {
+            IsBackground = true
+        };
+        cancellationThread.Start();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            HtmlRenderTestDriver.RenderAsync(HtmlConversionDocument.Parse(html), new HtmlRenderOptions { ViewportWidth = 240D }, cancellation.Token));
+        try {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                HtmlRenderTestDriver.RenderAsync(
+                    document,
+                    new HtmlRenderOptions {
+                        ViewportWidth = 240D,
+                        MaxSurfaceHeight = 1_000_000
+                    },
+                    cancellation.Token));
+        } finally {
+            Assert.True(cancellationThread.Join(TimeSpan.FromSeconds(5D)));
+        }
     }
 
     [Fact]
@@ -391,6 +408,7 @@ public sealed partial class HtmlRenderingTests {
 
         Assert.True(summary.HasResourceResolver);
         Assert.True(summary.AllowSystemFontEmbedding);
+        Assert.True(summary.AllowDocumentFontEmbedding);
         Assert.False(summary.AllowLocalFileAccess);
         Assert.False(summary.AllowRemoteResourceResolution);
         Assert.True(summary.AllowDataUris);
@@ -403,6 +421,27 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal(24, summary.MaxResourceRequests);
         Assert.Equal(4, summary.MaxStylesheetImportDepth);
         Assert.Contains("https", summary.AllowedUrlSchemes);
+    }
+
+    [Fact]
+    public void HtmlPdf_DocumentFontPolicyPreventsCssFamiliesFromLocatingHostFonts() {
+        string? installedFamily = new[] { "Arial", "Calibri", "Liberation Sans", "DejaVu Sans" }
+            .FirstOrDefault(candidate => PdfCore.PdfEmbeddedFontFamily.TryFromSystem(candidate, out _));
+        if (installedFamily == null) return;
+
+        var options = new HtmlPdfSaveOptions {
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateDefault()
+        };
+        options.ResourcePolicy.AllowDocumentFontEmbedding = false;
+
+        PdfCore.PdfDocumentConversionResult result = HtmlConversionDocument
+            .Parse("<p style=\"font-family:'" + installedFamily + "'\">Document font boundary</p>")
+            .ToPdfDocumentResult(options);
+
+        Assert.True(options.GetResourcePolicySummary().AllowSystemFontEmbedding);
+        Assert.False(options.GetResourcePolicySummary().AllowDocumentFontEmbedding);
+        Assert.Empty(result.Value.Options.EmbeddedFonts);
+        Assert.Contains("Document font boundary", PdfCore.PdfReadDocument.Open(result.Value.ToBytes()).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1393,6 +1432,19 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public void HtmlPdf_DirectRenderer_PreservesExplicitUntaggedDocumentMode() {
+        var options = new HtmlPdfSaveOptions {
+            PdfOptions = new PdfCore.PdfOptions {
+                TaggedStructureMode = PdfCore.PdfTaggedStructureMode.None
+            }
+        };
+
+        byte[] pdf = HtmlConversionDocument.Parse("<p>Explicit untagged output</p>").ToPdf(options);
+
+        Assert.False(PdfCore.PdfReadDocument.Open(pdf).HasTaggedContent);
+    }
+
+    [Fact]
     public void HtmlPdf_DirectRenderer_UsesXmlLanguageWhenHtmlLanguageIsEmpty() {
         const string html = "<html lang='' xml:lang='fr-FR'><body><p>Langue</p></body></html>";
 
@@ -1407,7 +1459,7 @@ public sealed partial class HtmlRenderingTests {
     public void HtmlPdf_DirectRenderer_PreservesCallerDocumentLanguageOverHtmlMetadata() {
         const string html = "<html lang='fr-FR'><body><p>Language precedence</p></body></html>";
         var options = new HtmlPdfSaveOptions();
-        options.DocumentOptions.Language = "en-US";
+        options.PdfOptions.Language = "en-US";
 
         byte[] pdf = HtmlConversionDocument.Parse(html).ToPdf(options);
 

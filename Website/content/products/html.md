@@ -1,6 +1,6 @@
 ---
 title: "OfficeIMO.Html"
-description: "Parse HTML and MHTML, resolve resources safely, and render or project web content into OfficeIMO document models."
+description: "Parse HTML and MHTML, resolve resources safely, and render or project web content into OfficeIMO document models. Compare packages, examples, and limits."
 layout: product
 meta.seo_title: "OfficeIMO.Html for web document workflows"
 meta.head_html: '<link rel="alternate" hreflang="en" href="https://officeimo.com/products/html/" /><link rel="alternate" hreflang="x-default" href="https://officeimo.com/products/html/" />'
@@ -10,6 +10,12 @@ install: "dotnet add package OfficeIMO.Html"
 nuget: "OfficeIMO.Html"
 docs_url: "/docs/html/"
 api_url: "/api/html/"
+meta.software.name: "OfficeIMO.Html"
+meta.software.application_category: "DeveloperApplication"
+meta.software.operating_system: "Windows, Linux, macOS"
+meta.software.download_url: "https://www.nuget.org/packages/OfficeIMO.Html"
+meta.software.price: 0
+meta.software.price_currency: "USD"
 ---
 
 ## Shared HTML behavior for every converter

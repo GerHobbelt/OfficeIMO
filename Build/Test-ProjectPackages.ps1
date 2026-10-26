@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory)]
     [string] $FeedPath,
 
-    [string] $Version = '3.0.0',
+    [string] $Version = '3.1.0',
 
     [switch] $KeepWorkingDirectory
 )
@@ -117,14 +117,9 @@ try {
 
     $toolPackages = @(
         [pscustomobject]@{
-            Id = 'OfficeIMO.Reader.Tool'
-            Executable = $(if ($IsWindows) { 'officeimo-reader.exe' } else { 'officeimo-reader' })
-            Arguments = @('capabilities', '--format', 'json')
-        },
-        [pscustomobject]@{
-            Id = 'OfficeIMO.Html.Tool'
-            Executable = $(if ($IsWindows) { 'officeimo-html.exe' } else { 'officeimo-html' })
-            Arguments = @('capabilities', '--format', 'json')
+            Id = 'OfficeIMO.Tool'
+            Executable = $(if ($IsWindows) { 'officeimo.exe' } else { 'officeimo' })
+            Arguments = @('reader', 'capabilities', '--format', 'json')
         }
     )
     $toolPackageIds = @($toolPackages.Id)

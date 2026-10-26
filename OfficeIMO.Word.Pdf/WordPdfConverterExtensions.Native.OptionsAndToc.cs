@@ -11,7 +11,7 @@ using PdfCore = OfficeIMO.Pdf;
 
 namespace OfficeIMO.Word.Pdf {
     public static partial class WordPdfConverterExtensions {
-        private static PdfCore.PdfOptions CreateNativeOptions(WordDocument document, PdfSaveOptions? options, NativeFontMap nativeFontMap) {
+        private static PdfCore.PdfOptions CreateNativeOptions(WordDocument document, WordPdfSaveOptions? options, NativeFontMap nativeFontMap) {
             WordSection? firstSection = document.Sections.FirstOrDefault();
             PdfCore.PdfOptions pdfOptions = options?.PdfOptions?.Clone() ?? new PdfCore.PdfOptions();
             if (options != null) {
@@ -19,7 +19,9 @@ namespace OfficeIMO.Word.Pdf {
             }
 
             NativeDocumentDefaults defaults = GetNativeDocumentDefaults(document);
-            if (options?.PdfOptions == null) {
+            bool hasConfiguredPdfOptions =
+                options?.HasExplicitPdfFontConfiguration == true;
+            if (!hasConfiguredPdfOptions) {
                 pdfOptions.DefaultFontSize = defaults.FontSize;
             }
             if ((string.IsNullOrWhiteSpace(pdfOptions.Language) ||
@@ -33,7 +35,6 @@ namespace OfficeIMO.Word.Pdf {
             bool allowSystemFontEmbedding = options?.ResourcePolicy.AllowSystemFontEmbedding == true;
             bool allowDocumentFontEmbedding = allowSystemFontEmbedding &&
                                               options?.ResourcePolicy.AllowDocumentFontEmbedding == true;
-            bool hasConfiguredPdfOptions = options?.PdfOptions != null;
             bool appliedNativeDefaultFont = false;
             if (!hasConfiguredPdfOptions || !string.IsNullOrWhiteSpace(options?.FontFamily)) {
                 appliedNativeDefaultFont = ApplyNativeDefaultFont(
@@ -45,7 +46,16 @@ namespace OfficeIMO.Word.Pdf {
                     allowDocumentFontEmbedding,
                     nativeFontMap);
             }
-            if (hasConfiguredPdfOptions && !appliedNativeDefaultFont) {
+            bool hasResolvedDocumentDefaultSubstitution =
+                string.IsNullOrWhiteSpace(options?.FontFamily) &&
+                !string.IsNullOrWhiteSpace(defaults.FontFamily) &&
+                pdfOptions.TryResolveFontFamilySubstitution(
+                    defaults.FontFamily,
+                    out PdfCore.PdfFontFamilySubstitution? documentDefaultSubstitution) &&
+                documentDefaultSubstitution != null;
+            if (hasConfiguredPdfOptions &&
+                !appliedNativeDefaultFont &&
+                !hasResolvedDocumentDefaultSubstitution) {
                 nativeFontMap.PreferPdfDefaultForDocumentDefaultFont();
             }
 
@@ -113,7 +123,7 @@ namespace OfficeIMO.Word.Pdf {
         private static bool ApplyNativeDefaultFont(
             WordDocument document,
             NativeDocumentDefaults defaults,
-            PdfSaveOptions? options,
+            WordPdfSaveOptions? options,
             PdfCore.PdfOptions pdfOptions,
             bool allowSystemFontEmbedding,
             bool allowDocumentFontEmbedding,
@@ -154,6 +164,7 @@ namespace OfficeIMO.Word.Pdf {
                  PdfCore.PdfStandardFontMapper.IsStandardPdfFamilyEquivalent(familyName, pdfOptions.DefaultFont));
             if (!representedExactly) {
                 nativeFontMap.ReportFontSubstitution(
+                    pdfOptions,
                     familyName,
                     pdfOptions.DefaultFont,
                     GetEmbeddedFontFamilyName(pdfOptions, pdfOptions.DefaultFont));
@@ -161,7 +172,7 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static void ApplyNativeTextFallbacks(
-            PdfSaveOptions? options,
+            WordPdfSaveOptions? options,
             PdfCore.PdfOptions pdfOptions,
             HashSet<PdfCore.PdfStandardFont> reservedFontSlots,
             bool preserveConfiguredFontSlots,
@@ -341,13 +352,19 @@ namespace OfficeIMO.Word.Pdf {
                 }
             }
 
-            RegisterNativeFontCandidate(
-                DocumentTraversal.GetListInfo(paragraph)?.MarkerFontFamily,
-                pdfOptions,
-                registeredFamilies,
-                registeredFontSlots,
-                allowSystemFontEmbedding,
-                nativeFontMap);
+            DocumentTraversal.ListInfo? listInfo = DocumentTraversal.GetListInfo(paragraph);
+            if (listInfo.HasValue &&
+                !ShouldUseNativeListTextFontForNormalizedMarker(
+                    listInfo.Value,
+                    NormalizeNativeBulletMarker(listInfo.Value.LevelText ?? string.Empty))) {
+                RegisterNativeFontCandidate(
+                    listInfo.Value.MarkerFontFamily,
+                    pdfOptions,
+                    registeredFamilies,
+                    registeredFontSlots,
+                    allowSystemFontEmbedding,
+                    nativeFontMap);
+            }
         }
 
         private static void RegisterNativeEffectiveParagraphFont(
@@ -380,6 +397,27 @@ namespace OfficeIMO.Word.Pdf {
 
         private static void RegisterNativeFontCandidate(string? familyName, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots, bool allowSystemFontEmbedding, NativeFontMap nativeFontMap) {
             if (!PdfCore.PdfOptions.TryAddOfficeFontFamilyKey(familyName, registeredFamilies, NormalizeNativeFontFamily, out string trimmedFamilyName)) {
+                return;
+            }
+
+            if (pdfOptions.TryResolveFontFamilySubstitution(
+                    trimmedFamilyName,
+                    out PdfCore.PdfFontFamilySubstitution? substitution) &&
+                substitution != null) {
+                nativeFontMap.RegisterNamed(trimmedFamilyName, substitution.TargetFontFamily);
+                nativeFontMap.ReportFontSubstitution(
+                    pdfOptions,
+                    trimmedFamilyName,
+                    fallbackSlot: null,
+                    substitution.TargetFontFamily);
+                return;
+            }
+
+            if (pdfOptions.TryResolveNamedOfficeFontFamily(
+                    trimmedFamilyName,
+                    out string? registeredNamedFamily) &&
+                registeredNamedFamily != null) {
+                nativeFontMap.RegisterNamed(trimmedFamilyName, registeredNamedFamily);
                 return;
             }
 
@@ -417,6 +455,7 @@ namespace OfficeIMO.Word.Pdf {
                      PdfCore.PdfStandardFontMapper.IsStandardPdfFamilyEquivalent(trimmedFamilyName, fontFamily));
                 if (!representedExactly) {
                     nativeFontMap.ReportFontSubstitution(
+                        pdfOptions,
                         trimmedFamilyName,
                         fontFamily,
                         GetEmbeddedFontFamilyName(pdfOptions, fontFamily));
@@ -438,6 +477,7 @@ namespace OfficeIMO.Word.Pdf {
                 ? mappedFallback
                 : PdfCore.PdfStandardFont.Helvetica;
             nativeFontMap.ReportFontSubstitution(
+                pdfOptions,
                 trimmedFamilyName,
                 fallback,
                 GetEmbeddedFontFamilyName(pdfOptions, fallback));
@@ -532,7 +572,7 @@ namespace OfficeIMO.Word.Pdf {
             return name;
         }
 
-        private static IReadOnlyList<NativeTableOfContentsEntry> BuildNativeTableOfContentsEntries(WordDocument document, PdfSaveOptions? options, IReadOnlyDictionary<W.Paragraph, string> headingDestinations) {
+        private static IReadOnlyList<NativeTableOfContentsEntry> BuildNativeTableOfContentsEntries(WordDocument document, WordPdfSaveOptions? options, IReadOnlyDictionary<W.Paragraph, string> headingDestinations) {
             var entries = new List<NativeTableOfContentsEntry>();
             int headingCount = CountNativeDocumentHeadings(document);
             int currentPage = 1;

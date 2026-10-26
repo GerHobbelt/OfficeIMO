@@ -7,8 +7,59 @@ namespace OfficeIMO.Shared.Tests;
 
 public sealed class ReleasePackagingGuardrails {
     [Fact]
+    public void CodexMarketplace_LocalPluginSourcesResolveFromRepositoryRoot() {
+        string repositoryRoot = GetRepositoryRoot();
+        string marketplacePath = Path.Combine(repositoryRoot, ".agents", "plugins", "marketplace.json");
+        using JsonDocument marketplace = JsonDocument.Parse(File.ReadAllText(marketplacePath));
+
+        Assert.All(marketplace.RootElement.GetProperty("plugins").EnumerateArray(), plugin => {
+            JsonElement source = plugin.GetProperty("source");
+            if (!string.Equals(source.GetProperty("source").GetString(), "local", StringComparison.Ordinal)) {
+                return;
+            }
+
+            string relativePath = source.GetProperty("path").GetString()
+                ?? throw new InvalidDataException("Local plugin sources must declare a path.");
+            string resolvedPath = Path.GetFullPath(Path.Combine(repositoryRoot, relativePath));
+
+            Assert.True(
+                Directory.Exists(resolvedPath),
+                $"Local plugin source '{relativePath}' does not resolve from the repository root.");
+        });
+    }
+
+    [Fact]
+    public void CodexPlugin_McpConfigurationUsesSupportedServerSchema() {
+        string repositoryRoot = GetRepositoryRoot();
+        string coordinatedVersion = ReadCoordinatedReleaseVersion(repositoryRoot);
+        string mcpPath = Path.Combine(
+            repositoryRoot,
+            ".agents",
+            "plugins",
+            "officeimo-document-tools",
+            ".mcp.json");
+        using JsonDocument mcp = JsonDocument.Parse(File.ReadAllText(mcpPath));
+        JsonElement officeImo = mcp.RootElement
+            .GetProperty("mcpServers")
+            .GetProperty("officeimo");
+
+        Assert.Equal("stdio", officeImo.GetProperty("type").GetString());
+        Assert.Equal("dotnet", officeImo.GetProperty("command").GetString());
+        Assert.Equal(
+            ["dnx", $"OfficeIMO.Tool@{coordinatedVersion}", "mcp", "serve", "--stdio"],
+            officeImo.GetProperty("args").EnumerateArray()
+                .Select(static value => value.GetString() ?? string.Empty)
+                .ToArray());
+        Assert.False(
+            officeImo.TryGetProperty("tools", out JsonElement tools) &&
+            tools.ValueKind == JsonValueKind.Array,
+            "Codex MCP tool configuration is a map when present, not an array allowlist.");
+    }
+
+    [Fact]
     public void ReadmeInventory_MatchesReleaseMapAndLinkedProjectCatalog() {
         string repositoryRoot = GetRepositoryRoot();
+        string coordinatedVersion = ReadCoordinatedReleaseVersion(repositoryRoot);
         string readme = File.ReadAllText(Path.Combine(repositoryRoot, "README.md"));
         using JsonDocument buildDocument = JsonDocument.Parse(
             File.ReadAllText(Path.Combine(repositoryRoot, "Build", "project.build.json")));
@@ -37,29 +88,31 @@ public sealed class ReleasePackagingGuardrails {
                 File.Exists(Path.Combine(repositoryRoot, match.Groups["path"].Value)),
                 "README project link is missing: " + match.Value));
         Assert.Equal(26, CountProjectHeadings(readme, "Native formats and shared foundations"));
-        Assert.Equal(29, CountProjectHeadings(readme, "Conversion and cloud bridges"));
-        Assert.Equal(28, CountProjectHeadings(readme, "Unified Reader family"));
-        Assert.Equal(11, CountProjectHeadings(readme, "Markdown rendering and OfficeIMO Markup"));
+        Assert.Equal(31, CountProjectHeadings(readme, "Conversion and cloud bridges"));
+        Assert.Equal(27, CountProjectHeadings(readme, "Unified Reader family"));
+        Assert.Equal(10, CountProjectHeadings(readme, "Markdown rendering and OfficeIMO Markup"));
         Assert.Equal(94, projectHeadings.Count);
 
         Assert.Contains($"| Coordinated `3.0.x` release packages | {releasePackageCount} |", readme, StringComparison.Ordinal);
         Assert.Contains($"| Documented package, tool, and example projects below | {projectHeadings.Count} |", readme, StringComparison.Ordinal);
         Assert.Contains("| Native format, foundation, and shared-service packages | 26 |", readme, StringComparison.Ordinal);
-        Assert.Contains("| Conversion and cloud bridge packages | 29 |", readme, StringComparison.Ordinal);
-        Assert.Contains("| Unified Reader packages and tool | 28 |", readme, StringComparison.Ordinal);
-        Assert.Contains("| Markdown renderer and OfficeIMO Markup surfaces | 11 |", readme, StringComparison.Ordinal);
+        Assert.Contains("| Conversion and cloud bridge packages | 31 |", readme, StringComparison.Ordinal);
+        Assert.Contains("| Unified Reader packages | 27 |", readme, StringComparison.Ordinal);
+        Assert.Contains("| Markdown renderer and OfficeIMO Markup surfaces | 10 |", readme, StringComparison.Ordinal);
         Assert.Contains("NuGet publication is a separate release step.", readme, StringComparison.Ordinal);
         Assert.DoesNotContain("All OfficeIMO .NET packages are published", readme, StringComparison.Ordinal);
         AssertDotNetInstallCommands(
             readme,
             releasePackageIds,
-            expectedCount: 18,
-            toolPackageIds: ["OfficeIMO.Reader.Tool", "OfficeIMO.Html.Tool"]);
+            expectedCount: 17,
+            expectedVersion: coordinatedVersion,
+            toolPackageIds: ["OfficeIMO.Tool"]);
     }
 
     [Fact]
     public void PackageLocks_DoNotRetainOlderOfficeIMOReleaseLines() {
         string repositoryRoot = GetRepositoryRoot();
+        string coordinatedVersion = ReadCoordinatedReleaseVersion(repositoryRoot);
         string[] lockFiles = Directory
             .EnumerateFiles(repositoryRoot, "packages.lock.json", SearchOption.AllDirectories)
             .Where(static path => !ContainsBuildOutput(path))
@@ -73,7 +126,10 @@ public sealed class ReleasePackagingGuardrails {
                 content,
                 "\"OfficeIMO\\.[^\"]+\"\\s*:\\s*\"\\[(?<version>\\d+\\.\\d+\\.\\d+),",
                 RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)) {
-                if (!string.Equals(match.Groups["version"].Value, "3.0.0", StringComparison.Ordinal)) {
+                if (!string.Equals(
+                    match.Groups["version"].Value,
+                    coordinatedVersion,
+                    StringComparison.Ordinal)) {
                     staleDependencies.Add(
                         GetRepositoryRelativePath(repositoryRoot, lockFile)
                         + " -> "
@@ -187,6 +243,7 @@ public sealed class ReleasePackagingGuardrails {
     [Fact]
     public void PublicReleaseDocs_UseCurrentPackageVersionsDependenciesAndMigrationNames() {
         string repositoryRoot = GetRepositoryRoot();
+        string coordinatedVersion = ReadCoordinatedReleaseVersion(repositoryRoot);
         string installation = File.ReadAllText(Path.Combine(
             repositoryRoot,
             "Website",
@@ -221,7 +278,8 @@ public sealed class ReleasePackagingGuardrails {
         string[] installationCommandIds = AssertDotNetInstallCommands(
             installation,
             releasePackageIds,
-            expectedCount: 9);
+            expectedCount: 9,
+            expectedVersion: coordinatedVersion);
         string[] packageReferenceIds = documentedPackages
             .Cast<Match>()
             .Select(static match => match.Groups["id"].Value)
@@ -230,7 +288,11 @@ public sealed class ReleasePackagingGuardrails {
         Assert.Equal(
             packageReferenceIds,
             installationCommandIds.OrderBy(static packageId => packageId, StringComparer.OrdinalIgnoreCase).ToArray());
-        AssertPackageManagerInstallCommands(installation, releasePackageIds, expectedCount: 4);
+        AssertPackageManagerInstallCommands(
+            installation,
+            releasePackageIds,
+            expectedCount: 4,
+            expectedVersion: coordinatedVersion);
 
         string openXmlVersion = ReadPackageReferenceVersion(
             repositoryRoot,
@@ -289,17 +351,29 @@ public sealed class ReleasePackagingGuardrails {
 
         string changelog = File.ReadAllText(Path.Combine(repositoryRoot, "CHANGELOG.MD"));
         Assert.Contains("SaveTablesAsExcel", changelog, StringComparison.Ordinal);
-        Assert.Contains("SaveTablesAsPowerPoint", changelog, StringComparison.Ordinal);
+        Assert.Contains("SaveAsPowerPoint", changelog, StringComparison.Ordinal);
         Assert.Contains("ImportTablesToExcelDocument", changelog, StringComparison.Ordinal);
-        Assert.Contains("ImportTablesToPowerPointPresentation", changelog, StringComparison.Ordinal);
+        Assert.Contains("ToPowerPointPresentation", changelog, StringComparison.Ordinal);
         Assert.DoesNotContain("SaveAs{Format}FromPdfTables", changelog, StringComparison.Ordinal);
         Assert.DoesNotContain("To{Format}BytesFromPdfTables", changelog, StringComparison.Ordinal);
 
-        string migration = File.ReadAllText(Path.Combine(repositoryRoot, "Docs", "officeimo-3.0-migration.md"));
+        string migrationPath = Path.Combine(repositoryRoot, "MIGRATION.md");
+        string migration = File.ReadAllText(migrationPath);
+        Assert.Contains("# OfficeIMO migration guide", migration, StringComparison.Ordinal);
+        Assert.Contains("## Migrating from OfficeIMO 3.0 to 3.1", migration, StringComparison.Ordinal);
+        Assert.Contains("## Migrating from OfficeIMO 2.x to 3.0", migration, StringComparison.Ordinal);
+        Assert.Contains("## Migrating from OfficeIMO 1.x to 2.0", migration, StringComparison.Ordinal);
+        Assert.Contains("### Conversion API grammar", migration, StringComparison.Ordinal);
+        Assert.Contains("`SaveImage`", migration, StringComparison.Ordinal);
+        Assert.Contains("`PdfExcelTableImportOptions`", migration, StringComparison.Ordinal);
+        Assert.Contains("`PdfPowerPointConversionResult`", migration, StringComparison.Ordinal);
         Assert.Contains("`new WordHelpers()`", migration, StringComparison.Ordinal);
         Assert.Contains("using OfficeIMO.Word;", migration, StringComparison.Ordinal);
         Assert.Contains("vector graphics", migration, StringComparison.Ordinal);
         Assert.Contains("System.Runtime.CompilerServices.IsExternalInit", migration, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "Docs", "officeimo-3.0-migration.md")));
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "Docs", "officeimo-4.0-pdf-bridges.md")));
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "Docs", "officeimo.breaking-api-migration.md")));
 
         string apiReview = File.ReadAllText(Path.Combine(
             repositoryRoot,
@@ -325,6 +399,7 @@ public sealed class ReleasePackagingGuardrails {
         string content,
         ISet<string> releasePackageIds,
         int expectedCount,
+        string expectedVersion,
         IReadOnlyCollection<string>? toolPackageIds = null) {
         MatchCollection commands = Regex.Matches(
             content,
@@ -339,7 +414,7 @@ public sealed class ReleasePackagingGuardrails {
                 Assert.True(
                     releasePackageIds.Contains(packageId),
                     "Install command references an unknown package: " + match.Value);
-                Assert.Equal(" --version 3.0.0", match.Groups["arguments"].Value);
+                Assert.Equal($" --version {expectedVersion}", match.Groups["arguments"].Value);
 
                 bool isTool = toolPackageIds?.Contains(packageId, StringComparer.OrdinalIgnoreCase) == true;
                 Assert.Equal(
@@ -358,7 +433,8 @@ public sealed class ReleasePackagingGuardrails {
     private static void AssertPackageManagerInstallCommands(
         string content,
         ISet<string> releasePackageIds,
-        int expectedCount) {
+        int expectedCount,
+        string expectedVersion) {
         MatchCollection commands = Regex.Matches(
             content,
             @"^Install-Package (?<id>OfficeIMO\.[^\s]+)(?<arguments>[^\r\n]*)\r?$",
@@ -372,7 +448,7 @@ public sealed class ReleasePackagingGuardrails {
                 Assert.True(
                     releasePackageIds.Contains(packageId),
                     "Package Manager command references an unknown package: " + match.Value);
-                Assert.Equal(" -Version 3.0.0", match.Groups["arguments"].Value);
+                Assert.Equal($" -Version {expectedVersion}", match.Groups["arguments"].Value);
                 return packageId;
             })
             .ToArray();
@@ -418,6 +494,18 @@ public sealed class ReleasePackagingGuardrails {
         return (string?)packageReference.Attribute("Version")
             ?? throw new InvalidDataException(
                 $"Package reference '{packageId}' in '{relativeProjectPath}' does not declare a Version attribute.");
+    }
+
+    private static string ReadCoordinatedReleaseVersion(string repositoryRoot) {
+        string[] versions = Directory
+            .EnumerateFiles(repositoryRoot, "*.csproj", SearchOption.AllDirectories)
+            .Where(static path => !ContainsBuildOutput(path))
+            .Select(ReadPackageProject)
+            .Where(static project => project is not null)
+            .Select(static project => project!.Version)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return Assert.Single(versions);
     }
 
     private static void AssertVersionMatchesReleaseBand(PackageProject project, string expectedBand) {

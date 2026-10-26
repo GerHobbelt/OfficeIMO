@@ -8,7 +8,12 @@ namespace OfficeIMO.Excel.Pdf {
     public sealed class ExcelPdfSaveOptions {
         private int _headerRowCount = 1;
         private int? _maxRowsPerSheet;
+        private PdfCore.PdfOptions? _pdfOptions;
+        private bool _pdfOptionsCreatedByRenderingProfile;
+        private long? _fontlessRenderingProfileFontConfigurationState;
         private PdfCore.PdfResourcePolicy _resourcePolicy = PdfCore.PdfResourcePolicy.CreateDefault();
+        private double? _renderingProfilePageWidth;
+        private double? _renderingProfilePageHeight;
 
         /// <summary>
         /// Warnings populated when workbook content cannot be mapped faithfully.
@@ -25,7 +30,29 @@ namespace OfficeIMO.Excel.Pdf {
         /// <summary>
         /// PDF creation options passed to the first-party PDF engine. The options are cloned before export.
         /// </summary>
-        public PdfCore.PdfOptions? PdfOptions { get; set; }
+        public PdfCore.PdfOptions? PdfOptions {
+            get => _pdfOptions;
+            set {
+                _pdfOptions = value;
+                _pdfOptionsCreatedByRenderingProfile = false;
+                _fontlessRenderingProfileFontConfigurationState = null;
+                _renderingProfilePageWidth = null;
+                _renderingProfilePageHeight = null;
+            }
+        }
+
+        internal bool HasExplicitPdfFontConfiguration =>
+            _pdfOptions != null
+            && (!_fontlessRenderingProfileFontConfigurationState.HasValue
+                || _pdfOptions.FontConfigurationState
+                    != _fontlessRenderingProfileFontConfigurationState.Value);
+
+        internal bool HasExplicitPdfPageSizeConfiguration =>
+            _pdfOptions != null
+            && (!_renderingProfilePageWidth.HasValue
+                || !_renderingProfilePageHeight.HasValue
+                || _pdfOptions.PageWidth != _renderingProfilePageWidth.Value
+                || _pdfOptions.PageHeight != _renderingProfilePageHeight.Value);
 
         /// <summary>
         /// Optional workbook default font family used by the first-party PDF engine.
@@ -189,9 +216,71 @@ namespace OfficeIMO.Excel.Pdf {
         }
 
         /// <summary>
+        /// When true together with <see cref="MaxRowsPerSheet"/>, worksheet values and direct cell styles are read
+        /// only through the bounded worksheet range. Metadata stored after the worksheet cell stream, such as
+        /// print settings, merges, hyperlinks, and drawing anchors, is not materialized. Defaults to false.
+        /// </summary>
+        public bool UseBoundedWorksheetRead { get; set; }
+
+        /// <summary>
         /// Text used for empty worksheet cells in the exported PDF table. Defaults to an empty string.
         /// </summary>
         public string EmptyCellText { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Applies shared deterministic typography resources to the first-party PDF engine.
+        /// Worksheet selection and page layout remain owned by this converter.
+        /// </summary>
+        public ExcelPdfSaveOptions UseRenderingProfile(
+            DrawingCore.OfficeRenderingProfile profile,
+            DrawingCore.OfficeRenderingProfileApplyMode mode = DrawingCore.OfficeRenderingProfileApplyMode.Replace) {
+            if (profile == null) {
+                throw new ArgumentNullException(nameof(profile));
+            }
+            if (mode != DrawingCore.OfficeRenderingProfileApplyMode.Replace
+                && mode != DrawingCore.OfficeRenderingProfileApplyMode.Overlay) {
+                throw new ArgumentOutOfRangeException(nameof(mode));
+            }
+
+            bool createdPdfOptions = _pdfOptions == null;
+            bool profileOwnsCurrentFontConfiguration =
+                _pdfOptions != null
+                && _fontlessRenderingProfileFontConfigurationState.HasValue
+                && _pdfOptions.FontConfigurationState
+                    == _fontlessRenderingProfileFontConfigurationState.Value;
+            bool profileOwnsCurrentPageSize =
+                createdPdfOptions
+                || (_pdfOptions != null
+                    && _renderingProfilePageWidth.HasValue
+                    && _renderingProfilePageHeight.HasValue
+                    && _pdfOptions.PageWidth == _renderingProfilePageWidth.Value
+                    && _pdfOptions.PageHeight == _renderingProfilePageHeight.Value);
+            PdfCore.PdfOptions target = _pdfOptions ?? new PdfCore.PdfOptions();
+            target.UseRenderingProfile(profile, mode);
+            if (createdPdfOptions) {
+                _pdfOptions = target;
+                _pdfOptionsCreatedByRenderingProfile = true;
+            }
+            if (profileOwnsCurrentPageSize) {
+                _renderingProfilePageWidth = target.PageWidth;
+                _renderingProfilePageHeight = target.PageHeight;
+            } else {
+                _renderingProfilePageWidth = null;
+                _renderingProfilePageHeight = null;
+            }
+            if (profile.Fonts.Faces.Count > 0) {
+                _fontlessRenderingProfileFontConfigurationState = null;
+            } else if (_pdfOptionsCreatedByRenderingProfile
+                && (createdPdfOptions
+                    || mode == DrawingCore.OfficeRenderingProfileApplyMode.Replace
+                    || profileOwnsCurrentFontConfiguration)) {
+                _fontlessRenderingProfileFontConfigurationState =
+                    target.FontConfigurationState;
+            } else {
+                _fontlessRenderingProfileFontConfigurationState = null;
+            }
+            return this;
+        }
 
         /// <summary>
         /// Applies a high-level export profile by setting the Excel PDF options that correspond to that profile.

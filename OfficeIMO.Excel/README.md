@@ -48,11 +48,12 @@ tables, formulas, charts, pivots, conditional formatting, validation, images,
 templates, protection, print settings, headers and footers, and both `.xlsx`
 and the supported legacy `.xls` subset.
 
-The compact table deliberately mixes raw data paths with feature-bearing work:
-typed-object reads, plain and styled `DataReader` exports, and a report containing
-normal workbook features. Each row only includes libraries with a directly
-comparable public API. Lower is faster.
-Differences below 5% are treated as ties rather than ranking claims.
+The historical single-workstation table below deliberately mixes raw data paths
+with feature-bearing work: typed-object reads, plain and styled `DataReader`
+exports, and a report containing normal workbook features. Each row only
+includes libraries with a directly comparable public API. Lower is faster
+within a row. Differences below 5% are treated as ties. This table is retained
+for reproducibility, not as a current cross-platform library ranking.
 
 <!-- officeimo-excel-benchmark-table:start -->
 | Scenario | Variables | Host | Operation | OfficeIMO.Excel | ClosedXML | EPPlus | LargeXlsx | SpreadCheetah | Sylvan.Data.Excel | Result |
@@ -63,10 +64,10 @@ Differences below 5% are treated as ties rather than ranking claims.
 | Typed objects streamed from XLSX | Format=.xlsx, MeasuredIterations=9, Rows=25,000, Runner=rotated local, Snapshot=2026-07-14, Warmups=20 | .NET 8 | Read | 1.00x (25ms) | 11.13x (278ms) | 10.08x (252ms) | n/a | n/a | 1.56x (39ms) | OfficeIMO.Excel fastest |
 <!-- officeimo-excel-benchmark-table:end -->
 
-These are local direction-finding results, not guarantees. Hardware, runtime,
-workload shape, package versions, warm-up, and library options change outcomes;
-results will vary. OfficeIMO wins some lanes and not others. The
-[benchmark harness](../OfficeIMO.Excel.Benchmarks/README.md) publishes the full
+Hardware, runtime, workload shape, package versions, warm-up, and library
+options change outcomes. Use the benchmark website's hash-pinned CSV/XLSX/XLSB
+matrix for current Windows, Linux, and macOS evidence. The
+[benchmark harness](../OfficeIMO.Excel.Benchmarks/README.md) covers the broader
 comparison suite against ClosedXML, EPPlus, MiniExcel, LargeXlsx,
 SpreadCheetah, ExcelDataReader, and Sylvan.Data.Excel. The opt-in
 [NPOI comparison](../OfficeIMO.Excel.Benchmarks.NPOI/README.md) separately covers
@@ -149,18 +150,28 @@ For untrusted files, capability preflight, macro and embedded-payload handling,
 and DOC/XLS/XLSB loss policies, see the
 [Word and Excel interoperability guide](../Docs/officeimo.word-excel-interoperability.md).
 
-### Map rows to objects
+### Stream workbook rows
 
 ```csharp
-using var document = ExcelDocument.Load("input.xlsx");
-List<Person> people = document["Data"].RowsAs<Person>("A1:C100").ToList();
+using OfficeIMO.Excel;
 
-public sealed class Person {
-    public string Name { get; set; } = "";
-    public int Value { get; set; }
-    public string Status { get; set; } = "";
+using var reader = ExcelDocument.OpenDataReader("input.xlsx", new ExcelReadOptions {
+    SheetName = "Data",
+    NumericAsDecimal = true
+});
+while (reader.Read()) {
+    string name = reader.GetString(reader.GetOrdinal("Full Name"));
+    decimal value = reader.GetDecimal(reader.GetOrdinal("Value"));
+    Console.WriteLine($"{name}: {value}");
 }
 ```
+
+`ExcelDocument.OpenDataReader` is the package-owned read-only entry point for
+XLSX, XLSM, XLSB, and BIFF8 XLS. It discovers used ranges and exposes
+additional worksheets through `NextResult()`. Legacy XLS is projected through
+the package's existing first-party reader; use `ExcelDocument.Load` when the
+workbook must be inspected, edited, or saved again. CSV uses the parallel
+`CsvDocument.OpenDataReader` API from the separate `OfficeIMO.CSV` package.
 
 ### Append to an existing table
 
@@ -174,6 +185,33 @@ rows.Rows.Add(150m, "APAC");
 document["Sales"].AppendDataTableToTable(rows, "SalesTable");
 document.Save();
 ```
+
+### Insert and delete worksheet rows
+
+```csharp
+using var document = ExcelDocument.Load("report.xlsx");
+var sheet = document["Data"];
+
+// Insert two blank rows immediately before row 5.
+sheet.InsertRows(firstRow: 5, count: 2);
+
+// Delete row 12 and shift following rows up.
+sheet.DeleteRows(firstRow: 12);
+
+document.Save();
+```
+
+Structural row edits update workbook-owned formulas and names, tables and
+filters, validations, conditional formatting, merges, links, comments,
+drawings, charts, sparklines, pivot sources, and print-related row metadata.
+Formula results are marked dirty and the workbook requests recalculation on
+open. Shared formulas are materialized into equivalent normal formulas before
+the edit so that each member can be rewritten independently.
+
+The operation rejects edits that would cross an array-formula boundary or
+PivotTable output, remove a table header or totals row, or move a dependent
+reference beyond Excel's row limit. Remove, move, or resize that owned structure
+first. Column and cell-shift mutations remain separate roadmap work.
 
 ### Validation lists and typed reads
 

@@ -1,6 +1,6 @@
 ---
 title: "OfficeIMO.OneNote"
-description: "Read, create, edit, and write native OneNote sections, notebooks, tables of contents, and packages offline."
+description: "Read, create, edit, and write native OneNote sections, notebooks, tables of contents, and packages offline. Compare packages, examples, and limits."
 layout: product
 meta.seo_title: "OfficeIMO.OneNote for .NET applications"
 meta.head_html: '<link rel="alternate" hreflang="en" href="https://officeimo.com/products/onenote/" /><link rel="alternate" hreflang="x-default" href="https://officeimo.com/products/onenote/" />'
@@ -10,6 +10,12 @@ install: "dotnet add package OfficeIMO.OneNote"
 nuget: "OfficeIMO.OneNote"
 docs_url: "/docs/onenote/"
 api_url: "/api/onenote/"
+meta.software.name: "OfficeIMO.OneNote"
+meta.software.application_category: "DeveloperApplication"
+meta.software.operating_system: "Windows, Linux, macOS"
+meta.software.download_url: "https://www.nuget.org/packages/OfficeIMO.OneNote"
+meta.software.price: 0
+meta.software.price_currency: "USD"
 ---
 
 ## Native OneNote files without Graph or OneNote

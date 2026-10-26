@@ -76,11 +76,146 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal("Part IV: Maintenance", margin.Text);
     }
 
+    [Fact]
+    public void HtmlRender_Paged_RunningStringAttributesPreserveEscapedParentheses() {
+        const string html = """
+            <style>
+              @page { size:3in 2in; margin:24px; @top-center { content:string(section); } }
+            </style>
+            <h2 data)id="Escaped attribute" style="string-set:section attr(data\)id)">Body</h2>
+            """;
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        HtmlRenderText margin = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin");
+        Assert.Equal("Escaped attribute", margin.Text);
+    }
+
+    [Theory]
+    [InlineData("\\41", "A")]
+    [InlineData("\\000041 ", "A")]
+    [InlineData("\\1F600", "\ud83d\ude00")]
+    public void HtmlRender_Paged_RunningStringLiteralsDecodeCssHexadecimalEscapes(
+        string literal,
+        string expected) {
+        string html = """
+            <style>
+              @page { size:3in 2in; margin:24px; @top-center { content:string(section); } }
+            </style>
+            """
+            + "<h2 style=\"string-set:section '" + literal + "'\">Body</h2>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        HtmlRenderText margin = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin");
+        Assert.Equal(expected, margin.Text);
+    }
+
+    [Fact]
+    public void HtmlRender_Paged_DecodesEscapedRunningStringIdentifiersOnAssignmentAndLookup() {
+        const string html = """
+            <style>
+              @page { size:3in 2in; margin:24px; @top-center { content:string(sec\74 ion); } }
+            </style>
+            <h2 style="string-set:sec\74 ion 'Escaped identifier'">Body</h2>
+            """;
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        HtmlRenderText margin = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin");
+        Assert.Equal("Escaped identifier", margin.Text);
+    }
+
+    [Theory]
+    [InlineData(@"sec\)tion")]
+    [InlineData(@"sec\,tion")]
+    public void HtmlRender_Paged_RunningStringLookupsPreserveEscapedDelimiters(string identifier) {
+        string html = """
+            <style>
+              @page { size:3in 2in; margin:24px; @top-center { content:string(
+            """
+            + identifier
+            + "); } }</style><h2 style=\"string-set:"
+            + identifier
+            + " 'Escaped delimiter'\">Body</h2>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        HtmlRenderText margin = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin");
+        Assert.Equal("Escaped delimiter", margin.Text);
+    }
+
+    [Fact]
+    public void HtmlRender_Paged_RetainsEscapedSemicolonsInRunningStringAssignmentNames() {
+        const string html = """
+            <style>
+              @page { size:3in 2in; margin:24px; @top-center { content:string(sec\;tion); } }
+              .target { string-set:sec\;tion 'Escaped semicolon'; }
+            </style>
+            <p class="target">Body</p>
+            """;
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        Assert.Contains(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin" && text.Text == "Escaped semicolon");
+    }
+
+    [Fact]
+    public void HtmlRender_Paged_PreservesRunningStringFlowOrderAcrossColumns() {
+        const string html = """
+            <style>
+              @page {
+                size:4in 3in;
+                margin:24px;
+                @top-left { content:"first=" string(section, first); }
+                @top-right { content:"last=" string(section, last); }
+              }
+              h2 { margin:0; font-size:12px; line-height:14px; }
+            </style>
+            <div style="column-count:2;column-fill:auto;height:60px;width:220px">
+              <div style="height:40px"></div>
+              <h2 style="string-set:section 'First column'">First</h2>
+              <div style="height:20px"></div>
+              <h2 style="string-set:section 'Second column'">Second</h2>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        IReadOnlyList<string> margins = rendered.Pages[0].Visuals
+            .OfType<HtmlRenderText>()
+            .Where(text => text.SemanticRole == "page-margin")
+            .Select(text => text.Text)
+            .ToList();
+        Assert.Contains("first=First column", margins);
+        Assert.Contains("last=Second column", margins);
+    }
+
     [Theory]
     [InlineData("<div style='display:flex'><h2 style='string-set:section content()'>Flex section</h2></div>", "Flex section")]
     [InlineData("<div style='display:grid;grid-template-columns:1fr'><h2 style='string-set:section content()'>Grid section</h2></div>", "Grid section")]
     [InlineData("<div style='column-count:2'><h2 style='string-set:section content()'>Column section</h2><p>Body</p></div>", "Column section")]
     [InlineData("<table><tr><td><h2 style='string-set:section content()'>Table section</h2></td></tr></table>", "Table section")]
+    [InlineData("<table><tr><td style='string-set:section content()'>Cell section</td></tr></table>", "Cell section")]
+    [InlineData("<table><tr><th style='string-set:section content()'>Header section</th></tr></table>", "Header section")]
+    [InlineData("<p><input value='Form section' style='string-set:section attr(value)'></p>", "Form section")]
     public void HtmlRender_Paged_PropagatesRunningStringsThroughSpecializedContainers(
         string body,
         string expected) {
@@ -119,6 +254,67 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public void HtmlRender_Paged_DoesNotRecordPositionedRunningStringAtStaticInlineAnchor() {
+        const string html = """
+            <style>
+              @page { size:3in 3in; margin:24px; @top-center { content:string(section, first); } }
+              p, h2 { margin:0; font-size:12px; line-height:14px; }
+            </style>
+            <p>Anchor <span style="position:absolute;top:100px;left:0;string-set:section 'Positioned'">Positioned</span></p>
+            <div style="height:48px"></div>
+            <h2 style="string-set:section 'Flow'">Flow</h2>
+            """;
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        Assert.Contains(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin" && text.Text == "Flow");
+    }
+
+    [Theory]
+    [InlineData("string-set:section 'old';string-set:section 'new'", "new")]
+    [InlineData("string-set:section 'old' !important;string-set:section 'new'", "old")]
+    [InlineData("string-set:section 'old';string-set:section 'new' !important", "new")]
+    [InlineData("string-set:section 'old' !important;string-set:section 'new' !important", "new")]
+    public void HtmlRender_Paged_RetainedStringSetDeclarationsRespectSourceOrderAndImportance(
+        string declarations,
+        string expected) {
+        string html = "<style>@page{size:3in 2in;margin:24px;@top-center{content:string(section)}}"
+            + ".target{" + declarations + "}</style><p class='target'>Body</p>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        Assert.Contains(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin" && text.Text == expected);
+    }
+
+    [Theory]
+    [InlineData(".escaped\\{", "escaped{")]
+    [InlineData(".escaped\\;", "escaped;")]
+    public void HtmlRender_Paged_RecoversRetainedDeclarationsAfterEscapedSelectorDelimiters(
+        string selector,
+        string className) {
+        string html = "<style>"
+            + "@page{size:3in 2in;margin:24px;@top-center{content:string(section)}}"
+            + selector + "{string-set:section 'Escaped selector'}"
+            + "</style><p class=\"" + className + "\">Body</p>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        Assert.Contains(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin" && text.Text == "Escaped selector");
+    }
+
+    [Fact]
     public void HtmlRender_Paged_CollectsRunningStringsFromInlineElements() {
         const string html = """
             <style>
@@ -138,10 +334,35 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
-    public void HtmlRender_InlineRunningStringMarkersRemainTransparentToWhitespaceCollapsing() {
+    public void HtmlRender_Paged_RunningStringContentUsesVisibleTransformedText() {
         const string html = """
-            <p style="margin:0;font-size:12px;line-height:14px">A <span style="string-set:section content()"></span> B</p>
+            <style>
+              @page { size:3in 2in; margin:24px; @top-center { content:string(section); } }
+              h2 { margin:0; font-size:12px; line-height:14px; text-transform:uppercase; }
+            </style>
+            <h2 style="string-set:section content()">Chapter<script>hidden</script>
+              <span style="text-transform:lowercase">LOUD</span>
+              <span style="display:none">ignored</span>
+            </h2>
             """;
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        Assert.Contains(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin" && text.Text == "CHAPTER loud");
+    }
+
+    [Theory]
+    [InlineData("A <span style=\"string-set:section content()\"></span> B", "A B")]
+    [InlineData("<span style=\"string-set:section 'Start'\"></span> A", "A")]
+    [InlineData("A <span style=\"string-set:section 'End'\"></span>", "A")]
+    public void HtmlRender_InlineRunningStringMarkersRemainTransparentToWhitespaceCollapsing(
+        string body,
+        string expected) {
+        string html = "<p style=\"margin:0;font-size:12px;line-height:14px\">" + body + "</p>";
 
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
             HtmlConversionDocument.Parse(html),
@@ -151,7 +372,35 @@ public sealed partial class HtmlRenderingTests {
             .OfType<HtmlRenderText>()
             .Where(visual => visual.SemanticRole != "page-margin")
             .Select(visual => visual.Text));
-        Assert.Equal("A B", text);
+        Assert.Equal(expected, text);
+    }
+
+    [Fact]
+    public void HtmlRender_InlineRunningStringMarkersDoNotCreateLineOccupancy() {
+        const string html = """
+            <style>
+            @page { size:3in 2in; margin:24px; @top-center { content:string(section) } }
+            div { margin:0; font-size:12px; line-height:14px }
+            </style>
+            <div>Before</div>
+            <div><span style="string-set:section 'Marker only'"></span></div>
+            <div>After</div>
+            """;
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        HtmlRenderText before = Assert.Single(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.Text == "Before");
+        HtmlRenderText after = Assert.Single(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.Text == "After");
+        Assert.InRange(after.Y - before.Y, 14D, 14.02D);
+        Assert.Contains(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            text => text.SemanticRole == "page-margin" && text.Text == "Marker only");
     }
 
     [Theory]

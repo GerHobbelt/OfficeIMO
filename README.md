@@ -12,9 +12,9 @@ OfficeIMO is a family of COM-free .NET libraries for creating, reading, editing,
 
 This is not one facade over a collection of unrelated document libraries. OfficeIMO owns its OneNote, PDF, Markdown, RTF, OpenDocument, AsciiDoc, LaTeX, CSV, EPUB, ZIP, drawing, legacy Word `.doc`, legacy Excel `.xls`, and legacy PowerPoint `.ppt`/`.pot`/`.pps` implementations. Word, Excel, and PowerPoint use the Open XML SDK for package mechanics; HTML uses AngleSharp for DOM and CSS parsing. Converters compose the same first-party object models used by the native packages and return diagnostics when a target format cannot carry everything from the source.
 
-The current source and packaging line is `3.0.x`. Applications should upgrade OfficeIMO packages together: 3.0 tightens public boundaries, makes table-only PDF recovery explicit, and aligns the complete release set on one version. See the [2.x to 3.0 migration guide](Docs/officeimo-3.0-migration.md).
+The current source and packaging line is `3.1.x`. Applications should upgrade OfficeIMO packages together: 3.1 completes the public API cleanup, keeps CSV and Excel package-owned, and aligns the complete release set on one version. See the [OfficeIMO migration guide](MIGRATION.md#migrating-from-officeimo-30-to-31).
 
-NuGet publication is a separate release step. The repository, project files, and locally packed artifacts target `3.0.0`; a package ID is installable from NuGet.org only after that exact artifact has been published there. Until then, use the clean local feed produced by the release build or remain on the current public stable version.
+NuGet publication is a separate release step. The repository, project files, and locally packed artifacts target `3.1.0`; a package ID is installable from NuGet.org only after that exact artifact has been published there. Until then, use the clean local feed produced by the release build or remain on the current public stable version.
 
 If OfficeIMO saves you time, please consider supporting the work through [GitHub Sponsors](https://github.com/sponsors/PrzemyslawKlys) or [PayPal](https://paypal.me/PrzemyslawKlys). PowerShell users should start with [PSWriteOffice](https://github.com/EvotecIT/PSWriteOffice).
 
@@ -54,12 +54,12 @@ OfficeIMO keeps document engines first-party and optional integrations isolated.
 
 | Surface | Current repository coverage |
 | --- | ---: |
-| Coordinated `3.0.x` release packages | 86 |
+| Coordinated `3.0.x` release packages | 87 |
 | Documented package, tool, and example projects below | 94 |
 | Native format, foundation, and shared-service packages | 26 |
-| Conversion and cloud bridge packages | 29 |
-| Unified Reader packages and tool | 28 |
-| Markdown renderer and OfficeIMO Markup surfaces | 11 |
+| Conversion and cloud bridge packages | 31 |
+| Unified Reader packages | 27 |
+| Markdown renderer and OfficeIMO Markup surfaces | 10 |
 | Runnable example projects | 1 |
 | Modern Office authoring/editing | `.docx`, `.xlsx`, `.pptx`, `.vsdx` |
 | First-party legacy binary support | Word 97–2003 `.doc`, Excel BIFF8 `.xls`, PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` |
@@ -524,13 +524,29 @@ _Dependency footprint:_ only OfficeIMO PowerPoint, PDF, and Drawing packages.
 
 _Dependency footprint:_ only OfficeIMO PowerPoint and OpenDocument packages.
 
-#### [OfficeIMO.OpenDocument.Pdf](OfficeIMO.OpenDocument.Pdf/README.md)
+#### [OfficeIMO.OpenDocument.Odt.Pdf](OfficeIMO.OpenDocument.Odt.Pdf/README.md)
 
-- [x] Direct ODT, ODS, and ODP to PDF workflows with path, stream, synchronous, asynchronous, and result-bearing APIs
-- [x] One thin façade over the existing OpenDocument-to-Office adapters and canonical Word, Excel, and PowerPoint PDF engines
-- [x] Combined feature-mapping and PDF conversion diagnostics so approximated, skipped, and unsupported content remains visible
+- [x] Bidirectional ODT and PDF workflows through the Word semantic engine
+- [x] Path, stream, synchronous, asynchronous, and result-bearing entry points
+- [x] Combined OpenDocument feature mapping and PDF conversion diagnostics
 
-_Dependency footprint:_ only first-party OfficeIMO OpenDocument, Office, and PDF adapter packages; no second document or PDF rendering engine.
+_Dependency footprint:_ Word, Word OpenDocument, PDF, and native OpenDocument only; no Excel or PowerPoint stack.
+
+#### [OfficeIMO.OpenDocument.Ods.Pdf](OfficeIMO.OpenDocument.Ods.Pdf/README.md)
+
+- [x] Bidirectional ODS and PDF workflows through the Excel semantic engine
+- [x] Editable detected-table recovery with non-table page-content loss reporting
+- [x] Combined OpenDocument feature mapping and PDF conversion diagnostics
+
+_Dependency footprint:_ Excel, Excel OpenDocument, PDF, and native OpenDocument only; no Word or PowerPoint stack.
+
+#### [OfficeIMO.OpenDocument.Odp.Pdf](OfficeIMO.OpenDocument.Odp.Pdf/README.md)
+
+- [x] Bidirectional ODP and PDF workflows through the PowerPoint semantic engine
+- [x] Visual-page reconstruction by default, with explicit editable-table mode
+- [x] Combined OpenDocument feature mapping and PDF conversion diagnostics
+
+_Dependency footprint:_ PowerPoint, PowerPoint OpenDocument, PDF, and native OpenDocument only; no Word or Excel stack. The 3.1 package graph has no all-formats umbrella or bridge-specific Core package.
 
 #### [OfficeIMO.Markdown.Html](OfficeIMO.Markdown.Html/README.md)
 
@@ -582,13 +598,14 @@ _Dependency footprint:_ OfficeIMO OneNote.Markdown, Markdown.Pdf, PDF, and Drawi
 
 _Dependency footprint:_ only OfficeIMO HTML, PDF, and Drawing packages; no browser process or native HTML renderer.
 
-#### [OfficeIMO.Html.Tool](OfficeIMO.Html.Tool/README.md)
+#### [OfficeIMO.Tool](OfficeIMO.Tool/README.md)
 
-- [x] HTML or MHTML files and standard input to PDF files or standard output
-- [x] Atomic output, explicit overwrite, bounded input/resources/pages, caller stylesheets, and portable resource defaults
-- [x] Machine-readable renderer capabilities and explicit embedded-font inputs for PDF/UA-ready output
+- [x] One `officeimo` executable with explicit `html`, `reader`, `markup`, `agent`, and `mcp` command areas
+- [x] Bounded HTML/MHTML-to-PDF conversion, document extraction, capability discovery, Markup validation, code emission, and Office export
+- [x] Compact inspect/search/fetch operations for documents and mail stores, plus a local STDIO MCP server for Codex and other clients
+- [x] Shared help, exit-code, packaging, NativeAOT, and stream contracts without duplicating document logic from the owning libraries
 
-_Dependency footprint:_ the same first-party HTML and PDF engines; no browser process or separate conversion engine.
+_Dependency footprint:_ the first-party HTML/PDF, Reader.All, and Markup exporter graphs; no browser process, hosted provider, or separate conversion engine.
 
 #### [OfficeIMO.Rtf.Markdown](OfficeIMO.Rtf.Markdown/README.md)
 
@@ -859,14 +876,6 @@ _Dependency footprint:_ YamlDotNet plus `OfficeIMO.Reader.Core`.
 
 _Dependency footprint:_ only `OfficeIMO.Reader.Core` and Zip.
 
-#### [OfficeIMO.Reader.Tool](OfficeIMO.Reader.Tool/README.md)
-
-- [x] Local `officeimo-reader` .NET tool for bounded file, standard-input, and folder conversion
-- [x] Markdown and stable v5 JSON output, embedded-asset materialization, deterministic folder ordering, and concurrency controls
-- [x] Capability discovery and explicit exit codes over the existing `OfficeIMO.Reader.All` adapter graph
-
-_Dependency footprint:_ only `OfficeIMO.Reader.All`; the tool adds no command framework, native binary, model, network client, or hosted provider.
-
 ### Markdown rendering and OfficeIMO Markup
 
 #### [OfficeIMO.MarkdownRenderer](OfficeIMO.MarkdownRenderer/README.md)
@@ -934,21 +943,13 @@ _Dependency footprint:_ only OfficeIMO Markup and Excel; currently outside the c
 
 _Dependency footprint:_ only OfficeIMO Markup, PowerPoint, and Drawing; Mermaid CLI is optional and external.
 
-#### [OfficeIMO.Markup.Cli](OfficeIMO.Markup.Cli/README.md)
-
-- [x] Parse and validate OfficeIMO Markup files
-- [x] Emit C# and PowerShell starter code
-- [x] Export `.docx`, `.xlsx`, and `.pptx` artifacts
-
-_Dependency footprint:_ only the OfficeIMO Markup and exporter projects; this repository tool is not a NuGet package.
-
 #### [OfficeIMO.Markup.VSCode](OfficeIMO.Markup.VSCode/README.md)
 
 - [x] Syntax highlighting, snippets, inline validation, and live preview for `.omd` and `.office.md`
 - [x] Generate C# or PowerShell and export Word, Excel, and PowerPoint from the editor
 - [x] Bundled self-contained CLI builds for Windows, Linux, and macOS on x64 and arm64
 
-_Dependency footprint:_ VS Code plus the bundled OfficeIMO Markup CLI; Mermaid CLI integration is optional.
+_Dependency footprint:_ VS Code plus the bundled `officeimo markup` command; Mermaid CLI integration is optional.
 
 #### [OfficeIMO.Examples](OfficeIMO.Examples/README.md)
 
@@ -1003,41 +1004,38 @@ Fixed-layout PDF import is necessarily semantic rather than visually lossless. R
 
 ## Install
 
-Install only the native packages and adapters an application needs. The commands below deliberately request `3.0.0`; they work against NuGet.org after each package ID is published, or against the clean local feed produced by `Build/Build-Project.ps1` before publication.
+Install only the native packages and adapters an application needs. The commands below deliberately request `3.1.0`; they work against NuGet.org after each package ID is published, or against the clean local feed produced by `Build/Build-Project.ps1` before publication.
 
 ```powershell
-dotnet add package OfficeIMO.Word --version 3.0.0
-dotnet add package OfficeIMO.Word.Pdf --version 3.0.0
+dotnet add package OfficeIMO.Word --version 3.1.0
+dotnet add package OfficeIMO.Word.Pdf --version 3.1.0
 
-dotnet add package OfficeIMO.Excel --version 3.0.0
-dotnet add package OfficeIMO.Excel.Html --version 3.0.0
-dotnet add package OfficeIMO.Excel.Pdf --version 3.0.0
+dotnet add package OfficeIMO.Excel --version 3.1.0
+dotnet add package OfficeIMO.Excel.Html --version 3.1.0
+dotnet add package OfficeIMO.Excel.Pdf --version 3.1.0
 
-dotnet add package OfficeIMO.Epub --version 3.0.0
-dotnet add package OfficeIMO.Epub.Image --version 3.0.0
+dotnet add package OfficeIMO.Epub --version 3.1.0
+dotnet add package OfficeIMO.Epub.Image --version 3.1.0
 
-dotnet add package OfficeIMO.Adf --version 3.0.0
-dotnet add package OfficeIMO.Confluence --version 3.0.0
+dotnet add package OfficeIMO.Adf --version 3.1.0
+dotnet add package OfficeIMO.Confluence --version 3.1.0
 
-dotnet add package OfficeIMO.Reader.Pdf --version 3.0.0
+dotnet add package OfficeIMO.Reader.Pdf --version 3.1.0
 
 # Add every Reader adapter only when a broad ingestion host genuinely needs all formats.
-dotnet add package OfficeIMO.Reader.All --version 3.0.0
+dotnet add package OfficeIMO.Reader.All --version 3.1.0
 
-dotnet add package OfficeIMO.OneNote --version 3.0.0
-dotnet add package OfficeIMO.OneNote.Markdown --version 3.0.0
-dotnet add package OfficeIMO.OneNote.Html --version 3.0.0
-dotnet add package OfficeIMO.OneNote.Pdf --version 3.0.0
-dotnet add package OfficeIMO.Reader.OneNote --version 3.0.0
+dotnet add package OfficeIMO.OneNote --version 3.1.0
+dotnet add package OfficeIMO.OneNote.Markdown --version 3.1.0
+dotnet add package OfficeIMO.OneNote.Html --version 3.1.0
+dotnet add package OfficeIMO.OneNote.Pdf --version 3.1.0
+dotnet add package OfficeIMO.Reader.OneNote --version 3.1.0
 
-# Install the broad local-reader command only when a CLI is the desired surface.
-dotnet tool install --global OfficeIMO.Reader.Tool --version 3.0.0
-
-# Install bounded HTML/MHTML-to-PDF conversion when a CLI is the desired surface.
-dotnet tool install --global OfficeIMO.Html.Tool --version 3.0.0
+# Install the unified command surface for HTML, Reader, Markup, agent, and MCP workflows.
+dotnet tool install --global OfficeIMO.Tool --version 3.1.0
 ```
 
-All coordinated source packages use the same `3.0.x` compatibility line. Avoid mixing OfficeIMO `2.x` and `3.x` packages in one application.
+All coordinated source packages use the same `3.1.x` compatibility line. Avoid mixing OfficeIMO `2.x`, `3.0`, and `3.1` packages in one application.
 
 ## Common workflows
 
@@ -1193,9 +1191,8 @@ Most shipping libraries target `netstandard2.0`, `net8.0`, and `net10.0`. Many a
 ## More documentation
 
 - [Examples](OfficeIMO.Examples/README.md)
-- [2.x to 3.0 migration](Docs/officeimo-3.0-migration.md)
+- [Versioned migration guide](MIGRATION.md)
 - [2.x to 3.0 public API review](Docs/officeimo-3.0-public-api-review.md)
-- [2.0 breaking API migration](Docs/officeimo.breaking-api-migration.md)
 - [Image export capability matrix](Docs/officeimo.image-export-capability-matrix.md)
 - [PDF current state](Docs/officeimo.pdf.current-state.md)
 - [PDF conversion support matrix](Docs/officeimo.pdf-conversion-support-matrix.md)

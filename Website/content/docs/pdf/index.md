@@ -1,6 +1,6 @@
 ---
 title: "PDF"
-description: "Create, inspect, transform, render, sign, and validate PDF documents with OfficeIMO.Pdf."
+description: "Create, inspect, transform, render, sign, and validate PDF documents with OfficeIMO.Pdf. Includes examples and API links."
 order: 35
 meta.seo_title: "PDF authoring and conversion | OfficeIMO"
 ---
@@ -50,7 +50,7 @@ PdfDocument.Create()
 | PowerPoint presentation | `OfficeIMO.PowerPoint.Pdf` |
 | HTML | `OfficeIMO.Html.Pdf` |
 | Markdown | `OfficeIMO.Markdown.Pdf` |
-| OpenDocument | `OfficeIMO.OpenDocument.Pdf` |
+| OpenDocument | `OfficeIMO.OpenDocument.Odt.Pdf`, `.Ods.Pdf`, or `.Odp.Pdf` |
 
 Use the [PDF API reference](/api/pdf/) for type-level detail. For conversion, inspect returned diagnostics before accepting approximated or omitted features.
 

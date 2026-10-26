@@ -313,6 +313,29 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public void HtmlPdf_DirectRenderer_UsesFallbackFontWhenRegisteredFaceDoesNotCoverRun() {
+        byte[] fontData = ManagedTextShapingTestAssets.CreateFont(' ', 'A');
+        string html = "<style>@font-face{font-family:Scoped;src:url('data:font/ttf;base64,"
+            + Convert.ToBase64String(fontData)
+            + "');unicode-range:U+0020,U+0041}p{font-family:Scoped,serif}</style><p>A</p><p>B</p>";
+        var options = new HtmlPdfSaveOptions {
+            TextFallbacks = PdfCore.PdfTextFallbackFeatures.None
+        };
+        options.ResourcePolicy.AllowSystemFontEmbedding = false;
+        options.PdfOptions.CompressContentStreams = false;
+
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdf(options);
+        string rawPdf = Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("/BaseFont /Scoped", rawPdf, StringComparison.Ordinal);
+        Assert.True(
+            rawPdf.Contains("/BaseFont /Times-Roman", StringComparison.Ordinal)
+            || rawPdf.Contains("/BaseFont /Helvetica", StringComparison.Ordinal),
+            "The uncovered run must use a standard fallback rather than the constrained embedded face.");
+        Assert.Contains("B", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HtmlRender_ChargesDecodedWoffFacesToTheOperationWideResourceBudget() {
         byte[] firstOpenType = ManagedTextShapingTestAssets.CreateFont('A');
         byte[] secondOpenType = ManagedTextShapingTestAssets.CreateFont('B');
@@ -465,6 +488,44 @@ public sealed partial class HtmlRenderingTests {
             Assert.Contains(family, extracted, StringComparison.Ordinal);
         }
         Assert.DoesNotContain(result.Report.Warnings, diagnostic => diagnostic.Code == HtmlPdfDiagnosticCodes.RenderedFontFamilyLimitExceeded);
+    }
+
+    [Fact]
+    public void HtmlPdf_DirectRenderer_FallsBackWhenCallerFontsConsumeNamedFamilyBudget() {
+        OfficeTrueTypeFont? font = OfficeTrueTypeFont.TryLoadDefault(out string? fontPath);
+        if (font == null ||
+            string.IsNullOrWhiteSpace(fontPath) ||
+            !string.Equals(Path.GetExtension(fontPath), ".ttf", StringComparison.OrdinalIgnoreCase)) {
+            return;
+        }
+
+        byte[] fontData = File.ReadAllBytes(fontPath!);
+        if (fontData.LongLength > 10L * 1024L * 1024L) return;
+        string encoded = Convert.ToBase64String(fontData);
+        string html = "<style>"
+            + "@font-face{font-family:WithinBudget;src:url('data:font/ttf;base64," + encoded + "')}"
+            + "@font-face{font-family:BeyondBudget;src:url('data:font/ttf;base64," + encoded + "')}"
+            + "</style><p style='font-family:WithinBudget'>Embedded text</p>"
+            + "<p style='font-family:BeyondBudget'>Fallback text</p>";
+        var options = new HtmlPdfSaveOptions {
+            TextFallbacks = PdfCore.PdfTextFallbackFeatures.None
+        };
+        options.ResourcePolicy.AllowSystemFontEmbedding = false;
+        for (int index = 0; index < PdfCore.PdfOptions.MaximumNamedFontFamilies - 1; index++) {
+            options.PdfOptions.RegisterNamedFontFamily(
+                new PdfCore.PdfEmbeddedFontFamily("Reserved" + index.ToString(), new byte[] { 0 }));
+        }
+
+        PdfCore.PdfDocumentConversionResult result =
+            HtmlConversionDocument.Parse(html).ToPdfDocumentResult(options);
+        byte[] pdf = result.ToBytes();
+        string rawPdf = Encoding.ASCII.GetString(pdf);
+        string extracted = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
+
+        Assert.Contains("/BaseFont /WithinBudget-Regular", rawPdf, StringComparison.Ordinal);
+        Assert.DoesNotContain("/BaseFont /BeyondBudget-Regular", rawPdf, StringComparison.Ordinal);
+        Assert.Contains("Embedded text", extracted, StringComparison.Ordinal);
+        Assert.Contains("Fallback text", extracted, StringComparison.Ordinal);
     }
 
     private static byte[] CreateHtmlRenderTestFont(int scalar = 0x1F600, short kerningAdjustment = 0) {
