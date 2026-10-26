@@ -16,17 +16,26 @@ Deliberately bounded compatibility contracts are not backlog by themselves. A pr
 
 ## PDF engine and conversion fidelity
 
-- [ ] Complete managed rendering for remaining difficult Type 3 glyph programs (including raster-image glyph resources), remaining ICC and content-paint color spaces, advanced pattern resources, transparency groups, masks, and optional-content interactions. Require producer fixtures, per-page diagnostics, and raster plus semantic proof before removing a limitation.
+- [ ] Complete managed rendering for remaining difficult Type 3 glyph programs that depend on implicit, non-isolated, knockout, or non-RGB transparency groups, remaining ICC and content-paint color spaces, advanced pattern resources, and advanced optional-content usage-application or intent interactions. Require producer fixtures, per-page diagnostics, and raster plus semantic proof before removing a limitation.
 - [ ] Expand native Word, Excel, and PowerPoint reference corpora around DrawingML, SmartArt, chart variants, floating and grouped objects, headers and footers, print layout, and theme inheritance. Keep each improvement in the shared Drawing or PDF owner when more than one adapter needs it.
 - [ ] Add exact-artifact external validation lanes for every supported PDF/A-2, PDF/A-3, PDF/A-4, PDF/UA-1, PDF/UA-2, Factur-X, and ZUGFeRD profile across representative generated artifacts and at least one independent producer corpus.
 - [ ] Extend PDF-to-Office hybrid reconstruction beyond detected tables with bounded positioned text, image, and vector layers that remain visibly aligned while reports distinguish editable, visual-only, approximated, and omitted content.
 - [ ] Publish optional provider adapters for OCR and other heavyweight engines only where the provider contract, resource limits, provenance, and warning merge are stable; keep `OfficeIMO.Pdf` dependency-light.
 - [ ] Evaluate an explicit XFA inspection or conversion product only with licensed specification coverage, hostile-input limits, external fixtures, and a fail-closed migration path to AcroForm or static visual output. Do not execute XFA in the core reader.
-- [ ] Expand the static HTML-to-PDF standards corpus for fragmentation, paged media, typography, SVG effects, and resource policy. Keep browser JavaScript and interactive state outside the managed static-renderer claim unless a separate browser-backed adapter owns them.
 
 ## Security and protected content
 
 - [ ] Add interoperable ODF encryption/decryption only after an external producer corpus, explicit password and key policy, and fail-safe preservation evidence are available.
+
+## Email artifacts and migration
+
+- [ ] Expand MIME/EML interoperability evidence with independently produced and adversarial fixtures covering malformed recovery, nested multiparts, duplicate and ordered headers, legacy encodings, parameter continuations, embedded messages, reports, and protected entities. Keep MimeKit or other comparison engines isolated to tests and opt-in verification.
+- [ ] Stabilize one structured preservation and conversion result contract for artifact-to-MIME workflows, including preserved-versus-regenerated source selection, attachment-content lifetime, diagnostic codes, and strict loss disposition, so transport adapters can retain OfficeIMO evidence without defining a second artifact model.
+- [ ] Deepen MSG/OFT/TNEF fidelity for unknown and named MAPI properties, embedded and linked objects, address forms, recurrence, and time-zone evidence using independently produced Outlook fixtures and semantic reopen checks.
+- [ ] Make large-store migrations resumable and auditable across supported PST/OST/OLM/EMLX/mbox/mail-directory inputs, with source identity, change detection, item provenance, bounded attachment access, partial-result policy, and destination verification manifests.
+- [ ] Expand Unicode PST writer and rewrite validation beyond generated round trips through independent libpff and supported Outlook reopen gates, while retaining the documented boundary against in-place NDB repair, append, ANSI mutation, and OST output.
+- [ ] Complete artifact S/MIME trust-policy diagnostics for signer identity, chain building, revocation, timestamps, offline operation, decrypt-then-verify ordering, and protected-entity pass-through with the concrete provider supplied explicitly.
+- [ ] Consolidate body selection, RTF fallback, CID/content-location resolution, remote-resource policy, sanitization, and safe HTML/text/Markdown projection only after at least two existing consumers can use one dependency-isolated contract. Do not add HTML dependencies to `OfficeIMO.Email`.
 
 ## Document-format depth
 

@@ -5,7 +5,7 @@ namespace OfficeIMO.Pdf;
 /// <summary>
 /// Builds foreground page content at absolute top-left page coordinates in the order items are added.
 /// </summary>
-public sealed class PdfPageCanvas {
+public sealed partial class PdfPageCanvas {
     /// <summary>Maximum supported outline hierarchy depth.</summary>
     public const int MaximumOutlineLevel = 64;
 
@@ -33,7 +33,26 @@ public sealed class PdfPageCanvas {
     /// <param name="title">Visible outline title.</param>
     /// <param name="level">One-based outline hierarchy level.</param>
     /// <param name="y">Top coordinate in page points.</param>
-    public PdfPageCanvas Outline(string title, int level, double y) {
+    public PdfPageCanvas Outline(string title, int level, double y) =>
+        Outline(title, level, y, PdfOutlineState.Default);
+
+    /// <summary>Adds a PDF outline entry anchored to this page with an explicit expansion preference.</summary>
+    /// <param name="title">Visible outline title.</param>
+    /// <param name="level">One-based outline hierarchy level.</param>
+    /// <param name="y">Top coordinate in page points.</param>
+    /// <param name="state">Optional per-entry expansion preference.</param>
+    public PdfPageCanvas Outline(string title, int level, double y, PdfOutlineState state) =>
+        AddOutline(title, level, y, state, documentOrder: null);
+
+    /// <summary>Adds an adapter-owned outline entry whose logical order may differ from its destination-page order.</summary>
+    internal PdfPageCanvas Outline(string title, int level, double y, PdfOutlineState state, int documentOrder) {
+        if (documentOrder < 0) {
+            throw new ArgumentOutOfRangeException(nameof(documentOrder), "Canvas outline document order cannot be negative.");
+        }
+        return AddOutline(title, level, y, state, documentOrder);
+    }
+
+    private PdfPageCanvas AddOutline(string title, int level, double y, PdfOutlineState state, int? documentOrder) {
         Guard.NotNull(title, nameof(title));
         if (string.IsNullOrWhiteSpace(title)) {
             throw new ArgumentException("Canvas outline titles cannot be empty or whitespace.", nameof(title));
@@ -44,7 +63,10 @@ public sealed class PdfPageCanvas {
         }
 
         ValidateCanvasCoordinate(y, nameof(y));
-        _items.Add(new PdfCanvasOutlineItem(title.Trim(), level, y));
+        if (state != PdfOutlineState.Default && state != PdfOutlineState.Open && state != PdfOutlineState.Closed) {
+            throw new ArgumentOutOfRangeException(nameof(state));
+        }
+        _items.Add(new PdfCanvasOutlineItem(title.Trim(), level, y, state, documentOrder));
         return this;
     }
 
@@ -99,6 +121,18 @@ public sealed class PdfPageCanvas {
             throw new ArgumentException("Canvas structure containers require at least one content item.", nameof(build));
         }
         _items.Add(new PdfCanvasStructureItem(role, snapshot, nestedCanvas.Items));
+        return this;
+    }
+
+    /// <summary>Groups decorative canvas content as a PDF artifact excluded from the structure tree.</summary>
+    public PdfPageCanvas Artifact(Action<PdfPageCanvas> build) {
+        Guard.NotNull(build, nameof(build));
+        var nestedCanvas = new PdfPageCanvas(allowOutOfPageCoordinates: true);
+        build(nestedCanvas);
+        if (nestedCanvas.Items.Count == 0) {
+            throw new ArgumentException("Canvas artifacts require at least one content item.", nameof(build));
+        }
+        _items.Add(new PdfCanvasArtifactItem(nestedCanvas.Items));
         return this;
     }
 
@@ -355,8 +389,8 @@ public sealed class PdfPageCanvas {
 
     /// <summary>Adds a path-clipped fixed-position canvas frame using top-left page coordinates.</summary>
     public PdfPageCanvas Clip(double x, double y, OfficeClipPath clipPath, Action<PdfPageCanvas> build) {
-        Guard.NonNegative(x, nameof(x));
-        Guard.NonNegative(y, nameof(y));
+        ValidateCanvasCoordinate(x, nameof(x));
+        ValidateCanvasCoordinate(y, nameof(y));
         Guard.NotNull(clipPath, nameof(clipPath));
         Guard.NotNull(build, nameof(build));
 
@@ -374,8 +408,35 @@ public sealed class PdfPageCanvas {
         Guard.NotNull(build, nameof(build));
         var nestedCanvas = new PdfPageCanvas(allowOutOfPageCoordinates: true);
         build(nestedCanvas);
+        bool trivialEffect = transform == OfficeTransform.Identity && Math.Abs(opacity - 1D) <= 0.000001D;
+        if (ContainsInteractiveFormContent(nestedCanvas.Items)) {
+            if (!trivialEffect) {
+                throw new ArgumentException("Interactive form fields cannot be nested inside a transformed or translucent canvas effect.", nameof(build));
+            }
+            _items.AddRange(nestedCanvas.Items);
+            return this;
+        }
         _items.Add(new PdfCanvasEffectItem(nestedCanvas.Items, transform, opacity));
         return this;
+    }
+
+    private static bool ContainsInteractiveFormContent(IReadOnlyList<PdfCanvasItem> items) {
+        foreach (PdfCanvasItem item in items) {
+            if (item is PdfCanvasFormFieldItem) return true;
+            if (item is PdfCanvasTableItem table
+                && table.Block.Cells.Any(row => row.Any(cell => cell.CheckBoxes.Count > 0 || cell.FormFields.Count > 0))) return true;
+            IReadOnlyList<PdfCanvasItem>? nested = item switch {
+                PdfCanvasClipItem clip => clip.Items,
+                PdfCanvasEffectItem effect => effect.Items,
+                PdfCanvasFigureItem figure => figure.Items,
+                PdfCanvasArtifactItem artifact => artifact.Items,
+                PdfCanvasStructureItem structure => structure.Items,
+                PdfCanvasActualTextItem actualText => actualText.Items,
+                _ => null
+            };
+            if (nested != null && ContainsInteractiveFormContent(nested)) return true;
+        }
+        return false;
     }
 
     private static OfficeShape CreateRotatedShape(OfficeShape shape, double rotationAngle) {
@@ -487,14 +548,27 @@ internal abstract class PdfCanvasItem {
 }
 
 internal sealed class PdfCanvasOutlineItem : PdfCanvasItem {
-    public PdfCanvasOutlineItem(string title, int level, double y)
+    public PdfCanvasOutlineItem(string title, int level, double y, PdfOutlineState state, int? documentOrder)
         : base(0D, y) {
         Title = title;
         Level = level;
+        State = state;
+        DocumentOrder = documentOrder;
     }
 
     public string Title { get; }
     public int Level { get; }
+    public PdfOutlineState State { get; }
+    public int? DocumentOrder { get; }
+}
+
+internal sealed class PdfCanvasArtifactItem : PdfCanvasItem {
+    public PdfCanvasArtifactItem(IReadOnlyList<PdfCanvasItem> items)
+        : base(0D, 0D) {
+        Items = items;
+    }
+
+    public IReadOnlyList<PdfCanvasItem> Items { get; }
 }
 
 internal sealed class PdfCanvasFigureItem : PdfCanvasItem {

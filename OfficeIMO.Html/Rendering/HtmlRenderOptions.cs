@@ -27,6 +27,12 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
     /// <summary>Continuous or paged layout mode.</summary>
     public HtmlRenderMode Mode { get; set; } = HtmlRenderMode.Continuous;
 
+    /// <summary>
+    /// Determines whether diagnosed approximations, omissions, or failures may be returned.
+    /// Strict rendering rejects every warning or error after collecting the complete diagnostic report.
+    /// </summary>
+    public HtmlRenderFidelityPolicy FidelityPolicy { get; set; } = HtmlRenderFidelityPolicy.AllowDiagnosedLoss;
+
     /// <summary>Viewport width for continuous rendering, in CSS pixels.</summary>
     public double ViewportWidth { get; set; } = 816D;
 
@@ -50,6 +56,15 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
 
     /// <summary>Default line-height multiplier.</summary>
     public double DefaultLineHeight { get; set; } = 1.2D;
+
+    /// <summary>Optional caller-owned dictionary or algorithm used by CSS <c>hyphens:auto</c>.</summary>
+    public OfficeTextHyphenationCallback? TextHyphenationCallback { get; set; }
+
+    /// <summary>Uses or clears a shared immutable hyphenation lexicon for CSS <c>hyphens:auto</c>.</summary>
+    public HtmlRenderOptions UseTextHyphenationLexicon(OfficeTextHyphenationLexicon? lexicon) {
+        TextHyphenationCallback = lexicon?.AsCallback();
+        return this;
+    }
 
     /// <summary>Deterministic device and user-preference values exposed to CSS media queries.</summary>
     public HtmlRenderMediaFeatures MediaFeatures { get; set; } = new HtmlRenderMediaFeatures();
@@ -135,6 +150,9 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
     /// <summary>Maximum color stops accepted in one CSS gradient.</summary>
     public int MaxGradientStops { get; set; } = 64;
 
+    /// <summary>Uniform vector quality segments used when expanding one conic gradient.</summary>
+    public int ConicGradientQualitySegments { get; set; } = 360;
+
     /// <summary>Maximum explicit or implicit tracks accepted on either grid axis.</summary>
     public int MaxGridTracks { get; set; } = 256;
 
@@ -172,6 +190,7 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
     protected internal T CopyTo<T>(T target) where T : HtmlRenderOptions {
         CopyImageExportOptionsTo(target);
         target.Mode = Mode;
+        target.FidelityPolicy = FidelityPolicy;
         target.ViewportWidth = ViewportWidth;
         target.ViewportHeight = ViewportHeight;
         target.PageSize = PageSize;
@@ -180,6 +199,7 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
         target.DefaultFontFamily = DefaultFontFamily;
         target.DefaultFontSize = DefaultFontSize;
         target.DefaultLineHeight = DefaultLineHeight;
+        target.TextHyphenationCallback = TextHyphenationCallback;
         target.MediaFeatures = (MediaFeatures ?? new HtmlRenderMediaFeatures()).Clone();
         target._additionalStylesheets.Clear();
         target._additionalStylesheets.AddRange(_additionalStylesheets);
@@ -205,6 +225,7 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
         target.MaxBackgroundImageLayers = MaxBackgroundImageLayers;
         target.MaxBoxShadowLayers = MaxBoxShadowLayers;
         target.MaxGradientStops = MaxGradientStops;
+        target.ConicGradientQualitySegments = ConicGradientQualitySegments;
         target.MaxGridTracks = MaxGridTracks;
         target.MaxColumnCount = MaxColumnCount;
         target.MaxTableRows = MaxTableRows;
@@ -223,6 +244,10 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
 
     internal void Validate() {
         ValidateImageExportOptions();
+        if (FidelityPolicy != HtmlRenderFidelityPolicy.AllowDiagnosedLoss
+            && FidelityPolicy != HtmlRenderFidelityPolicy.RequireNoLoss) {
+            throw new ArgumentOutOfRangeException(nameof(FidelityPolicy));
+        }
         ValidatePositive(ViewportWidth, nameof(ViewportWidth));
         if (ViewportHeight.HasValue) {
             ValidatePositive(ViewportHeight.Value, nameof(ViewportHeight));
@@ -273,6 +298,9 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
 
         if (MaxGradientStops < 2) {
             throw new ArgumentOutOfRangeException(nameof(MaxGradientStops), "Maximum gradient stop count must be at least two.");
+        }
+        if (ConicGradientQualitySegments < 12 || ConicGradientQualitySegments > 4096) {
+            throw new ArgumentOutOfRangeException(nameof(ConicGradientQualitySegments), "Conic gradient quality must be between 12 and 4096 segments.");
         }
         if (MaxGridTracks <= 0) {
             throw new ArgumentOutOfRangeException(nameof(MaxGridTracks), "Maximum grid track count must be positive.");

@@ -726,6 +726,34 @@ document.Compose("Report", composer => {
 document.Save();
 ```
 
+When rows already have a fixed schema, pass a `DataTable` directly. This keeps
+its column order and avoids generic object flattening. Fixed-schema tables allow
+up to 5,000,000 cells by default, including the header row. Set `MaxRows`,
+`MaxColumns`, or `MaxCells` in the configuration callback when a report needs a
+different bounded limit. Excel's worksheet row and column limits still apply;
+select or split data that exceeds them.
+
+```csharp
+using System.Data;
+using OfficeIMO.Excel;
+
+var rows = new DataTable("Members");
+rows.Columns.Add("Enabled", typeof(bool));
+rows.Columns.Add("AD State", typeof(string));
+rows.Rows.Add(true, "Enabled");
+rows.Rows.Add(false, "Disabled");
+
+using var document = ExcelDocument.Create("members.xlsx");
+document.Compose("Members", composer => {
+    composer.TableFrom(
+        rows,
+        title: "Members",
+        configure: options => options.Columns = new[] { "Enabled", "AD State" });
+    composer.Finish(autoFitColumns: true);
+});
+document.Save();
+```
+
 ## Managed image export
 
 Ranges, worksheets, and workbook batches can be exported as PNG, JPEG, TIFF, lossless WebP, or SVG:
@@ -771,6 +799,10 @@ chart.ToImage()
 
 chart.SaveAsSvg("revenue-chart.svg");
 ```
+
+## Content provenance
+
+`ExcelDocument.InspectProvenance("input.xlsx")` reports C2PA and AI-specific IPTC metadata in the workbook and its supported embedded images. `ExcelDocument.RemoveProvenance("input.xlsx", "clean.xlsx")` removes the selected carriers. Signed-package mutation is blocked unless `OfficeSignatureMutationPolicy.RemoveInvalidatedSignatures` is selected explicitly. Optional cryptographic C2PA verification remains in `OfficeIMO.Security`.
 
 ## Adjacent packages
 

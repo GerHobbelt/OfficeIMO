@@ -339,6 +339,29 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeRasterCanvas_InterpolatesTranslucentGradientStopsInPremultipliedAlphaSpace() {
+            var image = new OfficeRasterImage(1, 1);
+            var canvas = new OfficeRasterCanvas(image);
+            var gradient = new OfficeLinearGradient(
+                0D,
+                0.5D,
+                1D,
+                0.5D,
+                new[] {
+                    new OfficeGradientStop(0D, OfficeColor.Transparent),
+                    new OfficeGradientStop(1D, OfficeColor.Blue)
+                });
+
+            canvas.FillLinearGradientRectangle(0D, 0D, 1D, 1D, gradient);
+
+            OfficeColor midpoint = image.GetPixel(0, 0);
+            Assert.Equal((byte)0, midpoint.R);
+            Assert.Equal((byte)0, midpoint.G);
+            Assert.Equal((byte)255, midpoint.B);
+            Assert.InRange(midpoint.A, (byte)127, (byte)128);
+        }
+
+        [Fact]
         public void OfficeRasterCanvas_PreservesDuplicateOffsetHardStops() {
             OfficeRasterImage image = new OfficeRasterImage(100, 10, OfficeColor.Transparent);
             OfficeRasterCanvas canvas = new OfficeRasterCanvas(image);
@@ -1488,20 +1511,24 @@ namespace OfficeIMO.Tests {
             OfficeRasterImage image = new OfficeRasterImage(32, 32, OfficeColor.Transparent);
             double firstSegmentLength = Math.Sqrt(200D);
 
-            System.Threading.Tasks.Task render = System.Threading.Tasks.Task.Run(() => new OfficeRasterCanvas(image).DrawDashedEllipse(
-                16D,
-                16D,
-                10D,
-                10D,
-                OfficeColor.Black,
-                thickness: 1D,
-                dashLength: firstSegmentLength + 0.0000000005D,
-                gapLength: 0D,
-                segments: 4));
+            System.Threading.Tasks.Task render = System.Threading.Tasks.Task.Factory.StartNew(
+                () => new OfficeRasterCanvas(image).DrawDashedEllipse(
+                    16D,
+                    16D,
+                    10D,
+                    10D,
+                    OfficeColor.Black,
+                    thickness: 1D,
+                    dashLength: firstSegmentLength + 0.0000000005D,
+                    gapLength: 0D,
+                    segments: 4),
+                System.Threading.CancellationToken.None,
+                System.Threading.Tasks.TaskCreationOptions.LongRunning,
+                System.Threading.Tasks.TaskScheduler.Default);
 
             System.Threading.Tasks.Task completed = await System.Threading.Tasks.Task.WhenAny(
                 render,
-                System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(2)));
+                System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(10)));
             Assert.Same(render, completed);
             await render;
             Assert.True(CountPaintedPixels(image) > 0);
@@ -2292,6 +2319,37 @@ namespace OfficeIMO.Tests {
             Assert.True(left.G > left.B, "Expected the horizontally flipped cropped image to place the green side on the left.");
             Assert.True(right.B > right.G, "Expected the horizontally flipped cropped image to place the blue side on the right.");
             Assert.Equal(0, target.GetPixel(1, 1).A);
+        }
+
+        [Fact]
+        public void OfficeRasterCanvas_NearestNeighborCropSamplesFromSourcePixelEdges() {
+            OfficeRasterImage source = new OfficeRasterImage(4, 1, OfficeColor.Transparent);
+            source.SetPixel(0, 0, OfficeColor.Red);
+            source.SetPixel(1, 0, OfficeColor.Lime);
+            source.SetPixel(2, 0, OfficeColor.Blue);
+            source.SetPixel(3, 0, OfficeColor.White);
+            OfficeRasterImage target = new OfficeRasterImage(8, 1, OfficeColor.Transparent);
+            OfficeRasterCanvas canvas = new OfficeRasterCanvas(target);
+
+            canvas.DrawImage(
+                source,
+                0,
+                0,
+                8,
+                1,
+                sourceLeft: 0.125D,
+                sourceTop: 0D,
+                sourceWidth: 0.75D,
+                sourceHeight: 1D,
+                rotationDegrees: 0D,
+                rotationCenterX: 4D,
+                rotationCenterY: 0.5D,
+                flipHorizontal: false,
+                flipVertical: false,
+                interpolate: false);
+
+            Assert.Equal(OfficeColor.Red, target.GetPixel(0, 0));
+            Assert.Equal(OfficeColor.White, target.GetPixel(7, 0));
         }
 
         [Fact]

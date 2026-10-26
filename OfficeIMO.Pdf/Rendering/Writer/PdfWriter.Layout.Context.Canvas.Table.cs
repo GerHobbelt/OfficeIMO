@@ -315,7 +315,7 @@ internal static partial class PdfWriter {
             PdfColumnAlign align = GetTableCellAlignment(style, rowIndex, columnIndex, cell.Text);
             PdfColor? textColor = rowIsHeader ? style.HeaderTextColor : rowIsFooter ? style.FooterTextColor : style.TextColor;
             var paragraph = new RichParagraphBlock(StripRunLinksWhenCellLinked(cell.Runs, linkUri, linkDestinationName), MapTableCellAlignment(align), textColor);
-            int? markedContentId = RegisterTextStructureElement(rowIsHeader ? "TH" : "TD", _canvasStructureParentElementIndex);
+            int? markedContentId = RegisterTextStructureElement(rowIsHeader ? "TH" : "TD", _canvasStructureParentElement);
             WriteClippedRichParagraph(
                 sb,
                 paragraph,
@@ -361,7 +361,17 @@ internal static partial class PdfWriter {
                 } else {
                     double textHeight = MeasureTableCellTextHeight(lines, 0, lineCount, leading);
                     double formFieldTop = cellTop - padTop - verticalOffset - (string.IsNullOrEmpty(cell.Text) ? 0D : textHeight + TableCellCheckBoxGap);
-                    RenderTableCellObjects(currentPage!, cell, align, cellX + padLeft, innerWidth, formFieldTop);
+                    RenderTableCellObjects(
+                        currentPage!,
+                        cell,
+                        align,
+                        cellX + padLeft,
+                        innerWidth,
+                        formFieldTop,
+                        pageImage => {
+                            pageImage.InlineDrawToken = AllocateInlineImageDrawToken(currentPage!);
+                            sb.Append(pageImage.InlineDrawToken);
+                        });
                 }
             }
 

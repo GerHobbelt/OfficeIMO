@@ -27,18 +27,540 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
-    public void HtmlGrid_ExplicitIntrinsicTrackKeywordsUseDiagnosedFallback() {
+    public void HtmlGrid_ResolvesIntrinsicTrackKeywordsAndFitContentLimits() {
         const string html = """
-            <div style="display:grid;width:240px;grid-template-columns:max-content minmax(min-content,1fr)">
-              <span>Intrinsic label width</span><span>Cell</span>
+            <div style="display:grid;width:360px;grid-template-columns:min-content max-content fit-content(70px);justify-content:start">
+              <span id="min-content" style="background:#ff0000">alpha longestword omega</span>
+              <span id="max-content" style="background:#00ff00">short words together</span>
+              <span id="fit-content" style="background:#0000ff">content that exceeds the authored fit limit</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 380D);
+        HtmlRenderShape minimum = FindGridShape(rendered, "span#min-content");
+        HtmlRenderShape maximum = FindGridShape(rendered, "span#max-content");
+        HtmlRenderShape fitted = FindGridShape(rendered, "span#fit-content");
+
+        Assert.True(minimum.Width < maximum.Width);
+        Assert.Equal(minimum.X + minimum.Width, maximum.X, 3);
+        Assert.Equal(maximum.X + maximum.Width, fitted.X, 3);
+        Assert.True(fitted.Width <= 70D);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_UsesIntrinsicMinmaxFloorBeforeDistributingFractions() {
+        const string html = """
+            <div style="display:grid;width:240px;grid-template-columns:minmax(min-content,1fr) 1fr">
+              <span id="intrinsic-floor" style="white-space:nowrap;background:#ff0000">unbreakable intrinsic floor</span>
+              <span id="remaining-fraction" style="background:#0000ff">B</span>
             </div>
             """;
 
         HtmlRenderDocument rendered = RenderGrid(html, 260D);
+        HtmlRenderShape floor = FindGridShape(rendered, "span#intrinsic-floor");
+        HtmlRenderShape remaining = FindGridShape(rendered, "span#remaining-fraction");
+
+        Assert.True(floor.Width > remaining.Width);
+        Assert.Equal(floor.X + floor.Width, remaining.X, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_ColumnSubgridInheritsResolvedParentTracksAndGap() {
+        const string html = """
+            <div style="display:grid;width:210px;grid-template-columns:60px 140px;column-gap:10px">
+              <div style="display:grid;grid-column:1 / span 2;grid-template-columns:subgrid">
+                <span id="subgrid-a" style="background:#ff0000">A</span>
+                <span id="subgrid-b" style="background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 230D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#subgrid-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#subgrid-b");
+
+        Assert.Equal(60D, first.Width, 3);
+        Assert.Equal(70D, second.X, 3);
+        Assert.Equal(140D, second.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_RowSubgridInheritsResolvedParentTracksGapAndLineNames() {
+        const string html = """
+            <div style="display:grid;width:100px;grid-template-columns:100px;grid-template-rows:[top] 30px [middle] 50px [bottom];row-gap:10px">
+              <div style="display:grid;grid-row:top / bottom;grid-template-rows:subgrid">
+                <span id="row-subgrid-a" style="grid-row:top / middle;background:#ff0000">A</span>
+                <span id="row-subgrid-b" style="grid-row:middle / bottom;background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 120D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#row-subgrid-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#row-subgrid-b");
+
+        Assert.Equal(0D, first.Y, 3);
+        Assert.Equal(30D, first.Height, 3);
+        Assert.Equal(40D, second.Y, 3);
+        Assert.Equal(50D, second.Height, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_AutoHeightRowSubgridIncludesInheritedParentGap() {
+        const string html = """
+            <div style="display:grid;width:100px;grid-template-rows:32px 32px;row-gap:8px">
+              <div style="display:grid;grid-row:1 / span 2;grid-template-rows:subgrid;align-self:start">
+                <span id="auto-row-subgrid-a" style="background:#ff0000">A</span>
+                <span id="auto-row-subgrid-b" style="background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 120D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#auto-row-subgrid-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#auto-row-subgrid-b");
+
+        Assert.Equal(0D, first.Y, 3);
+        Assert.Equal(32D, first.Height, 3);
+        Assert.Equal(40D, second.Y, 3);
+        Assert.Equal(32D, second.Height, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_AutoHeightRowSubgridKeepsInsetsInsideInheritedExtent() {
+        const string html = """
+            <div style="display:grid;width:100px;grid-template-rows:32px 32px;row-gap:8px">
+              <div style="display:grid;grid-row:1 / span 2;grid-template-rows:subgrid;align-self:start;padding-top:4px;padding-bottom:4px">
+                <span id="inset-auto-row-subgrid-a" style="background:#ff0000">A</span>
+                <span id="inset-auto-row-subgrid-b" style="background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 120D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#inset-auto-row-subgrid-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#inset-auto-row-subgrid-b");
+
+        Assert.Equal(4D, first.Y, 3);
+        Assert.Equal(28D, first.Height, 3);
+        Assert.Equal(40D, second.Y, 3);
+        Assert.Equal(28D, second.Height, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_RowSubgridClampsAutoPlacementToInheritedTracks() {
+        const string html = """
+            <div style="display:grid;width:100px;grid-template-rows:30px 40px;row-gap:10px">
+              <div style="display:grid;grid-row:1 / span 2;grid-template-rows:subgrid">
+                <span id="clamped-row-a" style="background:#ff0000">A</span>
+                <span id="clamped-row-b" style="background:#00ff00">B</span>
+                <span id="clamped-row-c" style="background:#0000ff">C</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 120D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#clamped-row-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#clamped-row-b");
+        HtmlRenderShape third = FindGridShape(rendered, "span#clamped-row-c");
+
+        Assert.Equal(0D, first.Y, 3);
+        Assert.Equal(40D, second.Y, 3);
+        Assert.Equal(second.Y, third.Y, 3);
+        Assert.Equal(second.Height, third.Height, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_ColumnSubgridClampsAutoPlacementToInheritedTracks() {
+        const string html = """
+            <div style="display:grid;width:90px;grid-template-columns:30px 40px;column-gap:10px">
+              <div style="display:grid;grid-column:1 / span 2;grid-template-columns:subgrid;grid-auto-flow:column">
+                <span id="clamped-column-a" style="background:#ff0000">A</span>
+                <span id="clamped-column-b" style="background:#00ff00">B</span>
+                <span id="clamped-column-c" style="background:#0000ff">C</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 120D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#clamped-column-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#clamped-column-b");
+        HtmlRenderShape third = FindGridShape(rendered, "span#clamped-column-c");
+
+        Assert.Equal(0D, first.X, 3);
+        Assert.Equal(40D, second.X, 3);
+        Assert.Equal(second.X, third.X, 3);
+        Assert.Equal(second.Width, third.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_RowSubgridCentersAuthoredGapAndInsetsOnInheritedLines() {
+        const string html = """
+            <div style="display:grid;width:100px;grid-template-rows:40px 60px;row-gap:10px">
+              <div style="display:grid;grid-row:1 / span 2;grid-template-rows:subgrid;row-gap:20px;padding-top:4px;padding-bottom:6px;border-top:2px solid black;border-bottom:3px solid black">
+                <span id="inset-row-a" style="background:#ff0000">A</span>
+                <span id="inset-row-b" style="background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 120D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#inset-row-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#inset-row-b");
+
+        Assert.Equal(6D, first.Y, 3);
+        Assert.Equal(29D, first.Height, 3);
+        Assert.Equal(55D, second.Y, 3);
+        Assert.Equal(46D, second.Height, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_PlacesDefiniteRowAutomaticColumnBeforeFullyAutomaticSiblings() {
+        const string html = """
+            <style>.cell{padding:7px;background:#eeeeee;border:1px solid #999}.badge{padding:7px;background:#00ff00}</style>
+            <div style="display:grid;width:729px;grid-template-columns:1fr 1fr;grid-template-rows:34px 52px;gap:8px">
+              <div style="display:grid;grid-row:1/3;grid-template-rows:subgrid;row-gap:inherit">
+                <div id="row-auto-a" class="cell">Inherited row A</div>
+                <div id="row-auto-b" class="cell">Inherited row B</div>
+              </div>
+              <div id="automatic-a" class="badge">Clipped vector badge</div>
+              <div id="automatic-b" class="cell">Named page evidence</div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 230D);
+        HtmlRenderShape first = FindGridShape(rendered, "div#row-auto-a");
+        HtmlRenderShape second = FindGridShape(rendered, "div#row-auto-b");
+        HtmlRenderShape automaticFirst = FindGridShape(rendered, "div#automatic-a");
+        HtmlRenderShape automaticSecond = FindGridShape(rendered, "div#automatic-b");
+
+        Assert.Equal(0D, first.X, 3);
+        Assert.Equal(0D, second.X, 3);
+        Assert.True(automaticFirst.X > first.X);
+        Assert.Equal(automaticFirst.X, automaticSecond.X, 3);
+        Assert.Equal(0D, automaticFirst.Y, 3);
+        Assert.True(automaticSecond.Y > automaticFirst.Y);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_ColumnSubgridFitsInheritedTracksInsideItsEdgeInsets() {
+        const string html = """
+            <div style="display:grid;width:210px;grid-template-columns:60px 140px;column-gap:10px">
+              <div style="display:grid;grid-column:1 / span 2;grid-template-columns:subgrid;padding-left:10px;padding-right:20px;border-left:2px solid black;border-right:3px solid black">
+                <span id="inset-subgrid-a" style="background:#ff0000">A</span>
+                <span id="inset-subgrid-b" style="background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 230D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#inset-subgrid-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#inset-subgrid-b");
+
+        Assert.Equal(12D, first.X, 3);
+        Assert.Equal(48D, first.Width, 3);
+        Assert.Equal(70D, second.X, 3);
+        Assert.Equal(117D, second.Width, 3);
+        Assert.Equal(187D, second.X + second.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_ColumnSubgridCentersDifferentGapsOnInheritedGridLines() {
+        const string html = """
+            <div style="display:grid;width:210px;grid-template-columns:60px 140px;column-gap:10px">
+              <div style="display:grid;grid-column:1 / span 2;grid-template-columns:subgrid;column-gap:0">
+                <span id="zero-gap-a" style="background:#ff0000">A</span>
+                <span id="zero-gap-b" style="background:#0000ff">B</span>
+              </div>
+              <div style="display:grid;grid-column:1 / span 2;grid-template-columns:subgrid;column-gap:20px">
+                <span id="wide-gap-a" style="background:#ff0000">A</span>
+                <span id="wide-gap-b" style="background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 230D);
+        HtmlRenderShape zeroFirst = FindGridShape(rendered, "span#zero-gap-a");
+        HtmlRenderShape zeroSecond = FindGridShape(rendered, "span#zero-gap-b");
+        HtmlRenderShape wideFirst = FindGridShape(rendered, "span#wide-gap-a");
+        HtmlRenderShape wideSecond = FindGridShape(rendered, "span#wide-gap-b");
+
+        Assert.Equal(65D, zeroFirst.Width, 3);
+        Assert.Equal(65D, zeroSecond.X, 3);
+        Assert.Equal(145D, zeroSecond.Width, 3);
+        Assert.Equal(55D, wideFirst.Width, 3);
+        Assert.Equal(75D, wideSecond.X, 3);
+        Assert.Equal(135D, wideSecond.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_MinmaxAutoPreservesTheAutomaticItemMinimum() {
+        const string html = "<div style='display:grid;width:200px;grid-template-columns:minmax(auto,1fr) minmax(0,1fr)'>"
+            + "<span id='automatic-floor' style='white-space:nowrap;background:red'>unbreakable-automatic-minimum</span>"
+            + "<span id='remaining-fraction' style='background:blue'>B</span></div>";
+
+        HtmlRenderDocument rendered = RenderGrid(html, 220D);
+        HtmlRenderShape floor = FindGridShape(rendered, "span#automatic-floor");
+        HtmlRenderShape remaining = FindGridShape(rendered, "span#remaining-fraction");
+
+        Assert.True(floor.Width > remaining.Width);
+        Assert.Equal(floor.X + floor.Width, remaining.X, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_FitContentLimitDoesNotShrinkBelowMinContent() {
+        const string html = """
+            <div style="display:grid;width:260px;grid-template-columns:fit-content(10px) 20px;justify-content:start">
+              <span id="fit-floor" style="white-space:nowrap;background:#ff0000">unbreakable-intrinsic-floor</span>
+              <span id="fit-sibling" style="background:#0000ff">B</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 280D);
+        HtmlRenderShape fitted = FindGridShape(rendered, "span#fit-floor");
+        HtmlRenderShape sibling = FindGridShape(rendered, "span#fit-sibling");
+
+        Assert.True(fitted.Width > 10D);
+        Assert.Equal(fitted.X + fitted.Width, sibling.X, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_RedistributesSpanningMaxContentAfterFitContentCaps() {
+        const string html = "<div style='display:grid;width:260px;grid-template-columns:fit-content(10px) max-content;justify-content:start'>"
+            + "<span id='spanning' style='grid-column:1 / span 2;white-space:nowrap;background:green'>long spanning intrinsic contribution</span>"
+            + "<span id='capped' style='grid-column:1;background:red'>A</span>"
+            + "<span id='growing' style='grid-column:2;background:blue'>B</span></div>";
+
+        HtmlRenderDocument rendered = RenderGrid(html, 280D);
+        HtmlRenderShape capped = FindGridShape(rendered, "span#capped");
+        HtmlRenderShape growing = FindGridShape(rendered, "span#growing");
+        HtmlRenderShape spanning = FindGridShape(rendered, "span#spanning");
+
+        Assert.True(capped.Width <= 20D, $"Expected capped track near fit-content limit, got {capped.Width:F2}; growing={growing.Width:F2}; spanning={spanning.Width:F2}.");
+        Assert.True(growing.Width > capped.Width * 5D, $"Expected remaining deficit in uncapped track, got capped={capped.Width:F2}; growing={growing.Width:F2}; spanning={spanning.Width:F2}.");
+        Assert.Equal(capped.Width + growing.Width, spanning.Width, 3);
+    }
+
+    [Fact]
+    public void HtmlGrid_ColumnSubgridAcceptsAdditionalLineNames() {
+        const string html = """
+            <div style="display:grid;width:210px;grid-template-columns:60px 140px;column-gap:10px">
+              <div style="display:grid;grid-column:1 / span 2;grid-template-columns:subgrid [start] [end]">
+                <span id="named-subgrid-a" style="background:#ff0000">A</span>
+                <span id="named-subgrid-b" style="background:#0000ff">B</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 230D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#named-subgrid-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#named-subgrid-b");
+
+        Assert.Equal(60D, first.Width, 3);
+        Assert.Equal(70D, second.X, 3);
+        Assert.Equal(140D, second.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_ColumnSubgridAssignsAdjacentLineNameSetsToDistinctInheritedLines() {
+        const string html = """
+            <div style="display:grid;width:210px;grid-template-columns:60px 140px;column-gap:10px">
+              <div style="display:grid;grid-column:1 / span 2;grid-template-columns:subgrid [left] [middle] [right]">
+                <span id="named-subgrid" style="grid-column:left / middle;background:#ff0000">A</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 230D);
+        HtmlRenderShape item = FindGridShape(rendered, "span#named-subgrid");
+
+        Assert.Equal(0D, item.X, 3);
+        Assert.Equal(60D, item.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_ColumnSubgridCarriesParentLineNamesIntoItsLocalSpan() {
+        const string html = """
+            <div style="display:grid;width:260px;grid-template-columns:[outer] 40px [left] 60px [middle] 140px [right];column-gap:10px">
+              <div style="display:grid;grid-column:left / right;grid-template-columns:subgrid">
+                <span id="inherited-subgrid" style="grid-column:middle / right;background:#ff0000">A</span>
+              </div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 280D);
+        HtmlRenderShape item = FindGridShape(rendered, "span#inherited-subgrid");
+
+        Assert.Equal(120D, item.X, 3);
+        Assert.Equal(140D, item.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Theory]
+    [InlineData("alpha-beta")]
+    [InlineData("alpha/beta")]
+    [InlineData("alpha\u200Bbeta")]
+    [InlineData("漢字仮名")]
+    public void HtmlGrid_MinContentUsesSharedUnicodeAndPunctuationBreaks(string content) {
+        string html = "<div style='display:grid;width:260px;grid-template-columns:min-content max-content;justify-content:start'>"
+            + "<span id='minimum' style='background:red'>" + content + "</span>"
+            + "<span id='maximum' style='background:blue'>" + content + "</span></div>";
+
+        HtmlRenderDocument rendered = RenderGrid(html, 280D);
+        HtmlRenderShape minimum = FindGridShape(rendered, "span#minimum");
+        HtmlRenderShape maximum = FindGridShape(rendered, "span#maximum");
+
+        Assert.True(minimum.Width < maximum.Width, content);
+    }
+
+    [Fact]
+    public void HtmlGrid_MaxContentTrackIncludesReplacedContentInsideAWrapper() {
+        const string pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+        string html = "<div style='display:grid;width:300px;grid-template-columns:max-content 1fr'>"
+            + "<div id='wrapper' style='background:red'><img src='data:image/png;base64," + pixel + "' style='width:200px;height:10px'></div>"
+            + "<span id='after' style='background:blue'>B</span></div>";
+
+        HtmlRenderDocument rendered = RenderGrid(html, 320D);
+        HtmlRenderShape wrapper = FindGridShape(rendered, "div#wrapper");
+        HtmlRenderShape after = FindGridShape(rendered, "span#after");
+
+        Assert.Equal(200D, wrapper.Width, 3);
+        Assert.Equal(wrapper.X + wrapper.Width, after.X, 3);
+    }
+
+    [Fact]
+    public void HtmlGrid_MaxContentSumsAdjacentInlineReplacedElementsAndText() {
+        const string pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+        string html = "<div style='display:grid;width:300px;grid-template-columns:max-content 1fr'>"
+            + "<div id='wrapper' style='background:red'><img src='data:image/png;base64," + pixel + "' style='width:80px;height:10px'>"
+            + "<img src='data:image/png;base64," + pixel + "' style='width:60px;height:10px'><span style='font-size:10px'>XX</span></div>"
+            + "<span id='after' style='background:blue'>B</span></div>";
+
+        HtmlRenderDocument rendered = RenderGrid(html, 320D);
+        HtmlRenderShape wrapper = FindGridShape(rendered, "div#wrapper");
+        HtmlRenderShape after = FindGridShape(rendered, "span#after");
+
+        Assert.True(wrapper.Width > 150D);
+        Assert.Equal(wrapper.X + wrapper.Width, after.X, 3);
+    }
+
+    [Fact]
+    public void HtmlGrid_IntrinsicTracksIgnoreHiddenAndOutOfFlowDescendantText() {
+        const string html = """
+            <div style="display:grid;width:240px;grid-template-columns:max-content 20px;justify-content:start">
+              <div id="wrapper" style="background:red">A<span style="display:none">hidden-unbreakable-intrinsic-content</span><span style="position:absolute">positioned-unbreakable-intrinsic-content</span></div>
+              <span id="after" style="background:blue">B</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 260D);
+        HtmlRenderShape wrapper = FindGridShape(rendered, "div#wrapper");
+        HtmlRenderShape after = FindGridShape(rendered, "span#after");
+
+        Assert.InRange(wrapper.Width, 1D, 30D);
+        Assert.Equal(wrapper.X + wrapper.Width, after.X, 3);
+    }
+
+    [Fact]
+    public void HtmlGrid_IntrinsicTracksMeasureRenderableTextWithDescendantStyles() {
+        const string html = """
+            <div style="display:grid;width:400px;grid-template-columns:max-content 20px;justify-content:start">
+              <div id="wrapper" style="background:red"><span style="font-size:80px">WWW</span></div>
+              <span id="after" style="background:blue">B</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 420D);
+        HtmlRenderShape wrapper = FindGridShape(rendered, "div#wrapper");
+        HtmlRenderShape after = FindGridShape(rendered, "span#after");
+
+        Assert.True(wrapper.Width > 150D);
+        Assert.Equal(wrapper.X + wrapper.Width, after.X, 3);
+    }
+
+    [Fact]
+    public void HtmlGrid_MaxContentUsesTheWidestBlockLineInsteadOfConcatenatingBlocks() {
+        const string html = """
+            <div style="display:grid;width:400px;grid-template-columns:max-content max-content;justify-content:start">
+              <div id="wrapper" style="background:red"><div>WWWW</div><div>iiii</div></div>
+              <span id="reference" style="background:blue">WWWW</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 420D);
+        HtmlRenderShape wrapper = FindGridShape(rendered, "div#wrapper");
+        HtmlRenderShape reference = FindGridShape(rendered, "span#reference");
+
+        Assert.Equal(reference.Width, wrapper.Width, 3);
+        Assert.Equal(wrapper.X + wrapper.Width, reference.X, 3);
+    }
+
+    [Fact]
+    public void HtmlGrid_MaxContentPreservesAuthoredWhitespaceWhenTheDescendantStyleRequiresIt() {
+        const string html = """
+            <div style="display:grid;width:400px;grid-template-columns:max-content max-content;justify-content:start">
+              <span id="preserved" style="white-space:pre;background:red">A     B</span>
+              <span id="collapsed" style="background:blue">A     B</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 420D);
+        HtmlRenderShape preserved = FindGridShape(rendered, "span#preserved");
+        HtmlRenderShape collapsed = FindGridShape(rendered, "span#collapsed");
+
+        Assert.True(preserved.Width > collapsed.Width + 20D);
+        Assert.Equal(preserved.X + preserved.Width, collapsed.X, 3);
+    }
+
+    [Fact]
+    public void HtmlGrid_DoesNotLeakSubgridTracksThroughANonGridWrapper() {
+        const string html = """
+            <div style="display:grid;width:200px;grid-template-columns:60px 140px">
+              <div style="grid-column:1 / span 2"><section><div id="nested" style="display:grid;grid-template-columns:subgrid"><span>A</span><span>B</span></div></section></div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 220D);
 
         Assert.Contains(rendered.Diagnostics, diagnostic =>
-            diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported &&
-            diagnostic.Detail != null && diagnostic.Detail.Contains("intrinsic keyword", StringComparison.Ordinal));
+            diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported
+            && diagnostic.Source == "div#nested");
+    }
+
+    [Fact]
+    public void HtmlGrid_DoesNotLeakRowSubgridTracksThroughANonGridWrapper() {
+        const string html = """
+            <div style="display:grid;width:200px;grid-template-rows:[top] 40px [middle] 40px [bottom]">
+              <div style="grid-row:top / bottom"><section><div id="nested" style="display:grid;grid-template-rows:subgrid"><span>A</span><span>B</span></div></section></div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 220D);
+
+        Assert.Contains(rendered.Diagnostics, diagnostic =>
+            diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported
+            && diagnostic.Source == "div#nested");
+        Assert.Throws<HtmlConversionException>(() => HtmlRenderTestDriver.Render(html, new HtmlRenderOptions {
+            ViewportWidth = 220D,
+            Margins = HtmlRenderMargins.All(0D),
+            FidelityPolicy = HtmlRenderFidelityPolicy.RequireNoLoss
+        }));
     }
 
     [Fact]
@@ -52,6 +574,26 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderDocument rendered = RenderGrid(html, 140D);
 
         Assert.Contains(rendered.Diagnostics, diagnostic =>
+            diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported &&
+            diagnostic.Detail != null && diagnostic.Detail.Contains("fractional automatic minimum", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HtmlGrid_ExplicitZeroFractionMinimumAllowsIntentionalContentOverflowWithoutFallback() {
+        const string html = """
+            <div style="display:grid;width:120px;grid-template-columns:repeat(2,minmax(0,1fr))">
+              <span id="first" style="white-space:nowrap;background:#ff0000">This intrinsic label intentionally overflows</span>
+              <span id="second" style="background:#0000ff">Cell</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 140D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#first");
+        HtmlRenderShape second = FindGridShape(rendered, "span#second");
+
+        Assert.Equal(60D, first.Width, 3);
+        Assert.Equal(60D, second.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic =>
             diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported &&
             diagnostic.Detail != null && diagnostic.Detail.Contains("fractional automatic minimum", StringComparison.Ordinal));
     }
@@ -265,6 +807,83 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal(35D, b.Y, 3);
     }
 
+    [Theory]
+    [InlineData("align-items:baseline", "")]
+    [InlineData("align-items:first baseline", "")]
+    [InlineData("align-items:start", "align-self:first baseline")]
+    [InlineData("place-items:first baseline", "")]
+    public void HtmlGrid_AlignsFirstTextBaselinesWithinEachRow(string containerAlignment, string itemAlignment) {
+        string html = "<div style='display:grid;width:200px;grid-template-columns:100px 100px;grid-template-rows:50px;" + containerAlignment + "'>"
+            + "<span style='font-size:12px;line-height:18px;" + itemAlignment + "'>Small</span>"
+            + "<span style='font-size:24px;line-height:30px;" + itemAlignment + "'>Large</span></div>";
+
+        HtmlRenderDocument rendered = RenderGrid(html, 220D);
+        HtmlRenderText small = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(), text => text.Text == "Small");
+        HtmlRenderText large = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(), text => text.Text == "Large");
+        double smallBaseline = small.Y + (small.LineHeight - small.Font.Size) / 2D + small.Font.Size * 0.8D;
+        double largeBaseline = large.Y + (large.LineHeight - large.Font.Size) / 2D + large.Font.Size * 0.8D;
+
+        Assert.Equal(largeBaseline, smallBaseline, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Theory]
+    [InlineData("manual", "typo&shy;graphy")]
+    [InlineData("auto", "typography")]
+    public void HtmlGrid_MinContentUsesManualAndAutomaticHyphenation(string hyphens, string content) {
+        string html = "<div style='display:grid;width:260px;grid-template-columns:min-content max-content;justify-content:start'>"
+            + "<span id='minimum' style='hyphens:" + hyphens + ";background:red'>" + content + "</span>"
+            + "<span id='maximum' style='hyphens:" + hyphens + ";background:blue'>" + content + "</span></div>";
+        var options = new HtmlRenderOptions {
+            ViewportWidth = 280D,
+            Margins = HtmlRenderMargins.All(0D),
+            TextHyphenationCallback = token => token == "typography" ? new[] { 4 } : Array.Empty<int>()
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
+
+        Assert.True(FindGridShape(rendered, "span#minimum").Width < FindGridShape(rendered, "span#maximum").Width, hyphens);
+    }
+
+    [Fact]
+    public void HtmlGrid_AutoFitCollapsesLeadingAndInteriorEmptyTracksWithoutRenumberingLines() {
+        const string html = """
+            <div style="display:grid;width:450px;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));column-gap:10px;grid-auto-rows:20px">
+              <div id="second" style="grid-column:2;background:#ff0000"></div>
+              <div id="fourth" style="grid-column:4;background:#0000ff"></div>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 470D);
+
+        HtmlRenderShape second = FindGridShape(rendered, "div#second");
+        HtmlRenderShape fourth = FindGridShape(rendered, "div#fourth");
+        Assert.Equal(0D, second.X, 3);
+        Assert.Equal(225D, second.Width, 3);
+        Assert.Equal(225D, fourth.X, 3);
+        Assert.Equal(225D, fourth.Width, 3);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
+    }
+
+    [Fact]
+    public void HtmlGrid_AlignsBaselinesWhenTheFirstTextIsInsideAVisualGroup() {
+        const string html = """
+            <div style="display:grid;width:200px;grid-template-columns:100px 100px;grid-template-rows:60px;align-items:baseline">
+              <div><p style="margin:0;font-size:12px;line-height:18px">Nested</p></div>
+              <span style="font-size:24px;line-height:30px">Large</span>
+            </div>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 220D);
+        HtmlRenderVisual[] scene = EnumerateRenderVisuals(rendered.Pages[0].Visuals).ToArray();
+        HtmlRenderText nested = Assert.Single(scene.OfType<HtmlRenderText>(), text => text.Text == "Nested");
+        HtmlRenderText large = Assert.Single(scene.OfType<HtmlRenderText>(), text => text.Text == "Large");
+        double nestedBaseline = nested.Y + (nested.LineHeight - nested.Font.Size) / 2D + nested.Font.Size * 0.8D;
+        double largeBaseline = large.Y + (large.LineHeight - large.Font.Size) / 2D + large.Font.Size * 0.8D;
+
+        Assert.Equal(largeBaseline, nestedBaseline, 3);
+    }
+
     [Fact]
     public void HtmlGrid_PaginatesOnlyAtUnspannedRowBoundaries() {
         const string html = """
@@ -363,6 +982,26 @@ public sealed partial class HtmlRenderingTests {
         Assert.True(after.X > b.X);
         Assert.Contains(rendered.Pages[0].Visuals, visual => visual.Source == "span#inline-grid" && visual.LinkUri == "https://example.com/grid");
         Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridLayoutPending);
+    }
+
+    [Fact]
+    public void HtmlInlineGrid_ShrinkWrapsIntrinsicTracksThroughTheSharedSizingPath() {
+        const string html = """
+            <p style="margin:0">Before <span style="display:inline-grid;grid-template-columns:min-content max-content">
+              <span id="inline-intrinsic-a" style="background:#ff0000">longestword tail</span>
+              <span id="inline-intrinsic-b" style="background:#0000ff">two words together</span>
+            </span> After</p>
+            """;
+
+        HtmlRenderDocument rendered = RenderGrid(html, 320D);
+        HtmlRenderShape first = FindGridShape(rendered, "span#inline-intrinsic-a");
+        HtmlRenderShape second = FindGridShape(rendered, "span#inline-intrinsic-b");
+        HtmlRenderText after = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(), text => text.Text.Contains("After", StringComparison.Ordinal));
+
+        Assert.True(first.Width > 1D);
+        Assert.Equal(first.X + first.Width, second.X, 3);
+        Assert.True(after.X >= second.X + second.Width);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.GridValueUnsupported);
     }
 
     [Fact]

@@ -8,6 +8,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double containingWidth,
         HtmlRenderBoxStyle style,
         int depth,
+        IElement? continuationTarget,
         out HtmlRenderFlowBlock block) {
         block = null!;
         if (style.FlexWrap != "nowrap" && style.FlexWrap != "wrap" && style.FlexWrap != "wrap-reverse") {
@@ -17,10 +18,10 @@ internal sealed partial class HtmlRenderLayoutEngine {
         bool row = style.FlexDirection == "row" || style.FlexDirection == "row-reverse";
         bool column = style.FlexDirection == "column" || style.FlexDirection == "column-reverse";
         if (!row && !column) return false;
-        if (!TryCollectFlexItems(element, containingWidth, style, depth, out List<FlexItem> items)) return false;
-        if (column) return TryLayoutColumnFlexContainer(element, containingWidth, style, depth, items, out block);
+        if (!TryCollectFlexItems(element, containingWidth, style, depth, captureRunningElements: true, out List<FlexItem> items, out List<HtmlCssRunningStringAssignment> runningElementAssignments)) return false;
+        if (column) return TryLayoutColumnFlexContainer(element, containingWidth, style, depth, items, runningElementAssignments, out block);
 
-        return TryLayoutRowFlexContainer(element, containingWidth, style, depth, items, out block);
+        return TryLayoutRowFlexContainer(element, containingWidth, style, depth, items, runningElementAssignments, continuationTarget, out block);
     }
 
     private bool TryCollectFlexItems(
@@ -28,12 +29,15 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double containingWidth,
         HtmlRenderBoxStyle style,
         int depth,
-        out List<FlexItem> items) {
+        bool captureRunningElements,
+        out List<FlexItem> items,
+        out List<HtmlCssRunningStringAssignment> runningElementAssignments) {
         items = new List<FlexItem>();
+        runningElementAssignments = new List<HtmlCssRunningStringAssignment>();
         int sourceIndex = 0;
         AddGeneratedFlexItem(element, HtmlPseudoElementKind.Before, containingWidth, style, ref sourceIndex, items);
         foreach (INode node in element.ChildNodes) {
-            if (!TryAddFlexNode(node, containingWidth, style, depth + 1, ref sourceIndex, items)) return false;
+            if (!TryAddFlexNode(node, containingWidth, style, depth + 1, ref sourceIndex, items, captureRunningElements ? runningElementAssignments : null)) return false;
         }
         AddGeneratedFlexItem(element, HtmlPseudoElementKind.After, containingWidth, style, ref sourceIndex, items);
 
@@ -46,6 +50,8 @@ internal sealed partial class HtmlRenderLayoutEngine {
         HtmlRenderBoxStyle style,
         int depth,
         List<FlexItem> items,
+        IReadOnlyList<HtmlCssRunningStringAssignment> runningElementAssignments,
+        IElement? continuationTarget,
         out HtmlRenderFlowBlock block) {
         double availableWidth = Math.Max(1D, containingWidth - style.MarginLeft - style.MarginRight);
         double boxWidth = ResolveBoxWidth(availableWidth, style);
@@ -57,6 +63,11 @@ internal sealed partial class HtmlRenderLayoutEngine {
             ReportUnsupportedFlexValue(element, "row-gap=" + style.UnsupportedRowGap);
         }
         List<FlexItem> orderedItems = items.OrderBy(item => item.Style.Order).ThenBy(item => item.SourceIndex).ToList();
+        if (continuationTarget != null) {
+            int continuationIndex = orderedItems.FindIndex(item =>
+                item.Element != null && ContainsElementOrSelf(item.Element, continuationTarget));
+            if (continuationIndex >= 0) orderedItems = orderedItems.Skip(continuationIndex).ToList();
+        }
         double gap = orderedItems.Count > 1 ? style.ColumnGap : 0D;
         foreach (FlexItem item in orderedItems) item.Basis = ResolveFlexBasis(item, contentWidth);
         List<FlexLine> lines = CreateFlexLines(orderedItems, style.FlexWrap, contentWidth, gap);
@@ -82,7 +93,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
             }
         }
 
-        double boxHeight = ResolveBoxHeight(crossSize, style);
+        double boxHeight = ResolveBoxHeight(crossSize, boxWidth, style);
         double outerHeight = Math.Max(0.01D, style.MarginTop + boxHeight + style.MarginBottom);
         var visuals = new List<HtmlRenderVisual>();
         var positionedRunningStringAssignments = new List<HtmlCssRunningStringAssignment>();
@@ -129,6 +140,12 @@ internal sealed partial class HtmlRenderLayoutEngine {
                 .Distinct()
                 .OrderBy(offset => offset)
                 .Skip(1);
+        IReadOnlyList<HtmlInlineBreakProgress> continuationBreakProgress = style.FlexWrap == "wrap"
+            ? lines.Skip(1)
+                .Where(line => line.Items.Count > 0 && line.Items[0].Element != null)
+                .Select(line => new HtmlInlineBreakProgress(contentY + line.CrossOffset, 0, line.Items[0].Element))
+                .ToList()
+            : Array.Empty<HtmlInlineBreakProgress>();
 
         block = new HtmlRenderFlowBlock(
             containingWidth,
@@ -140,10 +157,19 @@ internal sealed partial class HtmlRenderLayoutEngine {
             HtmlRenderStyleResolver.DescribeSource(element),
             breakOffsets,
             pageName: style.PageName,
-            runningStringAssignments: itemPaintLayers.SelectMany(layer =>
-                    layer.Block.RunningStringAssignments.Select(assignment => assignment.Translate(layer.Y)))
-                .Concat(positionedRunningStringAssignments)
-                .OrderBy(assignment => assignment.OrderOffset));
+            runningStringAssignments: NormalizeRunningElementAssignmentOrder(
+                PlaceDirectRunningElementAssignments(
+                        runningElementAssignments,
+                        lines.SelectMany(line => line.Items.Select(item =>
+                            new RunningElementFlowAnchor(item.SourceIndex, contentY + line.CrossOffset + item.CrossOffset))),
+                        contentY,
+                        contentY + crossSize)
+                    .Concat(itemPaintLayers.SelectMany(layer =>
+                        layer.Block.RunningStringAssignments.Select(assignment => assignment.Translate(layer.Y))))
+                    .Concat(positionedRunningStringAssignments),
+                outerHeight),
+            inlineBreakProgress: continuationBreakProgress,
+            supportsInlineContinuationReflow: continuationBreakProgress.Count > 0);
         return true;
     }
 
@@ -151,7 +177,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         HtmlRenderBoxStyle style = item.Style;
         double boxBasis;
         if (style.FlexBasis != "auto") {
-            if (HtmlRenderCssValues.TryLength(style.FlexBasis, availableWidth, style.Font.Size, _options.DefaultFontSize, out double parsed)) {
+            if (TryResolveLength(style.FlexBasis, availableWidth, style.Font.Size, out double parsed)) {
                 boxBasis = Math.Max(0D, parsed) + (style.BorderBox ? 0D : style.HorizontalInsets);
             } else {
                 ReportUnsupportedFlexValue(item, "flex-basis=" + style.FlexBasis);
@@ -174,7 +200,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
 
         if (tag == "table") return availableWidth;
         string content = CollapseFlexText(item.TextContent);
-        double measured = content.Length == 0 ? 0D : MeasureText(ApplyTextTransform(content, style.TextTransform), style.Font);
+        double measured = content.Length == 0 ? 0D : MeasureInlineText(ApplyTextTransform(content, style.TextTransform), style);
         return Math.Min(availableWidth, measured + style.HorizontalInsets);
     }
 
@@ -398,6 +424,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         internal string Source { get; }
         internal string? Link { get; }
         internal bool PaintAnonymousBox { get; }
+        internal List<FlattenedSemanticPlacement> FlattenedSemanticPlacements { get; } = new List<FlattenedSemanticPlacement>();
         internal HtmlRenderBoxStyle Style { get; set; }
         internal int SourceIndex { get; }
         internal double Basis { get; set; }

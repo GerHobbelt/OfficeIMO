@@ -608,6 +608,9 @@ internal static partial class PdfWriter {
     private static void AppendClipPath(StringBuilder sb, OfficeIMO.Drawing.OfficeClipPath clipPath, double x, double y, double shapeHeight) {
         var content = new ContentStreamBuilder(sb);
         switch (clipPath.Kind) {
+            case OfficeIMO.Drawing.OfficeClipPathKind.Empty:
+                content.Rectangle(x, y + shapeHeight, 0D, 0D).ClipPath().EndPath();
+                break;
             case OfficeIMO.Drawing.OfficeClipPathKind.Rectangle:
                 content.Rectangle(x, y + shapeHeight - clipPath.Height, clipPath.Width, clipPath.Height).ClipPath().EndPath();
                 break;
@@ -622,7 +625,7 @@ internal static partial class PdfWriter {
                 break;
             case OfficeIMO.Drawing.OfficeClipPathKind.Path:
                 AppendPathCommands(content, clipPath.Commands, x, y, shapeHeight);
-                content.ClipPath().EndPath();
+                content.ClipPath(clipPath.FillRule).EndPath();
                 break;
         }
     }
@@ -630,6 +633,9 @@ internal static partial class PdfWriter {
     private static void AppendLocalClipPath(StringBuilder sb, OfficeIMO.Drawing.OfficeClipPath clipPath) {
         var content = new ContentStreamBuilder(sb);
         switch (clipPath.Kind) {
+            case OfficeIMO.Drawing.OfficeClipPathKind.Empty:
+                content.Rectangle(0D, 0D, 0D, 0D).ClipPath().EndPath();
+                break;
             case OfficeIMO.Drawing.OfficeClipPathKind.Rectangle:
                 content.Rectangle(0, 0, clipPath.Width, clipPath.Height).ClipPath().EndPath();
                 break;
@@ -644,7 +650,7 @@ internal static partial class PdfWriter {
                 break;
             case OfficeIMO.Drawing.OfficeClipPathKind.Path:
                 AppendLocalPathCommands(content, clipPath.Commands);
-                content.ClipPath().EndPath();
+                content.ClipPath(clipPath.FillRule).EndPath();
                 break;
         }
     }
