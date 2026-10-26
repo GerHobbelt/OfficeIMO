@@ -208,6 +208,34 @@ public sealed class HtmlConversionLimitTests {
     }
 
     [Fact]
+    public void HtmlConversionDocument_CountsRetainedStringSetRuleOnce() {
+        var limits = HtmlConversionLimits.CreateUntrustedProfile();
+        limits.MaxCssRules = 1;
+        HtmlConversionDocument document = HtmlConversionDocument.Parse(
+            "<style>.target{string-set:chapter content()}</style><p class='target'>x</p>",
+            new HtmlConversionDocumentOptions { Limits = limits, IncludeNormalizedHtml = false });
+
+        _ = document.StyleSummary;
+    }
+
+    [Fact]
+    public void HtmlConversionDocument_EnforcesCssNestingDepthBeforeRetainedDeclarationTraversal() {
+        var limits = HtmlConversionLimits.CreateUntrustedProfile();
+        limits.MaxCssNestingDepth = 4;
+        string css = string.Concat(Enumerable.Repeat("@media all{", 5))
+            + ".target{string-set:chapter content()}"
+            + new string('}', 5);
+        HtmlConversionDocument document = HtmlConversionDocument.Parse(
+            "<style>" + css + "</style><p class='target'>x</p>",
+            new HtmlConversionDocumentOptions { Limits = limits, IncludeNormalizedHtml = false });
+
+        HtmlDomLimitException exception = Assert.Throws<HtmlDomLimitException>(() => _ = document.StyleSummary);
+
+        Assert.Equal(HtmlConversionDiagnosticCodes.CssNestingDepthLimitExceeded, exception.Code);
+        Assert.Equal(nameof(HtmlConversionLimits.MaxCssNestingDepth), exception.LimitSource);
+    }
+
+    [Fact]
     public void HtmlConversionDocument_LoadStopsAtTheSharedCharacterBudgetAndRestoresTheStream() {
         byte[] bytes = Encoding.UTF8.GetBytes("<p>stream content</p>");
         using var stream = new MemoryStream(bytes);

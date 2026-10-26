@@ -433,6 +433,23 @@ public class PdfReadLimitTests {
     }
 
     [Fact]
+    public void ObjectStreamDeclaredCountIsBoundedBeforePairAllocation() {
+        byte[] pdf = BuildObjectPdf(
+            "<< /Type /ObjStm /N 4294967296 /First 1 /Length 1 >>\n"
+            + "stream\n0\nendstream");
+        var options = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxIndirectObjects = 32 }
+        };
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(
+            () => PdfReadDocument.Open(pdf, options));
+
+        Assert.Equal(PdfReadLimitKind.IndirectObjects, exception.Kind);
+        Assert.Equal(32, exception.Limit);
+        Assert.Equal(4_294_967_296L, exception.Actual);
+    }
+
+    [Fact]
     public void RawStreamBudgetStopsAllocation() {
         byte[] pdf = BuildPdf();
         var options = new PdfReadOptions {
@@ -481,6 +498,22 @@ public class PdfReadLimitTests {
 
         Assert.Equal(PdfReadLimitKind.DecodedStreamBytes, runLengthException.Kind);
         Assert.Equal(PdfReadLimitKind.DecodedStreamBytes, lzwException.Kind);
+    }
+
+    [Fact]
+    public void TryDecodeAppliesLzwPredictorWithinTheOutputBudget() {
+        var dictionary = new PdfDictionary();
+        dictionary.Items["Filter"] = new PdfName("LZWDecode");
+        var decodeParameters = new PdfDictionary();
+        decodeParameters.Items["Predictor"] = new PdfNumber(12);
+        decodeParameters.Items["Columns"] = new PdfNumber(4);
+        dictionary.Items["DecodeParms"] = decodeParameters;
+        byte[] encoded = PackNineBitCodes(new[] { 256, 0, 65, 66, 67, 68, 257 });
+
+        bool decoded = StreamDecoder.TryDecode(dictionary, encoded, 1024, out byte[] output);
+
+        Assert.True(decoded);
+        Assert.Equal(new byte[] { 65, 66, 67, 68 }, output);
     }
 
     [Fact]

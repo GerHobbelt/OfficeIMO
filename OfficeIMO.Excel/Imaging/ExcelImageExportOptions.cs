@@ -11,6 +11,9 @@ namespace OfficeIMO.Excel {
         /// <summary>Default maximum aggregate source-image bytes read for one visual snapshot.</summary>
         public const long DefaultMaximumTotalSourceImageBytes = 256L * 1024L * 1024L;
 
+        /// <summary>Default maximum number of images produced from manual page-break splitting.</summary>
+        public const int DefaultMaximumPageBreakImages = 1_000;
+
         /// <summary>
         /// Gridline color used when <see cref="ShowGridlines"/> is enabled.
         /// </summary>
@@ -63,6 +66,13 @@ namespace OfficeIMO.Excel {
         public bool ShowCommentBodies { get; set; }
 
         /// <summary>
+        /// Whether workbook directory paths referenced by header/footer <c>&amp;Z</c> and <c>&amp;[Path]</c>
+        /// fields may be included in rendered images. The default is <see langword="false"/> to avoid
+        /// exposing local or server filesystem paths in exported artifacts.
+        /// </summary>
+        public bool IncludeWorkbookPathInHeaderFooter { get; set; }
+
+        /// <summary>
         /// Default column width in pixels when a column has no explicit width.
         /// </summary>
         public double DefaultColumnWidthPixels { get; set; } = 64D;
@@ -85,6 +95,11 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public long MaximumTotalSourceImageBytes { get; set; } = DefaultMaximumTotalSourceImageBytes;
 
+        /// <summary>
+        /// Maximum aggregate number of image results that multi-area print ranges and manual row or column page breaks may produce for one worksheet export.
+        /// </summary>
+        public int MaximumPageBreakImages { get; set; } = DefaultMaximumPageBreakImages;
+
         /// <summary>Creates an independent options snapshot.</summary>
         public ExcelImageExportOptions Clone() => CopyExcelOptionsTo(new ExcelImageExportOptions());
 
@@ -100,10 +115,12 @@ namespace OfficeIMO.Excel {
             target.ConditionalFormattingDate = ConditionalFormattingDate;
             target.ShowHyperlinkHints = ShowHyperlinkHints;
             target.ShowCommentBodies = ShowCommentBodies;
+            target.IncludeWorkbookPathInHeaderFooter = IncludeWorkbookPathInHeaderFooter;
             target.DefaultColumnWidthPixels = DefaultColumnWidthPixels;
             target.DefaultRowHeightPixels = DefaultRowHeightPixels;
             target.MaximumRenderedCells = MaximumRenderedCells;
             target.MaximumTotalSourceImageBytes = MaximumTotalSourceImageBytes;
+            target.MaximumPageBreakImages = MaximumPageBreakImages;
             return target;
         }
 
@@ -114,6 +131,9 @@ namespace OfficeIMO.Excel {
             }
             if (MaximumTotalSourceImageBytes <= 0L) {
                 throw new ArgumentOutOfRangeException(nameof(MaximumTotalSourceImageBytes), "Maximum total source-image bytes must be positive.");
+            }
+            if (MaximumPageBreakImages <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(MaximumPageBreakImages), "Maximum page-break images must be positive.");
             }
         }
     }

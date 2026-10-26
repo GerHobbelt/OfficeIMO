@@ -956,6 +956,23 @@ public sealed class ReaderPdfModularTests {
     }
 
     [Fact]
+    public void DocumentReaderPdf_NormalizesNonFiniteLinkCoordinatesBeforeJsonSerialization() {
+        string source = Encoding.ASCII.GetString(BuildInternalDestinationLinkPdf());
+        byte[] malformed = Encoding.ASCII.GetBytes(source.Replace(
+            "/XYZ 24 144 1",
+            "/XYZ 1e309 144 1"));
+
+        OfficeDocumentReadResult result = PdfReaderAdapter.ReadDocument(
+            new MemoryStream(malformed, writable: false),
+            sourceName: "non-finite-link.pdf");
+
+        OfficeDocumentLink link = Assert.Single(result.Links);
+        Assert.Null(link.DestinationLeft);
+        using JsonDocument json = JsonDocument.Parse(result.ToJson());
+        Assert.False(json.RootElement.GetProperty("links")[0].TryGetProperty("destinationLeft", out _));
+    }
+
+    [Fact]
     public void DocumentReaderPdf_ReadPdfDocument_ExposesAttachmentMetadata() {
         byte[] invoiceXml = Encoding.UTF8.GetBytes("<invoice>42</invoice>");
         byte[] sourceBytes = Encoding.UTF8.GetBytes("Source payload");
@@ -1119,7 +1136,7 @@ public sealed class ReaderPdfModularTests {
     }
 
     [Fact]
-    public void DocumentReaderPdf_ReadPdfLogicalDocument_RangedReadOmitsCatalogActions() {
+    public void DocumentReaderPdf_ReadPdfLogicalDocument_RangedReadRetainsCatalogActions() {
         PdfLogicalDocument logical = PdfLogicalDocument.Load(BuildTwoPageCatalogActionsPdf());
 
         ReaderChunk chunk = Assert.Single(PdfReaderAdapter.Read(
@@ -1134,12 +1151,38 @@ public sealed class ReaderPdfModularTests {
 
         Assert.Equal(2, chunk.Location.Page);
         Assert.NotNull(chunk.Diagnostics);
-        Assert.False(chunk.Diagnostics!.HasCatalogActions);
-        Assert.False(chunk.Diagnostics.HasActiveContent);
-        Assert.Equal(0, chunk.Diagnostics.CatalogActionCount);
-        Assert.Null(chunk.Actions);
+        Assert.True(chunk.Diagnostics!.HasCatalogActions);
+        Assert.True(chunk.Diagnostics.HasActiveContent);
+        Assert.Equal(1, chunk.Diagnostics.CatalogActionCount);
+        Assert.NotNull(chunk.Actions);
+        Assert.Contains(chunk.Actions!, action => action.Scope == ReaderActionScope.Catalog && action.IsPotentiallyUnsafe);
         Assert.Contains("Second catalog-safe page", chunk.Markdown ?? chunk.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("First catalog page", chunk.Markdown ?? chunk.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DocumentReaderPdf_ReadPdfLogicalDocument_DuplicateRangesRetainCatalogActionsOnlyOnce() {
+        PdfLogicalDocument logical = PdfLogicalDocument.Load(BuildTwoPageCatalogActionsPdf());
+
+        List<ReaderChunk> chunks = PdfReaderAdapter.Read(
+            logical,
+            sourceName: "catalog-actions-duplicate-ranges.pdf",
+            pdfOptions: new ReaderPdfOptions {
+                PageRanges = new[] {
+                    PdfPageRange.From(2, 2),
+                    PdfPageRange.From(2, 2)
+                }
+            }).ToList();
+
+        Assert.Equal(2, chunks.Count);
+        Assert.Contains(chunks[0].Actions!, action => action.Scope == ReaderActionScope.Catalog);
+        Assert.DoesNotContain(chunks[1].Actions ?? Array.Empty<ReaderActionSummary>(), action => action.Scope == ReaderActionScope.Catalog);
+        Assert.All(chunks, chunk => {
+            Assert.NotNull(chunk.Diagnostics);
+            Assert.Equal(1, chunk.Diagnostics!.CatalogActionCount);
+            Assert.Equal(1, chunk.Diagnostics.PotentiallyUnsafeActionCount);
+            Assert.Equal(1, chunk.Diagnostics.JavaScriptActionCount);
+        });
     }
 
     [Fact]

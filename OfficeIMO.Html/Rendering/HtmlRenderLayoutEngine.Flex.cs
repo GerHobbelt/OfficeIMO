@@ -85,6 +85,7 @@ internal sealed partial class HtmlRenderLayoutEngine {
         double boxHeight = ResolveBoxHeight(crossSize, style);
         double outerHeight = Math.Max(0.01D, style.MarginTop + boxHeight + style.MarginBottom);
         var visuals = new List<HtmlRenderVisual>();
+        var positionedRunningStringAssignments = new List<HtmlCssRunningStringAssignment>();
         AddBoxPaint(visuals, style, style.MarginLeft, style.MarginTop, boxWidth, boxHeight, element);
         AppendLocalPositionedVisuals(
             element,
@@ -93,7 +94,8 @@ internal sealed partial class HtmlRenderLayoutEngine {
             style.MarginLeft + style.BorderLeftWidth,
             style.MarginTop + style.BorderTopWidth,
             PositionedPaintBand.Negative,
-            visuals);
+            visuals,
+            positionedRunningStringAssignments);
         double contentX = style.MarginLeft + style.BorderLeftWidth + style.PaddingLeft;
         double contentY = style.MarginTop + style.BorderTopWidth + style.PaddingTop;
         var itemPaintLayers = new List<FlowPaintLayer>();
@@ -117,7 +119,8 @@ internal sealed partial class HtmlRenderLayoutEngine {
             style.MarginLeft + style.BorderLeftWidth,
             style.MarginTop + style.BorderTopWidth,
             PositionedPaintBand.NonNegative,
-            visuals);
+            visuals,
+            positionedRunningStringAssignments);
         AddBoxOutlinePaint(visuals, style, style.MarginLeft, style.MarginTop, boxWidth, boxHeight, element);
 
         IEnumerable<double>? breakOffsets = style.FlexWrap == "nowrap"
@@ -136,7 +139,11 @@ internal sealed partial class HtmlRenderLayoutEngine {
             style.AvoidBreakInside,
             HtmlRenderStyleResolver.DescribeSource(element),
             breakOffsets,
-            pageName: style.PageName);
+            pageName: style.PageName,
+            runningStringAssignments: itemPaintLayers.SelectMany(layer =>
+                    layer.Block.RunningStringAssignments.Select(assignment => assignment.Translate(layer.Y)))
+                .Concat(positionedRunningStringAssignments)
+                .OrderBy(assignment => assignment.Offset));
         return true;
     }
 
@@ -195,13 +202,20 @@ internal sealed partial class HtmlRenderLayoutEngine {
             double frozenTotal = items.Where(item => !unfrozen.Contains(item)).Sum(item => item.MainSize);
             double unfrozenBasisTotal = unfrozen.Sum(item => item.Basis);
             double remaining = availableForItems - frozenTotal - unfrozenBasisTotal;
-            double factorTotal = unfrozen.Sum(item => growing ? item.Style.FlexGrow : item.Style.FlexShrink * item.Basis);
+            double maximumFactor = unfrozen.Max(item => growing ? item.Style.FlexGrow : item.Style.FlexShrink);
+            if (maximumFactor <= 0D || double.IsNaN(maximumFactor) || double.IsInfinity(maximumFactor)) break;
+            double factorTotal = unfrozen.Sum(item => {
+                double normalized = (growing ? item.Style.FlexGrow : item.Style.FlexShrink) / maximumFactor;
+                return growing ? normalized : normalized * item.Basis;
+            });
             if (factorTotal <= 0D) break;
 
             var newlyFrozen = new List<FlexItem>();
             foreach (FlexItem item in unfrozen) {
-                double factor = growing ? item.Style.FlexGrow : item.Style.FlexShrink * item.Basis;
+                double normalized = (growing ? item.Style.FlexGrow : item.Style.FlexShrink) / maximumFactor;
+                double factor = growing ? normalized : normalized * item.Basis;
                 double proposed = item.Basis + remaining * factor / factorTotal;
+                if (double.IsNaN(proposed) || double.IsInfinity(proposed)) proposed = item.Basis;
                 double clamped = ClampFlexMainSize(item, proposed, vertical);
                 item.MainSize = clamped;
                 if (Math.Abs(clamped - proposed) > 0.0001D) newlyFrozen.Add(item);

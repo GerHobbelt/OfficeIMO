@@ -62,7 +62,7 @@ internal sealed partial class HtmlRenderStyleResolver {
             PaintVisible = ResolvePaintVisibility(computed.GetValue("visibility"), parent),
             Font = new OfficeFontInfo(family, fontSize, fontStyle),
             Color = ResolveColor(computed.GetValue("color"), parent?.Color ?? OfficeColor.Black),
-            Alignment = ResolveAlignment(computed.GetValue("text-align"), direction),
+            Alignment = ResolveAlignment(computed.GetValue("text-align"), direction, parent?.Alignment),
             LineHeight = ResolveLineHeight(computed.GetValue("line-height"), fontSize),
             SemanticRole = pseudoElement ? pseudoSemanticRole : ResolveSemanticRole(tag),
             PreserveWhitespace = IsPreformatted(pseudoElement ? string.Empty : tag, computed.GetValue("white-space")),
@@ -87,6 +87,7 @@ internal sealed partial class HtmlRenderStyleResolver {
         ApplyGrid(computed, style);
         ApplyTable(computed, style);
         ApplyBreaks(computed, style);
+        style.StringSet = computed.GetValue("string-set").Trim();
         return style;
     }
 
@@ -256,7 +257,8 @@ internal sealed partial class HtmlRenderStyleResolver {
             case "larger": return parentFontSize * 1.2D;
         }
 
-        return HtmlRenderCssValues.TryLength(normalized, parentFontSize, parentFontSize, _options.DefaultFontSize, out double size) && size > 0D
+        return HtmlRenderCssValues.TryLength(normalized, parentFontSize, parentFontSize, _options.DefaultFontSize, out double size) &&
+            !double.IsNaN(size) && !double.IsInfinity(size) && size > 0D
             ? size
             : parentFontSize;
     }
@@ -330,10 +332,16 @@ internal sealed partial class HtmlRenderStyleResolver {
 
     private static OfficeColor ResolveColor(string value, OfficeColor fallback) => HtmlRenderCssValues.TryColor(value, out OfficeColor color) ? color : fallback;
 
-    private static OfficeTextAlignment ResolveAlignment(string value, string direction) {
+    private static OfficeTextAlignment ResolveAlignment(
+        string value,
+        string direction,
+        OfficeTextAlignment? parentAlignment) {
         if (string.Equals(value, "center", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Center;
         if (string.Equals(value, "right", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Right;
         if (string.Equals(value, "left", StringComparison.OrdinalIgnoreCase)) return OfficeTextAlignment.Left;
+        if (string.Equals(value, "match-parent", StringComparison.OrdinalIgnoreCase) && parentAlignment.HasValue) {
+            return parentAlignment.Value;
+        }
         bool rightToLeft = string.Equals(direction, "rtl", StringComparison.Ordinal);
         if (string.Equals(value, "end", StringComparison.OrdinalIgnoreCase)) return rightToLeft ? OfficeTextAlignment.Left : OfficeTextAlignment.Right;
         return rightToLeft ? OfficeTextAlignment.Right : OfficeTextAlignment.Left;
@@ -746,7 +754,7 @@ internal sealed partial class HtmlRenderStyleResolver {
             width = 5D;
             return true;
         }
-        return (normalized == "0" || HasSupportedColumnLengthUnit(normalized))
+        return HtmlRenderCssValues.HasExplicitLengthSyntax(normalized, allowPercentage: false, allowUnitlessZero: true)
             && HtmlRenderCssValues.TryLength(normalized, reference, fontSize, _options.DefaultFontSize, out width)
             && width >= 0D;
     }
@@ -766,20 +774,9 @@ internal sealed partial class HtmlRenderStyleResolver {
 
     private bool TryResolveColumnWidth(string value, double reference, double fontSize, out double width) {
         width = 0D;
-        return HasSupportedColumnLengthUnit(value)
+        return HtmlRenderCssValues.HasExplicitLengthSyntax(value, allowPercentage: false, allowUnitlessZero: false)
             && HtmlRenderCssValues.TryLength(value, reference, fontSize, _options.DefaultFontSize, out width)
             && width > 0D;
-    }
-
-    private static bool HasSupportedColumnLengthUnit(string value) {
-        string normalized = value.Trim().ToLowerInvariant();
-        int unitStart = 0;
-        while (unitStart < normalized.Length && (char.IsDigit(normalized[unitStart]) || normalized[unitStart] == '.' || normalized[unitStart] == '+' || normalized[unitStart] == '-')) unitStart++;
-        if (unitStart == 0 || unitStart == normalized.Length) return false;
-        if (!double.TryParse(normalized.Substring(0, unitStart), NumberStyles.Float, CultureInfo.InvariantCulture, out double number)
-            || double.IsNaN(number) || double.IsInfinity(number)) return false;
-        string unit = normalized.Substring(unitStart);
-        return unit == "px" || unit == "pt" || unit == "pc" || unit == "in" || unit == "cm" || unit == "mm" || unit == "q" || unit == "em" || unit == "rem";
     }
 
     private static void ApplyGrid(HtmlComputedStyle computed, HtmlRenderBoxStyle style) {

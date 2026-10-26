@@ -619,6 +619,44 @@ internal static partial class PdfWriter {
         return targetCells;
     }
 
+    private static System.Collections.Generic.List<TableCellLayout>[] GetTableCellLayoutsByRow(TableBlock table, int columnCount) {
+        var layouts = new System.Collections.Generic.List<TableCellLayout>[table.Cells.Count];
+        var activeRowSpans = new int[columnCount];
+        for (int currentRow = 0; currentRow < table.Cells.Count; currentRow++) {
+            var rowLayouts = new System.Collections.Generic.List<TableCellLayout>();
+            layouts[currentRow] = rowLayouts;
+            int column = 0;
+            var row = table.Cells[currentRow];
+            for (int cellIndex = 0; cellIndex < row.Count && column < columnCount; cellIndex++) {
+                while (column < columnCount && activeRowSpans[column] > 0) {
+                    column++;
+                }
+
+                if (column >= columnCount) {
+                    break;
+                }
+
+                PdfTableCell cell = row[cellIndex];
+                int columnSpan = System.Math.Min(cell.ColumnSpan, columnCount - column);
+                int rowSpan = System.Math.Min(cell.RowSpan, table.Cells.Count - currentRow);
+                rowLayouts.Add(new TableCellLayout(column, columnSpan, rowSpan, cell.Text, cell.Runs, cell.Paragraphs, cell.LinkUri, cell.LinkDestinationName, cell.LinkContents, cell.NamedDestinationName, cell.CheckBoxes, cell.FormFields, cell.Images, cell.NoWrap));
+                for (int c = column; c < column + columnSpan; c++) {
+                    activeRowSpans[c] = System.Math.Max(activeRowSpans[c], rowSpan);
+                }
+
+                column += columnSpan;
+            }
+
+            for (int c = 0; c < activeRowSpans.Length; c++) {
+                if (activeRowSpans[c] > 0) {
+                    activeRowSpans[c]--;
+                }
+            }
+        }
+
+        return layouts;
+    }
+
     private static double GetTableCellWidth(double[] columnWidths, int column, int columnSpan, double columnGap) {
         double width = 0D;
         int lastColumn = System.Math.Min(columnWidths.Length, column + columnSpan);
@@ -661,7 +699,7 @@ internal static partial class PdfWriter {
     private static TableCellTextLayout CreateTableCellTextLayout(TableCellLayout cell, double innerWidth, PdfStandardFont baseFont, double fontSize, double leading, PdfOptions? options, double runFontSizeScale = 1D, double minimumShrinkFontSize = 0D) {
         double wrapWidth = GetTableCellWrapWidth(innerWidth, cell.NoWrap);
         if (cell.Paragraphs.Count > 0) {
-            return CreateTableCellParagraphTextLayout(ScaleTableCellParagraphsForShrink(cell.Paragraphs, runFontSizeScale, minimumShrinkFontSize), wrapWidth, baseFont, fontSize, leading, options);
+            return CreateTableCellParagraphTextLayout(ScaleTableCellParagraphsForShrink(cell.Paragraphs, runFontSizeScale, minimumShrinkFontSize), wrapWidth, innerWidth, baseFont, fontSize, leading, options);
         }
 
         var wrap = WrapRichRunsCore(ScaleTableRunsForShrink(cell.Runs, runFontSizeScale, minimumShrinkFontSize), wrapWidth, fontSize, baseFont, leading, null, DefaultParagraphTabStopWidth, options);
@@ -744,7 +782,7 @@ internal static partial class PdfWriter {
     private static double GetTableCellWrapWidth(double innerWidth, bool noWrap) =>
         noWrap ? TableCellNoWrapWidth : innerWidth;
 
-    private static TableCellTextLayout CreateTableCellParagraphTextLayout(System.Collections.Generic.IReadOnlyList<PdfTableCellParagraph> paragraphs, double innerWidth, PdfStandardFont baseFont, double fontSize, double leading, PdfOptions? options) {
+    private static TableCellTextLayout CreateTableCellParagraphTextLayout(System.Collections.Generic.IReadOnlyList<PdfTableCellParagraph> paragraphs, double wrapWidth, double cellInnerWidth, PdfStandardFont baseFont, double fontSize, double leading, PdfOptions? options) {
         var lines = new System.Collections.Generic.List<System.Collections.Generic.List<RichSeg>>();
         var lineHeights = new System.Collections.Generic.List<double>();
         var lineAlignments = new System.Collections.Generic.List<PdfAlign?>();
@@ -752,9 +790,9 @@ internal static partial class PdfWriter {
         var lineWidths = new System.Collections.Generic.List<double>();
         for (int paragraphIndex = 0; paragraphIndex < paragraphs.Count; paragraphIndex++) {
             PdfTableCellParagraph paragraph = paragraphs[paragraphIndex];
-            PdfParagraphStyle paragraphStyle = CreateTableCellParagraphStyle(paragraph);
+            PdfParagraphStyle paragraphStyle = CreateTableCellParagraphStyle(paragraph, cellInnerWidth);
             double paragraphLeading = paragraphStyle.LineHeight.HasValue ? GetParagraphLeading(paragraphStyle, fontSize) : leading;
-            var paragraphFrame = GetParagraphTextFrame(paragraphStyle, 0D, innerWidth);
+            var paragraphFrame = GetParagraphTextFrame(paragraphStyle, 0D, wrapWidth);
             var wrap = WrapRichRunsCoreWithFirstLineOrigin(
                 paragraph.Runs,
                 paragraphFrame.Width,
@@ -803,18 +841,26 @@ internal static partial class PdfWriter {
             lineHeights.Add(leading);
             lineAlignments.Add(null);
             lineXOffsets.Add(0D);
-            lineWidths.Add(innerWidth);
+            lineWidths.Add(wrapWidth);
         }
 
         return new TableCellTextLayout(lines, lineHeights, lineAlignments, lineXOffsets, lineWidths);
     }
 
-    private static PdfParagraphStyle CreateTableCellParagraphStyle(PdfTableCellParagraph paragraph) {
+    private static PdfParagraphStyle CreateTableCellParagraphStyle(PdfTableCellParagraph paragraph, double availableWidth) {
+        const double minimumTextWidth = 0.001D;
+        double safeWidth = double.IsNaN(availableWidth) || double.IsInfinity(availableWidth)
+            ? minimumTextWidth
+            : System.Math.Max(minimumTextWidth, availableWidth);
+        double leftIndent = System.Math.Min(paragraph.LeftIndent, System.Math.Max(0D, safeWidth - minimumTextWidth));
+        double rightIndent = System.Math.Min(paragraph.RightIndent, System.Math.Max(0D, safeWidth - leftIndent - minimumTextWidth));
+        double textWidth = System.Math.Max(minimumTextWidth, safeWidth - leftIndent - rightIndent);
+        double firstLineIndent = System.Math.Max(-leftIndent, System.Math.Min(paragraph.FirstLineIndent, textWidth - minimumTextWidth));
         var style = new PdfParagraphStyle {
             LineHeight = paragraph.LineHeight,
-            LeftIndent = paragraph.LeftIndent,
-            RightIndent = paragraph.RightIndent,
-            FirstLineIndent = paragraph.FirstLineIndent,
+            LeftIndent = leftIndent,
+            RightIndent = rightIndent,
+            FirstLineIndent = firstLineIndent,
             DefaultTabStopWidth = paragraph.DefaultTabStopWidth
         };
 
@@ -840,6 +886,23 @@ internal static partial class PdfWriter {
 
     private static double GetRichLineHeight(System.Collections.Generic.IReadOnlyList<double> heights, int lineIndex, double fallbackLeading) =>
         lineIndex >= 0 && lineIndex < heights.Count ? heights[lineIndex] : fallbackLeading;
+
+    private static int LimitTableCellLineCountToHeight(TableCellTextLayout lines, int startLine, int requestedLineCount, double fallbackLeading, double availableHeight) {
+        int maximumLineCount = System.Math.Max(0, System.Math.Min(requestedLineCount, lines.LineCount - startLine));
+        double consumedHeight = 0D;
+        int visibleLineCount = 0;
+        for (int offset = 0; offset < maximumLineCount; offset++) {
+            double lineHeight = GetRichLineHeight(lines.LineHeights, startLine + offset, fallbackLeading);
+            if (consumedHeight + lineHeight > availableHeight + 0.001D) {
+                break;
+            }
+
+            consumedHeight += lineHeight;
+            visibleLineCount++;
+        }
+
+        return visibleLineCount;
+    }
 
     private static double MeasureRichLinesHeight(System.Collections.Generic.IReadOnlyList<double> heights, int lineCount, double fallbackLeading) {
         double height = 0D;

@@ -6,6 +6,9 @@ namespace OfficeIMO.Pdf;
 /// Builds foreground page content at absolute top-left page coordinates in the order items are added.
 /// </summary>
 public sealed class PdfPageCanvas {
+    /// <summary>Maximum supported outline hierarchy depth.</summary>
+    public const int MaximumOutlineLevel = 64;
+
     private readonly List<PdfCanvasItem> _items = new();
     private readonly bool _allowOutOfPageCoordinates;
 
@@ -36,8 +39,8 @@ public sealed class PdfPageCanvas {
             throw new ArgumentException("Canvas outline titles cannot be empty or whitespace.", nameof(title));
         }
 
-        if (level <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(level), "Canvas outline levels must be positive.");
+        if (level <= 0 || level > MaximumOutlineLevel) {
+            throw new ArgumentOutOfRangeException(nameof(level), "Canvas outline levels must be between 1 and " + MaximumOutlineLevel + ".");
         }
 
         ValidateCanvasCoordinate(y, nameof(y));
@@ -214,6 +217,10 @@ public sealed class PdfPageCanvas {
         _items.Add(new PdfCanvasDrawingItem(block, x, y, width, height, rotationAngle));
         return this;
     }
+
+    /// <summary>Adds a supported image at fixed top-left page coordinates.</summary>
+    public PdfPageCanvas Image(byte[] imageBytes, double x, double y, double width, double height, PdfImageStyle? style, string? linkUri, string? linkContents, string? alternativeText, double rotationAngle) =>
+        Image(imageBytes, x, y, width, height, style, linkUri, linkContents, alternativeText, rotationAngle, horizontalFlip: false, verticalFlip: false);
 
     /// <summary>Adds a supported image at fixed top-left page coordinates.</summary>
     public PdfPageCanvas Image(byte[] imageBytes, double x, double y, double width, double height, PdfImageStyle? style = null, string? linkUri = null, string? linkContents = null, string? alternativeText = null, double rotationAngle = 0D, bool horizontalFlip = false, bool verticalFlip = false) {

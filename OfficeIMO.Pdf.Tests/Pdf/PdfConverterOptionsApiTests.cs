@@ -6,7 +6,7 @@ namespace OfficeIMO.Tests.Pdf;
 
 public sealed class PdfConverterOptionsApiTests {
     [Fact]
-    public void ConverterOptionsExposeUnifiedBalancedResourceDefaults() {
+    public void ConverterOptionsExposeExpectedResourceDefaults() {
         var markdown = new MarkdownPdfSaveOptions();
         var word = new OfficeIMO.Word.Pdf.PdfSaveOptions();
         var excel = new OfficeIMO.Excel.Pdf.ExcelPdfSaveOptions();
@@ -21,7 +21,7 @@ public sealed class PdfConverterOptionsApiTests {
         Assert.Equal(PdfTextFallbackFeatures.Default, excel.TextFallbacks);
         Assert.Equal(PdfTextFallbackFeatures.Default, powerPoint.TextFallbacks);
         AssertBalancedDefault(markdown.ResourcePolicy);
-        AssertBalancedDefault(word.ResourcePolicy);
+        AssertPortable(word.ResourcePolicy);
         AssertBalancedDefault(excel.ResourcePolicy);
         AssertBalancedDefault(powerPoint.ResourcePolicy);
         AssertBalancedDefault(html.ResourcePolicy);
@@ -45,6 +45,7 @@ public sealed class PdfConverterOptionsApiTests {
         Assert.False(options.IncludeImages);
         Assert.True(options.ResourcePolicy.AllowDataUris);
         Assert.True(options.ResourcePolicy.AllowLocalFileAccess);
+        Assert.True(options.ResourcePolicy.AllowDocumentFontEmbedding);
         Assert.False(options.ApplyDefaultTheme);
         Assert.Equal(MarkdownPdfFrontMatterRenderMode.Hidden, options.FrontMatterRenderMode);
     }
@@ -159,6 +160,7 @@ public sealed class PdfConverterOptionsApiTests {
 
     private static void AssertPortable(PdfResourcePolicy policy) {
         Assert.False(policy.AllowSystemFontEmbedding);
+        Assert.False(policy.AllowDocumentFontEmbedding);
         Assert.False(policy.AllowLocalFileAccess);
         Assert.False(policy.AllowRemoteResourceResolution);
         Assert.True(policy.AllowDataUris);
@@ -167,6 +169,7 @@ public sealed class PdfConverterOptionsApiTests {
 
     private static void AssertBalancedDefault(PdfResourcePolicy policy) {
         Assert.True(policy.AllowSystemFontEmbedding);
+        Assert.False(policy.AllowDocumentFontEmbedding);
         Assert.False(policy.AllowLocalFileAccess);
         Assert.False(policy.AllowRemoteResourceResolution);
         Assert.True(policy.AllowDataUris);

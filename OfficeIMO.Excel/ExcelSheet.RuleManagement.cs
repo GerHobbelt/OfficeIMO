@@ -33,10 +33,38 @@ namespace OfficeIMO.Excel {
                 ? null
                 : new SortedSet<ConditionalFormattingCandidate>(ConditionalFormattingCandidateComparer.Instance);
             long ruleOrder = 0L;
+            bool discoveryLimitReached = false;
+            int maximumDiscoveryItems = maximumRules == int.MaxValue
+                ? int.MaxValue
+                : maximumRules + 1;
+            int containersExamined = 0;
+            // A finite maximum is also a hard discovery-work budget. One lookahead rule may
+            // replace the current worst candidate; truncated signals that later priorities
+            // were intentionally not inspected.
             foreach (var conditional in WorksheetRoot.Elements<ConditionalFormatting>()) {
+                if (retained != null && containersExamined++ >= maximumDiscoveryItems) {
+                    truncated = true;
+                    break;
+                }
                 string range = conditional.SequenceOfReferences?.InnerText ?? string.Empty;
                 if (filter.HasValue && !string.IsNullOrWhiteSpace(range)) {
-                    if (!ReferenceListOverlaps(range, filter.Value)) continue;
+                    long maximumRangeCharacters = (long)maximumDiscoveryItems * 64L;
+                    if (range.Length > maximumRangeCharacters) {
+                        truncated = true;
+                        break;
+                    }
+                    bool referencesTruncated;
+                    if (!ReferenceListOverlaps(
+                        range,
+                        filter.Value,
+                        maximumDiscoveryItems,
+                        out referencesTruncated)) {
+                        if (referencesTruncated) {
+                            truncated = true;
+                            break;
+                        }
+                        continue;
+                    }
                 }
 
                 foreach (var rule in conditional.Elements<ConditionalFormattingRule>()) {
@@ -61,7 +89,11 @@ namespace OfficeIMO.Excel {
                         retained.Remove(worst);
                         retained.Add(candidate);
                     }
+                    discoveryLimitReached = true;
+                    break;
                 }
+
+                if (discoveryLimitReached) break;
             }
 
             if (retained != null) {
@@ -202,19 +234,19 @@ namespace OfficeIMO.Excel {
                 return null;
             }
 
-            TimePeriodValues value = rule.TimePeriod.Value;
-            if (value == TimePeriodValues.Yesterday) return nameof(TimePeriodValues.Yesterday);
-            if (value == TimePeriodValues.Today) return nameof(TimePeriodValues.Today);
-            if (value == TimePeriodValues.Tomorrow) return nameof(TimePeriodValues.Tomorrow);
-            if (value == TimePeriodValues.Last7Days) return nameof(TimePeriodValues.Last7Days);
-            if (value == TimePeriodValues.LastWeek) return nameof(TimePeriodValues.LastWeek);
-            if (value == TimePeriodValues.ThisWeek) return nameof(TimePeriodValues.ThisWeek);
-            if (value == TimePeriodValues.NextWeek) return nameof(TimePeriodValues.NextWeek);
-            if (value == TimePeriodValues.LastMonth) return nameof(TimePeriodValues.LastMonth);
-            if (value == TimePeriodValues.ThisMonth) return nameof(TimePeriodValues.ThisMonth);
-            if (value == TimePeriodValues.NextMonth) return nameof(TimePeriodValues.NextMonth);
+            string? value = rule.TimePeriod.InnerText;
+            if (string.Equals(value, "yesterday", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.Yesterday);
+            if (string.Equals(value, "today", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.Today);
+            if (string.Equals(value, "tomorrow", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.Tomorrow);
+            if (string.Equals(value, "last7Days", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.Last7Days);
+            if (string.Equals(value, "lastWeek", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.LastWeek);
+            if (string.Equals(value, "thisWeek", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.ThisWeek);
+            if (string.Equals(value, "nextWeek", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.NextWeek);
+            if (string.Equals(value, "lastMonth", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.LastMonth);
+            if (string.Equals(value, "thisMonth", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.ThisMonth);
+            if (string.Equals(value, "nextMonth", StringComparison.OrdinalIgnoreCase)) return nameof(TimePeriodValues.NextMonth);
 
-            return rule.TimePeriod.InnerText;
+            return value;
         }
 
         private static IReadOnlyList<string> ReadColorScaleColors(ConditionalFormattingRule rule) {
@@ -1021,6 +1053,27 @@ namespace OfficeIMO.Excel {
                 }
             }
 
+            return false;
+        }
+
+        private static bool ReferenceListOverlaps(
+            string referenceList,
+            (int r1, int c1, int r2, int c2) filter,
+            int maximumReferences,
+            out bool truncated) {
+            int examined = 0;
+            foreach (ReferenceListPart part in SplitReferenceList(referenceList)) {
+                if (examined++ >= maximumReferences) {
+                    truncated = true;
+                    return false;
+                }
+                if (TryParseReference(part, out var bounds) && RangesOverlapInclusive(filter, bounds)) {
+                    truncated = false;
+                    return true;
+                }
+            }
+
+            truncated = false;
             return false;
         }
 

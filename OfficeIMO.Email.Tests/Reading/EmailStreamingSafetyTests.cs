@@ -4,6 +4,25 @@ using Xunit;
 namespace OfficeIMO.Email.Tests;
 
 public sealed class EmailStreamingSafetyTests {
+#if NET8_0_OR_GREATER
+    [Fact]
+    public void EmailTemporaryStorageCreatesOwnerOnlyUnixDirectories() {
+        if (OperatingSystem.IsWindows()) return;
+        string path = Path.Combine(Path.GetTempPath(),
+            "officeimo-email-private-" + Guid.NewGuid().ToString("N"));
+        try {
+            EmailTemporaryStorage.CreatePrivateDirectory(path);
+
+            UnixFileMode permissions = File.GetUnixFileMode(path);
+            Assert.Equal(UnixFileMode.None, permissions &
+                (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                 UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute));
+        } finally {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        }
+    }
+#endif
+
     [Fact]
     public void InvalidBase64AttachmentIsPreservedAndDiagnosed() {
         byte[] artifact = Encoding.ASCII.GetBytes(
@@ -28,6 +47,47 @@ public sealed class EmailStreamingSafetyTests {
         using Stream content = attachment.OpenContentStream();
         using var reader = new StreamReader(content, Encoding.ASCII);
         Assert.Equal("AA!B", reader.ReadToEnd().Trim());
+    }
+
+    [Fact]
+    public void StreamingReaderCountsSemanticAttachmentBeforeDecodingExternalContent() {
+        byte[] artifact = Encoding.ASCII.GetBytes(
+            "MIME-Version: 1.0\r\n" +
+            "Content-Type: multipart/mixed; boundary=officeimo\r\n\r\n" +
+            "--officeimo\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n" +
+            "--officeimo\r\nContent-Type: application/octet-stream; name=large.bin\r\n" +
+            "Content-Disposition: attachment; filename=large.bin\r\n\r\n0123456789ABCDEF\r\n" +
+            "--officeimo--\r\n");
+        var reader = new EmailDocumentReader(new EmailReaderOptions(
+            maxAttachmentBytes: 8,
+            maxAttachmentCount: 1));
+
+        EmailLimitExceededException exception = Assert.Throws<EmailLimitExceededException>(() =>
+            reader.ReadStreaming(new MemoryStream(artifact, writable: false), "semantic.eml"));
+
+        Assert.Equal(nameof(EmailReaderOptions.MaxAttachmentCount), exception.LimitName);
+    }
+
+    [Fact]
+    public void StreamingReaderCountsNestedAdditionalBodyBeforeDecodingExternalContent() {
+        byte[] artifact = Encoding.ASCII.GetBytes(
+            "MIME-Version: 1.0\r\n" +
+            "Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+            "--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n" +
+            "--inner\r\nContent-Type: text/plain\r\n\r\nPrimary body\r\n" +
+            "--inner\r\nContent-Type: text/plain\r\n\r\nAdditional body\r\n" +
+            "--inner--\r\n" +
+            "--outer\r\nContent-Type: application/octet-stream; name=large.bin\r\n" +
+            "Content-Disposition: attachment; filename=large.bin\r\n\r\n0123456789ABCDEF\r\n" +
+            "--outer--\r\n");
+        var reader = new EmailDocumentReader(new EmailReaderOptions(
+            maxAttachmentBytes: 8,
+            maxAttachmentCount: 1));
+
+        EmailLimitExceededException exception = Assert.Throws<EmailLimitExceededException>(() =>
+            reader.ReadStreaming(new MemoryStream(artifact, writable: false), "nested.eml"));
+
+        Assert.Equal(nameof(EmailReaderOptions.MaxAttachmentCount), exception.LimitName);
     }
 
     [Fact]

@@ -8,6 +8,177 @@ namespace OfficeIMO.Email.Store.Tests;
 
 public sealed class MailboxDirectorySessionTests {
     [Fact]
+    public void TrailingSeparatorNormalizationPreservesFilesystemRoots() {
+        string root = Path.GetPathRoot(Path.GetFullPath(Path.GetTempPath()))!;
+        string nested = Path.Combine(root, "mailbox") + Path.DirectorySeparatorChar;
+
+        Assert.Equal(root,
+            MailboxDirectoryStoreSessionBackend.TrimTrailingDirectorySeparators(root));
+        Assert.Equal(Path.Combine(root, "mailbox"),
+            MailboxDirectoryStoreSessionBackend.TrimTrailingDirectorySeparators(nested));
+    }
+
+#if NET8_0_OR_GREATER
+    [Fact]
+    public void WindowsMailboxRootAliasUsesItsPhysicalIdentityForSafeReads() {
+        if (!OperatingSystem.IsWindows()) return;
+        string physicalRoot = CreateMailboxDirectory();
+        string aliasRoot = Path.Combine(Path.GetTempPath(),
+            "officeimo-mailbox-root-alias-" + Guid.NewGuid().ToString("N"));
+        try {
+            try {
+                Directory.CreateSymbolicLink(aliasRoot, physicalRoot);
+            } catch (Exception exception) when (
+                exception is IOException || exception is UnauthorizedAccessException
+                || exception is PlatformNotSupportedException) {
+                return;
+            }
+
+            using EmailStoreSession session = EmailStoreSession.Open(aliasRoot);
+            EmailStoreItemReference reference = Assert.Single(
+                session.EnumerateItems(), item =>
+                    session.ReadSummary(item).Subject == "Apple directory message");
+
+            Assert.Equal("Apple directory message",
+                session.ReadItem(reference).Document.Subject);
+        } finally {
+            if (Directory.Exists(aliasRoot)) Directory.Delete(aliasRoot);
+            if (Directory.Exists(physicalRoot)) {
+                Directory.Delete(physicalRoot, recursive: true);
+            }
+        }
+    }
+#endif
+
+    [Fact]
+    public void FilesystemCaseDetectionUsesExistingNamedAncestorsForNumericDirectories() {
+        string root = Path.Combine(Path.GetTempPath(),
+            "officeimo-case-ancestor-" + Guid.NewGuid().ToString("N"));
+        string numeric = Path.Combine(root, "123456");
+        try {
+            Directory.CreateDirectory(numeric);
+
+            Assert.Equal(
+                EmailStorePathIdentity.IsCaseInsensitiveFileSystem(root),
+                EmailStorePathIdentity.IsCaseInsensitiveFileSystem(numeric));
+        } finally {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+#if NET8_0_OR_GREATER
+    [Fact]
+    public void MailboxDirectorySkipsNamedPipeCandidatesWithoutBlocking() {
+        if (OperatingSystem.IsWindows()) return;
+        string root = Path.Combine(Path.GetTempPath(),
+            "officeimo-mailbox-fifo-" + Guid.NewGuid().ToString("N"));
+        try {
+            Directory.CreateDirectory(root);
+            string fifo = Path.Combine(root, "blocking.emlx");
+            Assert.Equal(0, CreateNamedPipe(fifo, 0x180));
+
+            var stopwatch = Stopwatch.StartNew();
+            using EmailStoreSession session = EmailStoreSession.Open(root);
+            stopwatch.Stop();
+
+            Assert.Empty(session.EnumerateItems());
+            Assert.Contains(session.Diagnostics, diagnostic =>
+                diagnostic.Code == "EMAIL_STORE_DIRECTORY_SPECIAL_FILE_SKIPPED");
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), stopwatch.Elapsed.ToString());
+        } finally {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MailboxRegularFileCheckRejectsSeekableDeviceDescriptors() {
+        if (OperatingSystem.IsWindows()) return;
+        int descriptor = OpenNamedPipe("/dev/null", 0);
+        Assert.True(descriptor >= 0);
+        Type backend = typeof(EmailStoreSession).Assembly.GetType(
+            "OfficeIMO.Email.Store.MailboxDirectoryStoreSessionBackend",
+            throwOnError: true)!;
+        System.Reflection.MethodInfo method = backend.GetMethod(
+            "IsRegularUnixDescriptor",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        try {
+            Assert.False(Assert.IsType<bool>(method.Invoke(null,
+                new object[] { descriptor })));
+        } finally {
+            CloseDescriptor(descriptor);
+        }
+    }
+
+    [Fact]
+    public async Task MailboxDirectoryReadRejectsFileReplacedWithNamedPipeWithoutBlocking() {
+        if (OperatingSystem.IsWindows()) return;
+        string root = Path.Combine(Path.GetTempPath(),
+            "officeimo-mailbox-fifo-swap-" + Guid.NewGuid().ToString("N"));
+        try {
+            Directory.CreateDirectory(root);
+            string path = Path.Combine(root, "message.eml");
+            File.WriteAllText(path, "Subject: Safe\r\n\r\nBody");
+            using EmailStoreSession session = EmailStoreSession.Open(root);
+            EmailStoreItemReference reference = Assert.Single(session.EnumerateItems());
+            File.Delete(path);
+            Assert.Equal(0, CreateNamedPipe(path, 0x180));
+
+            Task<Exception> read = Task.Run(() => Record.Exception(() => session.ReadItem(reference)));
+            bool completedWithoutWriter = ReferenceEquals(
+                await Task.WhenAny(read, Task.Delay(TimeSpan.FromMilliseconds(500))),
+                read);
+            if (!completedWithoutWriter) {
+                int nonBlocking = OperatingSystem.IsMacOS() ? 0x0004 : 0x0800;
+                int descriptor = OpenNamedPipe(path, 0x0002 | nonBlocking);
+                if (descriptor >= 0) CloseDescriptor(descriptor);
+                Assert.Same(read, await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(2))));
+            }
+
+            Assert.True(completedWithoutWriter, "Reading a swapped FIFO waited for a writer.");
+            Assert.IsType<IOException>(await read);
+        } finally {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MailboxDirectoryReadRejectsParentDirectoryReplacedWithSymlink() {
+        if (OperatingSystem.IsWindows()) return;
+        string root = Path.Combine(Path.GetTempPath(),
+            "officeimo-mailbox-parent-swap-" + Guid.NewGuid().ToString("N"));
+        string outside = Path.Combine(Path.GetTempPath(),
+            "officeimo-mailbox-parent-target-" + Guid.NewGuid().ToString("N"));
+        string indexedDirectory = Path.Combine(root, "Inbox");
+        try {
+            Directory.CreateDirectory(indexedDirectory);
+            Directory.CreateDirectory(outside);
+            File.WriteAllText(Path.Combine(indexedDirectory, "message.eml"),
+                "Subject: Indexed\r\n\r\nSafe");
+            File.WriteAllText(Path.Combine(outside, "message.eml"),
+                "Subject: Outside\r\n\r\nUnsafe");
+            using EmailStoreSession session = EmailStoreSession.Open(root);
+            EmailStoreItemReference reference = Assert.Single(session.EnumerateItems());
+            Directory.Delete(indexedDirectory, recursive: true);
+            Directory.CreateSymbolicLink(indexedDirectory, outside);
+
+            Assert.Throws<IOException>(() => session.ReadItem(reference));
+        } finally {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (Directory.Exists(outside)) Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true, CharSet = CharSet.Ansi)]
+    private static extern int CreateNamedPipe(string path, uint mode);
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true, CharSet = CharSet.Ansi)]
+    private static extern int OpenNamedPipe(string path, int flags);
+
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static extern int CloseDescriptor(int descriptor);
+#endif
+
+    [Fact]
     public void Opens_apple_mail_and_maildir_trees_as_one_lazy_store() {
         string root = CreateMailboxDirectory();
         try {

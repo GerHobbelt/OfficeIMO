@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
     <BlazorEnableCompression>false</BlazorEnableCompression>
+    <!-- HarfBuzz WebAssembly ships as a native archive and must be linked into dotnet.native.wasm. -->
+    <WasmBuildNative>true</WasmBuildNative>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,12 +17,24 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\OfficeIMO.Drawing\OfficeIMO.Drawing.csproj" />
+    <ProjectReference Include="..\..\..\OfficeIMO.Drawing.HarfBuzz\OfficeIMO.Drawing.HarfBuzz.csproj" />
+    <ProjectReference Include="..\..\..\OfficeIMO.Html.Pdf\OfficeIMO.Html.Pdf.csproj" />
     <ProjectReference Include="..\..\..\OfficeIMO.Word.Pdf\OfficeIMO.Word.Pdf.csproj" />
     <ProjectReference Include="..\..\..\OfficeIMO.Excel.Pdf\OfficeIMO.Excel.Pdf.csproj" />
     <ProjectReference Include="..\..\..\OfficeIMO.PowerPoint.Pdf\OfficeIMO.PowerPoint.Pdf.csproj" />
     <ProjectReference Include="..\..\..\OfficeIMO.Markdown.Html\OfficeIMO.Markdown.Html.csproj" />
     <ProjectReference Include="..\..\..\OfficeIMO.MarkdownRenderer\OfficeIMO.MarkdownRenderer.csproj" />
     <ProjectReference Include="..\..\..\OfficeIMO.Word.Markdown\OfficeIMO.Word.Markdown.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Fonts\*.ttf" />
+    <None Update="Assets\Fonts\*.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Assets\Fonts\font-pack.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OfficeIMO.Web.Converter.Tests" />
   </ItemGroup>
 
 </Project>

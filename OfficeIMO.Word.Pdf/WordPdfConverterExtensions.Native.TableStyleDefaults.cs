@@ -134,7 +134,8 @@ namespace OfficeIMO.Word.Pdf {
 
                 W.SpacingBetweenLines? spacing = paragraphProperties?.GetFirstChild<W.SpacingBetweenLines>();
                 if (spacing != null) {
-                    double? styleParagraphLineHeight = GetNativeTableStyleParagraphLineHeight(spacing);
+                    double naturalLineHeight = ResolveNativeWordSingleLineHeight(fontFamily, nativeDefaults.FontFamily);
+                    double? styleParagraphLineHeight = GetNativeTableStyleParagraphLineHeight(spacing, fontFamily, nativeDefaults.FontFamily);
                     double? styleParagraphLineSpacingPoints = GetNativeTableStyleParagraphLineSpacingPoints(spacing);
                     if (styleParagraphLineHeight.HasValue || styleParagraphLineSpacingPoints.HasValue) {
                         paragraphLineHeight = styleParagraphLineHeight;
@@ -144,8 +145,8 @@ namespace OfficeIMO.Word.Pdf {
 
                     double effectiveFontSize = fontSize ?? nativeDefaults.FontSize;
                     double effectiveLineHeight = styleParagraphLineSpacingPoints.HasValue && effectiveFontSize > 0D
-                        ? ResolveNativeLineSpacingHeight(styleParagraphLineSpacingPoints.Value, spacing.LineRule?.Value, effectiveFontSize, NativeWordTableSingleLineHeight)
-                        : styleParagraphLineHeight ?? paragraphLineHeight ?? NativeWordTableSingleLineHeight;
+                        ? ResolveNativeLineSpacingHeight(styleParagraphLineSpacingPoints.Value, spacing.LineRule?.Value, effectiveFontSize, naturalLineHeight)
+                        : styleParagraphLineHeight ?? paragraphLineHeight ?? naturalLineHeight;
                     paragraphSpacingBefore = GetNativeSpacingBeforePoints(spacing, effectiveFontSize, effectiveLineHeight) ?? paragraphSpacingBefore;
                     paragraphSpacingAfter = GetNativeSpacingAfterPoints(spacing, effectiveFontSize, effectiveLineHeight) ?? paragraphSpacingAfter;
                 }
@@ -219,6 +220,12 @@ namespace OfficeIMO.Word.Pdf {
                 PdfCore.PdfCellVerticalAlign? cellVerticalAlignment = MapNativeNullableCellVerticalAlign(cellProperties?.GetFirstChild<W.TableCellVerticalAlignment>()?.Val?.Value);
 
                 W.RunPropertiesBaseStyle? runProperties = properties.GetFirstChild<W.RunPropertiesBaseStyle>();
+                W.RunFonts? runFonts = runProperties?.GetFirstChild<W.RunFonts>();
+                string? fontFamily = FirstNonWhiteSpace(
+                    runFonts?.Ascii?.Value,
+                    runFonts?.HighAnsi?.Value,
+                    runFonts?.EastAsia?.Value,
+                    runFonts?.ComplexScript?.Value);
                 PdfCore.PdfColor? textColor = ParseNativeColor(runProperties?.GetFirstChild<W.Color>()?.Val?.Value);
                 double? fontSize = GetNativeRunPropertiesBaseStyleFontSize(runProperties);
                 bool? bold = ReadNativeOnOff(runProperties?.GetFirstChild<W.Bold>());
@@ -254,7 +261,8 @@ namespace OfficeIMO.Word.Pdf {
                 }
 
                 if (spacing != null) {
-                    paragraphLineHeight = GetNativeTableStyleParagraphLineHeight(spacing);
+                    double naturalLineHeight = ResolveNativeWordSingleLineHeight(fontFamily);
+                    paragraphLineHeight = GetNativeTableStyleParagraphLineHeight(spacing, fontFamily);
                     paragraphLineSpacingPoints = GetNativeTableStyleParagraphLineSpacingPoints(spacing);
                     paragraphLineSpacingRule = paragraphLineHeight.HasValue || paragraphLineSpacingPoints.HasValue
                         ? spacing.LineRule?.Value
@@ -262,8 +270,8 @@ namespace OfficeIMO.Word.Pdf {
 
                     double effectiveFontSize = fontSize ?? result.FontSize ?? NativeDocumentDefaults.WordDefault.FontSize;
                     double effectiveLineHeight = paragraphLineSpacingPoints.HasValue && effectiveFontSize > 0D
-                        ? ResolveNativeLineSpacingHeight(paragraphLineSpacingPoints.Value, spacing.LineRule?.Value, effectiveFontSize, NativeWordTableSingleLineHeight)
-                        : paragraphLineHeight ?? result.ParagraphLineHeight ?? NativeWordTableSingleLineHeight;
+                        ? ResolveNativeLineSpacingHeight(paragraphLineSpacingPoints.Value, spacing.LineRule?.Value, effectiveFontSize, naturalLineHeight)
+                        : paragraphLineHeight ?? result.ParagraphLineHeight ?? naturalLineHeight;
                     paragraphSpacingBefore = GetNativeSpacingBeforePoints(spacing, effectiveFontSize, effectiveLineHeight);
                     paragraphSpacingAfter = GetNativeSpacingAfterPoints(spacing, effectiveFontSize, effectiveLineHeight);
                 }
@@ -330,7 +338,9 @@ namespace OfficeIMO.Word.Pdf {
             return halfPoints / 2D;
         }
 
-        private static double? GetNativeTableStyleParagraphLineHeight(W.SpacingBetweenLines spacing) {
+        private static double? GetNativeTableStyleParagraphLineHeight(
+            W.SpacingBetweenLines spacing,
+            params string?[] fontFamilies) {
             if (spacing.LineRule?.Value != W.LineSpacingRuleValues.Auto) {
                 return null;
             }
@@ -342,7 +352,7 @@ namespace OfficeIMO.Word.Pdf {
                 return null;
             }
 
-            return Math.Max(0.01D, NativeWordTableSingleLineHeight * (line / 240D));
+            return Math.Max(0.01D, ResolveNativeWordSingleLineHeight(fontFamilies) * (line / 240D));
         }
 
         private static double? GetNativeTableStyleParagraphLineSpacingPoints(W.SpacingBetweenLines spacing) {
@@ -354,34 +364,29 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static IReadOnlyList<W.Style> GetNativeTableStyleChain(WordDocument document, string? styleId) {
-            W.Styles? styles = document._wordprocessingDocument?.MainDocumentPart?.StyleDefinitionsPart?.Styles;
-            if (styles == null) {
+            NativeStyleLookupCache? cache = GetNativeStyleLookupCache(document);
+            string? resolvedStyleId = cache?.ResolveTableStyleId(styleId);
+            if (cache == null || string.IsNullOrWhiteSpace(resolvedStyleId)) {
                 return Array.Empty<W.Style>();
             }
 
-            Dictionary<string, W.Style> tableStyles = styles
-                .Elements<W.Style>()
-                .Where(style => style.Type?.Value == W.StyleValues.Table && !string.IsNullOrEmpty(style.StyleId?.Value))
-                .ToDictionary(style => style.StyleId!.Value!, style => style, StringComparer.Ordinal);
-
-            if (string.IsNullOrWhiteSpace(styleId)) {
-                styleId = tableStyles.Values.FirstOrDefault(style => style.Default?.Value == true)?.StyleId?.Value;
-            }
-
-            if (string.IsNullOrWhiteSpace(styleId)) {
-                return Array.Empty<W.Style>();
+            if (cache.TableChains.TryGetValue(resolvedStyleId!, out IReadOnlyList<W.Style>? cachedChain)) {
+                return cachedChain;
             }
 
             var chain = new List<W.Style>();
             var visited = new HashSet<string>(StringComparer.Ordinal);
-            string? currentStyleId = styleId;
-            while (!string.IsNullOrWhiteSpace(currentStyleId) && visited.Add(currentStyleId!) && tableStyles.TryGetValue(currentStyleId!, out W.Style? style)) {
+            string? currentStyleId = resolvedStyleId;
+            while (!string.IsNullOrWhiteSpace(currentStyleId) && visited.Add(currentStyleId!) && cache.TableStyles.TryGetValue(currentStyleId!, out W.Style? style)) {
+                cache.RecordStyleChainReference(chain.Count + 1);
                 chain.Add(style);
                 currentStyleId = style.BasedOn?.Val?.Value;
             }
 
             chain.Reverse();
-            return chain;
+            IReadOnlyList<W.Style> result = chain.ToArray();
+            cache.TableChains[resolvedStyleId!] = result;
+            return result;
         }
 
         private static string? GetNativeTableStyleId(WordTable table) =>

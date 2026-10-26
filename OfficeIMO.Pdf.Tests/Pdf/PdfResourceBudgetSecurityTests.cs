@@ -398,6 +398,22 @@ public sealed class PdfResourceBudgetSecurityTests {
     }
 
     [Fact]
+    public void PdfReadDocument_InvalidGenerationDoesNotHideLaterValidCatalogActionNode() {
+        byte[] pdf = BuildPdfObjects(
+            "<< /Type /Catalog /Pages 2 0 R /Names << /JavaScript << /Kids [5 1 R 5 0 R] >> >> >>",
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+            BuildStream(string.Empty),
+            "<< /Names [(Open) 6 0 R] >>",
+            "<< /S /JavaScript /JS (app.alert('OfficeIMO')) >>");
+
+        PdfCatalogAction action = Assert.Single(PdfReadDocument.Open(pdf).CatalogActions);
+
+        Assert.Equal("Open", action.Name);
+        Assert.Equal("JavaScript", action.ActionType);
+    }
+
+    [Fact]
     public void PdfReadDocument_AppliesNodeBudgetSeparatelyToEachCatalogNameTree() {
         byte[] pdf = BuildPdfObjects(
             "<< /Type /Catalog /Pages 2 0 R /Names << /Dests 5 0 R /JavaScript 6 0 R >> >>",
@@ -415,6 +431,28 @@ public sealed class PdfResourceBudgetSecurityTests {
 
         Assert.Equal("Target", Assert.Single(document.NamedDestinations).Name);
         Assert.Equal("Open", Assert.Single(document.CatalogActions).Name);
+    }
+
+    [Fact]
+    public void PdfReadDocument_IgnoresUnknownCatalogNameTreeAliasesBeforeTraversal() {
+        string aliases = string.Join(
+            " ",
+            Enumerable.Range(0, 256).Select(static index => "/Unknown" + index + " 6 0 R"));
+        byte[] pdf = BuildPdfObjects(
+            "<< /Type /Catalog /Pages 2 0 R /Names << /Dests 5 0 R " + aliases + " >> >>",
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+            BuildStream(string.Empty),
+            "<< /Names [(Target) [3 0 R /Fit]] >>",
+            "<< /Kids [7 0 R] >>",
+            "<< /Names [(Ignored) [3 0 R /Fit]] >>");
+        var options = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxNameTreeNodes = 1 }
+        };
+
+        PdfReadDocument document = PdfReadDocument.Open(pdf, options);
+
+        Assert.Equal("Target", Assert.Single(document.NamedDestinations).Name);
     }
 
     [Fact]

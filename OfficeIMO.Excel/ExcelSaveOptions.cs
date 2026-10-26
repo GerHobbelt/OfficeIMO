@@ -17,6 +17,25 @@ namespace OfficeIMO.Excel {
     /// robustness and CI validation.
     /// </summary>
     public sealed class ExcelSaveOptions {
+        /// <summary>Default maximum package size materialized by save operations: 256 MiB.</summary>
+        public const long DefaultMaxInMemoryPackageBytes = 256L * 1024L * 1024L;
+
+        /// <summary>Default maximum temporary package size staged for a non-seekable destination: 256 MiB.</summary>
+        public const long DefaultMaxTemporaryPackageBytes = 256L * 1024L * 1024L;
+
+        /// <summary>
+        /// Maximum package size that may be materialized in memory while saving. The default is
+        /// 256 MiB. Set to <c>null</c> only for explicitly trusted, intentionally larger workbooks.
+        /// </summary>
+        public long? MaxInMemoryPackageBytes { get; set; } = DefaultMaxInMemoryPackageBytes;
+
+        /// <summary>
+        /// Maximum package size that may be staged in a temporary file when a target framework
+        /// requires a seekable package destination. The default is 256 MiB. Set to <c>null</c>
+        /// only for explicitly trusted, intentionally larger workbooks.
+        /// </summary>
+        public long? MaxTemporaryPackageBytes { get; set; } = DefaultMaxTemporaryPackageBytes;
+
         /// <summary>
         /// When true, attempts to repair common defined-name issues (duplicates, out-of-range LocalSheetId, #REF!) before save.
         /// </summary>
@@ -78,7 +97,15 @@ namespace OfficeIMO.Excel {
         public static ExcelSaveOptions Default => new ExcelSaveOptions();
 
         internal ExcelSaveOptions WithLossPolicy(ExcelConversionLossPolicy lossPolicy) {
+            if (MaxInMemoryPackageBytes.HasValue && MaxInMemoryPackageBytes.Value <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(MaxInMemoryPackageBytes));
+            }
+            if (MaxTemporaryPackageBytes.HasValue && MaxTemporaryPackageBytes.Value <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(MaxTemporaryPackageBytes));
+            }
             return new ExcelSaveOptions {
+                MaxInMemoryPackageBytes = MaxInMemoryPackageBytes,
+                MaxTemporaryPackageBytes = MaxTemporaryPackageBytes,
                 SafeRepairDefinedNames = SafeRepairDefinedNames,
                 ValidateOpenXml = ValidateOpenXml,
                 SafePreflight = SafePreflight,

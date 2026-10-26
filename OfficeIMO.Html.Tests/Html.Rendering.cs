@@ -856,6 +856,24 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public void HtmlRender_Paged_PageRulesUseConfiguredMediaFeatures() {
+        string html = "<style>@media (prefers-color-scheme:dark) { @page { size: 5in 3in; } } @media (prefers-color-scheme:light) { @page { size: 2in 2in; } }</style><p>Dark page</p>";
+        var options = new HtmlRenderOptions {
+            Mode = HtmlRenderMode.Paged,
+            PageSize = new OfficePageSize(4D, 4D),
+            Margins = HtmlRenderMargins.All(12D),
+            MediaFeatures = new HtmlRenderMediaFeatures {
+                PreferredColorScheme = HtmlPreferredColorScheme.Dark
+            }
+        };
+
+        HtmlRenderPage page = Assert.Single(HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options).Pages);
+
+        Assert.Equal(480D, page.Width, 3);
+        Assert.Equal(288D, page.Height, 3);
+    }
+
+    [Fact]
     public void HtmlRender_Paged_FragmentsLongTextAndTablesAtStableLineAndRowBoundaries() {
         string paragraph = string.Join(" ", Enumerable.Range(0, 90).Select(index => "word" + index.ToString("D3")));
         string rows = string.Join(string.Empty, Enumerable.Range(0, 18).Select(index => "<tr><td>Row" + index.ToString("D2") + "</td><td>Value" + index.ToString("D2") + "</td></tr>"));
@@ -1316,7 +1334,7 @@ public sealed partial class HtmlRenderingTests {
 
     [Fact]
     public void HtmlPdf_DirectRenderer_MapsHeadingsAndParagraphsToTaggedStructure() {
-        const string html = "<!doctype html><html lang='pl-PL' dir='rtl'><head><title>Semantic document</title></head><body><main><h1>Semantic <em>heading</em></h1><p>Semantic <strong>paragraph</strong>.</p><h2>Nested detail</h2></main></body></html>";
+        const string html = "<!doctype html><html lang='pl-PL' dir='rtl'><head><title>Semantic document</title><meta name='author' content='HTML Team'><meta name='description' content='Tagged document proof'><meta name='keywords' content='html, pdf, tagged'><meta name='generator' content='Report Builder'></head><body><main><h1>Semantic <em>heading</em></h1><p>Semantic <strong>paragraph</strong>.</p><h2>Nested detail</h2></main></body></html>";
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html));
         byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(new HtmlPdfSaveOptions());
 
@@ -1325,7 +1343,14 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal("Semantic document", rendered.Metadata.Title);
         Assert.Equal("pl-PL", rendered.Metadata.Language);
         Assert.Equal(HtmlRenderTextDirection.RightToLeft, rendered.Metadata.Direction);
+        Assert.Equal("HTML Team", rendered.Metadata.Author);
+        Assert.Equal("Tagged document proof", rendered.Metadata.Subject);
+        Assert.Equal("html, pdf, tagged", rendered.Metadata.Keywords);
+        Assert.Equal("Report Builder", rendered.Metadata.Creator);
         Assert.Equal("Semantic document", info.Metadata.Title);
+        Assert.Equal("HTML Team", info.Metadata.Author);
+        Assert.Equal("Tagged document proof", info.Metadata.Subject);
+        Assert.Equal("html, pdf, tagged", info.Metadata.Keywords);
         Assert.Equal("pl-PL", info.CatalogLanguage);
         PdfCore.PdfViewerPreferences viewerPreferences = Assert.IsType<PdfCore.PdfViewerPreferences>(info.ViewerPreferences);
         Assert.Equal("true", viewerPreferences.GetValue("DisplayDocTitle"));
@@ -1365,6 +1390,28 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal(1, outline.Level);
         Assert.Equal("Nested detail", Assert.Single(outline.Children).Title);
         Assert.Contains("Semantic heading", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HtmlPdf_DirectRenderer_UsesXmlLanguageWhenHtmlLanguageIsEmpty() {
+        const string html = "<html lang='' xml:lang='fr-FR'><body><p>Langue</p></body></html>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html));
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdf(new HtmlPdfSaveOptions());
+
+        Assert.Equal("fr-FR", rendered.Metadata.Language);
+        Assert.Equal("fr-FR", PdfCore.PdfReadDocument.Open(pdf).CatalogLanguage);
+    }
+
+    [Fact]
+    public void HtmlPdf_DirectRenderer_PreservesCallerDocumentLanguageOverHtmlMetadata() {
+        const string html = "<html lang='fr-FR'><body><p>Language precedence</p></body></html>";
+        var options = new HtmlPdfSaveOptions();
+        options.DocumentOptions.Language = "en-US";
+
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdf(options);
+
+        Assert.Equal("en-US", PdfCore.PdfReadDocument.Open(pdf).CatalogLanguage);
     }
 
     [Fact]
@@ -1427,11 +1474,13 @@ public sealed partial class HtmlRenderingTests {
         HtmlPdfSaveOptions options = new HtmlPdfSaveOptions();
         options.FontFamily = new PdfCore.PdfEmbeddedFontFamily("CallerUnicode", installed.Regular);
 
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse("<h1>" + marker + "</h1>").ToPdf(options);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse("<p>" + marker + "</p>").ToPdf(options);
         PdfCore.PdfDiagnosticReport report = PdfCore.PdfDiagnostics.Analyze(pdf);
 
         Assert.Contains(marker, PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
-        Assert.Contains(report.Fonts, font => font.BaseFont?.Contains("CallerUnicode", StringComparison.Ordinal) == true);
+        Assert.Contains(report.Fonts, font =>
+            font.HasEmbeddedFontFile
+            && font.BaseFont?.Contains("Arial", StringComparison.OrdinalIgnoreCase) == true);
     }
 
     [Fact]
@@ -1542,6 +1591,61 @@ public sealed partial class HtmlRenderingTests {
         Assert.True(start.X > 100D);
         Assert.Equal(0D, end.X, 6);
         Assert.Equal(0D, left.X, 6);
+    }
+
+    [Fact]
+    public void HtmlRenderer_MatchParentUsesPhysicalParentAlignment() {
+        const string html =
+            "<div style='width:200px;text-align:center'><p style='margin:0;text-align:match-parent'>Matched</p></div>";
+
+        var parsed = HtmlDocumentParser.ParseDocument(html);
+        IReadOnlyDictionary<AngleSharp.Dom.IElement, HtmlComputedStyle> styles = HtmlComputedStyleEngine.Compute(parsed);
+        Assert.Equal("center", styles[parsed.QuerySelector("div")!].GetValue("text-align"));
+        Assert.Equal("match-parent", styles[parsed.QuerySelector("p")!].GetValue("text-align"));
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions {
+                ViewportWidth = 200D,
+                Margins = HtmlRenderMargins.All(0D)
+            });
+
+        HtmlRenderText text = Assert.Single(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            item => item.Text == "Matched");
+        // Inline text fragments are already physically positioned, so their
+        // local drawing frame remains left-aligned. The inherited alignment is
+        // observable through the centered physical position.
+        Assert.True(text.X > 50D);
+    }
+
+    [Fact]
+    public void HtmlRenderer_TableCellMatchParentUsesRowAlignment() {
+        const string html =
+            "<table style='width:200px;text-align:left'><tr style='text-align:center'><td style='text-align:match-parent'>MatchedCell</td></tr></table>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions {
+                ViewportWidth = 200D,
+                Margins = HtmlRenderMargins.All(0D)
+            });
+
+        HtmlRenderText text = Assert.Single(
+            rendered.Pages[0].Visuals.OfType<HtmlRenderText>(),
+            item => item.Text == "MatchedCell");
+        Assert.True(text.X > 40D);
+    }
+
+    [Fact]
+    public void HtmlRenderer_RootDirectionMetadataHonorsCssInitialReset() {
+        const string html =
+            "<!doctype html><html dir='rtl' style='direction:initial'><body><p>LTR metadata</p></body></html>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html));
+
+        Assert.Equal(HtmlRenderTextDirection.LeftToRight, rendered.Metadata.Direction);
     }
 
     [Fact]

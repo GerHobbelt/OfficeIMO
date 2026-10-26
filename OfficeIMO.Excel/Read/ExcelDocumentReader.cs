@@ -1,6 +1,7 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml;
+using OfficeIMO.Drawing.Internal;
 using OfficeIMO.Excel.Utilities;
 using System.IO;
 using System.IO.Packaging;
@@ -13,6 +14,8 @@ namespace OfficeIMO.Excel {
     public sealed partial class ExcelDocumentReader : IDisposable {
         private const string OfficeDocumentRelationshipNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
         private const string StrictOfficeDocumentRelationshipNamespace = "http://purl.oclc.org/ooxml/officeDocument/relationships";
+        private const string SpreadsheetNamespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        private const string StrictSpreadsheetNamespace = "http://purl.oclc.org/ooxml/spreadsheetml/main";
         private static readonly XmlReaderSettings WorkbookXmlReaderSettings = CreateWorkbookXmlReaderSettings();
 
         private readonly SpreadsheetDocument _doc;
@@ -44,9 +47,15 @@ namespace OfficeIMO.Excel {
                 throw new FileNotFoundException($"File '{path}' doesn't exist.", path);
             }
 
+            var effectiveOptions = options ?? new ExcelReadOptions();
+            byte[] bytes;
+            using (var stream = File.OpenRead(path)) {
+                bytes = OfficeStreamReader.ReadAllBytes(stream, effectiveOptions.MaxInputBytes);
+            }
+
             return OpenFromBytes(
-                File.ReadAllBytes(path),
-                options,
+                bytes,
+                effectiveOptions,
                 normalizeContentTypes: false,
                 contextMessage: $"Failed to open '{path}' after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
         }
@@ -58,9 +67,10 @@ namespace OfficeIMO.Excel {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
             if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
 
+            var effectiveOptions = options ?? new ExcelReadOptions();
             return OpenFromBytes(
-                ReadAllBytes(stream),
-                options,
+                OfficeStreamReader.ReadAllBytes(stream, effectiveOptions.MaxInputBytes),
+                effectiveOptions,
                 normalizeContentTypes: false,
                 contextMessage: "Failed to open workbook stream after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
         }
@@ -72,9 +82,14 @@ namespace OfficeIMO.Excel {
         public static ExcelDocumentReader Open(byte[] bytes, ExcelReadOptions? options = null) {
             if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 
+            var effectiveOptions = options ?? new ExcelReadOptions();
+            if (bytes.LongLength > effectiveOptions.MaxInputBytes) {
+                throw new InvalidDataException($"Workbook input contains {bytes.LongLength} bytes, exceeding the configured limit of {effectiveOptions.MaxInputBytes} bytes.");
+            }
+
             return OpenFromBytes(
                 bytes,
-                options,
+                effectiveOptions,
                 normalizeContentTypes: false,
                 contextMessage: "Failed to open workbook bytes after normalizing package content types. The package may declare an invalid content type for '/docProps/app.xml'.");
         }
@@ -168,8 +183,11 @@ namespace OfficeIMO.Excel {
             try {
                 using var stream = WorkbookPartRoot.GetStream(FileMode.Open, FileAccess.Read);
                 using var reader = XmlReader.Create(stream, WorkbookXmlReaderSettings);
+                var state = new WorkbookSheetXmlState();
+                string? resolvedName = null;
+                WorksheetPart? resolvedWorksheetPart = null;
                 while (reader.Read()) {
-                    if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "sheet") {
+                    if (!IsWorkbookSheetElement(reader, state)) {
                         continue;
                     }
 
@@ -187,12 +205,16 @@ namespace OfficeIMO.Excel {
                         return false;
                     }
 
-                    sheetName = candidateName!;
-                    worksheetPart = resolvedPart;
-                    return true;
+                    resolvedName ??= candidateName;
+                    resolvedWorksheetPart ??= resolvedPart;
                 }
 
-                return false;
+                if (state.IsInvalid || resolvedName == null || resolvedWorksheetPart == null) {
+                    return false;
+                }
+                sheetName = resolvedName;
+                worksheetPart = resolvedWorksheetPart;
+                return true;
             } catch (XmlException) {
                 return false;
             } catch (IOException) {
@@ -210,8 +232,7 @@ namespace OfficeIMO.Excel {
 
         private static string? GetRelationshipIdAttribute(XmlReader reader) {
             string? relationshipId = reader.GetAttribute("id", OfficeDocumentRelationshipNamespace)
-                ?? reader.GetAttribute("id", StrictOfficeDocumentRelationshipNamespace)
-                ?? reader.GetAttribute("r:id");
+                ?? reader.GetAttribute("id", StrictOfficeDocumentRelationshipNamespace);
             if (!string.IsNullOrEmpty(relationshipId)) {
                 return relationshipId;
             }
@@ -224,8 +245,7 @@ namespace OfficeIMO.Excel {
                 do {
                     if (reader.LocalName == "id"
                         && (reader.NamespaceURI == OfficeDocumentRelationshipNamespace
-                            || reader.NamespaceURI == StrictOfficeDocumentRelationshipNamespace
-                            || reader.Prefix == "r")) {
+                            || reader.NamespaceURI == StrictOfficeDocumentRelationshipNamespace)) {
                         return reader.Value;
                     }
                 } while (reader.MoveToNextAttribute());
@@ -248,8 +268,11 @@ namespace OfficeIMO.Excel {
                 using var stream = WorkbookPartRoot.GetStream(FileMode.Open, FileAccess.Read);
                 using var reader = XmlReader.Create(stream, WorkbookXmlReaderSettings);
                 int currentIndex = 0;
+                var state = new WorkbookSheetXmlState();
+                string? resolvedName = null;
+                WorksheetPart? resolvedWorksheetPart = null;
                 while (reader.Read()) {
-                    if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "sheet") {
+                    if (!IsWorkbookSheetElement(reader, state)) {
                         continue;
                     }
 
@@ -268,12 +291,16 @@ namespace OfficeIMO.Excel {
                         continue;
                     }
 
-                    sheetName = candidateName!;
-                    worksheetPart = resolvedPart;
-                    return true;
+                    resolvedName ??= candidateName;
+                    resolvedWorksheetPart ??= resolvedPart;
                 }
 
-                return false;
+                if (state.IsInvalid || resolvedName == null || resolvedWorksheetPart == null) {
+                    return false;
+                }
+                sheetName = resolvedName;
+                worksheetPart = resolvedWorksheetPart;
+                return true;
             } catch (XmlException) {
                 return false;
             } catch (IOException) {
@@ -299,8 +326,9 @@ namespace OfficeIMO.Excel {
             try {
                 using var stream = WorkbookPartRoot.GetStream(FileMode.Open, FileAccess.Read);
                 using var reader = XmlReader.Create(stream, WorkbookXmlReaderSettings);
+                var state = new WorkbookSheetXmlState();
                 while (reader.Read()) {
-                    if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "sheet") {
+                    if (!IsWorkbookSheetElement(reader, state)) {
                         continue;
                     }
 
@@ -318,7 +346,7 @@ namespace OfficeIMO.Excel {
                     names.Add(sheetName!);
                 }
 
-                return names.Count > 0;
+                return !state.IsInvalid && names.Count > 0;
             } catch (XmlException) {
                 names = [];
                 return false;
@@ -350,8 +378,9 @@ namespace OfficeIMO.Excel {
             try {
                 using var stream = WorkbookPartRoot.GetStream(FileMode.Open, FileAccess.Read);
                 using var reader = XmlReader.Create(stream, WorkbookXmlReaderSettings);
+                var state = new WorkbookSheetXmlState();
                 while (reader.Read()) {
-                    if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "sheet") {
+                    if (!IsWorkbookSheetElement(reader, state)) {
                         continue;
                     }
 
@@ -362,7 +391,7 @@ namespace OfficeIMO.Excel {
                     }
                 }
 
-                return count > 0;
+                return !state.IsInvalid && count > 0;
             } catch (XmlException) {
                 count = 0;
                 return false;
@@ -382,6 +411,59 @@ namespace OfficeIMO.Excel {
                 count = 0;
                 return false;
             }
+        }
+
+        private static bool IsWorkbookSheetElement(XmlReader reader, WorkbookSheetXmlState state) {
+            bool isSpreadsheetNamespace = reader.NamespaceURI == SpreadsheetNamespace
+                || reader.NamespaceURI == StrictSpreadsheetNamespace;
+
+            if (reader.NodeType == XmlNodeType.Element && reader.Depth == 0) {
+                if (!isSpreadsheetNamespace || reader.LocalName != "workbook") {
+                    state.IsInvalid = true;
+                } else {
+                    state.WorkbookDepth = reader.Depth;
+                    state.WorkbookNamespace = reader.NamespaceURI;
+                }
+                return false;
+            }
+
+            if (reader.NodeType == XmlNodeType.EndElement
+                && state.SheetsDepth == reader.Depth
+                && reader.LocalName == "sheets"
+                && reader.NamespaceURI == state.WorkbookNamespace) {
+                state.SheetsDepth = -1;
+                return false;
+            }
+
+            if (reader.NodeType != XmlNodeType.Element) {
+                return false;
+            }
+
+            if (isSpreadsheetNamespace && reader.LocalName == "sheets") {
+                if (state.WorkbookDepth < 0
+                    || state.SheetsContainerSeen
+                    || reader.Depth != state.WorkbookDepth + 1
+                    || reader.NamespaceURI != state.WorkbookNamespace) {
+                    state.IsInvalid = true;
+                    return false;
+                }
+                state.SheetsContainerSeen = true;
+                state.SheetsDepth = reader.IsEmptyElement ? -1 : reader.Depth;
+                return false;
+            }
+
+            return state.SheetsDepth >= 0
+                && reader.Depth == state.SheetsDepth + 1
+                && reader.LocalName == "sheet"
+                && reader.NamespaceURI == state.WorkbookNamespace;
+        }
+
+        private sealed class WorkbookSheetXmlState {
+            internal int WorkbookDepth { get; set; } = -1;
+            internal int SheetsDepth { get; set; } = -1;
+            internal string? WorkbookNamespace { get; set; }
+            internal bool SheetsContainerSeen { get; set; }
+            internal bool IsInvalid { get; set; }
         }
 
         private static XmlReaderSettings CreateWorkbookXmlReaderSettings() {
@@ -406,6 +488,11 @@ namespace OfficeIMO.Excel {
         }
 
         private static ExcelDocumentReader OpenFromBytes(byte[] bytes, ExcelReadOptions? options, bool normalizeContentTypes, string contextMessage) {
+            var effectiveOptions = options ?? new ExcelReadOptions();
+            if (bytes.LongLength > effectiveOptions.MaxInputBytes) {
+                throw new InvalidDataException($"Workbook input contains {bytes.LongLength} bytes, exceeding the configured limit of {effectiveOptions.MaxInputBytes} bytes.");
+            }
+
             MemoryStream? packageStream = null;
             Package? package = null;
             try {
@@ -421,11 +508,11 @@ namespace OfficeIMO.Excel {
 
                 package = Package.Open(packageStream, FileMode.Open, FileAccess.Read);
                 var doc = SpreadsheetDocument.Open(package);
-                return new ExcelDocumentReader(doc, options ?? new ExcelReadOptions(), owns: true, package, packageStream);
+                return new ExcelDocumentReader(doc, effectiveOptions, owns: true, package, packageStream);
             } catch (Exception ex) when (!normalizeContentTypes && IsRecoverableOpenException(ex)) {
                 package?.Close();
                 packageStream?.Dispose();
-                return OpenFromBytes(bytes, options, normalizeContentTypes: true, contextMessage);
+                return OpenFromBytes(bytes, effectiveOptions, normalizeContentTypes: true, contextMessage);
             } catch (Exception ex) when (IsRecoverableOpenException(ex)) {
                 package?.Close();
                 packageStream?.Dispose();
@@ -441,40 +528,5 @@ namespace OfficeIMO.Excel {
             return ex is InvalidDataException || ex is OpenXmlPackageException || ex is XmlException;
         }
 
-        private static byte[] ReadAllBytes(Stream stream) {
-            if (stream is MemoryStream memoryStream) {
-                return memoryStream.ToArray();
-            }
-
-            if (stream.CanSeek) {
-                stream.Seek(0, SeekOrigin.Begin);
-                long length = stream.Length;
-                if (length > int.MaxValue) {
-                    throw new IOException("Workbook stream is too large to read into memory.");
-                }
-
-                var bytes = new byte[(int)length];
-                int offset = 0;
-                while (offset < bytes.Length) {
-                    int read = stream.Read(bytes, offset, bytes.Length - offset);
-                    if (read == 0) {
-                        break;
-                    }
-
-                    offset += read;
-                }
-
-                if (offset == bytes.Length) {
-                    return bytes;
-                }
-
-                Array.Resize(ref bytes, offset);
-                return bytes;
-            }
-
-            using var buffer = new MemoryStream();
-            stream.CopyTo(buffer);
-            return buffer.ToArray();
-        }
     }
 }

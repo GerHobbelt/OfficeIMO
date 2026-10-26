@@ -41,7 +41,11 @@ namespace OfficeIMO.Excel.Pdf {
                 fallbackFeatures &= ~PdfCore.PdfTextFallbackFeatures.DocumentFont;
             }
 
-            pdfOptions.UseTextFallbacks(fallbackFeatures, reservedFontSlots, options.ResourcePolicy.AllowSystemFontEmbedding);
+            pdfOptions.UseTextFallbacks(
+                fallbackFeatures,
+                reservedFontSlots,
+                options.ResourcePolicy.AllowSystemFontEmbedding,
+                preserveConfiguredFontSlots);
         }
 
         private static bool TryApplyPdfFontFamily(string? familyName, PdfCore.PdfOptions pdfOptions, bool embedSystemFont, bool requireEmbeddedFont = false) {
@@ -169,7 +173,8 @@ namespace OfficeIMO.Excel.Pdf {
                     return;
                 }
 
-                bool embedSystemFont = options.ResourcePolicy.AllowSystemFontEmbedding;
+                bool embedSystemFont = options.ResourcePolicy.AllowSystemFontEmbedding &&
+                    options.ResourcePolicy.AllowDocumentFontEmbedding;
                 if (embedSystemFont && pdfOptions.TryRegisterNamedOfficeFontFamily(trimmedFamilyName, out _)) {
                     return;
                 }

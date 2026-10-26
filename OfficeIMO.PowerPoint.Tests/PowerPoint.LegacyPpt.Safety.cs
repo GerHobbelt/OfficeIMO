@@ -1,7 +1,9 @@
 using OfficeIMO.Drawing;
+using OfficeIMO.Drawing.Internal;
 using OfficeIMO.PowerPoint;
 using OfficeIMO.PowerPoint.LegacyPpt;
 using OfficeIMO.PowerPoint.LegacyPpt.Internal;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -310,10 +312,15 @@ namespace OfficeIMO.Tests {
                     .ToInt64();
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite,
                 File.GetUnixFileMode(descriptorPath) & accessBits);
+            int descriptor = temporary.SafeFileHandle.DangerousGetHandle().ToInt32();
+            Assert.NotEqual(0, GetFileDescriptorFlags(descriptor) & 1);
             temporary.WriteByte(0x5A);
             temporary.Position = 0;
             Assert.Equal(0x5A, temporary.ReadByte());
         }
+
+        [DllImport("libc", EntryPoint = "fcntl", SetLastError = true)]
+        private static extern int GetFileDescriptorFlags(int descriptor, int command = 1);
 #endif
 
         [Fact]
@@ -787,6 +794,23 @@ namespace OfficeIMO.Tests {
                     }));
             Assert.Contains("Compound stream bytes exceed",
                 routeException.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void CompoundWriterLayoutScalesAcrossManySiblingStorages() {
+            const int storageCount = 10_000;
+            OfficeCompoundStream[] streams = Enumerable.Range(0, storageCount)
+                .Select(index => new OfficeCompoundStream(
+                    "Storage" + index.ToString("D5") + "/Item",
+                    Array.Empty<byte>()))
+                .ToArray();
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            OfficeCompoundWriterLayout layout = OfficeCompoundWriterLayout.Create(streams);
+            stopwatch.Stop();
+
+            Assert.Equal(storageCount, layout.Streams.Count);
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), stopwatch.Elapsed.ToString());
         }
 
         [Fact]

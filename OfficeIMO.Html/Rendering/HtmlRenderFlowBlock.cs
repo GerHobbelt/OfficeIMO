@@ -28,9 +28,14 @@ internal sealed class HtmlRenderFlowBlock {
         double collapsibleMarginTop = 0D,
         double collapsibleMarginBottom = 0D,
         IElement? ownerElement = null,
-        bool collapsesThrough = false) {
+        bool collapsesThrough = false,
+        double? unclampedHeight = null,
+        IEnumerable<HtmlCssRunningStringAssignment>? runningStringAssignments = null) {
         Width = width;
         Height = height;
+        UnclampedHeight = unclampedHeight.HasValue && !double.IsNaN(unclampedHeight.Value) && !double.IsInfinity(unclampedHeight.Value)
+            ? unclampedHeight.Value
+            : height;
         Visuals = new List<HtmlRenderVisual>(visuals);
         BreakBefore = breakBefore;
         BreakAfter = breakAfter;
@@ -76,10 +81,12 @@ internal sealed class HtmlRenderFlowBlock {
         CollapsibleMarginBottom = collapsibleMarginBottom;
         OwnerElement = ownerElement;
         CollapsesThrough = collapsesThrough;
+        RunningStringAssignments = new List<HtmlCssRunningStringAssignment>(runningStringAssignments ?? Array.Empty<HtmlCssRunningStringAssignment>()).AsReadOnly();
     }
 
     internal double Width { get; }
     internal double Height { get; }
+    internal double UnclampedHeight { get; }
     internal IReadOnlyList<HtmlRenderVisual> Visuals { get; }
     internal HtmlPageBreakTarget BreakBefore { get; }
     internal HtmlPageBreakTarget BreakAfter { get; }
@@ -97,6 +104,7 @@ internal sealed class HtmlRenderFlowBlock {
     internal double CollapsibleMarginBottom { get; }
     internal IElement? OwnerElement { get; }
     internal bool CollapsesThrough { get; }
+    internal IReadOnlyList<HtmlCssRunningStringAssignment> RunningStringAssignments { get; }
 
     internal HtmlRenderFlowBlock TranslatePaint(double offsetX, double offsetY) =>
         new HtmlRenderFlowBlock(
@@ -118,7 +126,9 @@ internal sealed class HtmlRenderFlowBlock {
             collapsibleMarginTop: CollapsibleMarginTop,
             collapsibleMarginBottom: CollapsibleMarginBottom,
             ownerElement: OwnerElement,
-            collapsesThrough: CollapsesThrough);
+            collapsesThrough: CollapsesThrough,
+            unclampedHeight: UnclampedHeight,
+            runningStringAssignments: RunningStringAssignments);
 
     internal HtmlRenderFlowBlock WithStacking(int zIndex, int sourceOrder) =>
         new HtmlRenderFlowBlock(
@@ -140,7 +150,9 @@ internal sealed class HtmlRenderFlowBlock {
             collapsibleMarginTop: CollapsibleMarginTop,
             collapsibleMarginBottom: CollapsibleMarginBottom,
             ownerElement: OwnerElement,
-            collapsesThrough: CollapsesThrough);
+            collapsesThrough: CollapsesThrough,
+            unclampedHeight: UnclampedHeight,
+            runningStringAssignments: RunningStringAssignments);
 
     internal HtmlRenderFlowBlock WithVisuals(IEnumerable<HtmlRenderVisual> visuals) =>
         new HtmlRenderFlowBlock(
@@ -162,11 +174,14 @@ internal sealed class HtmlRenderFlowBlock {
             collapsibleMarginTop: CollapsibleMarginTop,
             collapsibleMarginBottom: CollapsibleMarginBottom,
             ownerElement: OwnerElement,
-            collapsesThrough: CollapsesThrough);
+            collapsesThrough: CollapsesThrough,
+            unclampedHeight: UnclampedHeight,
+            runningStringAssignments: RunningStringAssignments);
 
     internal HtmlRenderFlowBlock AdjustLeadingFlowSpace(double adjustment) {
         if (Math.Abs(adjustment) <= 0.0001D) return this;
-        double adjustedHeight = Math.Max(0.01D, Height - adjustment);
+        double adjustedUnclampedHeight = UnclampedHeight - adjustment;
+        double adjustedHeight = Math.Max(0.01D, adjustedUnclampedHeight);
         return new HtmlRenderFlowBlock(
             Width,
             adjustedHeight,
@@ -186,7 +201,9 @@ internal sealed class HtmlRenderFlowBlock {
             collapsibleMarginTop: CollapsibleMarginTop,
             collapsibleMarginBottom: CollapsibleMarginBottom,
             ownerElement: OwnerElement,
-            collapsesThrough: CollapsesThrough);
+            collapsesThrough: CollapsesThrough,
+            unclampedHeight: adjustedUnclampedHeight,
+            runningStringAssignments: RunningStringAssignments.Select(assignment => assignment.Translate(-adjustment)));
     }
 
     internal HtmlRenderFlowBlock WithCollapsibleMargins(double top, double bottom, IElement ownerElement, bool collapsesThrough = false) =>
@@ -209,11 +226,38 @@ internal sealed class HtmlRenderFlowBlock {
             collapsibleMarginTop: top,
             collapsibleMarginBottom: bottom,
             ownerElement: ownerElement,
-            collapsesThrough: collapsesThrough);
+            collapsesThrough: collapsesThrough,
+            unclampedHeight: UnclampedHeight,
+            runningStringAssignments: RunningStringAssignments);
+
+    internal HtmlRenderFlowBlock WithRunningStringAssignments(IEnumerable<HtmlCssRunningStringAssignment> assignments) =>
+        new HtmlRenderFlowBlock(
+            Width,
+            Height,
+            Visuals,
+            BreakBefore,
+            BreakAfter,
+            AvoidBreakInside,
+            Source,
+            BreakOffsets,
+            lineBreakGroups: LineBreakGroups,
+            continuationGroups: ContinuationGroups,
+            trailingGroups: TrailingGroups,
+            pageName: PageName,
+            stackingZIndex: StackingZIndex,
+            stackingSourceOrder: StackingSourceOrder,
+            hasCollapsibleMargins: HasCollapsibleMargins,
+            collapsibleMarginTop: CollapsibleMarginTop,
+            collapsibleMarginBottom: CollapsibleMarginBottom,
+            ownerElement: OwnerElement,
+            collapsesThrough: CollapsesThrough,
+            unclampedHeight: UnclampedHeight,
+            runningStringAssignments: assignments);
 
     internal HtmlRenderFlowBlock AdjustTrailingFlowSpace(double adjustment) {
         if (Math.Abs(adjustment) <= 0.0001D) return this;
-        double adjustedHeight = Math.Max(0.01D, Height - adjustment);
+        double adjustedUnclampedHeight = UnclampedHeight - adjustment;
+        double adjustedHeight = Math.Max(0.01D, adjustedUnclampedHeight);
         return new HtmlRenderFlowBlock(
             Width,
             adjustedHeight,
@@ -233,7 +277,9 @@ internal sealed class HtmlRenderFlowBlock {
             collapsibleMarginTop: CollapsibleMarginTop,
             collapsibleMarginBottom: CollapsibleMarginBottom,
             ownerElement: OwnerElement,
-            collapsesThrough: CollapsesThrough);
+            collapsesThrough: CollapsesThrough,
+            unclampedHeight: adjustedUnclampedHeight,
+            runningStringAssignments: RunningStringAssignments.Where(assignment => assignment.Offset <= adjustedHeight + 0.0001D));
     }
 }
 
@@ -321,6 +367,18 @@ internal sealed class HtmlRenderLineBreakGroup {
 
 internal sealed class HtmlInlineRun {
     internal HtmlInlineRun(
+        IElement runningStringElement,
+        HtmlRenderBoxStyle style,
+        string source) {
+        RunningStringElement = runningStringElement;
+        Text = string.Empty;
+        LogicalText = string.Empty;
+        Style = style;
+        Source = source;
+        SemanticRole = style.SemanticRole;
+    }
+
+    internal HtmlInlineRun(
         string text,
         HtmlRenderBoxStyle style,
         string? linkUri,
@@ -395,6 +453,7 @@ internal sealed class HtmlInlineRun {
     internal double PaintOffsetY { get; }
     internal IElement? OwnerElement { get; }
     internal IElement? PositionedMarkerElement { get; }
+    internal IElement? RunningStringElement { get; }
     internal bool IsReplacedImage { get; }
     internal string SemanticRole { get; private set; }
     internal int? SemanticNodeId { get; private set; }
@@ -410,13 +469,20 @@ internal sealed class HtmlInlineRun {
 }
 
 internal sealed class HtmlInlineLayout {
-    internal HtmlInlineLayout(IEnumerable<HtmlRenderVisual> visuals, double height, IEnumerable<double>? breakOffsets = null) {
+    internal HtmlInlineLayout(
+        IEnumerable<HtmlRenderVisual> visuals,
+        double height,
+        IEnumerable<double>? breakOffsets = null,
+        IEnumerable<HtmlCssRunningStringAssignment>? runningStringAssignments = null) {
         Visuals = new List<HtmlRenderVisual>(visuals);
         Height = height;
         BreakOffsets = new List<double>(breakOffsets ?? Array.Empty<double>()).AsReadOnly();
+        RunningStringAssignments = new List<HtmlCssRunningStringAssignment>(
+            runningStringAssignments ?? Array.Empty<HtmlCssRunningStringAssignment>()).AsReadOnly();
     }
 
     internal IReadOnlyList<HtmlRenderVisual> Visuals { get; }
     internal double Height { get; }
     internal IReadOnlyList<double> BreakOffsets { get; }
+    internal IReadOnlyList<HtmlCssRunningStringAssignment> RunningStringAssignments { get; }
 }

@@ -408,17 +408,17 @@ public static partial class HtmlExcelConverterExtensions {
             return;
         }
 
-        if (!dataUri.TryDecodeBytes(out byte[] bytes)) {
-            AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.ResourceDecodeFailed,
-                "Image inventory item '" + NormalizeText(item.QuerySelector(".officeimo-feature-label")?.TextContent) + "' could not be decoded.", lossKind: HtmlConversionLossKind.Omission);
-            return;
-        }
-
         if (!budget.TryReserveImageWithShape(dataUri, out imageLimit)) {
             AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                 "An embedded worksheet image was omitted because the shared import limit was reached.",
                 lossKind: HtmlConversionLossKind.Omission,
                 detail: imageLimit);
+            return;
+        }
+
+        if (!dataUri.TryDecodeBytes(out byte[] bytes)) {
+            AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.ResourceDecodeFailed,
+                "Image inventory item '" + NormalizeText(item.QuerySelector(".officeimo-feature-label")?.TextContent) + "' could not be decoded.", lossKind: HtmlConversionLossKind.Omission);
             return;
         }
 
@@ -766,9 +766,25 @@ public static partial class HtmlExcelConverterExtensions {
         double top = NormalizeCrop(item, "data-officeimo-crop-top", budget, result);
         double right = NormalizeCrop(item, "data-officeimo-crop-right", budget, result);
         double bottom = NormalizeCrop(item, "data-officeimo-crop-bottom", budget, result);
+        NormalizeCropPair(ref left, ref right, result, "horizontal");
+        NormalizeCropPair(ref top, ref bottom, result, "vertical");
         if (left > 0D || top > 0D || right > 0D || bottom > 0D) {
             image.SetCropRatio(left, top, right, bottom);
         }
+    }
+
+    private static void NormalizeCropPair(
+        ref double first,
+        ref double second,
+        HtmlToExcelResult result,
+        string axis) {
+        if (first + second < 1D) return;
+        first = 0D;
+        second = 0D;
+        AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.SemanticValueInvalid,
+            "Invalid image " + axis + " crop metadata used the zero fallback.",
+            lossKind: HtmlConversionLossKind.Approximation,
+            source: "image crop " + axis);
     }
 
     private static double NormalizeCrop(IElement item, string attributeName, HtmlImportBudget budget, HtmlToExcelResult result) {

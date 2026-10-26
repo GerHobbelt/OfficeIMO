@@ -53,6 +53,24 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public void HtmlColumns_ResolvesLengthMathForWidthAndRuleWidth() {
+        const string html = "<div id='math-columns' style='width:240px;margin:0;column-width:calc(40px + 20px);"
+            + "column-rule-width:max(1px, .1em);column-rule-style:solid'>"
+            + "<div style='height:20px'></div><div style='height:20px'></div><div style='height:20px'></div></div>";
+
+        HtmlRenderDocument rendered = RenderColumns(html, 260D);
+        HtmlRenderShape[] rules = rendered.Pages[0].Visuals.OfType<HtmlRenderShape>()
+            .Where(shape => shape.Source == "div#math-columns::column-rule")
+            .ToArray();
+
+        Assert.Equal(2, rules.Length);
+        Assert.All(rules, rule => Assert.Equal(1.6D, rule.Shape.StrokeWidth, 3));
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.MultiColumnValueUnsupported);
+        Assert.True(HtmlComputedStyleEngine.IsApplicableSupports("(column-width:calc(40px + 20px))"));
+        Assert.True(HtmlComputedStyleEngine.IsApplicableSupports("(column-rule-width:max(1px, .1em))"));
+    }
+
+    [Fact]
     public void HtmlColumns_ColumnFillAutoUsesDeclaredHeightBeforeAdvancing() {
         const string html = "<div style='width:100px;height:40px;margin:0;column-count:2;column-gap:20px;column-fill:auto'>"
             + "<div id='auto-a' style='height:20px;background:#ff0000'></div>"
@@ -233,6 +251,27 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal(nameof(HtmlRenderOptions.MaxColumnCount), exception.LimitSource);
         Assert.Equal(3L, exception.Actual);
         Assert.Equal(2L, exception.Limit);
+    }
+
+    [Fact]
+    public void HtmlColumns_BalancingProbesMayTemporarilyExceedTheFinalColumnLimit() {
+        const string html = """
+            <div style='column-count:2;column-fill:balance'>
+              <div style='height:40px;break-inside:avoid'>One</div>
+              <div style='height:40px;break-inside:avoid'>Two</div>
+              <div style='height:40px;break-inside:avoid'>Three</div>
+            </div>
+            """;
+        var options = new HtmlRenderOptions {
+            ViewportWidth = 160D,
+            Margins = HtmlRenderMargins.All(0D),
+            MaxColumnCount = 2
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(html, options);
+
+        Assert.Contains(rendered.Pages.SelectMany(page => page.Visuals).OfType<HtmlRenderText>(), text => text.Text.Contains("One", StringComparison.Ordinal));
+        Assert.Contains(rendered.Pages.SelectMany(page => page.Visuals).OfType<HtmlRenderText>(), text => text.Text.Contains("Three", StringComparison.Ordinal));
     }
 
     private static HtmlRenderDocument RenderColumns(string html, double viewportWidth) =>

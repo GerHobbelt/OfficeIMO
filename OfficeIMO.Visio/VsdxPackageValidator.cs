@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
@@ -12,6 +13,10 @@ namespace OfficeIMO.Visio {
     /// Validates and optionally fixes Visio VSDX packages for common structural issues.
     /// </summary>
     public partial class VsdxPackageValidator {
+#if !NET8_0_OR_GREATER
+        private static readonly PropertyInfo? ExternalAttributesProperty =
+            typeof(ZipArchiveEntry).GetProperty("ExternalAttributes", BindingFlags.Instance | BindingFlags.Public);
+#endif
         private static readonly XNamespace nsCore = "http://schemas.microsoft.com/office/visio/2012/main";
         private static readonly XNamespace nsPkgRel = "http://schemas.openxmlformats.org/package/2006/relationships";
         private static readonly XNamespace nsDocRel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -31,6 +36,16 @@ namespace OfficeIMO.Visio {
         private readonly List<string> _errors = new();
         private readonly List<string> _warnings = new();
         private readonly List<string> _fixes = new();
+        private readonly VsdxPackageValidationLimits.Snapshot _limits;
+
+        /// <summary>Creates a validator with default resource limits.</summary>
+        public VsdxPackageValidator() : this(null) { }
+
+        /// <summary>Creates a validator with caller-supplied resource limits.</summary>
+        /// <param name="limits">Limits to snapshot for this validator instance.</param>
+        public VsdxPackageValidator(VsdxPackageValidationLimits? limits) {
+            _limits = (limits ?? new VsdxPackageValidationLimits()).CreateSnapshot();
+        }
 
         /// <summary>
         /// Gets the list of validation errors.
@@ -62,12 +77,18 @@ namespace OfficeIMO.Visio {
                 return false;
             }
 
-            var tempPath = ExtractToTemp(inputPath);
+            string? tempPath = null;
             try {
+                tempPath = ExtractToTemp(inputPath);
                 ValidatePackageStructure(tempPath);
                 return _errors.Count == 0;
+            } catch (InvalidDataException ex) {
+                _errors.Add(ex.Message);
+                return false;
             } finally {
-                try { Directory.Delete(tempPath, recursive: true); } catch { /* ignore cleanup errors */ }
+                if (tempPath != null) {
+                    try { Directory.Delete(tempPath, recursive: true); } catch { /* ignore cleanup errors */ }
+                }
             }
         }
 
@@ -87,8 +108,9 @@ namespace OfficeIMO.Visio {
                 return false;
             }
 
-            var tempPath = ExtractToTemp(inputPath);
+            string? tempPath = null;
             try {
+                tempPath = ExtractToTemp(inputPath);
                 ValidateAndFix(tempPath);
                 _errors.Clear();
                 _warnings.Clear();
@@ -103,8 +125,13 @@ namespace OfficeIMO.Visio {
 
                 ZipFile.CreateFromDirectory(tempPath, outputPath, CompressionLevel.Optimal, includeBaseDirectory: false);
                 return true;
+            } catch (InvalidDataException ex) {
+                _errors.Add(ex.Message);
+                return false;
             } finally {
-                try { Directory.Delete(tempPath, recursive: true); } catch { /* ignore cleanup errors */ }
+                if (tempPath != null) {
+                    try { Directory.Delete(tempPath, recursive: true); } catch { /* ignore cleanup errors */ }
+                }
             }
         }
 
@@ -113,8 +140,138 @@ namespace OfficeIMO.Visio {
             var rnd = Path.GetRandomFileName();
             var tempPath = Path.Combine(tempBase, $"VsdxValidator_{rnd}");
             Directory.CreateDirectory(tempPath);
-            ZipFile.ExtractToDirectory(inputPath, tempPath);
-            return tempPath;
+            try {
+                using ZipArchive archive = ZipFile.OpenRead(inputPath);
+                ValidateArchiveLimits(archive);
+                ValidateArchiveContents(archive);
+
+                string root = Path.GetFullPath(tempPath) + Path.DirectorySeparatorChar;
+                long totalBytes = 0;
+                long copiedBytes = 0;
+                foreach (ZipArchiveEntry entry in archive.Entries) {
+                    if (IsLinkEntry(entry)) {
+                        throw new InvalidDataException($"The VSDX package contains a link entry: {entry.FullName}");
+                    }
+                    if (entry.Length > _limits.MaxEntryBytes) {
+                        throw new InvalidDataException($"The VSDX entry '{entry.FullName}' exceeds the {_limits.MaxEntryBytes}-byte limit.");
+                    }
+                    if (entry.Length > 0 && (entry.CompressedLength <= 0 || entry.Length / (double)entry.CompressedLength > _limits.MaxCompressionRatio)) {
+                        throw new InvalidDataException($"The VSDX entry '{entry.FullName}' exceeds the {_limits.MaxCompressionRatio:0.##}:1 compression-ratio limit.");
+                    }
+                    totalBytes = checked(totalBytes + entry.Length);
+                    if (totalBytes > _limits.MaxTotalBytes) {
+                        throw new InvalidDataException($"The VSDX package exceeds the {_limits.MaxTotalBytes}-byte aggregate extraction limit.");
+                    }
+
+                    string relative = entry.FullName.Replace('\\', '/').Replace('/', Path.DirectorySeparatorChar);
+                    string target = Path.GetFullPath(Path.Combine(tempPath, relative));
+                    if (!target.StartsWith(root, StringComparison.Ordinal)) {
+                        throw new InvalidDataException($"The VSDX entry '{entry.FullName}' escapes the extraction directory.");
+                    }
+
+                    if (string.IsNullOrEmpty(entry.Name)) {
+                        Directory.CreateDirectory(target);
+                        continue;
+                    }
+                    string? parent = Path.GetDirectoryName(target);
+                    if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                    using Stream input = entry.Open();
+                    using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    CopyEntryBounded(input, output, entry.FullName, entry.CompressedLength, ref copiedBytes);
+                }
+                return tempPath;
+            } catch {
+                try { Directory.Delete(tempPath, recursive: true); } catch { }
+                throw;
+            }
+        }
+
+        private void CopyEntryBounded(
+            Stream input,
+            Stream output,
+            string entryName,
+            long compressedBytes,
+            ref long aggregateBytes) {
+            var buffer = new byte[81920];
+            long total = 0;
+            while (true) {
+                int read = input.Read(buffer, 0, buffer.Length);
+                if (read == 0) break;
+                total = checked(total + read);
+                aggregateBytes = checked(aggregateBytes + read);
+                if (total > _limits.MaxEntryBytes) {
+                    throw new InvalidDataException($"The VSDX entry '{entryName}' exceeds the {_limits.MaxEntryBytes}-byte limit.");
+                }
+                if (aggregateBytes > _limits.MaxTotalBytes) {
+                    throw new InvalidDataException($"The VSDX package exceeds the {_limits.MaxTotalBytes}-byte aggregate limit.");
+                }
+                if (total > 0
+                    && (compressedBytes <= 0 || total / (double)compressedBytes > _limits.MaxCompressionRatio)) {
+                    throw new InvalidDataException($"The VSDX entry '{entryName}' exceeds the {_limits.MaxCompressionRatio:0.##}:1 compression-ratio limit.");
+                }
+                output.Write(buffer, 0, read);
+            }
+        }
+
+        private void ValidateArchiveContents(ZipArchive archive) {
+            long aggregateBytes = 0;
+            foreach (ZipArchiveEntry entry in archive.Entries) {
+                if (string.IsNullOrEmpty(entry.Name)) continue;
+                using Stream input = entry.Open();
+                CopyEntryBounded(input, Stream.Null, entry.FullName, entry.CompressedLength, ref aggregateBytes);
+            }
+        }
+
+        private static bool IsLinkEntry(ZipArchiveEntry entry) {
+            // ExternalAttributes is unavailable in the netstandard2.0 reference surface.
+            // Modern targets use it directly; older runtimes are inspected through the cached
+            // runtime property and fail closed if that metadata cannot be read.
+#if NET8_0_OR_GREATER
+            int attributes = entry.ExternalAttributes;
+#else
+            object? rawAttributes = ExternalAttributesProperty?.GetValue(entry, null);
+            // If this runtime cannot expose the metadata, extraction cannot prove the entry
+            // is a regular file. Reject it instead of silently disabling link protection.
+            if (!(rawAttributes is int attributes)) return true;
+#endif
+            int unixType = (attributes >> 16) & 0xF000;
+            return unixType == 0xA000 || (attributes & (int)FileAttributes.ReparsePoint) != 0;
+        }
+
+        private void ValidateArchiveLimits(ZipArchive archive) {
+            if (archive.Entries.Count > _limits.MaxEntries) {
+                throw new InvalidDataException($"The VSDX package exceeds the {_limits.MaxEntries}-entry limit.");
+            }
+
+            long totalBytes = 0;
+            foreach (ZipArchiveEntry entry in archive.Entries) {
+                ValidateEntryName(entry.FullName);
+                if (IsLinkEntry(entry)) {
+                    throw new InvalidDataException($"The VSDX package contains a link entry: {entry.FullName}");
+                }
+                if (entry.Length > _limits.MaxEntryBytes) {
+                    throw new InvalidDataException($"The VSDX entry '{entry.FullName}' exceeds the {_limits.MaxEntryBytes}-byte limit.");
+                }
+                if (entry.Length > 0
+                    && (entry.CompressedLength <= 0
+                        || entry.Length / (double)entry.CompressedLength > _limits.MaxCompressionRatio)) {
+                    throw new InvalidDataException($"The VSDX entry '{entry.FullName}' exceeds the {_limits.MaxCompressionRatio:0.##}:1 compression-ratio limit.");
+                }
+                totalBytes = checked(totalBytes + entry.Length);
+                if (totalBytes > _limits.MaxTotalBytes) {
+                    throw new InvalidDataException($"The VSDX package exceeds the {_limits.MaxTotalBytes}-byte aggregate limit.");
+                }
+            }
+        }
+
+        private static void ValidateEntryName(string entryName) {
+            string normalized = entryName.Replace('\\', '/');
+            if (normalized.Length == 0
+                || normalized[0] == '/'
+                || (normalized.Length >= 2 && normalized[1] == ':')
+                || normalized.Split('/').Any(part => part == "..")) {
+                throw new InvalidDataException($"The VSDX entry '{entryName}' escapes the package root.");
+            }
         }
 
         private void ValidatePackageStructure(string tempPath) {
@@ -147,10 +304,17 @@ namespace OfficeIMO.Visio {
                 return false;
             }
 
-            using ZipArchive zip = ZipFile.OpenRead(inputPath);
-            ValidateStreamingPhase1(zip);
-            ValidateStreamingPhase2(zip);
-            return _errors.Count == 0;
+            try {
+                using ZipArchive zip = ZipFile.OpenRead(inputPath);
+                ValidateArchiveLimits(zip);
+                ValidateArchiveContents(zip);
+                ValidateStreamingPhase1(zip);
+                ValidateStreamingPhase2(zip);
+                return _errors.Count == 0;
+            } catch (InvalidDataException ex) {
+                _errors.Add(ex.Message);
+                return false;
+            }
         }
 
         private void ValidateStreamingPhase1(ZipArchive zip) {
@@ -221,6 +385,9 @@ namespace OfficeIMO.Visio {
             var pagesRels = LoadZipXml(zip, "visio/pages/_rels/pages.xml.rels");
             if (pagesRels?.Root == null) { _errors.Add("Missing /visio/pages/_rels/pages.xml.rels"); return; }
             var relElems = pagesRels.Root.Elements(nsPkgRel + "Relationship").ToList();
+            if (relElems.Any(element => string.IsNullOrWhiteSpace((string?)element.Attribute("Id")))) {
+                _errors.Add("pages.xml.rels contains a relationship with missing or empty Id");
+            }
             // r:id uniqueness in pages.xml.rels
             var idGroups = relElems.Select(e => (string?)e.Attribute("Id") ?? string.Empty)
                 .GroupBy(id => id, StringComparer.Ordinal)
@@ -228,7 +395,11 @@ namespace OfficeIMO.Visio {
                 .ToList();
             foreach (var g in idGroups) _errors.Add($"Duplicate relationship Id in pages.xml.rels: '{g.Key}'");
 
-            var relsById = relElems.ToDictionary(e => (string?)e.Attribute("Id") ?? string.Empty, e => e);
+            var relsById = relElems
+                .Select(e => new { Id = (string?)e.Attribute("Id"), Element = e })
+                .Where(item => !string.IsNullOrEmpty(item.Id))
+                .GroupBy(item => item.Id!, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First().Element, StringComparer.Ordinal);
 
             // Page ID uniqueness in pages.xml
             var idAttrGroups = pages.Select(p => (string?)p.Attribute("ID") ?? string.Empty)
@@ -307,8 +478,12 @@ namespace OfficeIMO.Visio {
             if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir)) Directory.CreateDirectory(outDir);
             if (File.Exists(outputPath)) File.Delete(outputPath);
 
-            using (ZipArchive src = ZipFile.OpenRead(inputPath))
-            using (ZipArchive dst = ZipFile.Open(outputPath, ZipArchiveMode.Create)) {
+            try {
+                using (ZipArchive src = ZipFile.OpenRead(inputPath))
+                using (ZipArchive dst = ZipFile.Open(outputPath, ZipArchiveMode.Create)) {
+                ValidateArchiveLimits(src);
+                ValidateArchiveContents(src);
+                long copiedBytes = 0;
                 // Copy all entries except those we will recreate
                 var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
                     "[Content_Types].xml",
@@ -322,7 +497,7 @@ namespace OfficeIMO.Visio {
                     var ne = dst.CreateEntry(name, CompressionLevel.Optimal);
                     using var s = e.Open();
                     using var t = ne.Open();
-                    s.CopyTo(t);
+                    CopyEntryBounded(s, t, name, e.CompressedLength, ref copiedBytes);
                 }
 
                 // Build and write [Content_Types].xml
@@ -390,10 +565,15 @@ namespace OfficeIMO.Visio {
                 var pagesRels = new XDocument(relsRoot);
                 SaveZipXml(dst, "visio/pages/_rels/pages.xml.rels", pagesRels);
                 _fixes.Add("Rebuilt /visio/pages/_rels/pages.xml.rels");
-            }
+                }
 
-            // Run streaming validation on the output
-            return ValidateFileStreaming(outputPath);
+                // Run streaming validation on the output
+                return ValidateFileStreaming(outputPath);
+            } catch (InvalidDataException ex) {
+                try { if (File.Exists(outputPath)) File.Delete(outputPath); } catch { }
+                _errors.Add(ex.Message);
+                return false;
+            }
         }
     }
 }

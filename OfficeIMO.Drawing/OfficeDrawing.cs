@@ -18,6 +18,7 @@ public sealed partial class OfficeDrawing {
     private readonly List<OfficeDrawingElement> _elements = new List<OfficeDrawingElement>();
     private readonly ReadOnlyCollection<OfficeDrawingElement> _elementsView;
     private readonly HashSet<OfficeDrawingElement> _behindContentElements = new HashSet<OfficeDrawingElement>();
+    private int _behindContentBatchDepth;
 
     /// <summary>Drawing width in the caller's layout unit.</summary>
     public double Width { get; }
@@ -77,9 +78,46 @@ public sealed partial class OfficeDrawing {
         }
 
         int elementIndex = AddBehindContentElement(item);
-        _shapes.Insert(GetTypedElementInsertIndex<OfficeDrawingShape>(elementIndex), item);
+        if (_behindContentBatchDepth > 0) {
+            _shapes.Add(item);
+        } else {
+            _shapes.Insert(GetTypedElementInsertIndex<OfficeDrawingShape>(elementIndex), item);
+        }
         return this;
     }
+
+    /// <summary>Adds unrotated text using the original public text-box contract.</summary>
+    public OfficeDrawing AddText(
+        string text,
+        double x,
+        double y,
+        double width,
+        double height,
+        OfficeFontInfo? font,
+        OfficeColor? color,
+        OfficeTextAlignment alignment,
+        double? lineHeight) =>
+        AddText(
+            text,
+            x,
+            y,
+            width,
+            height,
+            font,
+            color,
+            alignment,
+            lineHeight,
+            OfficeTextVerticalAlignment.Top,
+            0D,
+            null,
+            null,
+            false,
+            false,
+            false,
+            false,
+            false,
+            null,
+            null);
 
     /// <summary>Adds text inside a local drawing rectangle and returns this drawing.</summary>
     public OfficeDrawing AddText(string text, double x, double y, double width, double height, OfficeFontInfo? font = null, OfficeColor? color = null, OfficeTextAlignment alignment = OfficeTextAlignment.Left, double? lineHeight = null, OfficeTextVerticalAlignment verticalAlignment = OfficeTextVerticalAlignment.Top, double rotationDegrees = 0D, double? rotationCenterX = null, double? rotationCenterY = null, bool wrapText = false, bool shrinkToFit = false, bool stackedText = false, bool flipHorizontal = false, bool flipVertical = false, OfficeTextPadding? padding = null, OfficeTextParagraphIndent? paragraphIndent = null) {
@@ -89,6 +127,22 @@ public sealed partial class OfficeDrawing {
     /// <summary>
     /// Adds an already-positioned single text run. The frame width may be clipped independently
     /// from the resolved glyph advance retained for backend-consistent positioning.
+    /// </summary>
+    /// <param name="text">Text content to draw.</param>
+    /// <param name="x">Horizontal frame position in drawing units.</param>
+    /// <param name="y">Vertical frame position in drawing units.</param>
+    /// <param name="width">Clipping frame width in drawing units.</param>
+    /// <param name="height">Clipping frame height in drawing units.</param>
+    /// <param name="font">Optional font descriptor.</param>
+    /// <param name="color">Optional text color.</param>
+    /// <param name="alignment">Horizontal alignment inside the frame.</param>
+    /// <param name="lineHeight">Optional resolved line height.</param>
+    /// <returns>The current drawing.</returns>
+    public OfficeDrawing AddPositionedText(string text, double x, double y, double width, double height, OfficeFontInfo? font, OfficeColor? color, OfficeTextAlignment alignment, double? lineHeight) =>
+        AddPositionedText(text, x, y, width, height, font, color, alignment, lineHeight, null);
+
+    /// <summary>
+    /// Adds an already-positioned single text run with an explicit resolved glyph advance.
     /// </summary>
     /// <param name="text">Text content to draw.</param>
     /// <param name="x">Horizontal frame position in drawing units.</param>
@@ -242,7 +296,11 @@ public sealed partial class OfficeDrawing {
         }
 
         int elementIndex = AddBehindContentElement(item);
-        _images.Insert(GetTypedElementInsertIndex<OfficeDrawingImage>(elementIndex), item);
+        if (_behindContentBatchDepth > 0) {
+            _images.Add(item);
+        } else {
+            _images.Insert(GetTypedElementInsertIndex<OfficeDrawingImage>(elementIndex), item);
+        }
         return this;
     }
 
@@ -569,9 +627,79 @@ public sealed partial class OfficeDrawing {
 
     private int AddBehindContentElement(OfficeDrawingElement item) {
         _behindContentElements.Add(item);
+        if (_behindContentBatchDepth > 0) {
+            _elements.Add(item);
+            return _elements.Count - 1;
+        }
+
         int index = GetBehindContentInsertIndex();
         _elements.Insert(index, item);
         return index;
+    }
+
+    /// <summary>
+    /// Defers behind-content ordering so importers can add many background elements in linear time.
+    /// Paint order is restored when the returned scope is disposed.
+    /// </summary>
+    internal IDisposable DeferBehindContentOrdering() {
+        _behindContentBatchDepth++;
+        return new BehindContentOrderingScope(this);
+    }
+
+    private void EndBehindContentOrdering() {
+        if (_behindContentBatchDepth <= 0) return;
+        _behindContentBatchDepth--;
+        if (_behindContentBatchDepth != 0) return;
+
+        int backgroundIndex = GetPageBackgroundIndex();
+        var ordered = new List<OfficeDrawingElement>(_elements.Count);
+        if (backgroundIndex >= 0) ordered.Add(_elements[backgroundIndex]);
+        for (int index = 0; index < _elements.Count; index++) {
+            if (index != backgroundIndex && _behindContentElements.Contains(_elements[index])) {
+                ordered.Add(_elements[index]);
+            }
+        }
+        for (int index = 0; index < _elements.Count; index++) {
+            if (index != backgroundIndex && !_behindContentElements.Contains(_elements[index])) {
+                ordered.Add(_elements[index]);
+            }
+        }
+
+        _elements.Clear();
+        _elements.AddRange(ordered);
+        _shapes.Clear();
+        _images.Clear();
+        for (int index = 0; index < _elements.Count; index++) {
+            if (_elements[index] is OfficeDrawingShape shape) _shapes.Add(shape);
+            if (_elements[index] is OfficeDrawingImage image) _images.Add(image);
+        }
+    }
+
+    private int GetPageBackgroundIndex() {
+        if (_elements.Count == 0) return -1;
+        return _elements[0] is OfficeDrawingShape shape
+            && shape.X == 0D
+            && shape.Y == 0D
+            && shape.Shape.Kind == OfficeShapeKind.Rectangle
+            && shape.Shape.Width == Width
+            && shape.Shape.Height == Height
+            && shape.Shape.StrokeWidth <= 0D
+            ? 0
+            : -1;
+    }
+
+    private sealed class BehindContentOrderingScope : IDisposable {
+        private OfficeDrawing? _owner;
+
+        internal BehindContentOrderingScope(OfficeDrawing owner) {
+            _owner = owner;
+        }
+
+        public void Dispose() {
+            OfficeDrawing? owner = _owner;
+            _owner = null;
+            owner?.EndBehindContentOrdering();
+        }
     }
 
     private int GetTypedElementInsertIndex<T>(int elementIndex) where T : OfficeDrawingElement {

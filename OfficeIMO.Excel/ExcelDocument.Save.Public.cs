@@ -159,7 +159,7 @@ namespace OfficeIMO.Excel {
 
             var payload = PreparePackageForSave(options);
             try {
-                var finalizedBytes = FinalizePackageBytes(payload);
+                var finalizedBytes = FinalizePackageBytes(payload, options);
                 ThrowIfOpenXmlValidationFails(finalizedBytes, options);
                 CommitPreparedPackageToFile(path, finalizedBytes);
                 ReloadFromBytes(finalizedBytes);
@@ -196,7 +196,7 @@ namespace OfficeIMO.Excel {
 
             var payload = PreparePackageForSave(saveOptions);
             try {
-                var finalizedBytes = FinalizePackageBytes(payload);
+                var finalizedBytes = FinalizePackageBytes(payload, saveOptions);
                 ThrowIfOpenXmlValidationFails(finalizedBytes, saveOptions);
                 var encryptedBytes = OfficeEncryption.EncryptPackage(finalizedBytes, password);
                 CommitPreparedPackageToFile(path, encryptedBytes);
@@ -307,7 +307,7 @@ namespace OfficeIMO.Excel {
 
             var payload = PreparePackageForSave(options);
             try {
-                var finalizedBytes = FinalizePackageBytes(payload);
+                var finalizedBytes = FinalizePackageBytes(payload, options);
                 ThrowIfOpenXmlValidationFails(finalizedBytes, options);
                 await CommitPreparedPackageToFileAsync(target, finalizedBytes, cancellationToken).ConfigureAwait(false);
                 ReloadFromBytes(finalizedBytes);
@@ -366,14 +366,14 @@ namespace OfficeIMO.Excel {
                 options,
                 preserveLinkedVbaProject: format == ExcelFileFormat.Xls);
 
-            if (TrySaveUnchangedXlsbToStream(destination, format, options)) {
+#if NETFRAMEWORK
+            if (!destination.CanSeek) {
+                SaveNonSeekableFrameworkDestination(destination, format, options);
                 return;
             }
+#endif
 
-            if (!destination.CanSeek) {
-                using var buffer = new MemoryStream();
-                Save(buffer, format, options);
-                OfficeStreamWriter.WriteAllBytes(destination, buffer.ToArray());
+            if (TrySaveUnchangedXlsbToStream(destination, format, options)) {
                 return;
             }
 
@@ -422,7 +422,7 @@ namespace OfficeIMO.Excel {
 
             var payload = PreparePackageForSave(options, closeDocument: false);
             try {
-                var finalizedBytes = FinalizePackageBytes(payload);
+                var finalizedBytes = FinalizePackageBytes(payload, options);
                 ThrowIfOpenXmlValidationFails(finalizedBytes, options);
                 PrepareDestinationStreamForWrite(destination);
                 destination.Write(finalizedBytes, 0, finalizedBytes.Length);
@@ -449,6 +449,7 @@ namespace OfficeIMO.Excel {
             EnsureLegacyXlsSaveDoesNotDropImportedContent(saveOptions);
 
             if (CanUseUnchangedPackageFastPath(saveOptions) && _unchangedPackageBytes != null) {
+                ThrowIfPackageMaterializationExceedsLimit(_unchangedPackageBytes.LongLength, saveOptions);
                 OfficeEncryption.EncryptPackageToStream(_unchangedPackageBytes, password, destination);
                 LastSaveDiagnostics = ExcelSaveDiagnostics.UnchangedPackage();
                 return;
@@ -456,7 +457,7 @@ namespace OfficeIMO.Excel {
 
             var payload = PreparePackageForSave(saveOptions, closeDocument: false);
             try {
-                var finalizedBytes = FinalizePackageBytes(payload);
+                var finalizedBytes = FinalizePackageBytes(payload, saveOptions);
                 ThrowIfOpenXmlValidationFails(finalizedBytes, saveOptions);
                 OfficeEncryption.EncryptPackageToStream(finalizedBytes, password, destination);
                 LastSaveDiagnostics = ExcelSaveDiagnostics.Standard("Encrypted saves use the standard package finalization path.");
@@ -504,14 +505,14 @@ namespace OfficeIMO.Excel {
                 options,
                 preserveLinkedVbaProject: format == ExcelFileFormat.Xls);
 
-            if (await TrySaveUnchangedXlsbToStreamAsync(destination, format, options, cancellationToken).ConfigureAwait(false)) {
+#if NETFRAMEWORK
+            if (!destination.CanSeek) {
+                await SaveNonSeekableFrameworkDestinationAsync(destination, format, options, cancellationToken).ConfigureAwait(false);
                 return;
             }
+#endif
 
-            if (!destination.CanSeek) {
-                using var buffer = new MemoryStream();
-                await SaveAsync(buffer, format, options, cancellationToken).ConfigureAwait(false);
-                await OfficeStreamWriter.WriteAllBytesAsync(destination, buffer.ToArray(), cancellationToken).ConfigureAwait(false);
+            if (await TrySaveUnchangedXlsbToStreamAsync(destination, format, options, cancellationToken).ConfigureAwait(false)) {
                 return;
             }
 
@@ -561,7 +562,7 @@ namespace OfficeIMO.Excel {
 
             var payload = PreparePackageForSave(options, closeDocument: false);
             try {
-                var finalizedBytes = FinalizePackageBytes(payload);
+                var finalizedBytes = FinalizePackageBytes(payload, options);
                 ThrowIfOpenXmlValidationFails(finalizedBytes, options);
                 PrepareDestinationStreamForWrite(destination);
                 await destination.WriteAsync(finalizedBytes, 0, finalizedBytes.Length, cancellationToken).ConfigureAwait(false);
@@ -573,6 +574,57 @@ namespace OfficeIMO.Excel {
                 throw;
             }
         }
+
+#if NETFRAMEWORK
+        private void SaveNonSeekableFrameworkDestination(
+            Stream destination,
+            ExcelFileFormat format,
+            ExcelSaveOptions? options) {
+            using FileStream stagingFile = OfficeTemporaryFile.Create(
+                "OfficeIMO.Excel-",
+                ".tmp",
+                FileOptions.SequentialScan,
+                out _);
+            using var staging = new ExcelBoundedSeekableStream(
+                stagingFile,
+                ResolveTemporaryPackageLimit(options),
+                leaveOpen: true);
+            SaveToStreamCore(staging, format, options);
+            staging.Position = 0L;
+            staging.CopyTo(destination, 81920);
+            destination.Flush();
+        }
+
+        private async Task SaveNonSeekableFrameworkDestinationAsync(
+            Stream destination,
+            ExcelFileFormat format,
+            ExcelSaveOptions? options,
+            CancellationToken cancellationToken) {
+            using FileStream stagingFile = OfficeTemporaryFile.Create(
+                "OfficeIMO.Excel-",
+                ".tmp",
+                FileOptions.Asynchronous | FileOptions.SequentialScan,
+                out _);
+            using var staging = new ExcelBoundedSeekableStream(
+                stagingFile,
+                ResolveTemporaryPackageLimit(options),
+                leaveOpen: true);
+            await SaveToStreamAsyncCore(staging, format, options, cancellationToken).ConfigureAwait(false);
+            staging.Position = 0L;
+            await staging.CopyToAsync(destination, 81920, cancellationToken).ConfigureAwait(false);
+            await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private static long ResolveTemporaryPackageLimit(ExcelSaveOptions? options) {
+            long? limit = options == null
+                ? ExcelSaveOptions.DefaultMaxTemporaryPackageBytes
+                : options.MaxTemporaryPackageBytes;
+            if (limit.HasValue && limit.Value <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(ExcelSaveOptions.MaxTemporaryPackageBytes));
+            }
+            return limit ?? long.MaxValue;
+        }
+#endif
 
         /// <summary>
         /// Asynchronously saves the document.

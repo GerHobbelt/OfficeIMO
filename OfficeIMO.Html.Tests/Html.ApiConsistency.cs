@@ -122,16 +122,25 @@ public sealed class HtmlApiConsistencyTests {
             TextShapingMode = PdfCore.PdfTextShapingMode.UnicodeScalar,
             FontFamily = fontFamily,
             TextShapingProvider = shapingProvider,
-            UrlPolicy = HtmlUrlPolicy.CreateOfficeIMOProfile()
+            UrlPolicy = HtmlUrlPolicy.CreateOfficeIMOProfile(),
+            DocumentOptions = new PdfCore.PdfOptions {
+                ObjectSerializationMode = PdfCore.PdfObjectSerializationMode.ForwardOnly
+            }.UsePdfUa(PdfCore.PdfComplianceProfile.PdfUa1, "pl-PL")
         };
 
         var copied = new HtmlPdfSaveOptions(options);
+        options.DocumentOptions.Language = "en-US";
 
         Assert.Equal(PdfCore.PdfTextFallbackFeatures.None, copied.TextFallbacks);
         Assert.Equal(PdfCore.PdfTextShapingMode.UnicodeScalar, copied.TextShapingMode);
         Assert.Same(fontFamily, copied.FontFamily);
         Assert.Same(shapingProvider, copied.TextShapingProvider);
         Assert.False(copied.UrlPolicy.RestrictUrlSchemes);
+        Assert.Equal(PdfCore.PdfObjectSerializationMode.ForwardOnly, copied.DocumentOptions.ObjectSerializationMode);
+        Assert.Equal(PdfCore.PdfComplianceProfile.PdfUa1, copied.DocumentOptions.PdfUaIdentification?.Part == 1
+            ? PdfCore.PdfComplianceProfile.PdfUa1
+            : PdfCore.PdfComplianceProfile.None);
+        Assert.Equal("pl-PL", copied.DocumentOptions.Language);
     }
 
     [Fact]
@@ -146,6 +155,22 @@ public sealed class HtmlApiConsistencyTests {
         Assert.False(HtmlUrlPolicyEvaluator.IsAllowed("cid:report", options.UrlPolicy));
         Assert.False(HtmlUrlPolicyEvaluator.IsAllowed("ftp://example.test/report", options.UrlPolicy));
         Assert.False(HtmlUrlPolicyEvaluator.IsAllowed("officeimo:report", options.UrlPolicy));
+    }
+
+    [Fact]
+    public void HtmlPdfOptions_FromRenderOptionsPreserveCallerRestrictionsWithinPdfPolicy() {
+        var source = new HtmlRenderOptions {
+            UrlPolicy = HtmlUrlPolicy.CreateOfficeIMOProfile()
+        };
+
+        var copied = new HtmlPdfSaveOptions(source);
+
+        Assert.True(copied.UrlPolicy.RestrictUrlSchemes);
+        Assert.True(copied.UrlPolicy.DisallowFileUrls);
+        Assert.False(copied.UrlPolicy.AllowDataUrls);
+        Assert.True(HtmlUrlPolicyEvaluator.IsAllowed("https://example.test/report", copied.UrlPolicy));
+        Assert.False(HtmlUrlPolicyEvaluator.IsAllowed("file:///private/report.html", copied.UrlPolicy));
+        Assert.False(HtmlUrlPolicyEvaluator.IsAllowed("data:text/html,report", copied.UrlPolicy));
     }
 
     [Fact]

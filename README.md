@@ -54,10 +54,10 @@ OfficeIMO keeps document engines first-party and optional integrations isolated.
 
 | Surface | Current repository coverage |
 | --- | ---: |
-| Coordinated `3.0.x` release packages | 84 |
-| Documented package, tool, and example projects below | 92 |
-| Native format, foundation, and shared-service packages | 25 |
-| Conversion and cloud bridge packages | 28 |
+| Coordinated `3.0.x` release packages | 86 |
+| Documented package, tool, and example projects below | 94 |
+| Native format, foundation, and shared-service packages | 26 |
+| Conversion and cloud bridge packages | 29 |
 | Unified Reader packages and tool | 28 |
 | Markdown renderer and OfficeIMO Markup surfaces | 11 |
 | Runnable example projects | 1 |
@@ -92,6 +92,14 @@ Every checked item below is implemented today. Detailed behavior, examples, and 
 - [x] Single and batch image-export builders with dimensions, source metadata, and diagnostics
 
 _Dependency footprint:_ zero third-party runtime dependencies.
+
+#### [OfficeIMO.Drawing.HarfBuzz](OfficeIMO.Drawing.HarfBuzz/README.md)
+
+- [x] Optional full OpenType GSUB/GPOS shaping through the shared `IOfficeTextShapingProvider` contract
+- [x] Stable logical cluster mappings and positioned glyph advances for TrueType and OpenType/CFF fonts
+- [x] Windows, Linux, macOS, and WebAssembly native assets kept out of the dependency-light Drawing and PDF cores
+
+_Dependency footprint:_ `OfficeIMO.Drawing`, HarfBuzzSharp, and its platform-native runtime assets.
 
 #### [OfficeIMO.Drawing.CodeGlyphX](OfficeIMO.Drawing.CodeGlyphX/README.md)
 
@@ -253,6 +261,7 @@ _Dependency footprint:_ OfficeIMO Markdown, Markdown.Html, and HTML plus `System
 - [x] MHTML/MHT loading and deterministic saving with HTML root selection plus CID/Content-Location resource resolution
 - [x] CSS-aware layout scene shared by PNG, JPEG, TIFF, SVG, WebP, PDF, and Office adapters
 - [x] Direct PNG, JPEG, TIFF, SVG, and lossless WebP output with structured diagnostics and bounded local/remote resource loading; `OfficeIMO.Html.Pdf` adds PDF
+- [x] Bounded CSS math, deterministic media preferences, caller stylesheets, paged running strings, shared CSS/SVG color parsing, WOFF 1, and Unicode-range-aware font selection
 - [x] Email body export through the same image pipeline with plain-text fallback, inline MIME resources, page selection, diagnostics, and bounded output
 - [x] Semantic HTML/RTF conversion and shared mappings for Word, Excel, PowerPoint, and Markdown
 
@@ -572,6 +581,14 @@ _Dependency footprint:_ OfficeIMO OneNote.Markdown, Markdown.Pdf, PDF, and Drawi
 - [x] PDF-to-HTML logical projection and result-bearing diagnostics
 
 _Dependency footprint:_ only OfficeIMO HTML, PDF, and Drawing packages; no browser process or native HTML renderer.
+
+#### [OfficeIMO.Html.Tool](OfficeIMO.Html.Tool/README.md)
+
+- [x] HTML or MHTML files and standard input to PDF files or standard output
+- [x] Atomic output, explicit overwrite, bounded input/resources/pages, caller stylesheets, and portable resource defaults
+- [x] Machine-readable renderer capabilities and explicit embedded-font inputs for PDF/UA-ready output
+
+_Dependency footprint:_ the same first-party HTML and PDF engines; no browser process or separate conversion engine.
 
 #### [OfficeIMO.Rtf.Markdown](OfficeIMO.Rtf.Markdown/README.md)
 
@@ -1015,6 +1032,9 @@ dotnet add package OfficeIMO.Reader.OneNote --version 3.0.0
 
 # Install the broad local-reader command only when a CLI is the desired surface.
 dotnet tool install --global OfficeIMO.Reader.Tool --version 3.0.0
+
+# Install bounded HTML/MHTML-to-PDF conversion when a CLI is the desired surface.
+dotnet tool install --global OfficeIMO.Html.Tool --version 3.0.0
 ```
 
 All coordinated source packages use the same `3.0.x` compatibility line. Avoid mixing OfficeIMO `2.x` and `3.x` packages in one application.
@@ -1179,6 +1199,7 @@ Most shipping libraries target `netstandard2.0`, `net8.0`, and `net10.0`. Many a
 - [Image export capability matrix](Docs/officeimo.image-export-capability-matrix.md)
 - [PDF current state](Docs/officeimo.pdf.current-state.md)
 - [PDF conversion support matrix](Docs/officeimo.pdf-conversion-support-matrix.md)
+- [HTML renderer support matrix](Docs/officeimo.html-support-matrix.md)
 - [Word/HTML support matrix](Docs/officeimo.word-html-support-matrix.md)
 - [RTF support matrix](Docs/officeimo.rtf-support-matrix.md)
 - [Email support matrix](Docs/officeimo.email-support-matrix.md)

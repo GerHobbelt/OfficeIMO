@@ -20,72 +20,8 @@ public static partial class OfficeSvgDrawingReader {
         if (value.StartsWith("url(", StringComparison.OrdinalIgnoreCase)) {
             return paintServers.TryResolve(value, out paint);
         }
-        if (!TrySvgColor(value, out OfficeColor color)) return false;
+        if (!OfficeColor.TryParseCss(value, out OfficeColor color)) return false;
         paint = new SvgResolvedPaint(color);
-        return true;
-    }
-
-    private static bool TrySvgColor(string value, out OfficeColor color) {
-        if (OfficeColor.TryParse(value, out color)) return true;
-
-        color = default;
-        string normalized = value.Trim();
-        bool hasAlpha = normalized.StartsWith("rgba(", StringComparison.OrdinalIgnoreCase);
-        bool hasRgb = normalized.StartsWith("rgb(", StringComparison.OrdinalIgnoreCase);
-        if ((!hasAlpha && !hasRgb) || !normalized.EndsWith(")", StringComparison.Ordinal)) return false;
-
-        int prefixLength = hasAlpha ? 5 : 4;
-        string content = normalized.Substring(prefixLength, normalized.Length - prefixLength - 1);
-        string[] components;
-        string? alphaComponent = null;
-        if (content.IndexOf(',') >= 0) {
-            string[] commaComponents = content.Split(',');
-            if (commaComponents.Length != (hasAlpha ? 4 : 3)) return false;
-            components = new[] { commaComponents[0], commaComponents[1], commaComponents[2] };
-            if (hasAlpha) alphaComponent = commaComponents[3];
-        } else {
-            string[] alphaParts = content.Split('/');
-            if (alphaParts.Length > 2) return false;
-            components = alphaParts[0].Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            if (alphaParts.Length == 2) alphaComponent = alphaParts[1];
-        }
-
-        if (components.Length != 3
-            || !TrySvgColorChannel(components[0], out byte red)
-            || !TrySvgColorChannel(components[1], out byte green)
-            || !TrySvgColorChannel(components[2], out byte blue)) return false;
-
-        byte alpha = 255;
-        if (alphaComponent != null && !TrySvgAlphaChannel(alphaComponent, out alpha)) return false;
-        color = OfficeColor.FromRgba(red, green, blue, alpha);
-        return true;
-    }
-
-    private static bool TrySvgColorChannel(string text, out byte channel) {
-        channel = 0;
-        string normalized = text.Trim();
-        bool percentage = normalized.EndsWith("%", StringComparison.Ordinal);
-        if (percentage) normalized = normalized.Substring(0, normalized.Length - 1).Trim();
-        if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
-            || double.IsNaN(value)
-            || double.IsInfinity(value)
-            || value < 0D
-            || value > (percentage ? 100D : 255D)) return false;
-        channel = (byte)Math.Round(percentage ? value * 255D / 100D : value);
-        return true;
-    }
-
-    private static bool TrySvgAlphaChannel(string text, out byte alpha) {
-        alpha = 0;
-        string normalized = text.Trim();
-        bool percentage = normalized.EndsWith("%", StringComparison.Ordinal);
-        if (percentage) normalized = normalized.Substring(0, normalized.Length - 1).Trim();
-        if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
-            || double.IsNaN(value)
-            || double.IsInfinity(value)
-            || value < 0D
-            || value > (percentage ? 100D : 1D)) return false;
-        alpha = (byte)Math.Round(percentage ? value * 255D / 100D : value * 255D);
         return true;
     }
 
@@ -126,6 +62,8 @@ public static partial class OfficeSvgDrawingReader {
 
     private sealed class SvgPaintServerRegistry {
         private readonly SvgDefinitionRegistry _definitions;
+        private readonly Dictionary<string, SvgGradientDefinition> _resolved = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _invalid = new(StringComparer.Ordinal);
 
         internal SvgPaintServerRegistry(SvgDefinitionRegistry definitions) {
             _definitions = definitions;
@@ -138,8 +76,15 @@ public static partial class OfficeSvgDrawingReader {
                 || (!element!.Name.LocalName.Equals("linearGradient", StringComparison.OrdinalIgnoreCase)
                     && !element.Name.LocalName.Equals("radialGradient", StringComparison.OrdinalIgnoreCase))) return false;
 
-            var resolving = new HashSet<string>(StringComparer.Ordinal);
-            if (!TryResolveDefinition(id, element, resolving, 0, out SvgGradientDefinition? definition)) return false;
+            if (!_resolved.TryGetValue(id, out SvgGradientDefinition? definition)) {
+                if (_invalid.Contains(id)) return false;
+                var resolving = new HashSet<string>(StringComparer.Ordinal);
+                if (!TryResolveDefinition(id, element, resolving, 0, out definition) || definition == null) {
+                    _invalid.Add(id);
+                    return false;
+                }
+                _resolved[id] = definition;
+            }
             try {
                 if (definition!.UserSpaceOnUse || definition.GradientTransform != OfficeTransform.Identity || definition.SpreadMode != SvgGradientSpreadMode.Pad) {
                     paint = new SvgResolvedPaint(definition);
@@ -173,7 +118,15 @@ public static partial class OfficeSvgDrawingReader {
             int depth,
             out SvgGradientDefinition? definition) {
             definition = null;
-            if (depth >= MaximumGradientReferenceDepth || !resolving.Add(id)) return false;
+            if (_resolved.TryGetValue(id, out SvgGradientDefinition? cached)) {
+                definition = cached;
+                return true;
+            }
+            if (_invalid.Contains(id)) return false;
+            if (depth >= MaximumGradientReferenceDepth || !resolving.Add(id)) {
+                _invalid.Add(id);
+                return false;
+            }
             try {
                 SvgGradientKind kind = element.Name.LocalName.Equals("linearGradient", StringComparison.OrdinalIgnoreCase)
                     ? SvgGradientKind.Linear
@@ -211,6 +164,7 @@ public static partial class OfficeSvgDrawingReader {
                         || !TryCoordinate(element, "y2", defaultY2, allowOutsideUnit: false, userSpaceOnUse, out SvgGradientCoordinate y2)
                         || (x1.Equals(x2) && y1.Equals(y2))) return false;
                     definition = SvgGradientDefinition.Linear(x1, y1, x2, y2, stops, userSpaceOnUse, gradientTransform, spreadMode);
+                    _resolved[id] = definition;
                     return true;
                 }
 
@@ -228,9 +182,11 @@ public static partial class OfficeSvgDrawingReader {
                     || (focalX.Equals(centerX) && focalY.Equals(centerY) && focalRadius.Equals(radius))) return false;
                 if (!userSpaceOnUse && focalRadius.Value > radius.Value) return false;
                 definition = SvgGradientDefinition.Radial(focalX, focalY, focalRadius, centerX, centerY, radius, stops, userSpaceOnUse, gradientTransform, spreadMode);
+                _resolved[id] = definition;
                 return true;
             } finally {
                 resolving.Remove(id);
+                if (definition == null) _invalid.Add(id);
             }
         }
 
@@ -346,11 +302,11 @@ public static partial class OfficeSvgDrawingReader {
 
             if (!string.IsNullOrWhiteSpace(currentColorText) &&
                 !currentColorText!.Trim().Equals("currentcolor", StringComparison.OrdinalIgnoreCase) &&
-                !TrySvgColor(currentColorText.Trim(), out currentColor)) return false;
+                !OfficeColor.TryParseCss(currentColorText.Trim(), out currentColor)) return false;
 
             if (string.IsNullOrWhiteSpace(colorText)) color = OfficeColor.Black;
             else if (colorText!.Trim().Equals("currentcolor", StringComparison.OrdinalIgnoreCase)) color = currentColor;
-            else if (!TrySvgColor(colorText.Trim(), out color)) return false;
+            else if (!OfficeColor.TryParseCss(colorText.Trim(), out color)) return false;
 
             double opacity = 1D;
             if (!string.IsNullOrWhiteSpace(opacityText) && !TryUnitOrPercentage(opacityText!, clamp: true, out opacity)) return false;
@@ -372,7 +328,7 @@ public static partial class OfficeSvgDrawingReader {
                 }
 
                 if (string.IsNullOrWhiteSpace(value) || value!.Trim().Equals("currentcolor", StringComparison.OrdinalIgnoreCase)) continue;
-                if (!TrySvgColor(value.Trim(), out color)) return false;
+                if (!OfficeColor.TryParseCss(value.Trim(), out color)) return false;
             }
             return true;
         }

@@ -4,7 +4,15 @@ using OfficeIMO.Drawing;
 
 namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
-        private bool TryResolveHeaderFooterText(string? text, int pageNumber, int pageCount, DateTime headerFooterDateTime, out HeaderFooterTextSection normalized) {
+        private const int MaximumHeaderFooterFontFamilyCharacters = 256;
+
+        private bool TryResolveHeaderFooterText(
+            string? text,
+            int pageNumber,
+            int pageCount,
+            DateTime headerFooterDateTime,
+            bool includeWorkbookPath,
+            out HeaderFooterTextSection normalized) {
             normalized = HeaderFooterTextSection.Empty;
             if (string.IsNullOrWhiteSpace(text)) {
                 return true;
@@ -33,18 +41,7 @@ namespace OfficeIMO.Excel {
 
                 char token = text[++i];
                 if (token == '&') {
-                    if (i + 1 < text.Length && char.IsDigit(text[i + 1])) {
-                        if (!TryReadHeaderFooterFontSizeToken(text, i + 1, out double parsedFontSize, out int tokenEnd)) {
-                            return false;
-                        }
-
-                        FlushHeaderFooterTextRun(runs, builder, bold, italic, underline, strikethrough, color, fontSize, fontFamily);
-                        fontSize = parsedFontSize;
-                        i = tokenEnd;
-                        hasFormatting = true;
-                    } else {
-                        builder.Append('&');
-                    }
+                    builder.Append('&');
                 } else if (token == 'B') {
                     FlushHeaderFooterTextRun(runs, builder, bold, italic, underline, strikethrough, color, fontSize, fontFamily);
                     bold = !bold;
@@ -115,6 +112,10 @@ namespace OfficeIMO.Excel {
                 } else if (token == 'G') {
                     FlushHeaderFooterTextRun(runs, builder, bold, italic, underline, strikethrough, color, fontSize, fontFamily);
                 } else if (token == 'Z') {
+                    if (!includeWorkbookPath) {
+                        continue;
+                    }
+
                     if (!TryGetWorkbookPathPrefix(out string pathPrefix)) {
                         return false;
                     }
@@ -127,7 +128,7 @@ namespace OfficeIMO.Excel {
                     }
 
                     string fieldName = text.Substring(i + 1, end - i - 1);
-                    if (!TryAppendHeaderFooterField(builder, fieldName, pageNumber, pageCount, headerFooterDateTime)) {
+                    if (!TryAppendHeaderFooterField(builder, fieldName, pageNumber, pageCount, headerFooterDateTime, includeWorkbookPath)) {
                         return false;
                     }
 
@@ -180,6 +181,10 @@ namespace OfficeIMO.Excel {
 
             int end = text.IndexOf('"', openingQuoteIndex + 1);
             if (end < 0) {
+                return false;
+            }
+
+            if (end - openingQuoteIndex - 1 > MaximumHeaderFooterFontFamilyCharacters) {
                 return false;
             }
 
@@ -243,7 +248,13 @@ namespace OfficeIMO.Excel {
             return false;
         }
 
-        private bool TryAppendHeaderFooterField(StringBuilder builder, string fieldName, int pageNumber, int pageCount, DateTime headerFooterDateTime) {
+        private bool TryAppendHeaderFooterField(
+            StringBuilder builder,
+            string fieldName,
+            int pageNumber,
+            int pageCount,
+            DateTime headerFooterDateTime,
+            bool includeWorkbookPath) {
             if (string.Equals(fieldName, "Page", StringComparison.OrdinalIgnoreCase)) {
                 builder.Append(pageNumber.ToString(CultureInfo.InvariantCulture));
                 return true;
@@ -279,6 +290,10 @@ namespace OfficeIMO.Excel {
             }
 
             if (string.Equals(fieldName, "Path", StringComparison.OrdinalIgnoreCase)) {
+                if (!includeWorkbookPath) {
+                    return true;
+                }
+
                 if (!TryGetWorkbookPathPrefix(out string pathPrefix)) {
                     return false;
                 }

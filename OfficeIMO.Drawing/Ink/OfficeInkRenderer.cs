@@ -126,7 +126,7 @@ public static class OfficeInkRenderer {
             double y1 = from.Y;
             double x2 = to.X;
             double y2 = to.Y;
-            if (x1.Equals(x2) && y1.Equals(y2)) continue;
+            if (IsDegenerateSegment(x1, y1, x2, y2)) continue;
             if (affineTipGeometry) {
                 AddAffineTipSegment(drawing, stroke, renderColor, from, to, opacity, options, transformedTipWidth, transformedTipHeight);
                 AddTransformedTip(drawing, stroke, renderColor, to, opacity, ResolvePointPressure(stroke, to, options));
@@ -141,7 +141,7 @@ public static class OfficeInkRenderer {
             double clipHalfWidth = transformedTipWidth * pressure / 2D;
             double clipHalfHeight = transformedTipHeight * pressure / 2D;
             if (!TryClipLine(-clipHalfWidth, -clipHalfHeight, drawing.Width + clipHalfWidth, drawing.Height + clipHalfHeight, ref x1, ref y1, ref x2, ref y2)) continue;
-            if (x1.Equals(x2) && y1.Equals(y2)) continue;
+            if (IsDegenerateSegment(x1, y1, x2, y2)) continue;
 
             OfficeShape shape = OfficeShape.Line(x1, y1, x2, y2);
             shape.StrokeColor = renderColor;
@@ -180,11 +180,28 @@ public static class OfficeInkRenderer {
         double clipHalfWidth = transformedTipWidth * maximumPressure / 2D;
         double clipHalfHeight = transformedTipHeight * maximumPressure / 2D;
         if (!TryClipLine(-clipHalfWidth, -clipHalfHeight, drawing.Width + clipHalfWidth, drawing.Height + clipHalfHeight, ref x1, ref y1, ref x2, ref y2)) return;
-        if (x1.Equals(x2) && y1.Equals(y2)) return;
+        if (IsDegenerateSegment(x1, y1, x2, y2)) return;
 
         OfficePoint support = stroke.GetTransformedTipSupport(-deltaY, deltaX);
         OfficePoint fromSupport = new OfficePoint(support.X * fromPressure, support.Y * fromPressure);
         OfficePoint toSupport = new OfficePoint(support.X * toPressure, support.Y * toPressure);
+        double maximumSupport = Math.Max(
+            Math.Sqrt(fromSupport.X * fromSupport.X + fromSupport.Y * fromSupport.Y),
+            Math.Sqrt(toSupport.X * toSupport.X + toSupport.Y * toSupport.Y));
+        if (double.IsNaN(maximumSupport)
+            || double.IsInfinity(maximumSupport)
+            || maximumSupport <= 0.000000000001D) {
+            OfficeShape fallback = OfficeShape.Line(x1, y1, x2, y2);
+            fallback.StrokeColor = renderColor;
+            fallback.StrokeOpacity = opacity;
+            fallback.StrokeWidth = 0.01D;
+            fallback.StrokeLineCap = stroke.TipShape == OfficeInkTipShape.Rectangle
+                ? OfficeStrokeLineCap.Square
+                : OfficeStrokeLineCap.Round;
+            fallback.StrokeLineJoin = OfficeStrokeLineJoin.Round;
+            drawing.AddShapeForClippedRendering(fallback, Math.Min(x1, x2), Math.Min(y1, y2));
+            return;
+        }
         var points = new[] {
             new OfficePoint(x1 + fromSupport.X, y1 + fromSupport.Y),
             new OfficePoint(x2 + toSupport.X, y2 + toSupport.Y),
@@ -284,6 +301,9 @@ public static class OfficeInkRenderer {
         }
         return true;
     }
+
+    private static bool IsDegenerateSegment(double x1, double y1, double x2, double y2) =>
+        Math.Abs(x2 - x1) <= 0.000000000001D && Math.Abs(y2 - y1) <= 0.000000000001D;
 
     private static double ResolvePointPressure(OfficeInkStroke stroke, OfficeInkPoint point, OfficeInkRenderOptions options) =>
         options.UsePressure && !stroke.IgnorePressure

@@ -203,38 +203,14 @@ namespace OfficeIMO.Word {
         /// </summary>
         public void Remove() {
             if (_imagePart != null) {
-                OpenXmlElement? parent = _Image?.Parent;
-                while (parent != null && parent is not Body && parent is not Header && parent is not Footer) {
-                    parent = parent.Parent;
-                }
-
-                OpenXmlPart? part = _document._wordprocessingDocument.MainDocumentPart;
-                if (parent is Header header) {
-                    part = header.HeaderPart;
-                } else if (parent is Footer footer) {
-                    part = footer.FooterPart;
-                }
-
-                part?.DeletePart(_imagePart);
+                OpenXmlPart part = GetContainingPart();
+                part.DeletePart(_imagePart);
                 _imagePart = null;
             } else if (!string.IsNullOrEmpty(_externalRelationshipId)) {
-                OpenXmlElement? parent = _Image?.Parent;
-                while (parent != null && parent is not Body && parent is not Header && parent is not Footer) {
-                    parent = parent.Parent;
-                }
-
-                OpenXmlPart? part = _document._wordprocessingDocument.MainDocumentPart;
-                if (parent is Header header) {
-                    part = header.HeaderPart;
-                } else if (parent is Footer footer) {
-                    part = footer.FooterPart;
-                }
-
-                if (part != null) {
-                    var rel = part.ExternalRelationships.FirstOrDefault(r => r.Id == _externalRelationshipId);
-                    if (rel != null) {
-                        part.DeleteExternalRelationship(rel);
-                    }
+                OpenXmlPart part = GetContainingPart();
+                var rel = part.ExternalRelationships.FirstOrDefault(r => r.Id == _externalRelationshipId);
+                if (rel != null) {
+                    part.DeleteExternalRelationship(rel);
                 }
                 _externalRelationshipId = null;
             }
@@ -281,11 +257,10 @@ namespace OfficeIMO.Word {
                 // if widht/height are not set we check ourselves
                 // but probably will need better way
                 var imageCharacteristics = Helpers.GetImageCharacteristics(preparedImageStream, fileName);
+                if (imageCharacteristics.Width <= 0 || imageCharacteristics.Height <= 0) {
+                    throw new InvalidDataException("The stream does not contain a supported image payload.");
+                }
                 if (width == null || height == null) {
-                    if (imageCharacteristics.Width == 0 || imageCharacteristics.Height == 0) {
-                        throw new ArgumentException("Width and height must be provided for this image type.");
-                    }
-
                     if (width != null) {
                         height = imageCharacteristics.Height * width.Value / imageCharacteristics.Width;
                     } else if (height != null) {
@@ -343,7 +318,17 @@ namespace OfficeIMO.Word {
             });
         }
 
-        private void AddExternalImage(WordDocument document, WordParagraph paragraph, Uri uri, double width, double height, ShapeTypeValues shape, BlipCompressionValues compressionQuality, string description, WrapTextImage wrapImage) {
+        private void AddExternalImage(WordDocument document, WordParagraph paragraph, Uri uri, double width, double height, ShapeTypeValues shape, BlipCompressionValues compressionQuality, string description, WrapTextImage wrapImage, bool allowFileUri = false) {
+            if (uri == null) throw new ArgumentNullException(nameof(uri));
+            if (!uri.IsAbsoluteUri ||
+                (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+                 !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+                 !string.Equals(uri.Scheme, Uri.UriSchemeFtp, StringComparison.OrdinalIgnoreCase) &&
+                 !(allowFileUri && string.Equals(uri.Scheme, Uri.UriSchemeFile, StringComparison.OrdinalIgnoreCase)) &&
+                 !string.Equals(uri.Scheme, "cid", StringComparison.OrdinalIgnoreCase))) {
+                throw new ArgumentException("External image URIs must use the HTTP, HTTPS, FTP, or CID scheme.", nameof(uri));
+            }
+
             _document = document;
 
             var location = paragraph.Location();

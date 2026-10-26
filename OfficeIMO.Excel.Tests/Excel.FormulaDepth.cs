@@ -1083,7 +1083,7 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void Test_FormulaInspection_ExpandsSharedWholeRowColumnSpillAndThreeDimensionalReferences() {
             string filePath = Path.Combine(_directoryWithFiles, "ExcelFormulaDepth.SharedReferenceKinds.xlsx");
-            const string masterFormula = "SUM(A:A,$A:$A,1:1,$1:$1,A1#,$A1#,A$1#,$A$1#,A1%)+LOG10(A1)+LOG10 (A1)+FOO1 (A1)+SUM(A1 (A1:A2))+Q1:Q4!A1";
+            const string masterFormula = "SUM(A:A,$A:$A,1:1,$1:$1,A1#,$A1#,A$1#,$A$1#,A1%)+LOG10(A1)+LOG10 (A1)+FOO1 (A1)+SUM(A1 (A1))+SUM(A1 (A1:A2))+SUM(A1 (A1,B2))+SUM(A1 ((A1,B2),C3))+Q1:Q4!A1";
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 document.AddWorksheet("Q1");
@@ -1119,12 +1119,71 @@ namespace OfficeIMO.Tests {
             }
 
             using ExcelDocument loaded = ExcelDocument.Load(filePath);
-            loaded.Calculation.RegisterCustomFunction("FOO1", (_, _) => ExcelFormulaValue.Blank);
             ExcelSheet shared = loaded["Shared"];
             Assert.Equal(masterFormula, shared.GetFormulaText(1, 5));
+            // Built-in functions remain stable while cell-like tokens followed by
+            // parenthesized references participate in whitespace intersections.
             Assert.Equal(
-                "SUM(B:B,$A:$A,2:2,$1:$1,B2#,$A2#,B$1#,$A$1#,B2%)+LOG10(B2)+LOG10 (B2)+FOO1 (B2)+SUM(B2 (B2:B3))+Q1:Q4!B2",
+                "SUM(B:B,$A:$A,2:2,$1:$1,B2#,$A2#,B$1#,$A$1#,B2%)+LOG10(B2)+LOG10 (B2)+FOP2 (B2)+SUM(B2 (B2))+SUM(B2 (B2:B3))+SUM(B2 (B2,C3))+SUM(B2 ((B2,C3),D4))+Q1:Q4!B2",
                 shared.GetFormulaText(2, 6));
+        }
+
+        [Fact]
+        public void Test_FormulaInspection_DoesNotExpandOversizedSharedFormulaFollowers() {
+            using ExcelDocument document = ExcelDocument.Create();
+            ExcelSheet sheet = document.AddWorksheet("Shared");
+            Worksheet worksheet = sheet.WorksheetPart.Worksheet;
+            SheetData sheetData = worksheet.GetFirstChild<SheetData>()!;
+            const int followerCount = 1_000;
+            string masterFormula = new string('A', 8_193);
+            sheetData.RemoveAllChildren<Row>();
+            for (int rowIndex = 1; rowIndex <= followerCount; rowIndex++) {
+                var cell = new Cell { CellReference = "A" + rowIndex };
+                cell.CellFormula = rowIndex == 1
+                    ? new CellFormula(masterFormula) {
+                        FormulaType = CellFormulaValues.Shared,
+                        SharedIndex = 19U,
+                        Reference = "A1:A" + followerCount
+                    }
+                    : new CellFormula {
+                        FormulaType = CellFormulaValues.Shared,
+                        SharedIndex = 19U
+                    };
+                sheetData.Append(new Row(cell) { RowIndex = (uint)rowIndex });
+            }
+            worksheet.Save();
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            Assert.Equal(string.Empty, sheet.GetFormulaText(followerCount, 1));
+            ExcelFormulaInspection inspection = document.InspectFormulas();
+            stopwatch.Stop();
+
+            Assert.Equal(followerCount, inspection.Formulas.Count);
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), stopwatch.Elapsed.ToString());
+        }
+
+        [Fact]
+        public void Test_FormulaInspection_IgnoresDefinedNamesScopedToMalformedSheets() {
+            using ExcelDocument document = ExcelDocument.Create();
+            ExcelSheet valid = document.AddWorksheet("Valid");
+            valid.CellFormula(1, 1, "Broken!ScopedValue");
+
+            uint malformedSheetIndex = (uint)document.WorkbookRoot.Sheets!.Elements<Sheet>().Count();
+            document.WorkbookRoot.Sheets.Append(new Sheet {
+                Name = "Broken",
+                SheetId = malformedSheetIndex + 1U
+            });
+            document.WorkbookRoot.DefinedNames ??= new DefinedNames();
+            document.WorkbookRoot.DefinedNames.Append(new DefinedName("Valid!$B$1") {
+                Name = "ScopedValue",
+                LocalSheetId = malformedSheetIndex
+            });
+            document.WorkbookRoot.Save();
+
+            ExcelFormulaInspection inspection = document.InspectFormulas();
+            ExcelFormulaCellInfo formula = Assert.Single(inspection.Formulas);
+            Assert.Equal("A1", formula.CellReference);
+            Assert.Empty(formula.Dependencies);
         }
 
         [Fact]

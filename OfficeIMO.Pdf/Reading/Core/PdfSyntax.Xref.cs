@@ -552,8 +552,12 @@ internal static partial class PdfSyntax {
         int w0 = GetNonNegativeInt(widthsArray.Items[0]);
         int w1 = GetNonNegativeInt(widthsArray.Items[1]);
         int w2 = GetNonNegativeInt(widthsArray.Items[2]);
-        int entryWidth = w0 + w1 + w2;
-        if (entryWidth <= 0) {
+        if (w0 > sizeof(long) || w1 > sizeof(long) || w2 > sizeof(long)) {
+            yield break;
+        }
+
+        int entryWidth = checked(w0 + w1 + w2);
+        if (entryWidth <= 0 || entryWidth > data.Length) {
             yield break;
         }
 
@@ -561,7 +565,7 @@ internal static partial class PdfSyntax {
         int dataOffset = 0;
         foreach (var range in ranges) {
             for (int i = 0; i < range.Count; i++) {
-                if (dataOffset + entryWidth > data.Length) {
+                if (dataOffset > data.Length - entryWidth) {
                     yield break;
                 }
 
@@ -733,9 +737,8 @@ internal static partial class PdfSyntax {
         }
 
         byte[] data = Filters.StreamDecoder.Decode(objectStream.Dictionary, objectStream.Data, map, limits.MaxDecodedStreamBytes);
-        int n = (int)(objectStream.Dictionary.Get<PdfNumber>("N")?.Value ?? 0);
-        int first = (int)(objectStream.Dictionary.Get<PdfNumber>("First")?.Value ?? 0);
-        if (objectStreamIndex < 0 || objectStreamIndex >= n || n <= 0 || first <= 0 || first > data.Length) {
+        if (!TryReadObjectStreamLayout(objectStream.Dictionary, data.Length, limits, out int n, out int first)
+            || objectStreamIndex < 0 || objectStreamIndex >= n) {
             return false;
         }
 

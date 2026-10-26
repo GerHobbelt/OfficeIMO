@@ -1,7 +1,7 @@
 {
-  "generatedAtUtc": "2026-07-22T16:11:09.0470502Z",
+  "generatedAtUtc": "2026-07-23T09:22:06.6302032Z",
   "sourceCount": 17,
-  "referenceCount": 58291,
+  "referenceCount": 58376,
   "duplicateCount": 0,
   "references": [
     {
@@ -2453,6 +2453,15 @@
       "aliases": [
         "global::OfficeIMO.CSV.CsvLoadMode.Stream",
         "OfficeIMO.CSV.CsvLoadMode.Stream"
+      ]
+    },
+    {
+      "uid": "F:OfficeIMO.CSV.CsvLoadOptions.DefaultMaxInputBytes",
+      "name": "CsvLoadOptions.DefaultMaxInputBytes",
+      "href": "/api/csv/officeimo-csv-csvloadoptions/#field-defaultmaxinputbytes",
+      "aliases": [
+        "global::OfficeIMO.CSV.CsvLoadOptions.DefaultMaxInputBytes",
+        "OfficeIMO.CSV.CsvLoadOptions.DefaultMaxInputBytes"
       ]
     },
     {
@@ -11375,6 +11384,15 @@
       ]
     },
     {
+      "uid": "F:OfficeIMO.Excel.ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded",
+      "name": "ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded",
+      "href": "/api/excel/officeimo-excel-excelimageexportdiagnosticcodes/#field-conditionalreferencelimitexceeded",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded",
+        "OfficeIMO.Excel.ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded"
+      ]
+    },
+    {
       "uid": "F:OfficeIMO.Excel.ExcelImageExportDiagnosticCodes.ConditionalRuleUnsupported",
       "name": "ExcelImageExportDiagnosticCodes.ConditionalRuleUnsupported",
       "href": "/api/excel/officeimo-excel-excelimageexportdiagnosticcodes/#field-conditionalruleunsupported",
@@ -11696,6 +11714,24 @@
       "aliases": [
         "global::OfficeIMO.Excel.ExcelImageExportDiagnosticCodes.ThreadedCommentUnsupported",
         "OfficeIMO.Excel.ExcelImageExportDiagnosticCodes.ThreadedCommentUnsupported"
+      ]
+    },
+    {
+      "uid": "F:OfficeIMO.Excel.ExcelImageExportOptions.DefaultMaximumRenderedCells",
+      "name": "ExcelImageExportOptions.DefaultMaximumRenderedCells",
+      "href": "/api/excel/officeimo-excel-excelimageexportoptions/#field-defaultmaximumrenderedcells",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelImageExportOptions.DefaultMaximumRenderedCells",
+        "OfficeIMO.Excel.ExcelImageExportOptions.DefaultMaximumRenderedCells"
+      ]
+    },
+    {
+      "uid": "F:OfficeIMO.Excel.ExcelImageExportOptions.DefaultMaximumTotalSourceImageBytes",
+      "name": "ExcelImageExportOptions.DefaultMaximumTotalSourceImageBytes",
+      "href": "/api/excel/officeimo-excel-excelimageexportoptions/#field-defaultmaximumtotalsourceimagebytes",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelImageExportOptions.DefaultMaximumTotalSourceImageBytes",
+        "OfficeIMO.Excel.ExcelImageExportOptions.DefaultMaximumTotalSourceImageBytes"
       ]
     },
     {
@@ -18611,6 +18647,15 @@
       ]
     },
     {
+      "uid": "F:OfficeIMO.Html.HtmlRenderDiagnosticCodes.CollapsedTableBorderLimitExceeded",
+      "name": "HtmlRenderDiagnosticCodes.CollapsedTableBorderLimitExceeded",
+      "href": "/api/html/officeimo-html-htmlrenderdiagnosticcodes/#field-collapsedtableborderlimitexceeded",
+      "aliases": [
+        "global::OfficeIMO.Html.HtmlRenderDiagnosticCodes.CollapsedTableBorderLimitExceeded",
+        "OfficeIMO.Html.HtmlRenderDiagnosticCodes.CollapsedTableBorderLimitExceeded"
+      ]
+    },
+    {
       "uid": "F:OfficeIMO.Html.HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported",
       "name": "HtmlRenderDiagnosticCodes.ComplexTextShapingUnsupported",
       "href": "/api/html/officeimo-html-htmlrenderdiagnosticcodes/#field-complextextshapingunsupported",
@@ -18797,6 +18842,15 @@
       "aliases": [
         "global::OfficeIMO.Html.HtmlRenderDiagnosticCodes.InputCharacterLimitExceeded",
         "OfficeIMO.Html.HtmlRenderDiagnosticCodes.InputCharacterLimitExceeded"
+      ]
+    },
+    {
+      "uid": "F:OfficeIMO.Html.HtmlRenderDiagnosticCodes.LayoutOperationLimitExceeded",
+      "name": "HtmlRenderDiagnosticCodes.LayoutOperationLimitExceeded",
+      "href": "/api/html/officeimo-html-htmlrenderdiagnosticcodes/#field-layoutoperationlimitexceeded",
+      "aliases": [
+        "global::OfficeIMO.Html.HtmlRenderDiagnosticCodes.LayoutOperationLimitExceeded",
+        "OfficeIMO.Html.HtmlRenderDiagnosticCodes.LayoutOperationLimitExceeded"
       ]
     },
     {
@@ -19103,6 +19157,15 @@
       "aliases": [
         "global::OfficeIMO.Html.HtmlRenderDiagnosticCodes.TableHeaderRepeatSuppressed",
         "OfficeIMO.Html.HtmlRenderDiagnosticCodes.TableHeaderRepeatSuppressed"
+      ]
+    },
+    {
+      "uid": "F:OfficeIMO.Html.HtmlRenderDiagnosticCodes.TableLimitExceeded",
+      "name": "HtmlRenderDiagnosticCodes.TableLimitExceeded",
+      "href": "/api/html/officeimo-html-htmlrenderdiagnosticcodes/#field-tablelimitexceeded",
+      "aliases": [
+        "global::OfficeIMO.Html.HtmlRenderDiagnosticCodes.TableLimitExceeded",
+        "OfficeIMO.Html.HtmlRenderDiagnosticCodes.TableLimitExceeded"
       ]
     },
     {
@@ -25892,6 +25955,15 @@
       ]
     },
     {
+      "uid": "F:OfficeIMO.Pdf.PdfExternalSignatureOptions.DefaultMaxInputBytes",
+      "name": "PdfExternalSignatureOptions.DefaultMaxInputBytes",
+      "href": "/api/pdf/officeimo-pdf-pdfexternalsignatureoptions/#field-defaultmaxinputbytes",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfExternalSignatureOptions.DefaultMaxInputBytes",
+        "OfficeIMO.Pdf.PdfExternalSignatureOptions.DefaultMaxInputBytes"
+      ]
+    },
+    {
       "uid": "F:OfficeIMO.Pdf.PdfExternalSignatureSubFilter.CadesDetached",
       "name": "PdfExternalSignatureSubFilter.CadesDetached",
       "href": "/api/pdf/officeimo-pdf-pdfexternalsignaturesubfilter/#field-cadesdetached",
@@ -28250,6 +28322,15 @@
       ]
     },
     {
+      "uid": "F:OfficeIMO.Pdf.PdfReadLimitKind.OcrArtifacts",
+      "name": "PdfReadLimitKind.OcrArtifacts",
+      "href": "/api/pdf/officeimo-pdf-pdfreadlimitkind/#field-ocrartifacts",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfReadLimitKind.OcrArtifacts",
+        "OfficeIMO.Pdf.PdfReadLimitKind.OcrArtifacts"
+      ]
+    },
+    {
       "uid": "F:OfficeIMO.Pdf.PdfReadLimitKind.Pages",
       "name": "PdfReadLimitKind.Pages",
       "href": "/api/pdf/officeimo-pdf-pdfreadlimitkind/#field-pages",
@@ -28286,6 +28367,15 @@
       ]
     },
     {
+      "uid": "F:OfficeIMO.Pdf.PdfReadLimitKind.RenderBytes",
+      "name": "PdfReadLimitKind.RenderBytes",
+      "href": "/api/pdf/officeimo-pdf-pdfreadlimitkind/#field-renderbytes",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfReadLimitKind.RenderBytes",
+        "OfficeIMO.Pdf.PdfReadLimitKind.RenderBytes"
+      ]
+    },
+    {
       "uid": "F:OfficeIMO.Pdf.PdfReadLimitKind.RenderPages",
       "name": "PdfReadLimitKind.RenderPages",
       "href": "/api/pdf/officeimo-pdf-pdfreadlimitkind/#field-renderpages",
@@ -28310,6 +28400,15 @@
       "aliases": [
         "global::OfficeIMO.Pdf.PdfReadLimitKind.Revisions",
         "OfficeIMO.Pdf.PdfReadLimitKind.Revisions"
+      ]
+    },
+    {
+      "uid": "F:OfficeIMO.Pdf.PdfReadLimitKind.UnderstandingArtifacts",
+      "name": "PdfReadLimitKind.UnderstandingArtifacts",
+      "href": "/api/pdf/officeimo-pdf-pdfreadlimitkind/#field-understandingartifacts",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfReadLimitKind.UnderstandingArtifacts",
+        "OfficeIMO.Pdf.PdfReadLimitKind.UnderstandingArtifacts"
       ]
     },
     {
@@ -43547,6 +43646,15 @@
       "aliases": [
         "global::OfficeIMO.Word.WordListStyle.UpperLetterWithDot",
         "OfficeIMO.Word.WordListStyle.UpperLetterWithDot"
+      ]
+    },
+    {
+      "uid": "F:OfficeIMO.Word.WordLoadOptions.DefaultMaxInputBytes",
+      "name": "WordLoadOptions.DefaultMaxInputBytes",
+      "href": "/api/word/officeimo-word-wordloadoptions/#field-defaultmaxinputbytes",
+      "aliases": [
+        "global::OfficeIMO.Word.WordLoadOptions.DefaultMaxInputBytes",
+        "OfficeIMO.Word.WordLoadOptions.DefaultMaxInputBytes"
       ]
     },
     {
@@ -79947,6 +80055,16 @@
       ]
     },
     {
+      "uid": "M:OfficeIMO.Excel.ExcelDocument.InspectVbaProject(System.Boolean,System.Int64)",
+      "name": "ExcelDocument.InspectVbaProject",
+      "href": "/api/excel/officeimo-excel-exceldocument/#method-inspectvbaproject-boolean-int64",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelDocument.InspectVbaProject",
+        "OfficeIMO.Excel.ExcelDocument.InspectVbaProject",
+        "OfficeIMO.Excel.ExcelDocument.InspectVbaProject(System.Boolean,System.Int64)"
+      ]
+    },
+    {
       "uid": "M:OfficeIMO.Excel.ExcelDocument.InvalidateFormulas",
       "name": "ExcelDocument.InvalidateFormulas",
       "href": "/api/excel/officeimo-excel-exceldocument/#method-invalidateformulas",
@@ -91074,6 +91192,16 @@
       "aliases": [
         "global::OfficeIMO.Excel.ExcelSheet.GetMergedRanges",
         "OfficeIMO.Excel.ExcelSheet.GetMergedRanges"
+      ]
+    },
+    {
+      "uid": "M:OfficeIMO.Excel.ExcelSheet.GetMergedRanges(System.Int32)",
+      "name": "ExcelSheet.GetMergedRanges",
+      "href": "/api/excel/officeimo-excel-excelsheet/#method-getmergedranges-int32",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelSheet.GetMergedRanges",
+        "OfficeIMO.Excel.ExcelSheet.GetMergedRanges",
+        "OfficeIMO.Excel.ExcelSheet.GetMergedRanges(System.Int32)"
       ]
     },
     {
@@ -209225,6 +209353,16 @@
       ]
     },
     {
+      "uid": "M:OfficeIMO.Pdf.PdfVisualComparer.Compare(System.Byte[],System.Byte[],System.Threading.CancellationToken,OfficeIMO.Pdf.PdfPageSelection,OfficeIMO.Pdf.PdfVisualComparisonOptions,OfficeIMO.Pdf.PdfReadOptions,OfficeIMO.Pdf.PdfReadOptions)",
+      "name": "PdfVisualComparer.Compare",
+      "href": "/api/pdf/officeimo-pdf-pdfvisualcomparer/#method-compare-byte-byte-threading-cancellationtoken-officeimo-pdf-pdfpageselection-officeimo-pdf-pdfvisualcomparisonoptions-officeimo-pdf-pdfreadoptions-officeimo-pdf-pdfreadoptions",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfVisualComparer.Compare",
+        "OfficeIMO.Pdf.PdfVisualComparer.Compare",
+        "OfficeIMO.Pdf.PdfVisualComparer.Compare(System.Byte[],System.Byte[],System.Threading.CancellationToken,OfficeIMO.Pdf.PdfPageSelection,OfficeIMO.Pdf.PdfVisualComparisonOptions,OfficeIMO.Pdf.PdfReadOptions,OfficeIMO.Pdf.PdfReadOptions)"
+      ]
+    },
+    {
       "uid": "M:OfficeIMO.Pdf.PdfVisualComparer.Equals(System.Object)",
       "name": "PdfVisualComparer.Equals",
       "href": "/api/pdf/officeimo-pdf-pdfvisualcomparer/#method-equals-object",
@@ -216221,6 +216359,52 @@
       "aliases": [
         "global::OfficeIMO.PowerPoint.PowerPointAccessibilitySlideInfo.ToString",
         "OfficeIMO.PowerPoint.PowerPointAccessibilitySlideInfo.ToString"
+      ]
+    },
+    {
+      "uid": "M:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.#ctor",
+      "name": "PowerPointAnimationInspectionOptions.PowerPointAnimationInspectionOptions",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#constructor-ctor",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.#ctor",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.#ctor"
+      ]
+    },
+    {
+      "uid": "M:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.Equals(System.Object)",
+      "name": "PowerPointAnimationInspectionOptions.Equals",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#method-equals-object",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.Equals",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.Equals",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.Equals(System.Object)"
+      ]
+    },
+    {
+      "uid": "M:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.GetHashCode",
+      "name": "PowerPointAnimationInspectionOptions.GetHashCode",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#method-gethashcode",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.GetHashCode",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.GetHashCode"
+      ]
+    },
+    {
+      "uid": "M:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.GetType",
+      "name": "PowerPointAnimationInspectionOptions.GetType",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#method-gettype",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.GetType",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.GetType"
+      ]
+    },
+    {
+      "uid": "M:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.ToString",
+      "name": "PowerPointAnimationInspectionOptions.ToString",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#method-tostring",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.ToString",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.ToString"
       ]
     },
     {
@@ -231872,6 +232056,16 @@
       "aliases": [
         "global::OfficeIMO.PowerPoint.PowerPointPresentation.InspectAnimations",
         "OfficeIMO.PowerPoint.PowerPointPresentation.InspectAnimations"
+      ]
+    },
+    {
+      "uid": "M:OfficeIMO.PowerPoint.PowerPointPresentation.InspectAnimations(OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions)",
+      "name": "PowerPointPresentation.InspectAnimations",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointpresentation/#method-inspectanimations-officeimo-powerpoint-powerpointanimationinspectionoptions",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointPresentation.InspectAnimations",
+        "OfficeIMO.PowerPoint.PowerPointPresentation.InspectAnimations",
+        "OfficeIMO.PowerPoint.PowerPointPresentation.InspectAnimations(OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions)"
       ]
     },
     {
@@ -293058,6 +293252,16 @@
       ]
     },
     {
+      "uid": "M:OfficeIMO.Word.WordDocument.InspectVbaProject(System.Boolean,System.Int64)",
+      "name": "WordDocument.InspectVbaProject",
+      "href": "/api/word/officeimo-word-worddocument/#method-inspectvbaproject-boolean-int64",
+      "aliases": [
+        "global::OfficeIMO.Word.WordDocument.InspectVbaProject",
+        "OfficeIMO.Word.WordDocument.InspectVbaProject",
+        "OfficeIMO.Word.WordDocument.InspectVbaProject(System.Boolean,System.Int64)"
+      ]
+    },
+    {
       "uid": "M:OfficeIMO.Word.WordDocument.Load(System.IO.Stream,OfficeIMO.Word.WordLoadOptions)",
       "name": "WordDocument.Load",
       "href": "/api/word/officeimo-word-worddocument/#method-load-io-stream-officeimo-word-wordloadoptions",
@@ -329832,6 +330036,16 @@
       ]
     },
     {
+      "uid": "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions",
+      "name": "PowerPointAnimationInspectionOptions",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions",
+        "PowerPointAnimationInspectionOptions",
+        "T:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions"
+      ]
+    },
+    {
       "uid": "OfficeIMO.PowerPoint.PowerPointAnimationKind",
       "name": "PowerPointAnimationKind",
       "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationkind/",
@@ -339368,6 +339582,15 @@
       "aliases": [
         "global::OfficeIMO.CSV.CsvLoadOptions.MaxFieldLength",
         "OfficeIMO.CSV.CsvLoadOptions.MaxFieldLength"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.CSV.CsvLoadOptions.MaxInputBytes",
+      "name": "CsvLoadOptions.MaxInputBytes",
+      "href": "/api/csv/officeimo-csv-csvloadoptions/#property-maxinputbytes",
+      "aliases": [
+        "global::OfficeIMO.CSV.CsvLoadOptions.MaxInputBytes",
+        "OfficeIMO.CSV.CsvLoadOptions.MaxInputBytes"
       ]
     },
     {
@@ -361358,6 +361581,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Excel.ExcelImageExportOptions.MaximumRenderedCells",
+      "name": "ExcelImageExportOptions.MaximumRenderedCells",
+      "href": "/api/excel/officeimo-excel-excelimageexportoptions/#property-maximumrenderedcells",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelImageExportOptions.MaximumRenderedCells",
+        "OfficeIMO.Excel.ExcelImageExportOptions.MaximumRenderedCells"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Excel.ExcelImageExportOptions.MaximumTotalEncodedBytes",
       "name": "ExcelImageExportOptions.MaximumTotalEncodedBytes",
       "href": "/api/excel/officeimo-excel-excelimageexportoptions/#property-maximumtotalencodedbytes",
@@ -361373,6 +361605,15 @@
       "aliases": [
         "global::OfficeIMO.Excel.ExcelImageExportOptions.MaximumTotalRasterPixels",
         "OfficeIMO.Excel.ExcelImageExportOptions.MaximumTotalRasterPixels"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.ExcelImageExportOptions.MaximumTotalSourceImageBytes",
+      "name": "ExcelImageExportOptions.MaximumTotalSourceImageBytes",
+      "href": "/api/excel/officeimo-excel-excelimageexportoptions/#property-maximumtotalsourceimagebytes",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelImageExportOptions.MaximumTotalSourceImageBytes",
+        "OfficeIMO.Excel.ExcelImageExportOptions.MaximumTotalSourceImageBytes"
       ]
     },
     {
@@ -363866,6 +364107,42 @@
       "aliases": [
         "global::OfficeIMO.Excel.ExcelReadOptions.InferDataTableColumnTypes",
         "OfficeIMO.Excel.ExcelReadOptions.InferDataTableColumnTypes"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderBufferedCells",
+      "name": "ExcelReadOptions.MaxDataReaderBufferedCells",
+      "href": "/api/excel/officeimo-excel-excelreadoptions/#property-maxdatareaderbufferedcells",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderBufferedCells",
+        "OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderBufferedCells"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderChunkRows",
+      "name": "ExcelReadOptions.MaxDataReaderChunkRows",
+      "href": "/api/excel/officeimo-excel-excelreadoptions/#property-maxdatareaderchunkrows",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderChunkRows",
+        "OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderChunkRows"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderColumns",
+      "name": "ExcelReadOptions.MaxDataReaderColumns",
+      "href": "/api/excel/officeimo-excel-excelreadoptions/#property-maxdatareadercolumns",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderColumns",
+        "OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderColumns"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderSchemaSampleRows",
+      "name": "ExcelReadOptions.MaxDataReaderSchemaSampleRows",
+      "href": "/api/excel/officeimo-excel-excelreadoptions/#property-maxdatareaderschemasamplerows",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderSchemaSampleRows",
+        "OfficeIMO.Excel.ExcelReadOptions.MaxDataReaderSchemaSampleRows"
       ]
     },
     {
@@ -368702,6 +368979,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumRenderedCells",
+      "name": "ExcelWorkbookImageExportOptions.MaximumRenderedCells",
+      "href": "/api/excel/officeimo-excel-excelworkbookimageexportoptions/#property-maximumrenderedcells",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumRenderedCells",
+        "OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumRenderedCells"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumTotalEncodedBytes",
       "name": "ExcelWorkbookImageExportOptions.MaximumTotalEncodedBytes",
       "href": "/api/excel/officeimo-excel-excelworkbookimageexportoptions/#property-maximumtotalencodedbytes",
@@ -368717,6 +369003,15 @@
       "aliases": [
         "global::OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumTotalRasterPixels",
         "OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumTotalRasterPixels"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumTotalSourceImageBytes",
+      "name": "ExcelWorkbookImageExportOptions.MaximumTotalSourceImageBytes",
+      "href": "/api/excel/officeimo-excel-excelworkbookimageexportoptions/#property-maximumtotalsourceimagebytes",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumTotalSourceImageBytes",
+        "OfficeIMO.Excel.ExcelWorkbookImageExportOptions.MaximumTotalSourceImageBytes"
       ]
     },
     {
@@ -369611,6 +369906,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumRenderedCells",
+      "name": "ExcelWorksheetImageExportOptions.MaximumRenderedCells",
+      "href": "/api/excel/officeimo-excel-excelworksheetimageexportoptions/#property-maximumrenderedcells",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumRenderedCells",
+        "OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumRenderedCells"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumTotalEncodedBytes",
       "name": "ExcelWorksheetImageExportOptions.MaximumTotalEncodedBytes",
       "href": "/api/excel/officeimo-excel-excelworksheetimageexportoptions/#property-maximumtotalencodedbytes",
@@ -369626,6 +369930,15 @@
       "aliases": [
         "global::OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumTotalRasterPixels",
         "OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumTotalRasterPixels"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumTotalSourceImageBytes",
+      "name": "ExcelWorksheetImageExportOptions.MaximumTotalSourceImageBytes",
+      "href": "/api/excel/officeimo-excel-excelworksheetimageexportoptions/#property-maximumtotalsourceimagebytes",
+      "aliases": [
+        "global::OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumTotalSourceImageBytes",
+        "OfficeIMO.Excel.ExcelWorksheetImageExportOptions.MaximumTotalSourceImageBytes"
       ]
     },
     {
@@ -371030,6 +371343,15 @@
       "aliases": [
         "global::OfficeIMO.Excel.LegacyXls.Diagnostics.LegacyXlsImportDiagnostic.SheetName",
         "OfficeIMO.Excel.LegacyXls.Diagnostics.LegacyXlsImportDiagnostic.SheetName"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.LegacyXls.LegacyXlsImportOptions.MaxDecodedImageBytes",
+      "name": "LegacyXlsImportOptions.MaxDecodedImageBytes",
+      "href": "/api/excel/officeimo-excel-legacyxls-legacyxlsimportoptions/#property-maxdecodedimagebytes",
+      "aliases": [
+        "global::OfficeIMO.Excel.LegacyXls.LegacyXlsImportOptions.MaxDecodedImageBytes",
+        "OfficeIMO.Excel.LegacyXls.LegacyXlsImportOptions.MaxDecodedImageBytes"
       ]
     },
     {
@@ -386657,6 +386979,24 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Excel.Xlsb.XlsbImportOptions.MaxRecordCount",
+      "name": "XlsbImportOptions.MaxRecordCount",
+      "href": "/api/excel/officeimo-excel-xlsb-xlsbimportoptions/#property-maxrecordcount",
+      "aliases": [
+        "global::OfficeIMO.Excel.Xlsb.XlsbImportOptions.MaxRecordCount",
+        "OfficeIMO.Excel.Xlsb.XlsbImportOptions.MaxRecordCount"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Excel.Xlsb.XlsbImportOptions.MaxRowDefinitions",
+      "name": "XlsbImportOptions.MaxRowDefinitions",
+      "href": "/api/excel/officeimo-excel-xlsb-xlsbimportoptions/#property-maxrowdefinitions",
+      "aliases": [
+        "global::OfficeIMO.Excel.Xlsb.XlsbImportOptions.MaxRowDefinitions",
+        "OfficeIMO.Excel.Xlsb.XlsbImportOptions.MaxRowDefinitions"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Excel.Xlsb.XlsbImportOptions.MaxSharedStrings",
       "name": "XlsbImportOptions.MaxSharedStrings",
       "href": "/api/excel/officeimo-excel-xlsb-xlsbimportoptions/#property-maxsharedstrings",
@@ -389645,6 +389985,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Html.EmailImageExportOptions.MaxCollapsedTableBorderSegments",
+      "name": "EmailImageExportOptions.MaxCollapsedTableBorderSegments",
+      "href": "/api/html/officeimo-html-emailimageexportoptions/#property-maxcollapsedtablebordersegments",
+      "aliases": [
+        "global::OfficeIMO.Html.EmailImageExportOptions.MaxCollapsedTableBorderSegments",
+        "OfficeIMO.Html.EmailImageExportOptions.MaxCollapsedTableBorderSegments"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Html.EmailImageExportOptions.MaxColumnCount",
       "name": "EmailImageExportOptions.MaxColumnCount",
       "href": "/api/html/officeimo-html-emailimageexportoptions/#property-maxcolumncount",
@@ -389753,6 +390102,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Html.EmailImageExportOptions.MaxLayoutOperations",
+      "name": "EmailImageExportOptions.MaxLayoutOperations",
+      "href": "/api/html/officeimo-html-emailimageexportoptions/#property-maxlayoutoperations",
+      "aliases": [
+        "global::OfficeIMO.Html.EmailImageExportOptions.MaxLayoutOperations",
+        "OfficeIMO.Html.EmailImageExportOptions.MaxLayoutOperations"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Html.EmailImageExportOptions.MaxPageCount",
       "name": "EmailImageExportOptions.MaxPageCount",
       "href": "/api/html/officeimo-html-emailimageexportoptions/#property-maxpagecount",
@@ -389813,6 +390171,24 @@
       "aliases": [
         "global::OfficeIMO.Html.EmailImageExportOptions.MaxSurfaceWidth",
         "OfficeIMO.Html.EmailImageExportOptions.MaxSurfaceWidth"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Html.EmailImageExportOptions.MaxTableColumns",
+      "name": "EmailImageExportOptions.MaxTableColumns",
+      "href": "/api/html/officeimo-html-emailimageexportoptions/#property-maxtablecolumns",
+      "aliases": [
+        "global::OfficeIMO.Html.EmailImageExportOptions.MaxTableColumns",
+        "OfficeIMO.Html.EmailImageExportOptions.MaxTableColumns"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Html.EmailImageExportOptions.MaxTableRows",
+      "name": "EmailImageExportOptions.MaxTableRows",
+      "href": "/api/html/officeimo-html-emailimageexportoptions/#property-maxtablerows",
+      "aliases": [
+        "global::OfficeIMO.Html.EmailImageExportOptions.MaxTableRows",
+        "OfficeIMO.Html.EmailImageExportOptions.MaxTableRows"
       ]
     },
     {
@@ -392615,6 +392991,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Html.HtmlRenderOptions.MaxCollapsedTableBorderSegments",
+      "name": "HtmlRenderOptions.MaxCollapsedTableBorderSegments",
+      "href": "/api/html/officeimo-html-htmlrenderoptions/#property-maxcollapsedtablebordersegments",
+      "aliases": [
+        "global::OfficeIMO.Html.HtmlRenderOptions.MaxCollapsedTableBorderSegments",
+        "OfficeIMO.Html.HtmlRenderOptions.MaxCollapsedTableBorderSegments"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Html.HtmlRenderOptions.MaxColumnCount",
       "name": "HtmlRenderOptions.MaxColumnCount",
       "href": "/api/html/officeimo-html-htmlrenderoptions/#property-maxcolumncount",
@@ -392723,6 +393108,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Html.HtmlRenderOptions.MaxLayoutOperations",
+      "name": "HtmlRenderOptions.MaxLayoutOperations",
+      "href": "/api/html/officeimo-html-htmlrenderoptions/#property-maxlayoutoperations",
+      "aliases": [
+        "global::OfficeIMO.Html.HtmlRenderOptions.MaxLayoutOperations",
+        "OfficeIMO.Html.HtmlRenderOptions.MaxLayoutOperations"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Html.HtmlRenderOptions.MaxPageCount",
       "name": "HtmlRenderOptions.MaxPageCount",
       "href": "/api/html/officeimo-html-htmlrenderoptions/#property-maxpagecount",
@@ -392783,6 +393177,24 @@
       "aliases": [
         "global::OfficeIMO.Html.HtmlRenderOptions.MaxSurfaceWidth",
         "OfficeIMO.Html.HtmlRenderOptions.MaxSurfaceWidth"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Html.HtmlRenderOptions.MaxTableColumns",
+      "name": "HtmlRenderOptions.MaxTableColumns",
+      "href": "/api/html/officeimo-html-htmlrenderoptions/#property-maxtablecolumns",
+      "aliases": [
+        "global::OfficeIMO.Html.HtmlRenderOptions.MaxTableColumns",
+        "OfficeIMO.Html.HtmlRenderOptions.MaxTableColumns"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Html.HtmlRenderOptions.MaxTableRows",
+      "name": "HtmlRenderOptions.MaxTableRows",
+      "href": "/api/html/officeimo-html-htmlrenderoptions/#property-maxtablerows",
+      "aliases": [
+        "global::OfficeIMO.Html.HtmlRenderOptions.MaxTableRows",
+        "OfficeIMO.Html.HtmlRenderOptions.MaxTableRows"
       ]
     },
     {
@@ -422369,6 +422781,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Pdf.PdfAnnotationRemovalOptions.AllowResidualDataInAppendOnly",
+      "name": "PdfAnnotationRemovalOptions.AllowResidualDataInAppendOnly",
+      "href": "/api/pdf/officeimo-pdf-pdfannotationremovaloptions/#property-allowresidualdatainappendonly",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfAnnotationRemovalOptions.AllowResidualDataInAppendOnly",
+        "OfficeIMO.Pdf.PdfAnnotationRemovalOptions.AllowResidualDataInAppendOnly"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Pdf.PdfAnnotationRemovalOptions.ExecutionPreference",
       "name": "PdfAnnotationRemovalOptions.ExecutionPreference",
       "href": "/api/pdf/officeimo-pdf-pdfannotationremovaloptions/#property-executionpreference",
@@ -422411,6 +422832,15 @@
       "aliases": [
         "global::OfficeIMO.Pdf.PdfAnnotationRemovalOptions.Subtype",
         "OfficeIMO.Pdf.PdfAnnotationRemovalOptions.Subtype"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfAnnotationUpdateOptions.AllowResidualDataInAppendOnly",
+      "name": "PdfAnnotationUpdateOptions.AllowResidualDataInAppendOnly",
+      "href": "/api/pdf/officeimo-pdf-pdfannotationupdateoptions/#property-allowresidualdatainappendonly",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfAnnotationUpdateOptions.AllowResidualDataInAppendOnly",
+        "OfficeIMO.Pdf.PdfAnnotationUpdateOptions.AllowResidualDataInAppendOnly"
       ]
     },
     {
@@ -428804,6 +429234,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Pdf.PdfExternalSignatureOptions.CancellationToken",
+      "name": "PdfExternalSignatureOptions.CancellationToken",
+      "href": "/api/pdf/officeimo-pdf-pdfexternalsignatureoptions/#property-cancellationtoken",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfExternalSignatureOptions.CancellationToken",
+        "OfficeIMO.Pdf.PdfExternalSignatureOptions.CancellationToken"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Pdf.PdfExternalSignatureOptions.CertificationPermission",
       "name": "PdfExternalSignatureOptions.CertificationPermission",
       "href": "/api/pdf/officeimo-pdf-pdfexternalsignatureoptions/#property-certificationpermission",
@@ -428846,6 +429285,15 @@
       "aliases": [
         "global::OfficeIMO.Pdf.PdfExternalSignatureOptions.Location",
         "OfficeIMO.Pdf.PdfExternalSignatureOptions.Location"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfExternalSignatureOptions.MaxInputBytes",
+      "name": "PdfExternalSignatureOptions.MaxInputBytes",
+      "href": "/api/pdf/officeimo-pdf-pdfexternalsignatureoptions/#property-maxinputbytes",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfExternalSignatureOptions.MaxInputBytes",
+        "OfficeIMO.Pdf.PdfExternalSignatureOptions.MaxInputBytes"
       ]
     },
     {
@@ -437057,6 +437505,69 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxDiagnosticCharactersPerPage",
+      "name": "PdfOcrMergeOptions.MaxDiagnosticCharactersPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxdiagnosticcharactersperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOcrMergeOptions.MaxDiagnosticCharactersPerPage",
+        "OfficeIMO.Pdf.PdfOcrMergeOptions.MaxDiagnosticCharactersPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxDiagnosticsPerPage",
+      "name": "PdfOcrMergeOptions.MaxDiagnosticsPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxdiagnosticsperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOcrMergeOptions.MaxDiagnosticsPerPage",
+        "OfficeIMO.Pdf.PdfOcrMergeOptions.MaxDiagnosticsPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxMergedTextCharactersPerPage",
+      "name": "PdfOcrMergeOptions.MaxMergedTextCharactersPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxmergedtextcharactersperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOcrMergeOptions.MaxMergedTextCharactersPerPage",
+        "OfficeIMO.Pdf.PdfOcrMergeOptions.MaxMergedTextCharactersPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxNativeTextBlocksPerPage",
+      "name": "PdfOcrMergeOptions.MaxNativeTextBlocksPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxnativetextblocksperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOcrMergeOptions.MaxNativeTextBlocksPerPage",
+        "OfficeIMO.Pdf.PdfOcrMergeOptions.MaxNativeTextBlocksPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxNativeTextOverlapComparisonsPerPage",
+      "name": "PdfOcrMergeOptions.MaxNativeTextOverlapComparisonsPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxnativetextoverlapcomparisonsperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOcrMergeOptions.MaxNativeTextOverlapComparisonsPerPage",
+        "OfficeIMO.Pdf.PdfOcrMergeOptions.MaxNativeTextOverlapComparisonsPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxOcrTextCharactersPerPage",
+      "name": "PdfOcrMergeOptions.MaxOcrTextCharactersPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxocrtextcharactersperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOcrMergeOptions.MaxOcrTextCharactersPerPage",
+        "OfficeIMO.Pdf.PdfOcrMergeOptions.MaxOcrTextCharactersPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxOcrWordsPerPage",
+      "name": "PdfOcrMergeOptions.MaxOcrWordsPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxocrwordsperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOcrMergeOptions.MaxOcrWordsPerPage",
+        "OfficeIMO.Pdf.PdfOcrMergeOptions.MaxOcrWordsPerPage"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Pdf.PdfOcrMergeOptions.MaxPages",
       "name": "PdfOcrMergeOptions.MaxPages",
       "href": "/api/pdf/officeimo-pdf-pdfocrmergeoptions/#property-maxpages",
@@ -437855,6 +438366,15 @@
       "aliases": [
         "global::OfficeIMO.Pdf.PdfOptimizationOptions.MaximumDecodedImageBytes",
         "OfficeIMO.Pdf.PdfOptimizationOptions.MaximumDecodedImageBytes"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfOptimizationOptions.MaximumTotalDecodedImageBytes",
+      "name": "PdfOptimizationOptions.MaximumTotalDecodedImageBytes",
+      "href": "/api/pdf/officeimo-pdf-pdfoptimizationoptions/#property-maximumtotaldecodedimagebytes",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfOptimizationOptions.MaximumTotalDecodedImageBytes",
+        "OfficeIMO.Pdf.PdfOptimizationOptions.MaximumTotalDecodedImageBytes"
       ]
     },
     {
@@ -440549,6 +441069,15 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Pdf.PdfPageRenderOptions.MaxOutputBytesPerPage",
+      "name": "PdfPageRenderOptions.MaxOutputBytesPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfpagerenderoptions/#property-maxoutputbytesperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfPageRenderOptions.MaxOutputBytesPerPage",
+        "OfficeIMO.Pdf.PdfPageRenderOptions.MaxOutputBytesPerPage"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Pdf.PdfPageRenderOptions.MaxPages",
       "name": "PdfPageRenderOptions.MaxPages",
       "href": "/api/pdf/officeimo-pdf-pdfpagerenderoptions/#property-maxpages",
@@ -440564,6 +441093,15 @@
       "aliases": [
         "global::OfficeIMO.Pdf.PdfPageRenderOptions.MaxPixelsPerPage",
         "OfficeIMO.Pdf.PdfPageRenderOptions.MaxPixelsPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfPageRenderOptions.MaxTotalOutputBytes",
+      "name": "PdfPageRenderOptions.MaxTotalOutputBytes",
+      "href": "/api/pdf/officeimo-pdf-pdfpagerenderoptions/#property-maxtotaloutputbytes",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfPageRenderOptions.MaxTotalOutputBytes",
+        "OfficeIMO.Pdf.PdfPageRenderOptions.MaxTotalOutputBytes"
       ]
     },
     {
@@ -448784,6 +449322,24 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPageContext.MaxTextCharactersPerPage",
+      "name": "PdfUnderstandingPageContext.MaxTextCharactersPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfunderstandingpagecontext/#property-maxtextcharactersperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfUnderstandingPageContext.MaxTextCharactersPerPage",
+        "OfficeIMO.Pdf.PdfUnderstandingPageContext.MaxTextCharactersPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPageContext.MaxWordsPerPage",
+      "name": "PdfUnderstandingPageContext.MaxWordsPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfunderstandingpagecontext/#property-maxwordsperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfUnderstandingPageContext.MaxWordsPerPage",
+        "OfficeIMO.Pdf.PdfUnderstandingPageContext.MaxWordsPerPage"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPageContext.Page",
       "name": "PdfUnderstandingPageContext.Page",
       "href": "/api/pdf/officeimo-pdf-pdfunderstandingpagecontext/#property-page",
@@ -448919,12 +449475,57 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxLinesPerPage",
+      "name": "PdfUnderstandingPipelineOptions.MaxLinesPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfunderstandingpipelineoptions/#property-maxlinesperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxLinesPerPage",
+        "OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxLinesPerPage"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxPages",
       "name": "PdfUnderstandingPipelineOptions.MaxPages",
       "href": "/api/pdf/officeimo-pdf-pdfunderstandingpipelineoptions/#property-maxpages",
       "aliases": [
         "global::OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxPages",
         "OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxPages"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxRegionsPerPage",
+      "name": "PdfUnderstandingPipelineOptions.MaxRegionsPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfunderstandingpipelineoptions/#property-maxregionsperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxRegionsPerPage",
+        "OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxRegionsPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxRunsPerPage",
+      "name": "PdfUnderstandingPipelineOptions.MaxRunsPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfunderstandingpipelineoptions/#property-maxrunsperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxRunsPerPage",
+        "OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxRunsPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxTextCharactersPerPage",
+      "name": "PdfUnderstandingPipelineOptions.MaxTextCharactersPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfunderstandingpipelineoptions/#property-maxtextcharactersperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxTextCharactersPerPage",
+        "OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxTextCharactersPerPage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxWordsPerPage",
+      "name": "PdfUnderstandingPipelineOptions.MaxWordsPerPage",
+      "href": "/api/pdf/officeimo-pdf-pdfunderstandingpipelineoptions/#property-maxwordsperpage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxWordsPerPage",
+        "OfficeIMO.Pdf.PdfUnderstandingPipelineOptions.MaxWordsPerPage"
       ]
     },
     {
@@ -449771,6 +450372,42 @@
       "aliases": [
         "global::OfficeIMO.Pdf.PdfVisualComparisonOptions.IgnoredRegions",
         "OfficeIMO.Pdf.PdfVisualComparisonOptions.IgnoredRegions"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxPages",
+      "name": "PdfVisualComparisonOptions.MaxPages",
+      "href": "/api/pdf/officeimo-pdf-pdfvisualcomparisonoptions/#property-maxpages",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxPages",
+        "OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxPages"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxPixelsPerImage",
+      "name": "PdfVisualComparisonOptions.MaxPixelsPerImage",
+      "href": "/api/pdf/officeimo-pdf-pdfvisualcomparisonoptions/#property-maxpixelsperimage",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxPixelsPerImage",
+        "OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxPixelsPerImage"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxTotalOutputBytes",
+      "name": "PdfVisualComparisonOptions.MaxTotalOutputBytes",
+      "href": "/api/pdf/officeimo-pdf-pdfvisualcomparisonoptions/#property-maxtotaloutputbytes",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxTotalOutputBytes",
+        "OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxTotalOutputBytes"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxTotalPixels",
+      "name": "PdfVisualComparisonOptions.MaxTotalPixels",
+      "href": "/api/pdf/officeimo-pdf-pdfvisualcomparisonoptions/#property-maxtotalpixels",
+      "aliases": [
+        "global::OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxTotalPixels",
+        "OfficeIMO.Pdf.PdfVisualComparisonOptions.MaxTotalPixels"
       ]
     },
     {
@@ -450977,6 +451614,15 @@
       "aliases": [
         "global::OfficeIMO.PowerPoint.LegacyPpt.LegacyPptImportOptions.MaxRecordDepth",
         "OfficeIMO.PowerPoint.LegacyPpt.LegacyPptImportOptions.MaxRecordDepth"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.LegacyPpt.LegacyPptImportOptions.MaxSlideCount",
+      "name": "LegacyPptImportOptions.MaxSlideCount",
+      "href": "/api/powerpoint/officeimo-powerpoint-legacyppt-legacypptimportoptions/#property-maxslidecount",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.LegacyPpt.LegacyPptImportOptions.MaxSlideCount",
+        "OfficeIMO.PowerPoint.LegacyPpt.LegacyPptImportOptions.MaxSlideCount"
       ]
     },
     {
@@ -456425,6 +457071,24 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointAccessibilityOptions.MaximumGroupDepth",
+      "name": "PowerPointAccessibilityOptions.MaximumGroupDepth",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointaccessibilityoptions/#property-maximumgroupdepth",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAccessibilityOptions.MaximumGroupDepth",
+        "OfficeIMO.PowerPoint.PowerPointAccessibilityOptions.MaximumGroupDepth"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointAccessibilityOptions.MaximumShapeCount",
+      "name": "PowerPointAccessibilityOptions.MaximumShapeCount",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointaccessibilityoptions/#property-maximumshapecount",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAccessibilityOptions.MaximumShapeCount",
+        "OfficeIMO.PowerPoint.PowerPointAccessibilityOptions.MaximumShapeCount"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.PowerPoint.PowerPointAccessibilityOptions.MinimumLargeTextContrastRatio",
       "name": "PowerPointAccessibilityOptions.MinimumLargeTextContrastRatio",
       "href": "/api/powerpoint/officeimo-powerpoint-powerpointaccessibilityoptions/#property-minimumlargetextcontrastratio",
@@ -456665,6 +457329,42 @@
       "aliases": [
         "global::OfficeIMO.PowerPoint.PowerPointAccessibilitySlideInfo.Title",
         "OfficeIMO.PowerPoint.PowerPointAccessibilitySlideInfo.Title"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.CancellationToken",
+      "name": "PowerPointAnimationInspectionOptions.CancellationToken",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#property-cancellationtoken",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.CancellationToken",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.CancellationToken"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxAnimationNodes",
+      "name": "PowerPointAnimationInspectionOptions.MaxAnimationNodes",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#property-maxanimationnodes",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxAnimationNodes",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxAnimationNodes"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxXmlDepth",
+      "name": "PowerPointAnimationInspectionOptions.MaxXmlDepth",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#property-maxxmldepth",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxXmlDepth",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxXmlDepth"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxXmlElements",
+      "name": "PowerPointAnimationInspectionOptions.MaxXmlElements",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointanimationinspectionoptions/#property-maxxmlelements",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxXmlElements",
+        "OfficeIMO.PowerPoint.PowerPointAnimationInspectionOptions.MaxXmlElements"
       ]
     },
     {
@@ -462455,6 +463155,24 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointDeckPreflightOptions.MaximumGroupDepth",
+      "name": "PowerPointDeckPreflightOptions.MaximumGroupDepth",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointdeckpreflightoptions/#property-maximumgroupdepth",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointDeckPreflightOptions.MaximumGroupDepth",
+        "OfficeIMO.PowerPoint.PowerPointDeckPreflightOptions.MaximumGroupDepth"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointDeckPreflightOptions.MaximumShapeCount",
+      "name": "PowerPointDeckPreflightOptions.MaximumShapeCount",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointdeckpreflightoptions/#property-maximumshapecount",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointDeckPreflightOptions.MaximumShapeCount",
+        "OfficeIMO.PowerPoint.PowerPointDeckPreflightOptions.MaximumShapeCount"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.PowerPoint.PowerPointDeckPreflightOptions.MinimumCollisionOverlapRatio",
       "name": "PowerPointDeckPreflightOptions.MinimumCollisionOverlapRatio",
       "href": "/api/powerpoint/officeimo-powerpoint-powerpointdeckpreflightoptions/#property-minimumcollisionoverlapratio",
@@ -464693,6 +465411,15 @@
       "aliases": [
         "global::OfficeIMO.PowerPoint.PowerPointImageExportOptions.LogicalUnitsPerInch",
         "OfficeIMO.PowerPoint.PowerPointImageExportOptions.LogicalUnitsPerInch"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointImageExportOptions.MaxGroupShapeDepth",
+      "name": "PowerPointImageExportOptions.MaxGroupShapeDepth",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointimageexportoptions/#property-maxgroupshapedepth",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointImageExportOptions.MaxGroupShapeDepth",
+        "OfficeIMO.PowerPoint.PowerPointImageExportOptions.MaxGroupShapeDepth"
       ]
     },
     {
@@ -468338,6 +469065,15 @@
       "aliases": [
         "global::OfficeIMO.PowerPoint.PowerPointPresentationImageExportOptions.LogicalUnitsPerInch",
         "OfficeIMO.PowerPoint.PowerPointPresentationImageExportOptions.LogicalUnitsPerInch"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.PowerPoint.PowerPointPresentationImageExportOptions.MaxGroupShapeDepth",
+      "name": "PowerPointPresentationImageExportOptions.MaxGroupShapeDepth",
+      "href": "/api/powerpoint/officeimo-powerpoint-powerpointpresentationimageexportoptions/#property-maxgroupshapedepth",
+      "aliases": [
+        "global::OfficeIMO.PowerPoint.PowerPointPresentationImageExportOptions.MaxGroupShapeDepth",
+        "OfficeIMO.PowerPoint.PowerPointPresentationImageExportOptions.MaxGroupShapeDepth"
       ]
     },
     {
@@ -476672,6 +477408,15 @@
       "aliases": [
         "global::OfficeIMO.Reader.OfficeDocumentStructuredExtractionOptions.IncludeSourceDiagnostics",
         "OfficeIMO.Reader.OfficeDocumentStructuredExtractionOptions.IncludeSourceDiagnostics"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Reader.OfficeDocumentStructuredExtractionOptions.MaxChartContentCharacters",
+      "name": "OfficeDocumentStructuredExtractionOptions.MaxChartContentCharacters",
+      "href": "/api/reader/officeimo-reader-officedocumentstructuredextractionoptions/#property-maxchartcontentcharacters",
+      "aliases": [
+        "global::OfficeIMO.Reader.OfficeDocumentStructuredExtractionOptions.MaxChartContentCharacters",
+        "OfficeIMO.Reader.OfficeDocumentStructuredExtractionOptions.MaxChartContentCharacters"
       ]
     },
     {
@@ -492731,6 +493476,24 @@
       ]
     },
     {
+      "uid": "P:OfficeIMO.Word.LegacyDoc.LegacyDocImportOptions.MaxDecodedCharacters",
+      "name": "LegacyDocImportOptions.MaxDecodedCharacters",
+      "href": "/api/word/officeimo-word-legacydoc-legacydocimportoptions/#property-maxdecodedcharacters",
+      "aliases": [
+        "global::OfficeIMO.Word.LegacyDoc.LegacyDocImportOptions.MaxDecodedCharacters",
+        "OfficeIMO.Word.LegacyDoc.LegacyDocImportOptions.MaxDecodedCharacters"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Word.LegacyDoc.LegacyDocImportOptions.MaxDecodedImageBytes",
+      "name": "LegacyDocImportOptions.MaxDecodedImageBytes",
+      "href": "/api/word/officeimo-word-legacydoc-legacydocimportoptions/#property-maxdecodedimagebytes",
+      "aliases": [
+        "global::OfficeIMO.Word.LegacyDoc.LegacyDocImportOptions.MaxDecodedImageBytes",
+        "OfficeIMO.Word.LegacyDoc.LegacyDocImportOptions.MaxDecodedImageBytes"
+      ]
+    },
+    {
       "uid": "P:OfficeIMO.Word.LegacyDoc.LegacyDocImportOptions.MaxInputBytes",
       "name": "LegacyDocImportOptions.MaxInputBytes",
       "href": "/api/word/officeimo-word-legacydoc-legacydocimportoptions/#property-maxinputbytes",
@@ -500027,6 +500790,15 @@
       "aliases": [
         "global::OfficeIMO.Word.WordLoadOptions.AccessMode",
         "OfficeIMO.Word.WordLoadOptions.AccessMode"
+      ]
+    },
+    {
+      "uid": "P:OfficeIMO.Word.WordLoadOptions.MaxInputBytes",
+      "name": "WordLoadOptions.MaxInputBytes",
+      "href": "/api/word/officeimo-word-wordloadoptions/#property-maxinputbytes",
+      "aliases": [
+        "global::OfficeIMO.Word.WordLoadOptions.MaxInputBytes",
+        "OfficeIMO.Word.WordLoadOptions.MaxInputBytes"
       ]
     },
     {
@@ -567064,7 +567836,7 @@
       ]
     }
   ],
-  "previousReferenceCount": 58263,
-  "referenceDeltaCount": 28,
-  "referenceDeltaPercent": 0.0481
+  "previousReferenceCount": 58376,
+  "referenceDeltaCount": 0,
+  "referenceDeltaPercent": 0
 }

@@ -588,6 +588,23 @@ internal static partial class PdfWriter {
                                 }
                             }
 
+                            if (line == 0 && consumed > 0.001) {
+                                int minimumFirstPageBodyRows = Math.Min(
+                                    tableStyle.MinimumBodyRowsOnFirstPage,
+                                    Math.Max(0, table.FooterStartRowIndex - table.HeaderRowCount));
+                                if (minimumFirstPageBodyRows > 0) {
+                                    int firstPageRowCount = table.HeaderRowCount + minimumFirstPageBodyRows;
+                                    double firstPageGroupHeight =
+                                        tableSpacingBefore +
+                                        table.CaptionHeight +
+                                        GetTableRowsHeight(table.RowHeights, 0, firstPageRowCount, columnTableRowGap);
+                                    if (firstPageGroupHeight <= maxContentHeight + 0.001 &&
+                                        firstPageGroupHeight > remain + 0.001) {
+                                        break;
+                                    }
+                                }
+                            }
+
                             if (line == 0 && tableSpacingBefore > 0) {
                                 if (tableSpacingBefore > remain && consumed > 0) break;
                                 if (tableSpacingBefore > remain && consumed == 0) { remain = 0; break; }
@@ -800,11 +817,11 @@ internal static partial class PdfWriter {
                                     TableCellTextLayout lines = table.RowLines[rowIndex][c];
                                     int sourceStartLine = wholeRowSegment && cell.RowSpan > 1 ? 0 : startLine;
                                     int requestedLineCount = wholeRowSegment && cell.RowSpan > 1 ? lines.LineCount : lineCount;
-                                    int visibleLineCount = Math.Max(0, Math.Min(requestedLineCount, lines.LineCount - sourceStartLine));
+                                    double availableTextHeight = Math.Max(0, cellHeight - cellPadTop - cellPadBottom);
+                                    int visibleLineCount = LimitTableCellLineCountToHeight(lines, sourceStartLine, requestedLineCount, rowLeading, availableTextHeight);
                                     double verticalOffset = 0;
                                     double visibleTextHeight = 0D;
                                     if (visibleLineCount > 0) {
-                                        double availableTextHeight = Math.Max(0, cellHeight - cellPadTop - cellPadBottom);
                                         visibleTextHeight = MeasureTableCellTextHeight(lines, sourceStartLine, visibleLineCount, rowLeading);
                                         double visibleContentHeight = MeasureTableCellContentHeight(cell, lines, sourceStartLine, visibleLineCount, rowLeading, innerW);
                                         double unusedTextHeight = Math.Max(0, availableTextHeight - visibleContentHeight);

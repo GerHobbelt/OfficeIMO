@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 namespace OfficeIMO.Pdf;
 
 /// <summary>Mutable serialized-object table that spills object bodies to a temporary file after a bounded memory budget.</summary>
-internal sealed class PdfObjectStore : IList<byte[]>, IReadOnlyList<byte[]>, IDisposable {
+internal sealed class PdfObjectStore : IPdfObjectStore {
     internal const long DefaultMemoryLimitBytes = 16L * 1024L * 1024L;
 
     private readonly List<Entry> _entries = new List<Entry>();
@@ -191,8 +191,7 @@ internal sealed class PdfObjectStore : IList<byte[]>, IReadOnlyList<byte[]>, IDi
 
     private void EnsureSpillStorage() {
         if (_spillStream != null) return;
-        string path = Path.Combine(Path.GetTempPath(), "OfficeIMO.Pdf-" + Guid.NewGuid().ToString("N") + ".objects");
-        var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 81920, FileOptions.None);
+        FileStream stream = PdfTemporaryFile.Create(".objects", FileOptions.RandomAccess, out string path);
         _spillPath = path;
         _spillStream = stream;
         for (int index = 0; index < _entries.Count; index++) {

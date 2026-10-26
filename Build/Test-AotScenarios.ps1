@@ -25,7 +25,7 @@ if ([string]::IsNullOrWhiteSpace($RuntimeIdentifier)) {
 }
 
 $scenarios = @(
-    [ordered]@{ id = 'production-libraries'; title = 'Production library coverage: 85 fully rooted plus bounded Google adapter'; project = 'OfficeIMO.All.AotSmoke/OfficeIMO.All.AotSmoke.csproj'; targetFramework = 'net10.0' },
+    [ordered]@{ id = 'production-libraries'; title = 'Production library coverage: 86 fully rooted plus bounded Google adapter'; project = 'OfficeIMO.All.AotSmoke/OfficeIMO.All.AotSmoke.csproj'; targetFramework = 'net10.0' },
     [ordered]@{ id = 'word'; title = 'Word create, save, and reload'; project = 'OfficeIMO.Word.AotSmoke/OfficeIMO.Word.AotSmoke.csproj' },
     [ordered]@{ id = 'excel'; title = 'Excel typed table create, save, and reload'; project = 'OfficeIMO.Excel.AotSmoke/OfficeIMO.Excel.AotSmoke.csproj' },
     [ordered]@{ id = 'powerpoint'; title = 'PowerPoint chart create, duplicate, save, and reload'; project = 'OfficeIMO.PowerPoint.AotSmoke/OfficeIMO.PowerPoint.AotSmoke.csproj' },
@@ -35,7 +35,8 @@ $scenarios = @(
     [ordered]@{ id = 'reader-all'; title = 'Reader all-formats registration and representative extraction'; project = 'OfficeIMO.Reader.All.AotSmoke/OfficeIMO.Reader.All.AotSmoke.csproj'; targetFramework = 'net10.0' },
     [ordered]@{ id = 'html-pdf-image'; title = 'HTML to SVG, PNG, and searchable PDF'; project = 'OfficeIMO.Html.AotSmoke/OfficeIMO.Html.AotSmoke.csproj' },
     [ordered]@{ id = 'markup-cli'; title = 'Markup production CLI startup and command discovery'; project = 'OfficeIMO.Markup.Cli/OfficeIMO.Markup.Cli.csproj'; targetFramework = 'net10.0'; aotValidation = $true; runArguments = @('--help') },
-    [ordered]@{ id = 'reader-tool'; title = 'Reader production CLI startup and command discovery'; project = 'OfficeIMO.Reader.Tool/OfficeIMO.Reader.Tool.csproj'; targetFramework = 'net10.0'; aotValidation = $true; runArguments = @('--help') }
+    [ordered]@{ id = 'reader-tool'; title = 'Reader production CLI startup and command discovery'; project = 'OfficeIMO.Reader.Tool/OfficeIMO.Reader.Tool.csproj'; targetFramework = 'net10.0'; aotValidation = $true; runArguments = @('--help') },
+    [ordered]@{ id = 'html-tool'; title = 'HTML production CLI startup and capability discovery'; project = 'OfficeIMO.Html.Tool/OfficeIMO.Html.Tool.csproj'; targetFramework = 'net10.0'; aotValidation = $true; runArguments = @('--help') }
 )
 
 $artifactRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("OfficeIMO-AotValidation-" + [guid]::NewGuid().ToString('N'))

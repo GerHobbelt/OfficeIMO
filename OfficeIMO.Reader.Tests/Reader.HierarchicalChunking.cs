@@ -309,6 +309,53 @@ public sealed class ReaderHierarchicalChunkingTests {
     }
 
     [Fact]
+    public void Chunk_DocumentPreservesKnownInputCountAtLimit() {
+        var options = new ReaderHierarchicalChunkingOptions {
+            MaxTokens = 10,
+            OverlapTokens = 0,
+            MaxInputChunks = 1,
+            IncludeContextInText = false,
+            TokenCounter = WordCounter
+        };
+        var exactDocument = new OfficeDocumentReadResult {
+            Chunks = new[] { CreateChunk("first", "first block") }
+        };
+        var truncatedDocument = new OfficeDocumentReadResult {
+            Chunks = new[] {
+                CreateChunk("first", "first block"),
+                CreateChunk("second", "second block")
+            }
+        };
+
+        ReaderChunkHierarchyResult exact = ReaderHierarchicalChunker.Chunk(exactDocument, options);
+        ReaderChunkHierarchyResult truncated = ReaderHierarchicalChunker.Chunk(truncatedDocument, options);
+
+        Assert.DoesNotContain(exact.Diagnostics, diagnostic => diagnostic.Code == "hierarchical-input-chunk-limit");
+        Assert.Contains(truncated.Diagnostics, diagnostic => diagnostic.Code == "hierarchical-input-chunk-limit");
+    }
+
+    [Fact]
+    public void Chunk_DoesNotAdvanceLazySourceBeyondInputLimit() {
+        var options = new ReaderHierarchicalChunkingOptions {
+            MaxTokens = 10,
+            OverlapTokens = 0,
+            MaxInputChunks = 1,
+            IncludeContextInText = false,
+            TokenCounter = WordCounter
+        };
+
+        ReaderChunkHierarchyResult result = ReaderHierarchicalChunker.Chunk(ThrowAfterFirstChunk(), options);
+
+        Assert.Single(result.Chunks);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "hierarchical-input-chunk-limit");
+    }
+
+    private static IEnumerable<ReaderChunk> ThrowAfterFirstChunk() {
+        yield return CreateChunk("first", "first block");
+        throw new InvalidOperationException("The chunker advanced beyond MaxInputChunks.");
+    }
+
+    [Fact]
     public void Chunk_BoundsFallbackInspectionWhenSourceBlocksAreDuplicates() {
         var duplicate = new OfficeDocumentBlock { Id = "duplicate", Text = "body" };
         var blocks = new CountingBlockList(duplicate, 1000);
@@ -401,6 +448,83 @@ public sealed class ReaderHierarchicalChunkingTests {
     }
 
     [Fact]
+    public void Chunk_OrdersFallbackPageBodiesBeforeLaterPageHeadings() {
+        var pageOneHeading = new OfficeDocumentBlock {
+            Id = "p1-heading",
+            Kind = "heading",
+            Level = 1,
+            Text = "Page one",
+            Location = new ReaderLocation { Page = 1, SourceBlockIndex = 0 }
+        };
+        var pageTwoHeading = new OfficeDocumentBlock {
+            Id = "p2-heading",
+            Kind = "heading",
+            Level = 1,
+            Text = "Page two",
+            Location = new ReaderLocation { Page = 2, SourceBlockIndex = 0 }
+        };
+        var pageOneBody = new OfficeDocumentBlock {
+            Id = "p1-body",
+            Kind = "paragraph",
+            Text = "First body"
+        };
+        var pageTwoBody = new OfficeDocumentBlock {
+            Id = "p2-body",
+            Kind = "paragraph",
+            Text = "Second body"
+        };
+        var document = new OfficeDocumentReadResult {
+            Kind = ReaderInputKind.Text,
+            Blocks = new[] { pageOneHeading, pageTwoHeading },
+            Pages = new[] {
+                new OfficeDocumentPage {
+                    Number = 1,
+                    Location = new ReaderLocation { Page = 1 },
+                    Blocks = new[] { pageOneBody }
+                },
+                new OfficeDocumentPage {
+                    Number = 2,
+                    Location = new ReaderLocation { Page = 2 },
+                    Blocks = new[] { pageTwoBody }
+                }
+            }
+        };
+
+        ReaderChunkHierarchyResult result = ReaderHierarchicalChunker.Chunk(
+            document,
+            new ReaderHierarchicalChunkingOptions {
+                MaxTokens = 20,
+                OverlapTokens = 0,
+                MaxInputChunks = 8,
+                IncludeContextInText = false,
+                TokenCounter = WordCounter
+            });
+
+        Assert.Equal(
+            new[] { "Page one", "First body", "Page two", "Second body" },
+            result.Chunks.Select(chunk => chunk.Text));
+        Assert.Equal("Page one", result.Chunks[1].Location.HeadingPath);
+        Assert.Equal("Page two", result.Chunks[3].Location.HeadingPath);
+
+        ReaderChunkHierarchyResult bounded = ReaderHierarchicalChunker.Chunk(
+            document,
+            new ReaderHierarchicalChunkingOptions {
+                MaxTokens = 20,
+                OverlapTokens = 0,
+                MaxInputChunks = 2,
+                IncludeContextInText = false,
+                TokenCounter = WordCounter
+            });
+
+        Assert.Equal(
+            new[] { "Page one", "First body" },
+            bounded.Chunks.Select(chunk => chunk.Text));
+        Assert.Contains(
+            bounded.Diagnostics,
+            diagnostic => diagnostic.Code == "hierarchical-input-chunk-limit");
+    }
+
+    [Fact]
     public void Chunk_InheritsPageLocationBeyondInputChunkOrdinal() {
         var block = new OfficeDocumentBlock { Id = "retained", Text = "body" };
         var document = new OfficeDocumentReadResult {
@@ -427,7 +551,7 @@ public sealed class ReaderHierarchicalChunkingTests {
     }
 
     [Fact]
-    public void Chunk_InheritsPageLocationPastUnrelatedPageBlocks() {
+    public void Chunk_OrdersEarlierPageBlocksAndInheritsLaterAggregatePageLocation() {
         var retained = new OfficeDocumentBlock { Id = "retained", Text = "body" };
         var unrelated = new OfficeDocumentBlock { Id = "unrelated", Text = "other" };
         var document = new OfficeDocumentReadResult {
@@ -443,13 +567,14 @@ public sealed class ReaderHierarchicalChunkingTests {
             new ReaderHierarchicalChunkingOptions {
                 MaxTokens = 10,
                 OverlapTokens = 0,
-                MaxInputChunks = 1,
+                MaxInputChunks = 2,
                 IncludeContextInText = false,
                 TokenCounter = WordCounter
             });
 
-        ReaderChunk chunk = Assert.Single(result.Chunks);
-        Assert.Equal(2, chunk.Location.Page);
+        Assert.Equal(new[] { "other", "body" }, result.Chunks.Select(chunk => chunk.Text));
+        Assert.Equal(1, result.Chunks[0].Location.Page);
+        Assert.Equal(2, result.Chunks[1].Location.Page);
     }
 
     [Fact]
@@ -476,6 +601,32 @@ public sealed class ReaderHierarchicalChunkingTests {
 
         ReaderChunk chunk = Assert.Single(result.Chunks);
         Assert.Equal(7, chunk.Location.Page);
+    }
+
+    [Fact]
+    public void Chunk_DoesNotReportPageInspectionLimitAtExactFinalBlock() {
+        var retained = new OfficeDocumentBlock { Id = "retained", Text = "body" };
+        OfficeDocumentBlock[] pageBlocks = Enumerable.Repeat(retained, 15).ToArray();
+        var document = new OfficeDocumentReadResult {
+            Kind = ReaderInputKind.Text,
+            Blocks = new[] { retained },
+            Pages = new[] { new OfficeDocumentPage { Number = 7, Blocks = pageBlocks } }
+        };
+
+        ReaderChunkHierarchyResult result = ReaderHierarchicalChunker.Chunk(document,
+            new ReaderHierarchicalChunkingOptions {
+                MaxTokens = 10,
+                OverlapTokens = 0,
+                MaxInputChunks = 1,
+                IncludeContextInText = false,
+                TokenCounter = WordCounter
+            });
+
+        ReaderChunk chunk = Assert.Single(result.Chunks);
+        Assert.Equal(7, chunk.Location.Page);
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "hierarchical-input-chunk-limit");
     }
 
     [Fact]
@@ -557,7 +708,7 @@ public sealed class ReaderHierarchicalChunkingTests {
             });
 
         Assert.Single(result.Chunks);
-        Assert.Equal(20, pages.ReadCount);
+        Assert.Equal(16, pages.ReadCount);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "hierarchical-input-chunk-limit");
     }
 

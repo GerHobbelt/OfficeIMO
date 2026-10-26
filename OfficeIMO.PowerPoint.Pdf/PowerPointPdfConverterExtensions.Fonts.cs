@@ -48,7 +48,11 @@ public static partial class PowerPointPdfConverterExtensions {
             fallbackFeatures &= ~PdfCore.PdfTextFallbackFeatures.DocumentFont;
         }
 
-        pdfOptions.UseTextFallbacks(fallbackFeatures, reservedFontSlots, options.ResourcePolicy.AllowSystemFontEmbedding);
+        pdfOptions.UseTextFallbacks(
+            fallbackFeatures,
+            reservedFontSlots,
+            options.ResourcePolicy.AllowSystemFontEmbedding,
+            preserveConfiguredFontSlots);
     }
 
     private static bool TryApplyPdfFontFamily(string? familyName, PdfCore.PdfOptions pdfOptions, bool embedSystemFont, bool requireEmbeddedFont = false) {
@@ -283,7 +287,8 @@ public static partial class PowerPointPdfConverterExtensions {
                 return;
             }
 
-            bool embedSystemFont = options.ResourcePolicy.AllowSystemFontEmbedding;
+            bool embedSystemFont = options.ResourcePolicy.AllowSystemFontEmbedding &&
+                options.ResourcePolicy.AllowDocumentFontEmbedding;
             if (embedSystemFont && pdfOptions.TryRegisterNamedOfficeFontFamily(trimmedFamilyName, out _)) {
                 return;
             }

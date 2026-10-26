@@ -140,6 +140,23 @@ public class DrawingSvgReaderTests {
     }
 
     [Fact]
+    public void SvgReaderChargesMalformedPathCommandsAgainstTheDocumentBudget() {
+        var commands = new StringBuilder("M0 0 ");
+        for (int index = 0; index < 10_000; index++) commands.Append("L1 1 ");
+        commands.Append('X');
+        string malformed = commands.ToString();
+        string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'>"
+            + "<path d='" + malformed + "'/><path d='" + malformed + "'/>"
+            + "<path d='M0 0 L10 0 L10 10 Z'/></svg>";
+
+        Assert.True(OfficeSvgDrawingReader.TryRead(Encoding.UTF8.GetBytes(svg), out OfficeDrawing? drawing, out int unsupported));
+
+        Assert.NotNull(drawing);
+        Assert.Empty(drawing!.Shapes);
+        Assert.Equal(3, unsupported);
+    }
+
+    [Fact]
     public void SvgReaderConvertsRotatedEllipticalArcsToBoundedCubicPaths() {
         const string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'>"
             + "<path fill='none' stroke='blue' d='M2 10 A8 6 30 0 1 18 10 A8 6 30 1 1 2 10 Z'/></svg>";
@@ -762,6 +779,65 @@ public class DrawingSvgReaderTests {
         Assert.Null(drawing.Shapes[2].Shape.FillColor);
         Assert.Equal(OfficeColor.Lime, drawing.Shapes[3].Shape.FillColor);
         Assert.Equal(OfficeColor.Lime, OfficeDrawingRasterRenderer.Render(drawing).GetPixel(35, 5));
+    }
+
+    [Fact]
+    public void SvgReaderCachesRepeatedGradientTransformResolution() {
+        const int shapeCount = 256;
+        string transform = string.Join(" ", Enumerable.Repeat("translate(0 0)", 32));
+        var svg = new StringBuilder(
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 1'><defs><linearGradient id='shared' gradientTransform='");
+        svg.Append(transform)
+            .Append("'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient></defs>");
+        for (int index = 0; index < shapeCount; index++) {
+            svg.Append("<rect x='").Append(index)
+                .Append("' width='1' height='1' fill='url(#shared)'/>");
+        }
+        svg.Append("</svg>");
+        var timer = Stopwatch.StartNew();
+
+        bool success = OfficeSvgDrawingReader.TryRead(
+            Encoding.UTF8.GetBytes(svg.ToString()),
+            out OfficeDrawing? drawing,
+            out int unsupported);
+        timer.Stop();
+
+        Assert.True(success);
+        Assert.NotNull(drawing);
+        Assert.Equal(0, unsupported);
+        Assert.Equal(shapeCount, drawing!.Shapes.Count);
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5), "Repeated gradient resolution exceeded the bounded parse time.");
+    }
+
+    [Fact]
+    public void SvgReaderCachesInvalidInheritedGradientDefinitions() {
+        const int childCount = 1024;
+        string transform = string.Join(" ", Enumerable.Repeat("translate(0 0)", 512));
+        var svg = new StringBuilder(
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1'><defs><linearGradient id='invalid' gradientTransform='");
+        svg.Append(transform).Append("' x1='0' y1='0' x2='0' y2='0'><stop stop-color='red'/></linearGradient>");
+        for (int index = 0; index < childCount; index++) {
+            svg.Append("<linearGradient id='child-").Append(index).Append("' href='#invalid'/>");
+        }
+        svg.Append("</defs>");
+        for (int index = 0; index < childCount; index++) {
+            svg.Append("<rect x='").Append(index)
+                .Append("' width='1' height='1' fill='url(#child-").Append(index).Append(")'/>");
+        }
+        svg.Append("</svg>");
+        var timer = Stopwatch.StartNew();
+
+        bool success = OfficeSvgDrawingReader.TryRead(
+            Encoding.UTF8.GetBytes(svg.ToString()),
+            out OfficeDrawing? drawing,
+            out int unsupported);
+        timer.Stop();
+
+        Assert.True(success);
+        Assert.NotNull(drawing);
+        Assert.Equal(childCount, unsupported);
+        Assert.Equal(childCount, drawing!.Shapes.Count);
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5), "Invalid inherited gradients were reparsed instead of cached.");
     }
 
     [Fact]

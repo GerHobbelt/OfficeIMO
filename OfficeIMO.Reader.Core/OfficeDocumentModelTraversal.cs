@@ -8,20 +8,32 @@ namespace OfficeIMO.Reader;
 
 internal static class OfficeDocumentModelTraversal {
     internal static IEnumerable<OfficeDocumentBlock> Blocks(OfficeDocumentReadResult document) {
+        IEnumerable<OfficeDocumentBlock> candidates =
+            (document.Blocks ?? System.Array.Empty<OfficeDocumentBlock>())
+            .Concat((document.Pages ?? System.Array.Empty<OfficeDocumentPage>())
+                .Where(page => page?.Blocks != null)
+                .SelectMany(page => page.Blocks));
+        foreach (OfficeDocumentBlock block in OrderBlocks(candidates)) yield return block;
+    }
+
+    internal static IReadOnlyList<OfficeDocumentBlock> OrderBlocks(
+        IEnumerable<OfficeDocumentBlock> candidates) =>
+        OrderBlocks(candidates, static block => block.Location);
+
+    internal static IReadOnlyList<OfficeDocumentBlock> OrderBlocks(
+        IEnumerable<OfficeDocumentBlock> candidates,
+        Func<OfficeDocumentBlock, ReaderLocation?> locationSelector) {
+        if (locationSelector == null) throw new ArgumentNullException(nameof(locationSelector));
         var seen = new HashSet<OfficeDocumentBlock>(ReferenceIdentityComparer<OfficeDocumentBlock>.Instance);
         var ordered = new List<OrderedBlock>();
         int insertionIndex = 0;
-        foreach (OfficeDocumentBlock block in document.Blocks ?? System.Array.Empty<OfficeDocumentBlock>()) {
-            if (block != null && seen.Add(block)) ordered.Add(new OrderedBlock(block, insertionIndex++));
-        }
-        foreach (OfficeDocumentPage page in document.Pages ?? System.Array.Empty<OfficeDocumentPage>()) {
-            if (page?.Blocks == null) continue;
-            foreach (OfficeDocumentBlock block in page.Blocks) {
-                if (block != null && seen.Add(block)) ordered.Add(new OrderedBlock(block, insertionIndex++));
+        foreach (OfficeDocumentBlock block in candidates) {
+            if (block != null && seen.Add(block)) {
+                ordered.Add(new OrderedBlock(block, locationSelector(block), insertionIndex++));
             }
         }
         ordered.Sort(CompareBlocks);
-        for (int index = 0; index < ordered.Count; index++) yield return ordered[index].Block;
+        return ordered.Select(item => item.Block).ToArray();
     }
 
     internal static IEnumerable<ReaderTable> Tables(OfficeDocumentReadResult document) {
@@ -113,11 +125,22 @@ internal static class OfficeDocumentModelTraversal {
         }
     }
 
-    internal static IEnumerable<OfficeDocumentFormField> Forms(OfficeDocumentReadResult document) {
+    internal static IEnumerable<OfficeDocumentFormField> Forms(
+        OfficeDocumentReadResult document,
+        int maxCandidates = int.MaxValue,
+        Action? candidateLimitExceeded = null) {
+        if (maxCandidates <= 0) yield break;
+        int candidateCount = 0;
         var seen = new HashSet<OfficeDocumentFormField>(ReferenceIdentityComparer<OfficeDocumentFormField>.Instance);
         var seenIds = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (OfficeDocumentFormField form in document.Forms ?? System.Array.Empty<OfficeDocumentFormField>()) {
-            if (form != null && seen.Add(form) &&
+            if (candidateCount >= maxCandidates) {
+                candidateLimitExceeded?.Invoke();
+                yield break;
+            }
+            candidateCount++;
+            if (form == null) continue;
+            if (seen.Add(form) &&
                 (string.IsNullOrWhiteSpace(form.Id) || seenIds.Add(form.Id))) {
                 yield return form;
             }
@@ -125,7 +148,13 @@ internal static class OfficeDocumentModelTraversal {
         foreach (OfficeDocumentPage page in document.Pages ?? System.Array.Empty<OfficeDocumentPage>()) {
             if (page?.Forms == null) continue;
             foreach (OfficeDocumentFormField form in page.Forms) {
-                if (form != null && seen.Add(form) &&
+                if (candidateCount >= maxCandidates) {
+                    candidateLimitExceeded?.Invoke();
+                    yield break;
+                }
+                candidateCount++;
+                if (form == null) continue;
+                if (seen.Add(form) &&
                     (string.IsNullOrWhiteSpace(form.Id) || seenIds.Add(form.Id))) {
                     yield return form;
                 }
@@ -137,6 +166,11 @@ internal static class OfficeDocumentModelTraversal {
             if (chunk?.FormFields == null) continue;
             for (int index = 0; index < chunk.FormFields.Count; index++) {
                 ReaderFormField field = chunk.FormFields[index];
+                if (candidateCount >= maxCandidates) {
+                    candidateLimitExceeded?.Invoke();
+                    yield break;
+                }
+                candidateCount++;
                 if (field == null) continue;
                 OfficeDocumentFormField form = ProjectChunkForm(chunk, field, chunkIndex, index);
                 if (seenIds.Add(form.Id)) yield return form;
@@ -219,9 +253,9 @@ internal static class OfficeDocumentModelTraversal {
     }
 
     private static int CompareBlocks(OrderedBlock left, OrderedBlock right) {
-        int comparison = string.CompareOrdinal(BuildContainerOrderKey(left.Block.Location), BuildContainerOrderKey(right.Block.Location));
+        int comparison = string.CompareOrdinal(BuildContainerOrderKey(left.Location), BuildContainerOrderKey(right.Location));
         if (comparison != 0) return comparison;
-        comparison = BuildBlockPosition(left.Block.Location).CompareTo(BuildBlockPosition(right.Block.Location));
+        comparison = BuildBlockPosition(left.Location).CompareTo(BuildBlockPosition(right.Location));
         return comparison != 0 ? comparison : left.InsertionIndex.CompareTo(right.InsertionIndex);
     }
 
@@ -432,12 +466,14 @@ internal static class OfficeDocumentModelTraversal {
     }
 
     private readonly struct OrderedBlock {
-        internal OrderedBlock(OfficeDocumentBlock block, int insertionIndex) {
+        internal OrderedBlock(OfficeDocumentBlock block, ReaderLocation? location, int insertionIndex) {
             Block = block;
+            Location = location;
             InsertionIndex = insertionIndex;
         }
 
         internal OfficeDocumentBlock Block { get; }
+        internal ReaderLocation? Location { get; }
         internal int InsertionIndex { get; }
     }
 }

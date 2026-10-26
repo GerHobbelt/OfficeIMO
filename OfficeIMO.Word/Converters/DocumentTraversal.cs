@@ -11,6 +11,11 @@ namespace OfficeIMO.Word {
         /// Describes list information for a paragraph.
         /// </summary>
         public readonly struct ListInfo {
+            /// <summary>Initializes a list descriptor using the original public constructor shape.</summary>
+            public ListInfo(int level, bool ordered, int start, NumberFormatValues? format, string? text, int? leftIndentTwips, int? hangingIndentTwips)
+                : this(level, ordered, start, format, text, leftIndentTwips, hangingIndentTwips, null, null, null, null, null, null) {
+            }
+
             /// <summary>
             /// Initializes a new instance of the <see cref="ListInfo"/> struct.
             /// </summary>
@@ -259,9 +264,12 @@ namespace OfficeIMO.Word {
                 return result;
             }
 
-            Dictionary<int, AbstractNum> abstracts = numbering.Elements<AbstractNum>()
-                .Where(abstractNum => abstractNum.AbstractNumberId?.Value != null)
-                .ToDictionary(abstractNum => abstractNum.AbstractNumberId!.Value, abstractNum => abstractNum);
+            var abstracts = new Dictionary<int, AbstractNum>();
+            foreach (AbstractNum abstractNum in numbering.Elements<AbstractNum>()) {
+                if (abstractNum.AbstractNumberId?.HasValue == true && !abstracts.ContainsKey(abstractNum.AbstractNumberId.Value)) {
+                    abstracts.Add(abstractNum.AbstractNumberId.Value, abstractNum);
+                }
+            }
 
             foreach (NumberingInstance instance in numbering.Elements<NumberingInstance>()) {
                 if (instance.NumberID?.Value == null) {
@@ -281,22 +289,25 @@ namespace OfficeIMO.Word {
                         return startOverrideValue?.Val?.HasValue == true && startOverrideValue.Val.Value == 1;
                     });
 
-                Dictionary<int, int> startOverrides = overrides
-                    .Where(levelOverride => levelOverride.LevelIndex?.Value != null)
-                    .Select(levelOverride => new {
-                        Level = levelOverride.LevelIndex!.Value,
-                        Start = levelOverride.GetFirstChild<StartOverrideNumberingValue>()?.Val
-                    })
-                    .Where(item => item.Start?.HasValue == true)
-                    .ToDictionary(item => item.Level, item => item.Start!.Value);
+                var startOverrides = new Dictionary<int, int>();
+                foreach (LevelOverride levelOverride in overrides) {
+                    StartOverrideNumberingValue? start = levelOverride.GetFirstChild<StartOverrideNumberingValue>();
+                    if (levelOverride.LevelIndex?.HasValue == true && start?.Val?.HasValue == true && !startOverrides.ContainsKey(levelOverride.LevelIndex.Value)) {
+                        startOverrides.Add(levelOverride.LevelIndex.Value, start.Val.Value);
+                    }
+                }
 
-                Dictionary<int, ListLevelDefinition> levels = abstractNum?.Elements<Level>()
-                    .Where(level => level.LevelIndex?.Value != null)
-                    .Select(level => {
+                var levels = new Dictionary<int, ListLevelDefinition>();
+                if (abstractNum != null) {
+                    foreach (Level level in abstractNum.Elements<Level>()) {
+                        if (level.LevelIndex?.HasValue != true || levels.ContainsKey(level.LevelIndex.Value)) {
+                            continue;
+                        }
+
                         var indentation = level.GetFirstChild<PreviousParagraphProperties>()?.GetFirstChild<Indentation>();
                         NumberingSymbolRunProperties? markerProperties = level.GetFirstChild<NumberingSymbolRunProperties>();
-                        return new ListLevelDefinition(
-                            level: level.LevelIndex!.Value,
+                        var definition = new ListLevelDefinition(
+                            level: level.LevelIndex.Value,
                             start: level.StartNumberingValue?.Val?.Value ?? 1,
                             numberFormat: level.NumberingFormat?.Val?.Value,
                             levelText: level.LevelText?.Val?.Value,
@@ -309,8 +320,9 @@ namespace OfficeIMO.Word {
                             markerFontSize: ResolveListMarkerFontSize(markerProperties),
                             levelJustification: level.LevelJustification?.Val?.Value,
                             levelSuffix: level.LevelSuffix?.Val?.Value);
-                    })
-                    .ToDictionary(level => level.Level, level => level) ?? new Dictionary<int, ListLevelDefinition>();
+                        levels.Add(definition.Level, definition);
+                    }
+                }
 
                 result[numberId] = new ListNumberingDefinition(
                     numberId,
@@ -462,7 +474,10 @@ namespace OfficeIMO.Word {
             string marker = pattern!;
             marker = marker.Replace("%CurrentLevel", FormatNumber(index, formats[level]));
             marker = Regex.Replace(marker, "%([0-9]+)", m => {
-                int lvl = int.Parse(m.Groups[1].Value) - 1;
+                if (!int.TryParse(m.Groups[1].Value, out int placeholderLevel) || placeholderLevel <= 0) {
+                    return m.Value;
+                }
+                int lvl = placeholderLevel - 1;
                 int value = lvl == level ? index : indices.TryGetValue(lvl, out int val) ? val - 1 : 0;
                 formats.TryGetValue(lvl, out NumberFormatValues? fmt);
                 return FormatNumber(value, fmt);
@@ -525,4 +540,3 @@ namespace OfficeIMO.Word {
         }
     }
 }
-
