@@ -34,12 +34,13 @@ namespace OfficeIMO.PowerPoint {
             }
 
             ChartPart chartPart = GetChartPart();
+            EmbeddedPackagePart? embedded = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartWriter.GetSharedEmbeddedWorkbook(chartPart);
+            byte[]? workbookBytes = embedded != null ? PowerPointUtils.BuildChartWorkbook(data) : null;
+            Action? preserveBindings = embedded != null ? OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartWriter.PrepareSharedWorkbookBindings(chartPart) : null;
             PowerPointUtils.UpdateChartData(chartPart, data);
-
-            EmbeddedPackagePart? embedded = chartPart.GetPartsOfType<EmbeddedPackagePart>().FirstOrDefault();
+            preserveBindings?.Invoke();
             if (embedded != null) {
-                byte[] workbookBytes = PowerPointUtils.BuildChartWorkbook(data);
-                using var stream = new MemoryStream(workbookBytes);
+                using var stream = new MemoryStream(workbookBytes!);
                 embedded.FeedData(stream);
             }
 
@@ -56,12 +57,13 @@ namespace OfficeIMO.PowerPoint {
             }
 
             ChartPart chartPart = GetChartPart();
+            EmbeddedPackagePart? embedded = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartWriter.GetSharedEmbeddedWorkbook(chartPart);
+            byte[]? workbookBytes = embedded != null ? PowerPointUtils.BuildChartWorkbook(data) : null;
+            Action? preserveBindings = embedded != null ? OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartWriter.PrepareSharedWorkbookBindings(chartPart) : null;
             PowerPointUtils.UpdateChartData(chartPart, data);
-
-            EmbeddedPackagePart? embedded = chartPart.GetPartsOfType<EmbeddedPackagePart>().FirstOrDefault();
+            preserveBindings?.Invoke();
             if (embedded != null) {
-                byte[] workbookBytes = PowerPointUtils.BuildChartWorkbook(data);
-                using var stream = new MemoryStream(workbookBytes);
+                using var stream = new MemoryStream(workbookBytes!);
                 embedded.FeedData(stream);
             }
 

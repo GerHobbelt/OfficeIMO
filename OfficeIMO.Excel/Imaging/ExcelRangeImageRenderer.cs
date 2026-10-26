@@ -392,7 +392,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(officeSnapshot);
+            OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(officeSnapshot, useMinimumCanvas: true, diagnostics);
             drawing.Fonts.AddRange(options.Fonts);
             drawing.AppendFontDiagnostics(
                 diagnostics ?? new List<OfficeImageExportDiagnostic>(),
@@ -432,7 +432,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(officeSnapshot);
+            OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(officeSnapshot, useMinimumCanvas: true, diagnostics);
             drawing.Fonts.AddRange(options.Fonts);
             drawing.AppendFontDiagnostics(
                 diagnostics ?? new List<OfficeImageExportDiagnostic>(),
@@ -521,8 +521,8 @@ namespace OfficeIMO.Excel {
                     renderKind: TryMapSeriesRenderKind(series.ChartType ?? snapshot.ChartType, out OfficeChartKind seriesKind, out _) ? seriesKind : null,
                     axisGroup: series.AxisGroup == OfficeChartAxisGroup.Secondary
                         ? OfficeChartAxisGroup.Secondary
-                        : OfficeChartAxisGroup.Primary)));
-            officeSnapshot = new OfficeChartSnapshot(snapshot.Name, snapshot.Title, kind, data, Math.Max(1D, width), Math.Max(1D, height), snapshot.Style, snapshot.Layout);
+                        : OfficeChartAxisGroup.Primary).WithPointStyles(series.PointStyles)));
+            officeSnapshot = new OfficeChartSnapshot(snapshot.Name, snapshot.Title, kind, data, Math.Max(1D, width), Math.Max(1D, height), snapshot.Style, snapshot.Layout, snapshot.RadialLayout);
             return true;
         }
 

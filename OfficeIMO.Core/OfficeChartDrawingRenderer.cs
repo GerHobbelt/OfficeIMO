@@ -18,10 +18,18 @@ public static partial class OfficeChartDrawingRenderer {
     /// <param name="snapshot">Chart snapshot to render.</param>
     /// <param name="useMinimumCanvas">Whether to expand small snapshots to the shared default minimum chart canvas.</param>
     /// <returns>Vector drawing containing the chart plot area and series marks.</returns>
-    public static OfficeDrawing Render(OfficeChartSnapshot snapshot, bool useMinimumCanvas = true) {
+    public static OfficeDrawing Render(OfficeChartSnapshot snapshot, bool useMinimumCanvas = true) =>
+        Render(snapshot, useMinimumCanvas, diagnostics: null);
+
+    /// <summary>Renders a chart and reports unsupported point appearance to the caller's diagnostic sink.</summary>
+    public static OfficeDrawing Render(OfficeChartSnapshot snapshot, bool useMinimumCanvas,
+        ICollection<OfficeImageExportDiagnostic>? diagnostics) {
         if (snapshot == null) {
             throw new ArgumentNullException(nameof(snapshot));
         }
+        if (HasUnsupportedAreaPointStyles(snapshot)) diagnostics?.Add(new OfficeImageExportDiagnostic(
+            OfficeImageExportDiagnosticSeverity.Warning, "ChartPointStylesUnsupported", AreaPointStyleWarning,
+            snapshot.Name, OfficeConversionLossKind.Approximation));
 
         double width = useMinimumCanvas ? Math.Max(MinimumChartCanvasWidth, snapshot.WidthPoints) : Math.Max(1D, snapshot.WidthPoints);
         double height = useMinimumCanvas ? Math.Max(MinimumChartCanvasHeight, snapshot.HeightPoints) : Math.Max(1D, snapshot.HeightPoints);
@@ -39,28 +47,28 @@ public static partial class OfficeChartDrawingRenderer {
             style.ShowBorder ? style.ChartBorderWidth ?? 0.75D : 0D,
             style.ChartBorderDashStyle ?? OfficeStrokeDashStyle.Solid);
         double contentTop = 0D;
+        Action? drawOverlayTitle = null;
         if (!string.IsNullOrWhiteSpace(snapshot.Title)) {
-            double titleHeight = Math.Min(22D, Math.Max(16D, height * 0.12D));
-            double titleTop = Math.Min(layout.TitleTopPadding, Math.Max(0D, height - titleHeight));
+            double defaultTitleHeight = Math.Min(22D, Math.Max(16D, height * 0.12D));
             string titleFontFamily = style.TitleFontFamily ?? style.FontFamily;
-            double titleFontSize = style.TitleFontSize ?? Math.Min(12D, Math.Max(8D, titleHeight - 7D));
+            double titleFontSize = style.TitleFontSize ?? Math.Min(12D, Math.Max(8D, defaultTitleHeight - 7D));
+            double titleHeight = Math.Min(height, Math.Max(defaultTitleHeight, titleFontSize * 1.25D + 4D));
+            double titleTop = Math.Min(layout.TitleTopPadding, Math.Max(0D, height - titleHeight));
             OfficeFontStyle titleFontStyle = style.TitleFontStyle ?? OfficeFontStyle.Bold;
-            drawing.AddText(
-                snapshot.Title!,
-                8D,
-                titleTop,
-                Math.Max(1D, width - 16D),
-                Math.Max(1D, titleHeight - 4D),
-                new OfficeFontInfo(titleFontFamily, titleFontSize, titleFontStyle),
-                style.TitleColor,
-                OfficeTextAlignment.Center);
-            if (!layout.OverlayTitle) {
+            Action drawTitle = () => AddChartText(drawing, snapshot.Title!, 8D, titleTop, Math.Max(1D, width - 16D),
+                Math.Max(1D, titleHeight - 4D), titleFontSize, style.TitleColor,
+                OfficeTextAlignment.Center, style, titleFontFamily, titleFontStyle);
+            if (layout.OverlayTitle) {
+                drawOverlayTitle = drawTitle;
+            } else {
+                drawTitle();
                 contentTop = titleHeight + Math.Max(0D, titleTop - 5D);
             }
         }
 
         if (IsPieChart(snapshot.ChartKind) || IsDoughnutChart(snapshot.ChartKind)) {
             AddPieSeries(drawing, snapshot, width, height, contentTop, 0D, IsDoughnutChart(snapshot.ChartKind), style, layout);
+            drawOverlayTitle?.Invoke();
             return drawing;
         }
 
@@ -77,6 +85,7 @@ public static partial class OfficeChartDrawingRenderer {
 
         if (IsRadarChart(snapshot.ChartKind)) {
             AddRadarSeries(drawing, snapshot, width, height, contentTop + topLegendHeight, bottomLegendHeight, style, layout);
+            drawOverlayTitle?.Invoke();
             return drawing;
         }
 
@@ -122,8 +131,18 @@ public static partial class OfficeChartDrawingRenderer {
         double plotRight = 12D + verticalAxisRightLabelWidth + (leftLegend ? 0D : legendWidth);
         double horizontalAxisTitleHeight = HasHorizontalAxisTitle(snapshot.ChartKind, layout) ? GetAxisTitleBandHeight(layout) : 0D;
         double plotBottom = 40D + horizontalAxisTitleHeight + bottomLegendHeight;
-        double plotWidth = Math.Max(20D, width - plotLeft - plotRight);
-        double plotHeight = Math.Max(20D, height - plotTop - plotBottom);
+        double minimumPlotWidth = Math.Min(20D, width);
+        double minimumPlotHeight = Math.Min(20D, height);
+        if (plotLeft + plotRight > width - minimumPlotWidth) {
+            double marginScale = Math.Max(0D, width - minimumPlotWidth) / (plotLeft + plotRight);
+            plotLeft *= marginScale; plotRight *= marginScale;
+        }
+        if (plotTop + plotBottom > height - minimumPlotHeight) {
+            double marginScale = Math.Max(0D, height - minimumPlotHeight) / (plotTop + plotBottom);
+            plotTop *= marginScale; plotBottom *= marginScale;
+        }
+        double plotWidth = Math.Max(minimumPlotWidth, width - plotLeft - plotRight);
+        double plotHeight = Math.Max(minimumPlotHeight, height - plotTop - plotBottom);
         double maximumBubbleDiameter = IsScatterChart(snapshot.ChartKind)
             ? GetBubbleMaximumDiameter(snapshot, plotWidth, plotHeight)
             : 0D;
@@ -272,33 +291,11 @@ public static partial class OfficeChartDrawingRenderer {
         }
 
         if (GetShowCategoryMinorGridLines(style)) {
-            if (barChart) {
-                AddHorizontalGridLines(
-                    drawing,
-                    plotLeft,
-                    plotTop,
-                    plotWidth,
-                    plotHeight,
-                    divisions: 8,
-                    startIndex: 1,
-                    step: 2,
-                    GetCategoryMinorGridLineColor(style),
-                    GetCategoryMinorGridLineWidth(style),
-                    GetCategoryMinorGridLineDashStyle(style));
-            } else {
-                AddVerticalGridLines(
-                    drawing,
-                    numericPlotLeft,
-                    plotTop,
-                    numericPlotWidth,
-                    plotHeight,
-                    divisions: 8,
-                    startIndex: 1,
-                    step: 2,
-                    GetCategoryMinorGridLineColor(style),
-                    GetCategoryMinorGridLineWidth(style),
-                    GetCategoryMinorGridLineDashStyle(style));
-            }
+            AddCategoryGridLines(drawing, snapshot, layout, barChart,
+                barChart ? plotLeft : numericPlotLeft, plotTop,
+                barChart ? plotWidth : numericPlotWidth, plotHeight, minor: true,
+                GetCategoryMinorGridLineColor(style), GetCategoryMinorGridLineWidth(style),
+                GetCategoryMinorGridLineDashStyle(style));
         }
 
         if (GetShowValueMinorGridLines(style)) {
@@ -360,33 +357,11 @@ public static partial class OfficeChartDrawingRenderer {
         }
 
         if (GetShowCategoryGridLines(style)) {
-            if (barChart) {
-                AddHorizontalGridLines(
-                    drawing,
-                    plotLeft,
-                    plotTop,
-                    plotWidth,
-                    plotHeight,
-                    divisions: 4,
-                    startIndex: 1,
-                    step: 1,
-                    GetCategoryGridLineColor(style),
-                    GetCategoryGridLineWidth(style),
-                    GetCategoryGridLineDashStyle(style));
-            } else {
-                AddVerticalGridLines(
-                    drawing,
-                    numericPlotLeft,
-                    plotTop,
-                    numericPlotWidth,
-                    plotHeight,
-                    divisions: 4,
-                    startIndex: 1,
-                    step: 1,
-                    GetCategoryGridLineColor(style),
-                    GetCategoryGridLineWidth(style),
-                    GetCategoryGridLineDashStyle(style));
-            }
+            AddCategoryGridLines(drawing, snapshot, layout, barChart,
+                barChart ? plotLeft : numericPlotLeft, plotTop,
+                barChart ? plotWidth : numericPlotWidth, plotHeight, minor: false,
+                GetCategoryGridLineColor(style), GetCategoryGridLineWidth(style),
+                GetCategoryGridLineDashStyle(style));
         }
 
         if (GetShowValueGridLines(style)) {
@@ -535,6 +510,7 @@ public static partial class OfficeChartDrawingRenderer {
             AddSeriesLegendBand(drawing, legendSeries, 8D, height - bottomLegendHeight + 2D, Math.Max(1D, width - 16D), style, layout);
         }
 
+        drawOverlayTitle?.Invoke();
         return drawing;
     }
 
@@ -545,8 +521,22 @@ public static partial class OfficeChartDrawingRenderer {
     /// <param name="qualityOptions">Optional drawing quality analysis options.</param>
     /// <returns>Rendered chart drawing plus quality report.</returns>
     public static OfficeChartRenderingResult RenderWithQuality(OfficeChartSnapshot snapshot, OfficeDrawingQualityOptions? qualityOptions = null) {
-        OfficeDrawing drawing = Render(snapshot);
+        return RenderWithQuality(snapshot, useMinimumCanvas: true, qualityOptions);
+    }
+
+    /// <summary>Renders a chart with configurable minimum canvas sizing and drawing quality diagnostics.</summary>
+    /// <param name="snapshot">Chart snapshot to render.</param>
+    /// <param name="useMinimumCanvas">Whether to enlarge small authored dimensions to the default minimum canvas.</param>
+    /// <param name="qualityOptions">Optional drawing quality analysis options.</param>
+    /// <returns>Rendered chart drawing plus quality report.</returns>
+    public static OfficeChartRenderingResult RenderWithQuality(OfficeChartSnapshot snapshot, bool useMinimumCanvas, OfficeDrawingQualityOptions? qualityOptions = null) {
+        OfficeDrawing drawing = Render(snapshot, useMinimumCanvas);
         OfficeDrawingQualityReport qualityReport = OfficeDrawingQualityAnalyzer.Analyze(drawing, qualityOptions);
+        if (HasUnsupportedAreaPointStyles(snapshot)) {
+            var issues = qualityReport.Issues.ToList();
+            issues.Add(new OfficeDrawingQualityIssue(OfficeDrawingQualityIssueKind.UnsupportedAppearance, AreaPointStyleWarning, 0));
+            qualityReport = new OfficeDrawingQualityReport(issues);
+        }
         return new OfficeChartRenderingResult(drawing, qualityReport);
     }
 
@@ -860,7 +850,7 @@ public static partial class OfficeChartDrawingRenderer {
 
     private static OfficeColor GetPointColor(OfficeChartStyle style, OfficeChartSeries series, int index) {
         OfficeColor fallbackColor = series.Color ?? GetPointColor(style, (IReadOnlyList<OfficeColor?>?)null, index);
-        return GetPointColor(series.PointColors, index, fallbackColor);
+        return GetPointStyle(series, index)?.FillColor ?? GetPointColor(series.PointColors, index, fallbackColor);
     }
 
     private static double GetSeriesStrokeWidth(OfficeChartSeries series, double fallbackWidth) =>
@@ -872,12 +862,12 @@ public static partial class OfficeChartDrawingRenderer {
     private static double GetMarkerDiameter(OfficeChartSeries series, double fallbackDiameter) =>
         series.MarkerSize.HasValue ? Math.Max(1D, series.MarkerSize.Value) : fallbackDiameter;
 
-    private static void AddMarker(OfficeDrawing drawing, OfficeChartSeries series, OfficePoint point, double fallbackDiameter, OfficeColor color, double strokeWidth) {
+    private static void AddMarker(OfficeDrawing drawing, OfficeChartSeries series, OfficePoint point, double fallbackDiameter, OfficeColor color, double strokeWidth, OfficeChartPointStyle? pointStyle = null) {
         double diameter = GetMarkerDiameter(series, fallbackDiameter);
         double left = point.X - diameter / 2D;
         double top = point.Y - diameter / 2D;
-        OfficeColor markerStroke = series.MarkerOutlineColor ?? color;
-        double markerStrokeWidth = series.MarkerOutlineWidth ?? strokeWidth;
+        OfficeColor markerStroke = pointStyle?.OutlineColor ?? series.MarkerOutlineColor ?? color;
+        double markerStrokeWidth = pointStyle?.ShowOutline == false ? 0 : pointStyle?.OutlineWidth ?? series.MarkerOutlineWidth ?? strokeWidth;
         if (series.MarkerShape == OfficeChartMarkerShape.Dash) {
             AddShape(drawing, OfficeShape.Line(0D, 0D, diameter, 0D), left, point.Y, null, markerStroke, markerStrokeWidth);
             return;
@@ -887,7 +877,7 @@ public static partial class OfficeChartDrawingRenderer {
             double dotDiameter = Math.Max(1D, diameter * 0.45D);
             double dotLeft = point.X - dotDiameter / 2D;
             double dotTop = point.Y - dotDiameter / 2D;
-            AddShape(drawing, OfficeShape.Ellipse(dotDiameter, dotDiameter), dotLeft, dotTop, color, markerStroke, markerStrokeWidth);
+            AddStyledPointShape(drawing, OfficeShape.Ellipse(dotDiameter, dotDiameter), dotLeft, dotTop, color, pointStyle, markerStroke, markerStrokeWidth);
             return;
         }
 
@@ -934,12 +924,13 @@ public static partial class OfficeChartDrawingRenderer {
                 break;
         }
 
-        AddShape(
+        AddStyledPointShape(
             drawing,
             shape,
             left,
             top,
             color,
+            pointStyle,
             markerStroke,
             markerStrokeWidth);
     }
@@ -953,16 +944,17 @@ public static partial class OfficeChartDrawingRenderer {
         return colors;
     }
 
-    private static IReadOnlyList<OfficeColor?>? GetLegendPointColors(OfficeChartStyle style, IReadOnlyList<OfficeChartSeries> series, int categoryCount) {
+    private static OfficeChartSeries? GetCategoryLegendSeries(IReadOnlyList<OfficeChartSeries> series) {
         for (int i = 0; i < series.Count; i++) {
-            if (series[i].PointColors != null) {
-                return series[i].PointColors;
+            if (series[i].PointColors != null || series[i].PointStyles != null) {
+                return series[i];
+
             }
         }
 
         for (int i = 0; i < series.Count; i++) {
             if (series[i].Color.HasValue) {
-                return GetCategoryPointColors(style, series[i], categoryCount);
+                return series[i];
             }
         }
 
@@ -1095,7 +1087,7 @@ public static partial class OfficeChartDrawingRenderer {
                     double x = Math.Min(x1, x2);
                     double w = Math.Max(1D, Math.Abs(x2 - x1));
                     if (value != 0D) {
-                        AddShape(drawing, OfficeShape.Rectangle(w, rowHeight), x, y, color, null, 0D);
+                        AddStyledPointShape(drawing, OfficeShape.Rectangle(w, rowHeight), x, y, color, GetPointStyle(currentSeries, category), null, 0.75D);
                     }
 
                     AddHorizontalDataLabel(
@@ -1122,7 +1114,7 @@ public static partial class OfficeChartDrawingRenderer {
                     double y = Math.Min(y1, y2);
                     double h = Math.Max(1D, Math.Abs(y2 - y1));
                     if (value != 0D) {
-                        AddShape(drawing, OfficeShape.Rectangle(barWidth * 0.88D, h), x, y, color, null, 0D);
+                        AddStyledPointShape(drawing, OfficeShape.Rectangle(barWidth * 0.88D, h), x, y, color, GetPointStyle(currentSeries, category), null, 0.75D);
                     }
 
                     AddVerticalDataLabel(
@@ -1389,7 +1381,7 @@ public static partial class OfficeChartDrawingRenderer {
 
                 if (layout.ShowMarkers && currentSeries.ShowMarkers) {
                     OfficeColor pointColor = GetPointColor(currentSeries.PointColors, i, color);
-                    AddMarker(drawing, currentSeries, points[i], 4D, pointColor, 1D);
+                    AddMarker(drawing, currentSeries, points[i], 4D, pointColor, 1D, GetPointStyle(currentSeries, i));
                 }
 
                 double value = GetSeriesValue(currentSeries, i);
@@ -1655,7 +1647,7 @@ public static partial class OfficeChartDrawingRenderer {
                         maximumBubbleSize, maximumBubbleDiameter,
                         snapshot.BubbleSizeMode, pointColor);
                 } else if (layout.ShowMarkers && currentSeries.ShowMarkers) {
-                        AddMarker(drawing, currentSeries, point, 5D, pointColor, 1.25D);
+                        AddMarker(drawing, currentSeries, point, 5D, pointColor, 1.25D, GetPointStyle(currentSeries, points[i].SourceIndex));
                 }
 
                 int pointIndex = points[i].SourceIndex;
@@ -1687,11 +1679,9 @@ public static partial class OfficeChartDrawingRenderer {
 
         double legendWidth = GetSeriesLegendWidth(series, width, layout);
         bool leftLegend = layout.LegendPosition == OfficeChartLegendPosition.Left;
-        double visualWidth = Math.Max(80D, width - legendWidth);
-        double centerX = (leftLegend ? legendWidth : 0D) + visualWidth / 2D;
-        double contentHeight = Math.Max(40D, height - contentTop - bottomLegendHeight);
-        double centerY = contentTop + contentHeight / 2D;
-        double radius = Math.Max(28D, Math.Min(visualWidth - 52D, contentHeight - 42D) / 2D);
+        GetRadialPlotGeometry(width, height, contentTop, bottomLegendHeight, legendWidth,
+            leftLegend, 52D, 42D, out double centerX, out double centerY, out double radius,
+            out double visualWidth, out double contentHeight);
         ValueRange range = GetRadarValueRange(series);
 
         for (int ring = 1; ring <= 4; ring++) {
@@ -1760,7 +1750,7 @@ public static partial class OfficeChartDrawingRenderer {
 
                     OfficePoint point = points[i];
                     OfficeColor pointColor = GetPointColor(series[s].PointColors, i, color);
-                    AddMarker(drawing, series[s], point, 4D, pointColor, 1D);
+                    AddMarker(drawing, series[s], point, 4D, pointColor, 1D, GetPointStyle(series[s], i));
                 }
             }
 
@@ -1804,286 +1794,12 @@ public static partial class OfficeChartDrawingRenderer {
         }
     }
 
-    private static void AddPieSeries(OfficeDrawing drawing, OfficeChartSnapshot snapshot, double width, double height, double contentTop, double bottomLegendHeight, bool doughnut, OfficeChartStyle style, OfficeChartLayout layout) {
-        IReadOnlyList<string> categories = snapshot.Data.Categories;
-        IReadOnlyList<OfficeChartSeries> series = snapshot.Data.Series;
-        if (categories.Count == 0 || series.Count == 0) {
-            return;
-        }
-
-        if (doughnut) {
-            AddDoughnutSeries(drawing, categories, series, width, height, contentTop, bottomLegendHeight, style, layout);
-            return;
-        }
-
-        OfficeChartSeries values = series[0];
-        double total = 0D;
-        for (int i = 0; i < categories.Count; i++) {
-            if (TryGetSeriesValue(values, i, out double value) && value > 0D) {
-                total += value;
-            }
-        }
-
-        if (total <= 0D) {
-            return;
-        }
-
-        double topCategoryLegendHeight = layout.LegendPosition == OfficeChartLegendPosition.Top
-            ? GetCategoryLegendBandHeight(categories, width - 16D, layout)
-            : 0D;
-        IReadOnlyList<OfficeColor?> categoryPointColors = GetCategoryPointColors(style, values, categories.Count);
-        if (topCategoryLegendHeight > 0D) {
-            AddCategoryLegendBand(drawing, categories, 8D, contentTop + 2D, Math.Max(1D, width - 16D), style, layout, categoryPointColors);
-            contentTop += topCategoryLegendHeight;
-        }
-
-        double categoryBottomLegendHeight = layout.LegendPosition == OfficeChartLegendPosition.Bottom
-            ? GetCategoryLegendBandHeight(categories, width - 16D, layout)
-            : bottomLegendHeight;
-        double legendWidth = GetCategoryLegendWidth(categories, width, layout);
-        bool leftLegend = layout.LegendPosition == OfficeChartLegendPosition.Left;
-        double contentHeight = Math.Max(40D, height - contentTop - categoryBottomLegendHeight);
-        double visualWidth = Math.Max(80D, width - legendWidth);
-        double radius = Math.Max(28D, Math.Min(visualWidth - 48D, contentHeight - 36D) / 2D);
-        double centerX = (leftLegend ? legendWidth : 0D) + visualWidth / 2D;
-        double centerY = contentTop + contentHeight / 2D;
-        double start = -Math.PI / 2D;
-        int zeroLabelIndex = 0;
-        for (int i = 0; i < categories.Count; i++) {
-            if (!TryGetSeriesValue(values, i, out double seriesValue)) {
-                continue;
-            }
-
-            double value = Math.Max(0D, seriesValue);
-            double sweep = value / total * Math.PI * 2D;
-            if (value > 0D) {
-                double end = start + sweep;
-                var points = new List<OfficePoint> {
-                    new OfficePoint(centerX, centerY)
-                };
-                int segments = Math.Max(2, (int)Math.Ceiling(sweep / (Math.PI / 18D)));
-                for (int segment = 0; segment <= segments; segment++) {
-                    double angle = start + sweep * segment / segments;
-                    points.Add(new OfficePoint(
-                        centerX + Math.Cos(angle) * radius,
-                        centerY + Math.Sin(angle) * radius));
-                }
-
-                OfficeColor sliceColor = GetPointColor(style, values, i);
-                AddPolygonShape(drawing, points, sliceColor, OfficeColor.White, 0.5D);
-                if (ShouldShowDataLabel(layout, 0, i)) {
-                    AddPieDataLabel(drawing, layout, style, GetReadableDataLabelColor(sliceColor), categories[i], values, value, total, centerX, centerY, radius, start + sweep / 2D, zeroLabelIndex: null);
-                }
-
-                start = end;
-            } else if (ShouldShowDataLabel(layout, 0, i)) {
-                OfficeColor sliceColor = GetPointColor(style, values, 0);
-                AddPieDataLabel(drawing, layout, style, GetReadableDataLabelColor(sliceColor), categories[i], values, 0D, total, centerX, centerY, radius, -Math.PI / 2D, zeroLabelIndex);
-                zeroLabelIndex++;
-            }
-        }
-
-        if (layout.OverlayLegend) {
-            AddOverlayCategoryLegend(drawing, categories, leftLegend ? legendWidth : 0D, contentTop + 4D, visualWidth, Math.Max(20D, contentHeight - 8D), style, layout, categoryPointColors);
-        } else {
-            AddCategoryLegend(
-                drawing,
-                categories,
-                leftLegend ? 6D : width - legendWidth + 6D,
-                contentTop + 12D,
-                Math.Max(0D, legendWidth - 12D),
-                Math.Max(20D, contentHeight - 24D),
-                style,
-                layout,
-                categoryPointColors);
-        }
-
-        if (!layout.OverlayLegend && categoryBottomLegendHeight > 0D) {
-            AddCategoryLegendBand(drawing, categories, 8D, height - categoryBottomLegendHeight + 2D, Math.Max(1D, width - 16D), style, layout, categoryPointColors);
-        }
-    }
-
-    private static void AddDoughnutSeries(OfficeDrawing drawing, IReadOnlyList<string> categories, IReadOnlyList<OfficeChartSeries> series, double width, double height, double contentTop, double bottomLegendHeight, OfficeChartStyle style, OfficeChartLayout layout) {
-        var renderableSeries = new List<(OfficeChartSeries Series, int SourceIndex)>();
-        for (int s = 0; s < series.Count; s++) {
-            if (GetPositiveSeriesTotal(series[s], categories.Count) > 0D) {
-                renderableSeries.Add((series[s], s));
-            }
-        }
-
-        if (renderableSeries.Count == 0) {
-            return;
-        }
-
-        double topCategoryLegendHeight = layout.LegendPosition == OfficeChartLegendPosition.Top
-            ? GetCategoryLegendBandHeight(categories, width - 16D, layout)
-            : 0D;
-        IReadOnlyList<OfficeColor?>? legendPointColors = GetLegendPointColors(style, renderableSeries.ConvertAll(item => item.Series), categories.Count);
-        if (topCategoryLegendHeight > 0D) {
-            AddCategoryLegendBand(drawing, categories, 8D, contentTop + 2D, Math.Max(1D, width - 16D), style, layout, legendPointColors);
-            contentTop += topCategoryLegendHeight;
-        }
-
-        double categoryBottomLegendHeight = layout.LegendPosition == OfficeChartLegendPosition.Bottom
-            ? GetCategoryLegendBandHeight(categories, width - 16D, layout)
-            : bottomLegendHeight;
-        double legendWidth = GetCategoryLegendWidth(categories, width, layout);
-        bool leftLegend = layout.LegendPosition == OfficeChartLegendPosition.Left;
-        double contentHeight = Math.Max(40D, height - contentTop - categoryBottomLegendHeight);
-        double visualWidth = Math.Max(80D, width - legendWidth);
-        double radius = Math.Max(28D, Math.Min(visualWidth - 48D, contentHeight - 36D) / 2D);
-        double centerX = (leftLegend ? legendWidth : 0D) + visualWidth / 2D;
-        double centerY = contentTop + contentHeight / 2D;
-
-        double ringThickness = radius / (renderableSeries.Count + 0.9D);
-        for (int s = 0; s < renderableSeries.Count; s++) {
-            OfficeChartSeries values = renderableSeries[s].Series;
-            int sourceSeriesIndex = renderableSeries[s].SourceIndex;
-            double outerRadius = radius - s * ringThickness;
-            double innerRadius = Math.Max(0D, outerRadius - ringThickness * 0.82D);
-            double total = GetPositiveSeriesTotal(values, categories.Count);
-            double start = -Math.PI / 2D;
-            int zeroLabelIndex = 0;
-            for (int i = 0; i < categories.Count; i++) {
-                if (!TryGetSeriesValue(values, i, out double seriesValue)) {
-                    continue;
-                }
-
-                double value = Math.Max(0D, seriesValue);
-                double sweep = value / total * Math.PI * 2D;
-                if (value > 0D) {
-                    double end = start + sweep;
-                    OfficeColor sliceColor = GetPointColor(style, values, i);
-                    AddDoughnutSlice(drawing, centerX, centerY, outerRadius, innerRadius, start, sweep, sliceColor);
-                    if (ShouldShowDataLabel(layout, sourceSeriesIndex, i)) {
-                        AddPieDataLabel(drawing, layout, style, GetReadableDataLabelColor(sliceColor), categories[i], values, value, total, centerX, centerY, Math.Max(innerRadius + 8D, outerRadius - ringThickness * 0.42D), start + sweep / 2D, zeroLabelIndex: null);
-                    }
-
-                    start = end;
-                } else if (s == 0 && ShouldShowDataLabel(layout, sourceSeriesIndex, i)) {
-                    OfficeColor sliceColor = GetPointColor(style, values, 0);
-                    AddPieDataLabel(drawing, layout, style, GetReadableDataLabelColor(sliceColor), categories[i], values, 0D, total, centerX, centerY, outerRadius, -Math.PI / 2D, zeroLabelIndex);
-                    zeroLabelIndex++;
-                }
-            }
-        }
-
-        if (layout.OverlayLegend) {
-            AddOverlayCategoryLegend(drawing, categories, leftLegend ? legendWidth : 0D, contentTop + 4D, visualWidth, Math.Max(20D, contentHeight - 8D), style, layout, legendPointColors);
-        } else {
-            AddCategoryLegend(
-                drawing,
-                categories,
-                leftLegend ? 6D : width - legendWidth + 6D,
-                contentTop + 12D,
-                Math.Max(0D, legendWidth - 12D),
-                Math.Max(20D, contentHeight - 24D),
-                style,
-                layout,
-                legendPointColors);
-        }
-
-        if (!layout.OverlayLegend && categoryBottomLegendHeight > 0D) {
-            AddCategoryLegendBand(drawing, categories, 8D, height - categoryBottomLegendHeight + 2D, Math.Max(1D, width - 16D), style, layout, legendPointColors);
-        }
-    }
-
-    private static void AddPieDataLabel(
-        OfficeDrawing drawing,
-        OfficeChartLayout layout,
-        OfficeChartStyle style,
-        OfficeColor labelColor,
-        string category,
-        OfficeChartSeries series,
-        double value,
-        double total,
-        double centerX,
-        double centerY,
-        double radius,
-        double angle,
-        int? zeroLabelIndex) {
-        string label = FormatDataLabel(layout, category, series, value, total);
-        if (string.IsNullOrWhiteSpace(label)) {
-            return;
-        }
-
-        double labelWidth = Math.Min(78D, Math.Max(40D, label.Length * layout.DataLabelFontSize * 0.52D + 12D));
-        double labelHeight = Math.Max(12D, layout.DataLabelFontSize + 6D);
-        double distance = zeroLabelIndex.HasValue ? radius * 0.9D : radius * 0.58D;
-        double x = centerX + Math.Cos(angle) * distance - labelWidth / 2D;
-        double y = centerY + Math.Sin(angle) * distance - labelHeight / 2D;
-        if (zeroLabelIndex.HasValue) {
-            y += zeroLabelIndex.Value * (labelHeight + 1D);
-        }
-
-        AddDataLabel(drawing, layout, style, label, x, y, labelWidth, labelHeight, OfficeTextAlignment.Center, labelColor);
-    }
-
-    private static OfficeColor GetReadableDataLabelColor(OfficeColor fillColor) {
-        double srgbR = fillColor.R / 255D;
-        double srgbG = fillColor.G / 255D;
-        double srgbB = fillColor.B / 255D;
-        double luminance = 0.2126D * srgbR + 0.7152D * srgbG + 0.0722D * srgbB;
-        return luminance < 0.52D ? OfficeColor.White : OfficeColor.Black;
-    }
-
-    private static double GetPositiveSeriesTotal(OfficeChartSeries values, int categoryCount) {
-        double total = 0D;
-        for (int i = 0; i < categoryCount; i++) {
-            if (TryGetSeriesValue(values, i, out double value) && value > 0D) {
-                total += value;
-            }
-        }
-
-        return total;
-    }
-
-    private static void AddPieSlice(OfficeDrawing drawing, double centerX, double centerY, double radius, double start, double sweep, OfficeColor color) {
-        var points = new List<OfficePoint> {
-            new OfficePoint(centerX, centerY)
-        };
-        int segments = Math.Max(2, (int)Math.Ceiling(sweep / (Math.PI / 18D)));
-        for (int segment = 0; segment <= segments; segment++) {
-            double angle = start + sweep * segment / segments;
-            points.Add(new OfficePoint(
-                centerX + Math.Cos(angle) * radius,
-                centerY + Math.Sin(angle) * radius));
-        }
-
-        AddPolygonShape(drawing, points, color, OfficeColor.White, 0.5D);
-    }
-
-    private static void AddDoughnutSlice(OfficeDrawing drawing, double centerX, double centerY, double outerRadius, double innerRadius, double start, double sweep, OfficeColor color) {
-        if (innerRadius <= 0D) {
-            AddPieSlice(drawing, centerX, centerY, outerRadius, start, sweep, color);
-            return;
-        }
-
-        int segments = Math.Max(2, (int)Math.Ceiling(sweep / (Math.PI / 18D)));
-        var points = new List<OfficePoint>((segments + 1) * 2);
-        for (int segment = 0; segment <= segments; segment++) {
-            double angle = start + sweep * segment / segments;
-            points.Add(new OfficePoint(
-                centerX + Math.Cos(angle) * outerRadius,
-                centerY + Math.Sin(angle) * outerRadius));
-        }
-
-        for (int segment = segments; segment >= 0; segment--) {
-            double angle = start + sweep * segment / segments;
-            points.Add(new OfficePoint(
-                centerX + Math.Cos(angle) * innerRadius,
-                centerY + Math.Sin(angle) * innerRadius));
-        }
-
-        AddPolygonShape(drawing, points, color, OfficeColor.White, 0.5D);
-    }
-
     private static void AddShape(OfficeDrawing drawing, OfficeShape shape, double x, double y, OfficeColor? fill, OfficeColor? stroke, double strokeWidth, OfficeStrokeDashStyle dashStyle = OfficeStrokeDashStyle.Solid) {
         shape.FillColor = fill;
         shape.StrokeColor = stroke;
         shape.StrokeWidth = strokeWidth;
         shape.StrokeDashStyle = dashStyle;
-        drawing.AddShape(shape, x, y);
+        drawing.AddShapeForClippedRendering(shape, x, y);
     }
 
     private static void AddPolygonShape(OfficeDrawing drawing, IReadOnlyList<OfficePoint> points, OfficeColor? fill, OfficeColor? stroke, double strokeWidth, double? fillOpacity = null, OfficeStrokeDashStyle dashStyle = OfficeStrokeDashStyle.Solid) {

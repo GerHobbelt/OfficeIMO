@@ -226,12 +226,12 @@ namespace OfficeIMO.Word.Html {
                 bool AppendRunArtifacts(WordParagraph run, List<INode> target, DocumentFormat.OpenXml.OpenXmlElement? artifactElement = null) {
                     bool includeAll = artifactElement == null;
                     if ((includeAll || artifactElement is FootnoteReference || artifactElement is EndnoteReference) &&
-                        TryAppendNoteReference(htmlDoc, run, options, processNotes, target, footnotes, footnoteMap, endnotes, endnoteMap)) {
+                        TryAppendNoteReference(htmlDoc, run, options, processNotes, target, footnotes, footnoteMap, endnotes, endnoteMap, artifactElement)) {
                         return true;
                     }
 
                     if ((includeAll || artifactElement is CommentReference) &&
-                        TryAppendCommentReference(htmlDoc, run, options, commentsById, comments, commentMap, target)) {
+                        TryAppendCommentReference(htmlDoc, run, options, commentsById, comments, commentMap, target, artifactElement as CommentReference)) {
                         return true;
                     }
 
@@ -261,9 +261,29 @@ namespace OfficeIMO.Word.Html {
                         return true;
                     }
 
+                    if (HasExtendedChart(artifactElement ?? (includeAll ? run._run : null))) {
+                        AddExportDiagnostic(options, "WordChartOmitted", "An extended Office chart has no supported HTML image projection.",
+                            OfficeConversionLossKind.Omission);
+                        return true;
+                    }
+                    if ((includeAll || artifactElement is DocumentFormat.OpenXml.Wordprocessing.Drawing) &&
+                        (artifactElement is DocumentFormat.OpenXml.Wordprocessing.Drawing chartDrawing &&
+                            chartDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Charts.ChartReference>().Any()
+                            ? new WordChart(run._document, run, chartDrawing) : includeAll ? run.Chart : null) is WordChart chart) {
+                        IElement? chartImage = CreateChartImage(htmlDoc, chart, options, ref embeddedImageBytes);
+                        if (chartImage != null) target.Add(chartImage);
+                        return true;
+                    }
+
                     if ((includeAll || artifactElement is DocumentFormat.OpenXml.Wordprocessing.Drawing || artifactElement is DocumentFormat.OpenXml.Vml.ImageData) &&
-                        run.IsImage && run.Image != null) {
-                        var imgObj = run.Image;
+                        (artifactElement is DocumentFormat.OpenXml.Wordprocessing.Drawing imageDrawing &&
+                            imageDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Pictures.Picture>().Any()
+                            ? new WordImage(run._document, imageDrawing)
+                            : artifactElement is DocumentFormat.OpenXml.Vml.ImageData vmlImage &&
+                                vmlImage.Ancestors<DocumentFormat.OpenXml.Vml.Shape>().FirstOrDefault() is DocumentFormat.OpenXml.Vml.Shape vmlShape &&
+                                run._run != null
+                                ? new WordImage(run._document, run._paragraph, run._run, vmlShape)
+                                : includeAll ? run.Image : null) is WordImage imgObj) {
                         var ext = Path.GetExtension(imgObj.FileName)?.ToLowerInvariant();
                         if (ext == ".svg") {
                             if (options.EmbedImagesAsBase64) {
@@ -347,6 +367,15 @@ namespace OfficeIMO.Word.Html {
                     }
 
                     bool appendedBreak = false;
+                    if (artifactElement is CarriageReturn || artifactElement is Break) {
+                        var lineBreak = CreateOutputElement(htmlDoc, "br");
+                        if (artifactElement is Break specificBreak && specificBreak.Type?.Value == BreakValues.Page)
+                            SetOutputAttribute(lineBreak, "style", "break-after:page", "RunBreak:page");
+                        else if (artifactElement is Break columnBreak && columnBreak.Type?.Value == BreakValues.Column)
+                            SetOutputAttribute(lineBreak, "style", "break-after:column", "RunBreak:column");
+                        target.Add(lineBreak);
+                        return true;
+                    }
                     if ((includeAll || artifactElement is Break || artifactElement is CarriageReturn) && run.Break != null && run.PageBreak == null) {
                         target.Add(CreateOutputElement(htmlDoc, "br"));
                         appendedBreak = true;
@@ -396,7 +425,21 @@ namespace OfficeIMO.Word.Html {
                             continue;
                         }
                         if (segment.IsRunArtifact) {
-                            AppendRunArtifacts(sourceRun, expandedNodes, segment.ArtifactElement);
+                            var artifactNodes = new List<INode>();
+                            AppendRunArtifacts(sourceRun, artifactNodes, segment.ArtifactElement);
+                            if (artifactNodes.Count == 0) continue;
+                            if (string.Equals(sourceRun.CharacterStyleId, HtmlSemanticStyleIds.InsertedText, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(sourceRun.CharacterStyleId, HtmlSemanticStyleIds.DeletedText, StringComparison.OrdinalIgnoreCase)) {
+                                var revision = CreateOutputElement(htmlDoc, string.Equals(sourceRun.CharacterStyleId, HtmlSemanticStyleIds.InsertedText, StringComparison.OrdinalIgnoreCase) ? "ins" : "del");
+                                foreach (var artifact in artifactNodes) revision.AppendChild(artifact);
+                                artifactNodes = new List<INode> { revision };
+                            }
+                            IElement? sourceAnchor = hyperlinkNode == null && sourceRun.IsHyperLink && sourceRun.Hyperlink != null
+                                ? CreateEquationHyperlinkNode(htmlDoc, sourceRun.Hyperlink) : null;
+                            if (sourceAnchor != null) {
+                                foreach (INode artifactNode in artifactNodes) sourceAnchor.AppendChild(artifactNode);
+                                if (artifactNodes.Count > 0) expandedNodes.Add(sourceAnchor);
+                            } else expandedNodes.AddRange(artifactNodes);
                             continue;
                         }
                         if (string.IsNullOrEmpty(segment.Text)) continue;
@@ -487,6 +530,23 @@ namespace OfficeIMO.Word.Html {
                         continue;
                     }
                     if (coveringEquations.Count > 0) {
+                        continue;
+                    }
+                    // Imported chart runs may also contain text, pictures or other charts.
+                    // The existing segment projector preserves the actual child order and
+                    // supplies the specific drawing occurrence to artifact conversion.
+                    if (run._stdRun?.GetFirstChild<SdtContentRun>() is SdtContentRun controlContent &&
+                        (controlContent.Descendants<DocumentFormat.OpenXml.Drawing.Charts.ChartReference>().Any() || HasExtendedChart(controlContent))) {
+                        foreach (INode expandedNode in CreateExpandedEquationContainerNodes(controlContent, Array.Empty<WordEquationOccurrence>(), run))
+                            AppendNode(expandedNode);
+                        continue;
+                    }
+                    bool multipleReferences = run._run?.ChildElements.Count(child =>
+                        child is FootnoteReference or EndnoteReference or CommentReference) > 1;
+                    if ((run.IsChart || HasExtendedChart(run._run) || multipleReferences) && run._run != null) {
+                        foreach (INode expandedNode in CreateExpandedEquationContainerNodes(run._run, Array.Empty<WordEquationOccurrence>(), run)) {
+                            AppendNode(expandedNode);
+                        }
                         continue;
                     }
                     if (HtmlSemanticMetadata.IsTimeDateTimeMetadataRun(run)) {
@@ -697,6 +757,10 @@ namespace OfficeIMO.Word.Html {
             }
 
             bool IsCodeParagraph(WordParagraph para) {
+                // A text-only code block cannot carry rendered inline artifacts.
+                if (para.GetRuns().Any(run => run.IsChart || HasExtendedChart(run._run) || run.IsImage ||
+                    run.IsStructuredDocumentTag || run.IsEquation || run.FootNote != null || run.EndNote != null ||
+                    run._run?.Elements<CommentReference>().Any() == true)) return false;
                 if (string.Equals(para.StyleId, "Code", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(para.StyleId, "HTMLPreformatted", StringComparison.OrdinalIgnoreCase)) {
                     return true;
@@ -768,7 +832,8 @@ namespace OfficeIMO.Word.Html {
                     return;
                 }
 
-                if (para.Borders.BottomStyle != null && string.IsNullOrWhiteSpace(para.Text)) {
+                if (para.Borders.BottomStyle != null && string.IsNullOrWhiteSpace(para.Text) &&
+                    !para.GetRuns().Any(run => run.IsChart || HasExtendedChart(run._run) || run.IsImage || run.IsStructuredDocumentTag || run.IsEquation)) {
                     var hr = CreateOutputElement(htmlDoc, "hr");
                     ApplyBookmarkId(hr, para);
                     parent.AppendChild(hr);
@@ -1473,8 +1538,8 @@ namespace OfficeIMO.Word.Html {
 
             CloseLists();
 
-            AppendFootnotes(htmlDoc, body, footnotes, options, cancellationToken);
-            AppendEndnotes(htmlDoc, body, endnotes, options, cancellationToken);
+            AppendFootnotes(htmlDoc, body, footnotes, options, cancellationToken, (parent, paragraph) => AppendParagraph(parent, paragraph), CloseLists);
+            AppendEndnotes(htmlDoc, body, endnotes, options, cancellationToken, (parent, paragraph) => AppendParagraph(parent, paragraph), CloseLists);
             AppendComments(htmlDoc, body, comments, options, cancellationToken);
             AppendReviewInventories(htmlDoc, body, reviewInfo, fieldInfo, options);
             AppendListDefinitions(htmlDoc, head, listDefinitions, cancellationToken);
