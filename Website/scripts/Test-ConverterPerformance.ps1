@@ -96,9 +96,22 @@ try {
         if ([long] $route.peakRetainedBytes -gt [long] $routeBudget.maximumPeakRetainedBytes) {
             throw "Route '$($route.routeId)' retained $($route.peakRetainedBytes) bytes; budget is $($routeBudget.maximumPeakRetainedBytes) bytes."
         }
+        if ([long] $route.repeatConversionMilliseconds -gt [long] $routeBudget.maximumConversionMilliseconds) {
+            throw "Repeated route '$($route.routeId)' took $($route.repeatConversionMilliseconds) ms; budget is $($routeBudget.maximumConversionMilliseconds) ms."
+        }
+        if ([long] $route.repeatPeakRetainedBytes -gt [long] $routeBudget.maximumPeakRetainedBytes) {
+            throw "Repeated route '$($route.routeId)' retained $($route.repeatPeakRetainedBytes) bytes; budget is $($routeBudget.maximumPeakRetainedBytes) bytes."
+        }
         if ([long] $route.resultBytes -le 0) { throw "Route '$($route.routeId)' produced an empty result." }
+        if ([long] $route.repeatResultBytes -le 0) { throw "Repeated route '$($route.routeId)' produced an empty result." }
+        if ([string] $route.pdfMagic -ne '%PDF' -or [string] $route.repeatPdfMagic -ne '%PDF') {
+            throw "Route '$($route.routeId)' did not produce PDF bytes in both cold and repeated conversions."
+        }
         if ([long] $route.memorySamples -lt 2 -or [long] $route.peakBrowserHeapBytes -le 0) {
             throw "Route '$($route.routeId)' did not produce fail-closed in-flight browser heap evidence."
+        }
+        if ([long] $route.repeatMemorySamples -lt 2 -or [long] $route.repeatPeakBrowserHeapBytes -le 0) {
+            throw "Repeated route '$($route.routeId)' did not produce fail-closed in-flight browser heap evidence."
         }
     }
     if (@($result.consoleErrors).Count -gt 0) {
@@ -123,7 +136,11 @@ try {
 } finally {
     $npxCommand = Get-Command npx -ErrorAction SilentlyContinue
     if ($npxCommand) { & $npxCommand.Source --yes --package $playwrightPackage playwright-cli "-s=$session" close 2>$null | Out-Null }
-    if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+    if ($server -and -not $server.HasExited) {
+        Stop-Process -Id $server.Id -Force
+        $server.WaitForExit(5000) | Out-Null
+    }
+    if ($server) { $server.Dispose() }
     [System.IO.File]::Delete($serverStandardOutputPath)
     [System.IO.File]::Delete($serverStandardErrorPath)
 }

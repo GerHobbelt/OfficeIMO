@@ -241,6 +241,15 @@ internal static class StreamDecoder {
         return unsupported;
     }
 
+    internal static bool HasNoEffectiveFilters(
+        PdfDictionary dictionary,
+        Dictionary<int, PdfIndirectObject>? objects = null) {
+        if (!dictionary.Items.TryGetValue("Filter", out PdfObject? filterObject)) return true;
+        return TryGetFilterNames(filterObject, objects, out List<string> filterNames) &&
+            filterNames.Count == 0 &&
+            HasValidDecodeParmsDeclaration(dictionary, filterCount: 0, objects);
+    }
+
     internal static bool IsSupportedFilter(string filterName) {
         return GetFilterKind(filterName) != DecodeFilterKind.Unsupported;
     }
@@ -412,22 +421,7 @@ internal static class StreamDecoder {
     }
 
     private static PdfObject? ResolveObject(PdfObject? obj, Dictionary<int, PdfIndirectObject>? objects) {
-        if (objects is null) {
-            return obj;
-        }
-
-        HashSet<(int ObjectNumber, int Generation)>? visited = null;
-        while (obj is PdfReference reference) {
-            visited ??= new HashSet<(int ObjectNumber, int Generation)>();
-            if (!visited.Add((reference.ObjectNumber, reference.Generation)) ||
-                !PdfObjectLookup.TryGet(objects, reference, out PdfIndirectObject? indirect)) {
-                return obj;
-            }
-
-            obj = indirect.Value;
-        }
-
-        return obj;
+        return objects is null ? obj : PdfObjectLookup.ResolveChain(objects, obj);
     }
 
     private static bool HasValidDecodeParmsDeclaration(
@@ -551,7 +545,7 @@ internal static class StreamDecoder {
             return true;
         }
 
-        if (resolved is not PdfArray filterArray || filterArray.Items.Count == 0) {
+        if (resolved is not PdfArray filterArray) {
             return false;
         }
 

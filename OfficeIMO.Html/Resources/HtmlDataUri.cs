@@ -65,7 +65,7 @@ public sealed class HtmlDataUri {
         try {
             bytes = DecodeBytes();
             return bytes.Length > 0;
-        } catch (FormatException) {
+        } catch (Exception exception) when (exception is FormatException || exception is UriFormatException) {
             return false;
         }
     }
@@ -197,20 +197,37 @@ public sealed class HtmlDataUri {
     private static string GetContentType(string metadata) {
         int separatorIndex = metadata.IndexOf(';');
         string contentType = separatorIndex >= 0 ? metadata.Substring(0, separatorIndex) : metadata;
-        return string.IsNullOrWhiteSpace(contentType) ? string.Empty : contentType.Trim();
+        return TrimAsciiWhitespace(contentType);
     }
 
-    private static bool HasBase64Flag(string metadata) =>
-        metadata.Split(';').Any(part => part.Trim().Equals("base64", StringComparison.OrdinalIgnoreCase));
+    private static bool HasBase64Flag(string metadata) {
+        int separator = metadata.LastIndexOf(';');
+        if (separator < 0) return false;
+        string finalSegment = TrimAsciiWhitespace(metadata.Substring(separator + 1));
+        return finalSegment.Equals("base64", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string TrimAsciiWhitespace(string value) {
+        int start = 0;
+        while (start < value.Length && IsAsciiWhitespace(value[start])) start++;
+        int end = value.Length;
+        while (end > start && IsAsciiWhitespace(value[end - 1])) end--;
+        return start == 0 && end == value.Length ? value : value.Substring(start, end - start);
+    }
 
     private static string NormalizeBase64Payload(string payload) {
         var builder = new StringBuilder(payload.Length);
-        foreach (char character in payload.Trim()) {
-            if (!char.IsWhiteSpace(character)) {
+        foreach (char character in payload) {
+            if (!IsAsciiWhitespace(character)) {
                 builder.Append(character);
             }
         }
 
+        int remainder = builder.Length & 3;
+        if (remainder == 2) builder.Append("==");
+        else if (remainder == 3) builder.Append('=');
         return builder.ToString();
     }
+
+    private static bool IsAsciiWhitespace(char value) => value is '\t' or '\n' or '\f' or '\r' or ' ';
 }

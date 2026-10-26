@@ -9,8 +9,7 @@
       "task": "sources-sync",
       "id": "sync-sources",
       "config": "./site.json",
-      "lockMode": "verify",
-      "lockPath": "./.powerforge/git-sync-lock.json",
+      "lockMode": "off",
       "writeManifest": true
     },
     {
@@ -84,8 +83,21 @@
     },
     {
       "task": "exec",
-      "id": "test-discovery-evidence",
+      "id": "test-pdf-workflow-content",
       "dependsOn": ["test-capability-claims"],
+      "command": "pwsh",
+      "argsList": [
+        "-NoLogo",
+        "-NoProfile",
+        "-File",
+        "./scripts/Test-PdfWorkflowContent.ps1"
+      ],
+      "workingDirectory": "."
+    },
+    {
+      "task": "exec",
+      "id": "test-discovery-evidence",
+      "dependsOn": ["test-pdf-workflow-content"],
       "command": "pwsh",
       "argsList": [
         "-NoLogo",
@@ -592,9 +604,26 @@
       "workingDirectory": "."
     },
     {
+      "task": "exec",
+      "id": "verify-website-presentation",
+      "dependsOn": ["deploy-theme-css"],
+      "command": "pwsh",
+      "argsList": [
+        "-NoLogo",
+        "-NoProfile",
+        "-File",
+        "./scripts/Test-WebsitePresentation.ps1",
+        "-SiteRoot",
+        "./_site",
+        "-SourceRoot",
+        "."
+      ],
+      "workingDirectory": "."
+    },
+    {
       "task": "verify",
       "id": "verify-site",
-      "dependsOn": ["deploy-theme-css", "verify-excel-benchmark-page"],
+      "dependsOn": ["deploy-theme-css", "verify-excel-benchmark-page", "verify-website-presentation"],
       "config": "./site.json"
     },
     {
@@ -1254,6 +1283,7 @@
         "../OfficeIMO.Rtf/OfficeIMO.Rtf.csproj",
         "../OfficeIMO.Rtf.Markdown/OfficeIMO.Rtf.Markdown.csproj",
         "../OfficeIMO.Rtf.Pdf/OfficeIMO.Rtf.Pdf.csproj",
+        "../OfficeIMO.Provenance.C2pa/OfficeIMO.Provenance.C2pa.csproj",
         "../OfficeIMO.Security/OfficeIMO.Security.csproj",
         "../OfficeIMO.Tool/OfficeIMO.Tool.csproj",
         "../OfficeIMO.Visio/OfficeIMO.Visio.csproj",
@@ -1355,6 +1385,7 @@
       "dependsOn": "test-browser-converter",
       "project": "./Apps/OfficeIMO.Web.Converter/OfficeIMO.Web.Converter.csproj",
       "out": "./_temp/converter-publish",
+      "clean": true,
       "configuration": "Release",
       "baseHref": "/apps/officeimo-converter/"
     },
@@ -1442,7 +1473,14 @@
       "siteRoot": "./_site",
       "baseline": "./.powerforge/audit-baseline.json",
       "failOnNewIssues": true,
-      "failOnCategories": "budget",
+      "failOnCategories": "budget,agent-content",
+      "checkAgentContentSecurity": true,
+      "agentContentFiles": ["llms.txt", "llms-full.txt", "llms.json"],
+      "agentPublicationCatalog": "./_temp/llms-publication-catalog.json",
+      "agentPublicationCatalogMaxAgeHours": 24,
+      "agentNuGetOwner": "Evotec",
+      "agentPowerShellGalleryOwner": "Przemyslaw.Klys",
+      "agentRequireOwnerVerification": ["nuget:*", "powershellgallery:*"],
       "maxTotalFiles": 20000,
       "maxFileBytes": 26214400,
       "navSelector": "header nav",

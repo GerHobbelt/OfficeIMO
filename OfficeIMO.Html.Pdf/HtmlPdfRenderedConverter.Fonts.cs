@@ -249,6 +249,8 @@ internal static partial class HtmlPdfRenderedConverter {
             yield return visual;
             IEnumerable<HtmlRenderVisual>? children = visual is HtmlRenderClipGroup clipGroup
                 ? clipGroup.Visuals
+                : visual is HtmlRenderLayoutRegion layoutRegion
+                    ? layoutRegion.Visuals
                 : visual is HtmlRenderPathClipGroup pathClipGroup
                     ? pathClipGroup.Visuals
                     : visual is HtmlRenderEffectGroup effectGroup
@@ -291,7 +293,7 @@ internal static partial class HtmlPdfRenderedConverter {
     }
 
     private static bool RequiresUnicodeFont(string text) =>
-        PdfCore.PdfTextDiagnostics.AnalyzeWinAnsiText(text).Count != 0;
+        PdfCore.PdfTextDiagnostics.RequiresEmbeddedUnicodeFont(text);
 
     private static bool RegisterNamedFamily(
         PdfCore.PdfDocument pdf,

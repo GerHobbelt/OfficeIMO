@@ -78,7 +78,8 @@ public static partial class HtmlResourcePipeline {
             List<string> aliases = ExtractCustomPropertyAliases(css, valueStart + 1, valueEnd);
             bool addedUrl = false;
             foreach (Match urlMatch in CssUrlExpression.Matches(css)) {
-                if (urlMatch.Index < valueStart || urlMatch.Index >= valueEnd || !IsCssFunctionNameAt(css, urlMatch.Index, "url") || IsInsideCssString(css, urlMatch.Index)) {
+                if (urlMatch.Index < valueStart || urlMatch.Index >= valueEnd || !IsValidCssUrlMatch(css, urlMatch) ||
+                    !IsCssFunctionNameAt(css, urlMatch.Index, "url") || IsInsideCssString(css, urlMatch.Index)) {
                     continue;
                 }
 
@@ -165,7 +166,7 @@ public static partial class HtmlResourcePipeline {
 
     private static bool IsImportantDeclarationValue(string css, int valueStart, int valueEnd) {
         int index = valueEnd - 1;
-        while (index >= valueStart && char.IsWhiteSpace(css[index])) {
+        while (index >= valueStart && IsCssWhitespace(css[index])) {
             index--;
         }
 
@@ -180,7 +181,7 @@ public static partial class HtmlResourcePipeline {
         }
 
         index -= Important.Length;
-        while (index >= valueStart && char.IsWhiteSpace(css[index])) {
+        while (index >= valueStart && IsCssWhitespace(css[index])) {
             index--;
         }
 
@@ -214,13 +215,20 @@ public static partial class HtmlResourcePipeline {
         }
     }
 
-    private static List<SourceRange> GetInactiveCssRuleRanges(string css, HtmlResourcePipelineOptions options) {
-        List<SourceRange> ranges = GetInactiveMediaRanges(css, options);
-        ranges.AddRange(GetInactiveSupportsRanges(css));
+    private static List<SourceRange> GetInactiveCssRuleRanges(
+        string css,
+        HtmlResourcePipelineOptions options,
+        bool includePotentialResponsiveScreenMedia = false,
+        bool includeProvenanceImageSupports = false) {
+        List<SourceRange> ranges = GetInactiveMediaRanges(css, options, includePotentialResponsiveScreenMedia);
+        ranges.AddRange(GetInactiveSupportsRanges(css, includeProvenanceImageSupports));
         return ranges;
     }
 
-    private static List<SourceRange> GetInactiveMediaRanges(string css, HtmlResourcePipelineOptions options) {
+    private static List<SourceRange> GetInactiveMediaRanges(
+        string css,
+        HtmlResourcePipelineOptions options,
+        bool includePotentialResponsiveScreenMedia) {
         var ranges = new List<SourceRange>();
         int index = 0;
         while (index < css.Length) {
@@ -246,7 +254,11 @@ public static partial class HtmlResourcePipeline {
             }
 
             string mediaText = css.Substring(preludeStart, open - preludeStart).Trim();
-            if (!IsApplicableMedia(mediaText, options)) {
+            bool applies = IsApplicableMedia(mediaText, options) ||
+                includePotentialResponsiveScreenMedia &&
+                options.MediaContext == HtmlCssMediaContext.Screen &&
+                HtmlComputedStyleEngine.IsPotentiallyApplicableScreenMedia(mediaText, options.MediaFeatures);
+            if (!applies) {
                 ranges.Add(new SourceRange(open + 1, close));
                 index = close + 1;
             } else {
@@ -257,7 +269,7 @@ public static partial class HtmlResourcePipeline {
         return ranges;
     }
 
-    private static List<SourceRange> GetInactiveSupportsRanges(string css) {
+    private static List<SourceRange> GetInactiveSupportsRanges(string css, bool includeProvenanceImageSupports) {
         var ranges = new List<SourceRange>();
         int index = 0;
         while (index < css.Length) {
@@ -283,7 +295,10 @@ public static partial class HtmlResourcePipeline {
             }
 
             string conditionText = css.Substring(preludeStart, open - preludeStart).Trim();
-            if (!HtmlComputedStyleEngine.IsApplicableSupports(conditionText)) {
+            bool applies = includeProvenanceImageSupports
+                ? HtmlComputedStyleEngine.IsApplicableProvenanceSupports(conditionText)
+                : HtmlComputedStyleEngine.IsApplicableSupports(conditionText);
+            if (!applies) {
                 ranges.Add(new SourceRange(open + 1, close));
                 index = close + 1;
             } else {
@@ -386,6 +401,7 @@ public static partial class HtmlResourcePipeline {
         string css,
         IReadOnlyDictionary<string, List<CssCustomPropertyDefinition>> customPropertyDefinitions,
         IReadOnlyDictionary<IElement, int> inlineSourceOrders,
+        IReadOnlyDictionary<IElement, HtmlComputedStyle> computedStyles,
         IReadOnlyList<SourceRange> inactiveRanges,
         Uri? baseUri,
         HtmlResourcePipelineOptions options,
@@ -409,7 +425,7 @@ public static partial class HtmlResourcePipeline {
             }
 
             string useSelector = GetDeclarationSelector(css, match.Index);
-            if (!IsCssReferenceForMatchingSelector(document, attributeName, css, match.Index)) {
+            if (!IsCssReferenceForMatchingSelector(document, attributeName, css, match.Index, computedStyles)) {
                 continue;
             }
 
@@ -422,7 +438,7 @@ public static partial class HtmlResourcePipeline {
                         Dictionary<string, List<CssCustomPropertyDefinition>> mergedDefinitions = inlineDefinitions.Count == 0
                             ? CloneCustomPropertyDefinitions(customPropertyDefinitions)
                             : MergeCustomPropertyDefinitions(customPropertyDefinitions, inlineDefinitions);
-                        foreach (CssCustomPropertyDefinition source in ResolveCustomPropertyUrlDefinitions(propertyName, mergedDefinitions, useSelector, document, matchedElement, new HashSet<string>(StringComparer.Ordinal), depth: 0)) {
+                        foreach (CssCustomPropertyDefinition source in ResolveCustomPropertyUrlDefinitions(propertyName, mergedDefinitions, useSelector, document, matchedElement, computedStyles, new HashSet<string>(StringComparer.Ordinal), depth: 0)) {
                             if (!IsFragmentOnlyReference(source.Source) && addedSources.Add(source.Source)) {
                                 AddRaw(manifest, kind, element, attributeName + "-var-url", source.Source, baseUri, options);
                             }
@@ -433,7 +449,7 @@ public static partial class HtmlResourcePipeline {
                 }
             }
 
-            foreach (CssCustomPropertyDefinition source in ResolveCustomPropertyUrlDefinitions(propertyName, customPropertyDefinitions, useSelector, document, useElement, new HashSet<string>(StringComparer.Ordinal), depth: 0)) {
+            foreach (CssCustomPropertyDefinition source in ResolveCustomPropertyUrlDefinitions(propertyName, customPropertyDefinitions, useSelector, document, useElement, computedStyles, new HashSet<string>(StringComparer.Ordinal), depth: 0)) {
                 if (!IsFragmentOnlyReference(source.Source) && addedSources.Add(source.Source)) {
                     AddRaw(manifest, kind, element, attributeName + "-var-url", source.Source, baseUri, options);
                 }

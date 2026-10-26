@@ -24,6 +24,26 @@ internal static class MimeWriter {
         WriteMessage(output, document, state, 0);
     }
 
+    internal static byte[] WriteTransportHeaders(EmailDocument document, EmailWriterOptions options) {
+        using var output = new EmailBoundedMemoryStream(options.MaxOutputBytes);
+        WriteEnvelopeHeaders(output, document, options);
+        WriteLine(output, "MIME-Version: 1.0");
+        return output.ToArray();
+    }
+
+    internal static byte[] WriteMimeEntity(EmailDocument document, EmailWriterOptions options,
+        IList<EmailDiagnostic> diagnostics) {
+        using var output = new EmailBoundedMemoryStream(options.MaxOutputBytes);
+        var state = new MimeWriterState(options, diagnostics);
+        state.Enter(document, 0);
+        try {
+            WriteContent(output, document, state, 0, true);
+            return output.ToArray();
+        } finally {
+            state.Exit(document);
+        }
+    }
+
     private static void WriteMessage(Stream output, EmailDocument document, MimeWriterState state, int depth) {
         state.Enter(document, depth);
         try {
@@ -485,6 +505,8 @@ internal static class MimeWriter {
     private static void WriteBase64(Stream output, Stream input, int lineLength, long maximumInputBytes) {
         int bytesPerLine = checked(lineLength / 4 * 3);
         var buffer = new byte[bytesPerLine];
+        var encodedCharacters = new char[lineLength];
+        var encodedLine = new byte[checked(lineLength + 2)];
         long total = 0;
         bool wrote = false;
         while (true) {
@@ -500,7 +522,13 @@ internal static class MimeWriter {
                 }
             }
             if (count == 0) break;
-            WriteLine(output, Convert.ToBase64String(buffer, 0, count));
+            int characterCount = Convert.ToBase64CharArray(buffer, 0, count, encodedCharacters, 0);
+            for (int index = 0; index < characterCount; index++) {
+                encodedLine[index] = checked((byte)encodedCharacters[index]);
+            }
+            encodedLine[characterCount] = (byte)'\r';
+            encodedLine[characterCount + 1] = (byte)'\n';
+            output.Write(encodedLine, 0, characterCount + 2);
             wrote = true;
             if (count < buffer.Length) break;
         }

@@ -14,7 +14,12 @@ public sealed record ConversionRoute(
     ConversionInputKind InputKind,
     string Accept,
     string EnginePath,
-    string AccentClass);
+    string AccentClass,
+    string OutputModel,
+    string SupportLevel,
+    string SupportLabel,
+    string SupportEvidence,
+    string KnownLimitations);
 
 public sealed record SelectedDocument(string Name, string Extension, string FormatLabel, long Size, byte[] Bytes);
 
@@ -34,6 +39,14 @@ public sealed record BrowserPdfProfile(
     string Id,
     string Label,
     string Description);
+
+public sealed record BrowserPowerPointImportProfile(
+    OfficeIMO.PowerPoint.Pdf.PdfPowerPointImportMode Mode,
+    string Id,
+    string Label,
+    string Description,
+    string FidelityStatus,
+    string Projection);
 
 public sealed record ConversionWarningView(
     string Code,

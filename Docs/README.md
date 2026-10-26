@@ -19,6 +19,7 @@ Use this index to find package guides, cross-package contracts, generated eviden
 The package README is the primary usage guide for its public API. These repository-level documents add cross-package contracts or evidence that would be awkward to repeat in every package.
 
 - [Provenance support matrix](officeimo.provenance-support-matrix.md) — exact carrier, package-owner, removal, verification, and resource-limit contracts.
+- [Content safety support matrix](officeimo.content-safety-support-matrix.md) — concealed-content, Unicode, cleanup, and format-specific ingestion-security boundaries.
 
 ### Office formats and interoperability
 
@@ -41,6 +42,7 @@ The package README is the primary usage guide for its public API. These reposito
 
 - [PDF current state](officeimo.pdf.current-state.md)
 - [PDF conversion support](officeimo.pdf-conversion-support-matrix.md)
+- [PDF reverse-conversion scorecard](pdf-reverse-conversion-scorecard.json) — executable 56-case producer/target matrix plus scanned, mixed, encrypted, and malformed stress evidence.
 - [HTML rendering support](officeimo.html-support-matrix.md)
 - [RTF support](officeimo.rtf-support-matrix.md)
 - [Email and Outlook artifact support](officeimo.email-support-matrix.md)

@@ -48,6 +48,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Validate benchmark evidence policy
+        shell: pwsh
+        run: ./Build/Test-LibraryComparisonRunnerContract.ps1
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
         with:
@@ -67,6 +71,9 @@ jobs:
       - name: Build solution
         run: dotnet build OfficeIMO.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
 
+      - name: Test optional C2PA process adapter
+        run: dotnet test OfficeIMO.Provenance.C2pa.Tests/OfficeIMO.Provenance.C2pa.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --no-restore --logger "console;verbosity=${{ env.TEST_VERBOSITY }}"
+
       - name: Build public examples
         shell: pwsh
         run: |
@@ -75,6 +82,23 @@ jobs:
           $project = 'OfficeIMO.Examples/OfficeIMO.Examples.csproj'
           dotnet restore $project
           dotnet build $project --configuration $env:BUILD_CONFIGURATION --no-restore
+
+  html-package-consumers:
+    name: 'OfficeIMO HTML packed API consumers'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Pack and test HTML API consumers
+        shell: pwsh
+        run: ./Build/Test-HtmlPackages.ps1
 
   email-package-consumers:
     name: 'OfficeIMO email platform packed consumers'
@@ -106,6 +130,7 @@ jobs:
             'OfficeIMO.Rtf/OfficeIMO.Rtf.csproj',
             'OfficeIMO.Email/OfficeIMO.Email.csproj',
             'OfficeIMO.Html/OfficeIMO.Html.csproj',
+            'OfficeIMO.Email.Html/OfficeIMO.Email.Html.csproj',
             'OfficeIMO.Markdown.Html/OfficeIMO.Markdown.Html.csproj',
             'OfficeIMO.Mhtml/OfficeIMO.Mhtml.csproj',
             'OfficeIMO.Reader.Core/OfficeIMO.Reader.Core.csproj',
@@ -127,6 +152,7 @@ jobs:
             return $packages[0].BaseName.Substring($id.Length + 1)
           }
           $emailVersion = Get-PackedPackageVersion 'OfficeIMO.Email'
+          $emailHtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Email.Html'
           $readerCoreVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Core'
           $readerEmailVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Email'
           $readerImageVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Image'
@@ -166,6 +192,7 @@ jobs:
             'OfficeIMO.Markdown',
             'OfficeIMO.Rtf',
             'OfficeIMO.Email',
+            'OfficeIMO.Email.Html',
             'OfficeIMO.Html',
             'OfficeIMO.Markdown.Html',
             'OfficeIMO.Mhtml',
@@ -188,6 +215,7 @@ jobs:
           $expectedFeed = (Resolve-Path $feed).Path.TrimEnd('\', '/')
           foreach ($package in @(
             @{ Id = 'officeimo.email'; Version = $emailVersion },
+            @{ Id = 'officeimo.email.html'; Version = $emailHtmlVersion },
             @{ Id = 'officeimo.reader.core'; Version = $readerCoreVersion },
             @{ Id = 'officeimo.reader.email'; Version = $readerEmailVersion },
             @{ Id = 'officeimo.reader.image'; Version = $readerImageVersion },
@@ -350,7 +378,9 @@ jobs:
   opendocument-schema:
     name: 'OpenDocument schema and LibreOffice'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold Ubuntu mirrors can spend most of the former 20-minute budget fetching
+    # the full Writer/Calc/Impress dependency graph before validation starts.
+    timeout-minutes: 40
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -361,9 +391,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Install schema and OpenDocument interoperability tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libxml2-utils unzip libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
+        run: bash Build/install-libreoffice-tools.sh libxml2-utils unzip libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
 
       - name: Build OpenDocument schema probe
         run: |
@@ -392,7 +420,9 @@ jobs:
   binary-powerpoint-libreoffice:
     name: 'Binary PowerPoint and LibreOffice'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Match the other LibreOffice jobs: a cold mirror and the interoperability
+    # proof must both fit without turning an external setup stall into a cancel.
+    timeout-minutes: 40
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -403,9 +433,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Install LibreOffice Impress
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libreoffice-core libreoffice-impress
+        run: bash Build/install-libreoffice-tools.sh libreoffice-core libreoffice-impress
 
       - name: Build binary PowerPoint interoperability probe
         run: |
@@ -431,7 +459,9 @@ jobs:
   office-corpus-libreoffice:
     name: 'Office binary corpus and LibreOffice'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Leave room for a cold LibreOffice install plus corpus conversion and the
+    # always-run evidence upload. Slow mirrors must not cancel the proof itself.
+    timeout-minutes: 40
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -442,9 +472,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Install LibreOffice Writer, Calc, and Impress
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
+        run: bash Build/install-libreoffice-tools.sh libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
 
       - name: Open, convert, and render declared corpus artifacts
         shell: pwsh

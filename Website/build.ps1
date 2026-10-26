@@ -41,6 +41,7 @@
 
 .PARAMETER PSWriteOfficeRoot
     Optional PSWriteOffice repo root used to refresh the checked-in PowerShell API snapshot before building.
+    Overrides the PSWRITEOFFICE_ROOT environment variable for this build.
 
 .EXAMPLE
     ./build.ps1
@@ -62,7 +63,7 @@ param(
     [switch]$CI,
     [switch]$SkipBuildTool,
     [string]$PowerForgeRoot = $env:POWERFORGE_ROOT,
-    [string]$PSWriteOfficeRoot = ''
+    [string]$PSWriteOfficeRoot = $env:PSWRITEOFFICE_ROOT
 )
 
 $ErrorActionPreference = 'Stop'
@@ -182,16 +183,29 @@ function Assert-SiteOutput {
 
     $conversionRoutesCatalog = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'data/office_conversion_routes.json') -Raw | ConvertFrom-Json
     $conversionRoutesHtml = Get-Content -LiteralPath $conversionRoutesPage -Raw
+    $renderedCodeValues = [regex]::Matches(
+        $conversionRoutesHtml,
+        '<code(?:\s[^>]*)?>(?<value>.*?)</code>',
+        [System.Text.RegularExpressions.RegexOptions]::Singleline
+    ) | ForEach-Object {
+        [System.Net.WebUtility]::HtmlDecode($_.Groups['value'].Value)
+    }
     foreach ($resultContract in @($conversionRoutesCatalog.routes.resultContract | Where-Object { $_ -match '[<>]' } | Sort-Object -Unique)) {
-        $encodedContract = [System.Net.WebUtility]::HtmlEncode([string] $resultContract)
-        if (-not $conversionRoutesHtml.Contains("<code>$encodedContract</code>", [System.StringComparison]::Ordinal)) {
+        if (-not [System.Linq.Enumerable]::Contains(
+            [string[]] $renderedCodeValues,
+            [string] $resultContract,
+            [System.StringComparer]::Ordinal)) {
             throw "Build validation failed: conversion result contract '$resultContract' is not preserved as encoded code text."
         }
     }
 }
 
+$PreviousPSWriteOfficeRoot = $env:PSWRITEOFFICE_ROOT
+
 try {
     if (-not [string]::IsNullOrWhiteSpace($PSWriteOfficeRoot)) {
+        $PSWriteOfficeRoot = (Resolve-Path -LiteralPath $PSWriteOfficeRoot -ErrorAction Stop).Path
+        $env:PSWRITEOFFICE_ROOT = $PSWriteOfficeRoot
         $syncScript = Join-Path $PSScriptRoot 'scripts\Sync-PSWriteOfficeApiDocs.ps1'
         if (-not (Test-Path -LiteralPath $syncScript -PathType Leaf)) {
             throw "PSWriteOffice API sync script not found: $syncScript"
@@ -266,5 +280,10 @@ try {
         Write-Host 'Build complete -> _site/' -ForegroundColor Green
     }
 } finally {
+    if ($null -eq $PreviousPSWriteOfficeRoot) {
+        Remove-Item Env:PSWRITEOFFICE_ROOT -ErrorAction SilentlyContinue
+    } else {
+        $env:PSWRITEOFFICE_ROOT = $PreviousPSWriteOfficeRoot
+    }
     Pop-Location
 }

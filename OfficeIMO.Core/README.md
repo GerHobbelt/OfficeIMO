@@ -43,6 +43,39 @@ badge.StrokeColor = accent;
 badge.Shadow = new OfficeShadow(OfficeColor.Black, 0.18, 3, 4);
 ```
 
+Use `OfficeIccColorProfile` when an application already has embedded ICC profile bytes and needs the
+same bounded, dependency-free conversion used by OfficeIMO renderers:
+
+```csharp
+using OfficeIMO.Drawing;
+
+byte[] profileBytes = File.ReadAllBytes("display.icc");
+if (OfficeIccColorProfile.TryCreate(profileBytes, out OfficeIccColorProfile? profile) &&
+    profile.TryConvert(new[] { 0.25D, 0.5D, 0.75D }, out OfficeColor converted)) {
+    Console.WriteLine(converted.ToHex());
+}
+
+if (profile?.HasOutputTransform == true &&
+    profile.TryConvertToDevice(OfficeColor.CornflowerBlue, OfficeIccRenderingIntent.RelativeColorimetric, out double[] deviceColor) &&
+    profile.TrySoftProof(OfficeColor.CornflowerBlue, OfficeIccRenderingIntent.RelativeColorimetric, out OfficeColor proofed)) {
+    Console.WriteLine($"Device channels: {string.Join(", ", deviceColor)}; proof: {proofed.ToHex()}");
+}
+```
+
+The managed contract accepts bounded RGB and Gray matrix/TRC input-device and display-device profiles
+plus RGB or CMYK LUT8 input transforms with a Lab profile connection space and RGB or CMYK LUT16
+input transforms with an XYZ or Lab profile connection space. For LUT and ICC v4 `mAB` profiles,
+conversion selects `A2B1` for relative or absolute colorimetric intent and `A2B2` for saturation intent,
+falling back to `A2B0` when the intent-specific transform is absent. It also accepts bounded ICC v4
+RGB and CMYK A2B `mAB` input transforms and B2A `mBA` output transforms using the
+specification-defined curve, variable-grid CLUT, matrix, and offset combinations. Output conversion is
+available through a valid `B2A0` transform or
+the synthesized inverse of a supported RGB matrix/TRC profile; optional intent-specific tags fall back
+to `B2A0` when that transform is present. `TryCreate` returns `false` for unsupported
+input profile classes and transform types, while malformed or unsupported optional output transforms
+leave `HasOutputTransform` false so the caller can choose an explicit color-management provider or
+fallback instead of receiving a silent approximation.
+
 ### Image metadata and complete-content validation
 
 ```csharp
@@ -123,6 +156,63 @@ foreach (OfficeProvenanceChange change in removal.Changes) {
 Removal is selective. It removes structurally valid C2PA carriers and AI-specific `trainedAlgorithmicMedia` or `compositeWithTrainedAlgorithmicMedia` declarations while preserving unrelated metadata and non-AI source declarations. The generic Core API blocks signed ZIP packages because rewriting the package invalidates its signatures; callers that own the complete document save must handle signature invalidation separately.
 
 Structural inspection does not claim that a manifest is authentic or trusted. Install `OfficeIMO.Security` and use its optional C2PA verifier when content binding, signature mathematics, and certificate trust must be checked.
+
+For an evidence-oriented result, combine structural carriers, optional cryptographic verification, exact Unicode findings, and vendor-specific detectors without collapsing them into an unreliable universal AI verdict:
+
+```csharp
+OfficeProvenanceAssessmentReport assessment =
+    OfficeProvenanceAssessment.InspectFile("article.md");
+
+Console.WriteLine($"Verified credential: {assessment.HasVerifiedContentCredential}");
+foreach (OfficeProvenanceSignalResult signal in assessment.ProviderSignals) {
+    Console.WriteLine($"{signal.ProviderName}: {signal.Status}");
+}
+```
+
+`IOfficeProvenanceSignalDetector` is deliberately provider-specific. A detector reports its own durable-media watermark, statistical-text watermark, visible disclosure, or deterministic artifact and keeps `NotDetected`, `Inconclusive`, `ProviderUnavailable`, and `Error` distinct. OfficeIMO does not turn the absence of one vendor's signal into “human-authored.”
+
+Use `OfficeTextIntegrityInspector` to report exact invisible and context-sensitive Unicode code points. It reports offsets, code points, and risk; it does not call those characters an AI watermark. Format content-safety reports also mirror these as selectable `NonPrintingUnicode` findings when the owning adapter can verify and rewrite the exact native text node. Cleanup has no blanket mode: callers pass only reviewed finding IDs, so legitimate joiners, variation selectors, and typographic spaces are not silently normalized.
+
+### Inspect concealed content before model ingestion
+
+`OfficeIMO.ContentSafety` is separate from provenance. It reports native hidden text, white-on-white or otherwise low-contrast text, tiny or zero-size text, off-canvas/clipped content, notes/comments/alternative text, and exact Unicode evidence through the format package that understands the file. Concealment can be legitimate accessibility, review, layout, or metadata content; it is not an AI watermark or an authorship verdict.
+
+```csharp
+using OfficeIMO.ContentSafety;
+using OfficeIMO.Word;
+
+OfficeContentSafetyReport report = WordDocument.InspectContentSafety("candidate.docx");
+foreach (OfficeContentSafetyFinding finding in report.Findings) {
+    Console.WriteLine($"{finding.Risk}: {finding.Kind} at {finding.Location}");
+}
+
+OfficeContentSafetyFinding[] reviewed = report.Findings
+    .Where(item => item.IsInstructionLike)
+    .ToArray();
+
+WordDocument.RemoveSelectedContent(
+    "candidate.docx",
+    "candidate.cleaned.docx",
+    new OfficeContentCleanupSelection(reviewed.Select(item => item.Id)));
+```
+
+Cleanup is always selection-based and stale-evidence checked. The adapter reopens and reinspects the rewritten artifact; it does not provide a blanket “remove anything unusual” switch. See the [content safety support matrix](../Docs/officeimo.content-safety-support-matrix.md) for exact format coverage and renderer boundaries.
+
+Transformations can make an existing Content Credential invalid. `OfficeProvenanceLifecycle.FinalizeFile` makes the disposition explicit:
+
+```csharp
+var disposition = new OfficeProvenanceTransformationOptions {
+    Policy = OfficeProvenanceTransformationPolicy.PreserveIfUnchanged
+};
+
+OfficeProvenanceTransformationResult audit = OfficeProvenanceLifecycle.FinalizeFile(
+    sourcePath: "source.png",
+    candidatePath: "resized.png",
+    outputPath: "final.png",
+    options: disposition);
+```
+
+The default blocks a changed credentialed source. Applications must explicitly select `RemoveInvalidated` for auditable carrier removal or `SignAsDerived` with an `IOfficeProvenanceSigner`, which records the source as the parent ingredient. Package-owned Word, Excel, PowerPoint, Visio, OpenDocument, EPUB, and PDF removal adapters remain the correct surfaces when package signatures also need safe disposition.
 
 The [provenance support matrix](../Docs/officeimo.provenance-support-matrix.md) records the exact carriers, strict-removal behavior, verification boundary, and known limits.
 

@@ -44,13 +44,14 @@ public class PdfTableStreamExportContracts {
 
         using var wordDocument = wordResult.RequireNoLoss();
         using var excelDocument = excelResult.RequireNoLoss();
-        using var powerPointPresentation = powerPointResult.RequireNoLoss();
+        Assert.Throws<InvalidOperationException>(() => powerPointResult.RequireNoLoss());
+        using var powerPointPresentation = powerPointResult.Value;
         Assert.NotEmpty(wordDocument.ToBytes());
         Assert.NotEmpty(excelDocument.ToBytes());
         Assert.NotEmpty(powerPointPresentation.ToBytes());
         Assert.False(wordResult.Report.HasLoss);
         Assert.False(excelResult.Report.HasLoss);
-        Assert.False(powerPointResult.Report.HasLoss);
+        Assert.True(powerPointResult.Report.HasLoss);
         Assert.True(excelResult.HasOmittedPageContent);
         Assert.True(powerPointResult.HasOmittedPageContent);
         Assert.Equal(1, excelResult.Report.SourceScope.NonTableTextBlockCount);
@@ -144,6 +145,30 @@ public class PdfTableStreamExportContracts {
         Assert.Equal(
             excelResult.Report.SourceScope.VectorPrimitiveCount,
             powerPointResult.Report.SourceScope.VectorPrimitiveCount);
+    }
+
+    [Fact]
+    public void LogicalPowerPointEditableContent_CountsEachOmittedVectorOnce() {
+        byte[] source = PdfDocument.Create()
+            .Rectangle(
+                120,
+                40,
+                strokeColor: PdfColor.FromRgb(0, 64, 128),
+                strokeWidth: 2,
+                fillColor: PdfColor.FromRgb(204, 238, 255))
+            .ToBytes();
+        PdfLogicalDocument logical = PdfLogicalDocument.Load(source);
+
+        PdfPowerPointConversionResult result = logical.ToPowerPointPresentationResult(
+            PdfPowerPointImportOptions.CreateEditableContent());
+
+        using (result.Value) {
+            Assert.Equal(1, logical.Pages.Count);
+            Assert.True(logical.Pages[0].VectorPrimitiveCount > 0);
+            Assert.Equal(
+                logical.Pages[0].VectorPrimitiveCount,
+                result.Report.EditablePages[0].OmittedVectorCount);
+        }
     }
 
     [Fact]

@@ -51,6 +51,8 @@ public static partial class HtmlComputedStyleEngine {
         "align-content",
         "align-items",
         "align-self",
+        "animation",
+        "animation-name",
         "aspect-ratio",
         "bottom",
         "bookmark-label",
@@ -123,6 +125,7 @@ public static partial class HtmlComputedStyleEngine {
         "flex-grow",
         "flex-shrink",
         "flex-wrap",
+        "filter",
         "float",
         "gap",
         "grid-area",
@@ -197,6 +200,7 @@ public static partial class HtmlComputedStyleEngine {
         "string-set",
         "tab-size",
         "text-align",
+        "text-indent",
         "text-decoration-line",
         "text-overflow",
         "text-transform",
@@ -229,6 +233,24 @@ public static partial class HtmlComputedStyleEngine {
         HtmlCssMediaContext mediaContext,
         HtmlConversionLimits limits) =>
         ComputeStyleSet(document, MediaEnvironment.CreateDefault(mediaContext), false, limits).Elements;
+
+    internal static IReadOnlyDictionary<IElement, HtmlComputedStyle> Compute(
+        IHtmlDocument document,
+        HtmlResourcePipelineOptions options) {
+        MediaEnvironment environment = options.MediaWidth.HasValue && options.MediaHeight.HasValue
+            ? new MediaEnvironment(options.MediaContext, options.MediaWidth.Value, options.MediaHeight.Value, options.MediaFeatures)
+            : MediaEnvironment.CreateDefault(options.MediaContext, options.MediaFeatures);
+        return ComputeStyleSet(document, environment, false, options.Limits).Elements;
+    }
+
+    internal static HtmlComputedStyleSet ComputeForProvenance(
+        IHtmlDocument document,
+        HtmlResourcePipelineOptions options) {
+        MediaEnvironment environment = options.MediaWidth.HasValue && options.MediaHeight.HasValue
+            ? new MediaEnvironment(options.MediaContext, options.MediaWidth.Value, options.MediaHeight.Value, options.MediaFeatures)
+            : MediaEnvironment.CreateDefault(options.MediaContext, options.MediaFeatures);
+        return ComputeStyleSet(document, environment, true, options.Limits);
+    }
 
     internal static HtmlComputedStyleSet ComputeForRendering(IHtmlDocument document, HtmlRenderOptions options, HtmlConversionLimits limits) =>
         ComputeStyleSet(
@@ -360,8 +382,10 @@ public static partial class HtmlComputedStyleEngine {
         }
 
         ApplyInlineDeclarations(properties, parent?.Properties, element.GetAttribute("style"));
-        IDictionary<string, string> resolvedProperties = ResolveComputedProperties(properties, parent?.Properties, out IReadOnlyCollection<string> inheritedProperties, out IReadOnlyCollection<string> resetProperties);
-        var style = new HtmlComputedStyle(resolvedProperties, inheritedProperties, resetProperties);
+        IDictionary<string, string> resolvedProperties = ResolveComputedProperties(properties, parent?.Properties,
+            out IReadOnlyCollection<string> inheritedProperties, out IReadOnlyCollection<string> resetProperties,
+            out IReadOnlyCollection<string> specifiedProperties);
+        var style = new HtmlComputedStyle(resolvedProperties, inheritedProperties, resetProperties, specifiedProperties);
         computed[element] = style;
 
         double inheritedFontSize = containerContexts.Count == 0 ? 16D : containerContexts[containerContexts.Count - 1].FontSize;
@@ -433,8 +457,10 @@ public static partial class HtmlComputedStyleEngine {
         }
 
         if (!matched) return null;
-        IDictionary<string, string> resolvedProperties = ResolveComputedProperties(properties, originatingStyle.Properties, out IReadOnlyCollection<string> inheritedProperties, out IReadOnlyCollection<string> resetProperties);
-        return new HtmlComputedStyle(resolvedProperties, inheritedProperties, resetProperties);
+        IDictionary<string, string> resolvedProperties = ResolveComputedProperties(properties, originatingStyle.Properties,
+            out IReadOnlyCollection<string> inheritedProperties, out IReadOnlyCollection<string> resetProperties,
+            out IReadOnlyCollection<string> specifiedProperties);
+        return new HtmlComputedStyle(resolvedProperties, inheritedProperties, resetProperties, specifiedProperties);
     }
 
 }

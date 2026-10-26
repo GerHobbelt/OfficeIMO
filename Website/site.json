@@ -14,7 +14,8 @@
     {
       "Repo": "EvotecIT/PSWriteOffice",
       "Slug": "pswriteoffice",
-      "Destination": "./projects/pswriteoffice"
+      "Destination": "./projects/pswriteoffice",
+      "Clean": true
     }
   ],
   "StaticAssets": [
@@ -63,6 +64,15 @@
       "Name": "conversions",
       "Input": "content/conversions",
       "Output": "/convert",
+      "DefaultLayout": "conversion",
+      "UseToc": false,
+      "SitemapLastModified": "sourceDate",
+      "Include": ["*.md", "**/*.md"]
+    },
+    {
+      "Name": "pdf-workflows",
+      "Input": "content/pdf-workflows",
+      "Output": "/pdf",
       "DefaultLayout": "conversion",
       "UseToc": false,
       "SitemapLastModified": "sourceDate",
@@ -201,7 +211,7 @@
       "Hsts": false,
       "XFrameOptionsValue": "SAMEORIGIN",
       "PermissionsPolicy": true,
-      "ContentSecurityPolicyValue": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+      "ContentSecurityPolicyValue": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
     },
     "ContentSignals": {
       "Enabled": true,
@@ -283,13 +293,18 @@
     "McpServerCard": { "Enabled": false },
     "OpenApi": { "Enabled": false },
     "WebMcp": false,
-    "MarkdownNegotiation": true
+    "MarkdownNegotiation": false
   },
   "Cloudflare": {
     "Cache": {
       "EdgeTtlSeconds": 604800
     },
-    "PurgeMode": "hostname"
+    "PurgeMode": "incremental",
+    "AlwaysPurgePaths": [
+      "/apps/officeimo-converter/",
+      "/apps/officeimo-converter/?embedded=1"
+    ],
+    "SmartTieredCache": true
   },
   "EditLinks": {
     "Enabled": true,
@@ -324,6 +339,7 @@
       { "Match": "/", "Bundles": ["global", "home", "experience"] },
       { "Match": "/products/**", "Bundles": ["global", "product", "experience"] },
       { "Match": "/compatibility/", "Bundles": ["global", "product", "experience"] },
+      { "Match": "/pdf/**", "Bundles": ["global", "product", "experience"] },
       { "Match": "/convert/**", "Bundles": ["global", "product", "experience"] },
       { "Match": "/solutions/**", "Bundles": ["global", "product", "experience"] },
       { "Match": "/comparison/", "Bundles": ["global", "product", "experience"] },

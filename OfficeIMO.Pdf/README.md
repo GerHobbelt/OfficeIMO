@@ -50,7 +50,7 @@ PdfDocument.Create(pdf => pdf.Content(content => content
 - Manipulates existing PDFs with page extraction, split, merge, delete, duplicate, move, rotate, metadata editing, stamps, watermarks, and complete-page overlay/underlay while preserving source PDF header versions on shared rewrite paths.
 - Renders supported embedded TrueType and OpenType/CFF fonts with stable-glyph subsetting. `UseManagedTextShaping()` selects Drawing's dependency-light positioned-glyph provider for its proven core-Arabic/TrueType subset. The shared `IOfficeTextShapingProvider` contract remains the extension point for broader scripts and shaping engines.
 - Projects authored annotation appearance streams into page images. When a supported free-text, text-markup, shape, line, ink, path, stamp, or caret annotation has no usable normal appearance, the renderer reuses the bounded annotation synthesizer and reports `render.annotation.appearance-synthesized` as an approximation.
-- Shares managed CMYK, Lab, XYZ, calibrated-color conversion, vector tiling fills, standard blend modes, and alpha/luminosity soft masks with `OfficeIMO.Drawing`.
+- Shares managed CMYK, Lab, XYZ, calibrated-color conversion, bounded sampled, exponential, stitching, and Type 4 calculator color functions, vector tiling fills, standard blend modes, and alpha/luminosity soft masks with `OfficeIMO.Drawing`. Catalog destination output profiles with supported RGB matrix/TRC or ICC mBA transforms soft-proof vector, text, form, pattern, and image colors through the same rendering-intent pipeline. ICC LUT-composed and output-profile-composed shadings remain fail-closed unless their final interpolation can be certified. Pages with explicit transparency retain authored colors and report `render.colorspace.icc-output-intent-transparency-simplified` until output conversion can run after composition. Color-managed DCT/JPEG images use the ICC, `/Decode`, Indexed-palette, and transparency pipeline, while simple device-color JPEGs without required color management remain lossless pass-through payloads.
 - Bounds completed page/effect content and serialized-object retention with separate memory limits, temporary-file spillover, direct large-stream spooling, and chunked final assembly during stream saves. `PdfSaveResult.Serialization` records limits, peak retained bytes, spill decisions, final buffering, and passthrough without claiming forward-only layout. Per-page metadata and the authored block model remain proportional to document size, and `ToBytes()` buffers the final artifact.
 - Provides conversion reports, grouped warning summaries, and diagnostics so adapters can expose unsupported or simplified source content honestly.
 - Provides reusable conversion proof snapshots for generated PDFs, artifact hashes, required page counts, page sizes, document metadata, outline titles, URI links, form fields, named destinations, page labels, attachments, output intents, optional-content/layer metadata, catalog/viewer metadata, XMP/tagged metadata, text markers, logical readback signals, expected and accepted warning contracts, and post-processing hand-off. Compliance proof records bind external validator name, version, profile, result, warnings, SHA-256, byte length, and validation time to the exact artifact.
@@ -409,6 +409,14 @@ foreach (var table in logical.Tables) {
     Console.WriteLine($"Table on page {table.PageNumber}: {table.Rows.Count} rows");
 }
 
+IReadOnlyList<PdfLogicalReadingOrderItem> readingOrder =
+    PdfLogicalReadingOrderAnalysis.Analyze(logical.Pages[0]);
+
+PdfLogicalTableData tableData = PdfLogicalTableAnalysis.Extract(logical.Tables[0]);
+foreach (PdfLogicalTableValueProfile profile in tableData.ValueProfiles) {
+    Console.WriteLine($"{profile.Name}: {profile.Kind} ({profile.Confidence:P0})");
+}
+
 string markdownTables = PdfLogicalTableTextExportExtensions.ExtractMarkdownTables("statement.pdf");
 IReadOnlyList<PdfExtractedImage> images = pdf.Read.Images();
 IReadOnlyList<PdfExtractedImage> firstPageImages = pdf.Read.Images("1");
@@ -444,6 +452,36 @@ PdfDocument visualTextPdf = PdfDocument.Open("spreadsheet-export.pdf", new PdfRe
 
 IReadOnlyList<string> visualTextByPage = visualTextPdf.Read.TextByPage();
 ```
+
+Image-only and mixed pages can be enriched through a caller-owned OCR provider
+without adding an OCR runtime to `OfficeIMO.Pdf`. Accepted words are normalized
+to cropped, rotated visual page coordinates, de-duplicated against native text,
+and projected into the same logical model used by reverse converters:
+
+```csharp
+static async Task<PdfLogicalDocument> ReadWithOcrAsync(
+    string path,
+    IPdfOcrProvider provider) {
+    PdfOcrMergeResult ocr = await PdfDocument
+        .Open(path)
+        .Read.OcrAsync(provider, new PdfOcrMergeOptions {
+            MinimumConfidence = 0.75,
+            DetectAlignedTables = true
+        });
+
+    Console.WriteLine(ocr.AcceptedWordCount);
+    return ocr.EnrichedDocument;
+}
+```
+
+`NativeDocument` retains the parser-only view for comparison. Every enriched
+text block and inferred table exposes native-or-OCR provenance; OCR text also
+retains provider confidence and direct visual bounds. Table inference requires
+repeated aligned rows plus typed-value evidence (or a wider repeated grid), so
+ordinary two-column prose remains separate reading-order content. The work is
+bounded by the merge options. Word, Excel,
+PowerPoint, HTML, RTF, ODT, ODS, and ODP packages consume
+`EnrichedDocument` directly through their existing logical-PDF overloads.
 
 ### Split and extract pages
 
@@ -736,6 +774,22 @@ The Word, Excel, PowerPoint, Markdown, HTML, RTF, OneNote, AsciiDoc, and LaTeX P
 
 The text-capable adapters also expose `TextFallbacks`. `PdfTextFallbackFeatures.Default` enables document, monospace, symbol, and emoji groups. Add `PdfTextFallbackFeatures.MultilingualFonts` for CJK, Arabic, and other non-Latin family candidates; OneNote adds that candidate group unless fallbacks are `None`. Candidate selection does not read installed fonts unless the resource policy allows it.
 
+### Inspect and remove content provenance
+
+```csharp
+using OfficeIMO.Pdf;
+using OfficeIMO.Provenance;
+
+OfficeProvenanceReport report = PdfProvenance.InspectFile("input.pdf");
+OfficeProvenanceRemovalResult result = PdfProvenance.RemoveFile("input.pdf", "clean.pdf");
+```
+
+The PDF owner recognizes the standards-defined embedded file with media type `application/c2pa` and `/AFRelationship /C2PA_Manifest`. Removal uses a bounded, targeted object-graph rewrite that leaves unrelated attachment associations in place. Malformed indirect-object candidates remain untouched unless the caller disables `RequireStructurallyValidCarrier`; direct file-spec dictionaries are inspected but cannot be removed safely. A signed PDF is never silently rewritten or stripped; handle its signature through an explicit PDF signature workflow first. Optional cryptographic C2PA verification is provided by `OfficeIMO.Security`.
+
+## Concealed-content inspection and cleanup
+
+`PdfDocument.InspectContentSafety(...)` reports non-painting text render modes, effective transparency, clipping, tiny/zero/off-canvas geometry, paint-order-resolved low contrast, and Unicode evidence from decoded spans. `PdfDocument.RemoveSelectedContent(...)` physically removes exact selected spans and can rewrite reviewed Unicode ranges in ordinary painted or painted low-contrast spans while verifying neighboring text restoration. Unicode sub-findings whose restamp could change concealment remain report-only, while their whole concealed span remains removable. Encrypted and signed PDFs are rejected; hidden optional-content nesting that cannot be mapped to an exact removable span is diagnosed instead of guessed.
+
 ### Generate a formal e-invoice carrier
 
 ```csharp
@@ -882,6 +936,7 @@ dotnet test OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj -c Release -f net8.0
 dotnet test OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj -c Release -f net10.0
 dotnet run --project OfficeIMO.Pdf.Benchmarks/OfficeIMO.Pdf.Benchmarks.csproj -c Release -f net8.0 -- --verify-budgets
 dotnet run --project OfficeIMO.Pdf.Benchmarks/OfficeIMO.Pdf.Benchmarks.csproj -c Release -f net10.0 -- --verify-budgets
+dotnet run --project OfficeIMO.Pdf.Benchmarks/OfficeIMO.Pdf.Benchmarks.csproj -c Release -f net10.0 -- --verify-timing-budgets
 Build/Export-PdfComplianceProof.ps1 -Configuration Release -Framework net8.0
 Build/Export-PdfVisualReviewGallery.ps1 -Configuration Release -Framework net8.0
 ```
@@ -889,7 +944,11 @@ Build/Export-PdfVisualReviewGallery.ps1 -Configuration Release -Framework net8.0
 The checked-in interoperability gate uses hash-pinned Open Preservation
 Foundation and veraPDF fixtures with explicit provenance. The performance gate
 uses a deterministic 60-page mixed corpus and checks cold and cached analysis,
-SVG rendering, PNG rendering, output integrity, and allocation/time budgets.
+SVG rendering, PNG rendering, output integrity, absolute allocation and heap
+budgets, generous elapsed-time ceilings, and cached allocation savings. Relative
+cached speedup is opt-in through `--verify-timing-budgets` for controlled
+benchmark hosts; ordinary CI records it without treating shared-runner timing as
+a release comparison.
 
 Pixel baselines are strict when the installed Poppler major/minor version
 matches the recorded renderer. A different renderer version still runs semantic

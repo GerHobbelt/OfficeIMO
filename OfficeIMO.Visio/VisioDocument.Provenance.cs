@@ -8,26 +8,76 @@ namespace OfficeIMO.Visio;
 public partial class VisioDocument {
     private const string SignatureOriginRelationship = "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/origin";
     private const string SignaturePartRelationship = "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/signature";
+    private const string DocumentRelationship = "http://schemas.microsoft.com/visio/2010/relationships/document";
+    private const string ExtendedPropertiesRelationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties";
     private const string SignatureOriginContentType = "application/vnd.openxmlformats-package.digital-signature-origin";
     private const string SignaturePartContentType = "application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml";
+    private const string ExtendedPropertiesContentType = "application/vnd.openxmlformats-officedocument.extended-properties+xml";
 
     /// <summary>Inspects C2PA and IPTC provenance in a saved VSDX package and its supported embedded images.</summary>
     public static OfficeProvenanceReport InspectProvenance(string filePath, OfficeProvenanceOptions? options = null) =>
-        OfficeProvenanceInspector.InspectFile(filePath, options);
+        OfficeProvenancePackageMutation.InspectFile(filePath, options, ValidatePackage);
 
     /// <summary>Removes selected provenance and atomically writes a VSDX package.</summary>
     public static OfficeProvenanceRemovalResult RemoveProvenance(
         string inputPath,
         string outputPath,
         OfficeProvenanceRemovalOptions? options = null) =>
-        OfficeProvenancePackageMutation.RemoveFile(inputPath, outputPath, options, StripPackageSignatures);
+        OfficeProvenancePackageMutation.RemoveFile(inputPath, outputPath, options, StripPackageSignatures, HasPackageSignatures, ValidatePackage);
 
     /// <summary>Removes selected provenance from encoded VSDX package bytes.</summary>
     public static OfficeProvenanceRemovalResult RemoveProvenance(
         byte[] packageBytes,
         string fileName = "drawing.vsdx",
         OfficeProvenanceRemovalOptions? options = null) =>
-        OfficeProvenancePackageMutation.Remove(packageBytes, fileName, options, StripPackageSignatures);
+        OfficeProvenancePackageMutation.Remove(packageBytes, fileName, options, StripPackageSignatures, HasPackageSignatures, ValidatePackage);
+
+    private static void ValidatePackage(byte[] data, OfficeProvenanceOptions options) {
+        OfficeProvenanceZip.ValidateForOwningPackageMutation(data, options);
+        using var stream = new MemoryStream(data, writable: false);
+        using Package package = Package.Open(stream, FileMode.Open, FileAccess.Read);
+        PackageRelationship[] relationships = package.GetRelationshipsByType(DocumentRelationship).ToArray();
+        if (relationships.Length != 1 || relationships[0].TargetMode != TargetMode.Internal) {
+            throw new InvalidDataException("The package is not a supported Visio document.");
+        }
+        Uri documentUri = PackUriHelper.ResolvePartUri(relationships[0].SourceUri, relationships[0].TargetUri);
+        if (!package.PartExists(documentUri) || !VisioPackageFormat.TryFromContentType(package.GetPart(documentUri).ContentType, out _)) {
+            throw new InvalidDataException("The package is not a supported Visio document.");
+        }
+    }
+
+    private static bool HasPackageSignatures(byte[] data, OfficeProvenanceRemovalOptions options) =>
+        OfficeProvenanceZip.HasNativePackageSignature(data, options) ||
+        HasRelationshipOwnedApplicationSignatureMetadata(data, options.Limits);
+
+    private static bool HasRelationshipOwnedApplicationSignatureMetadata(byte[] data, OfficeProvenanceOptions limits) {
+        using var stream = new MemoryStream(data, writable: false);
+        using Package package = Package.Open(stream, FileMode.Open, FileAccess.Read);
+        var inspected = new HashSet<Uri>();
+        foreach (PackageRelationship relationship in package.GetRelationshipsByType(ExtendedPropertiesRelationship)) {
+            if (relationship.TargetMode != TargetMode.Internal) continue;
+            Uri partUri = PackUriHelper.ResolvePartUri(relationship.SourceUri, relationship.TargetUri);
+            if (!inspected.Add(partUri) || !package.PartExists(partUri)) continue;
+            PackagePart part = package.GetPart(partUri);
+            if (!string.Equals(part.ContentType, ExtendedPropertiesContentType, StringComparison.OrdinalIgnoreCase)) {
+                throw new InvalidDataException("A Visio extended-properties relationship targets a part with an unexpected content type.");
+            }
+            using Stream input = part.GetStream(FileMode.Open, FileAccess.Read);
+            byte[] xml = ReadBoundedXml(input, limits.MaxAssetBytes);
+            // System.IO.Packaging can surface an owned but empty extended-properties part.
+            // It carries no DigSig evidence and must not make unrelated native signatures
+            // impossible to remove.
+            if (xml.Length == 0) continue;
+            OfficeProvenanceXml.ValidateMaterializedNodeBudget(xml, limits, "Visio app metadata");
+            using var xmlInput = new MemoryStream(xml, writable: false);
+            using XmlReader reader = XmlReader.Create(xmlInput, OfficeProvenanceXml.CreateReaderSettings(limits));
+            XDocument document = XDocument.Load(reader, LoadOptions.None);
+            XNamespace properties = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
+            if (document.Root?.Name == properties + "Properties" &&
+                document.Root.Elements(properties + "DigSig").Any()) return true;
+        }
+        return false;
+    }
 
     private static OfficeProvenanceSignatureStripResult StripPackageSignatures(byte[] data, OfficeProvenanceOptions limits) {
         using var stream = new MemoryStream(data.Length);
@@ -48,6 +98,7 @@ public partial class VisioDocument {
                         throw new InvalidDataException("A Visio signature-origin relationship targets a part with an unexpected content type.");
                     }
                     originParts.Add(origin);
+                    ValidateRelationshipNodeBudget(package, origin.Uri, limits);
                     foreach (PackageRelationship signature in origin.GetRelationshipsByType(SignaturePartRelationship).ToArray()) {
                         if (signature.TargetMode == TargetMode.External) continue;
                         Uri signatureUri = PackUriHelper.ResolvePartUri(origin.Uri, signature.TargetUri);
@@ -66,9 +117,17 @@ public partial class VisioDocument {
                 package.DeleteRelationship(relationship.Id);
             }
 
-            Uri appPropertiesUri = PackUriHelper.CreatePartUri(new Uri("/docProps/app.xml", UriKind.Relative));
-            if (package.PartExists(appPropertiesUri)) {
+            var appPropertiesUris = new HashSet<Uri>();
+            foreach (PackageRelationship relationship in package.GetRelationshipsByType(ExtendedPropertiesRelationship)) {
+                if (relationship.TargetMode != TargetMode.Internal) continue;
+                appPropertiesUris.Add(PackUriHelper.ResolvePartUri(relationship.SourceUri, relationship.TargetUri));
+            }
+            foreach (Uri appPropertiesUri in appPropertiesUris) {
+                if (!package.PartExists(appPropertiesUri)) continue;
                 PackagePart appProperties = package.GetPart(appPropertiesUri);
+                if (!string.Equals(appProperties.ContentType, ExtendedPropertiesContentType, StringComparison.OrdinalIgnoreCase)) {
+                    throw new InvalidDataException("A Visio extended-properties relationship targets a part with an unexpected content type.");
+                }
                 XDocument? document = null;
                 using (Stream input = appProperties.GetStream(FileMode.Open, FileAccess.Read)) {
                     byte[] xml = ReadBoundedXml(input, limits.MaxAssetBytes);
@@ -90,6 +149,15 @@ public partial class VisioDocument {
             }
         }
         return new OfficeProvenanceSignatureStripResult(stream.ToArray(), hadSignatures);
+    }
+
+    private static void ValidateRelationshipNodeBudget(Package package, Uri sourcePartUri, OfficeProvenanceOptions limits) {
+        Uri relationshipPartUri = PackUriHelper.GetRelationshipPartUri(sourcePartUri);
+        if (!package.PartExists(relationshipPartUri)) return;
+        PackagePart relationshipPart = package.GetPart(relationshipPartUri);
+        using Stream input = relationshipPart.GetStream(FileMode.Open, FileAccess.Read);
+        byte[] xml = ReadBoundedXml(input, limits.MaxAssetBytes);
+        OfficeProvenanceXml.ValidateMaterializedNodeBudget(xml, limits, "Visio signature relationships");
     }
 
     private static byte[] ReadBoundedXml(Stream input, long maximumBytes) {

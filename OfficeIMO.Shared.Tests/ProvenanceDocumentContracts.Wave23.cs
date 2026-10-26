@@ -37,18 +37,19 @@ public sealed partial class ProvenanceDocumentContracts {
 
     [Fact]
     public void OdfSignatureRemovalCleansManifestFileEntries() {
-        const string signaturePath = "META-INF/customsignatures.xml";
+        const string signaturePath = "META-INF/documentsignatures.xml";
         byte[] package;
         using (var output = new MemoryStream()) {
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true)) {
                 WriteEntry(archive, "mimetype", "application/vnd.oasis.opendocument.text", CompressionLevel.NoCompression);
+                WriteEntry(archive, "content.xml", "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\"/>", CompressionLevel.Optimal);
                 WriteEntry(archive, signaturePath, "<signatures/>", CompressionLevel.Optimal);
                 WriteEntry(archive, "META-INF/content_credential.c2pa", CreateManifestStore(), CompressionLevel.Optimal);
                 WriteEntry(archive, "META-INF/manifest.xml",
                     "<manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\"><manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.text\"/><manifest:file-entry manifest:full-path=\"" + signaturePath + "\" manifest:media-type=\"text/xml\"/></manifest:manifest>",
                     CompressionLevel.Optimal);
             }
-            package = output.ToArray();
+            package = RewriteFixtureWithStoredMimetype(output.ToArray());
         }
 
         OfficeProvenanceRemovalResult result = OdfDocument.RemoveProvenance(package, "document.odt", new OfficeProvenanceRemovalOptions {

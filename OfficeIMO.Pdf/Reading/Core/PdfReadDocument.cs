@@ -8,12 +8,15 @@ public sealed partial class PdfReadDocument {
     private readonly Dictionary<int, PdfIndirectObject> _objects;
     private readonly string _trailerRaw;
     private readonly PdfReadOptions _options;
+    private readonly long _decodedStreamBytes;
+    private readonly PdfDecodedStreamBudget _decodedStreamBudget;
     private readonly Dictionary<string, PdfNamedDestination> _nameDestinations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PdfNamedDestination> _stringDestinations = new(StringComparer.Ordinal);
     private readonly PdfFontResourceCache _fontResourceCache = new();
     private readonly PdfMetadata _metadata;
     private readonly PdfXmpMetadataInfo? _xmpMetadata;
     private readonly IReadOnlyList<PdfOutputIntentInfo> _outputIntents;
+    private readonly PdfIccProfileRetentionBudget _outputIntentMetadataRetentionBudget;
     private readonly IReadOnlyList<PdfOutlineItem> _outlines;
     private readonly IReadOnlyList<PdfPageLabel> _pageLabels;
     private readonly IReadOnlyList<PdfNamedDestination> _namedDestinations;
@@ -32,21 +35,32 @@ public sealed partial class PdfReadDocument {
     private readonly bool? _acroFormNeedAppearances;
     private readonly int? _acroFormSignatureFlags;
     private readonly PdfAcroFormXfaInfo? _acroFormXfa;
+    private readonly PdfOutputIntentColorTransform? _outputIntentColorTransform;
 
     internal Dictionary<int, PdfIndirectObject> Objects => _objects;
     internal string TrailerRaw => _trailerRaw;
     internal PdfReadOptions ReadOptions => _options;
     internal int FormWidgetJavaScriptCount => _formWidgetJavaScriptCount;
     internal long FormWidgetJavaScriptBytes => _formWidgetJavaScriptBytes;
+    internal long DecodedStreamBytes => _decodedStreamBytes;
+    internal PdfDecodedStreamBudget DecodedStreamBudget => _decodedStreamBudget;
 
     private PdfReadDocument(
         Dictionary<int, PdfIndirectObject> objects,
         string trailerRaw,
         PdfDocumentSecurityInfo security,
         PdfRepairReport repairReport,
-        PdfReadOptions? options) {
+        PdfReadOptions? options,
+        long decodedStreamBytes) {
         _objects = objects; _trailerRaw = trailerRaw; _options = options ?? new PdfReadOptions();
+        _decodedStreamBudget = new PdfDecodedStreamBudget(_options.Limits, decodedStreamBytes);
+        _outputIntentMetadataRetentionBudget = new PdfIccProfileRetentionBudget(_options.Limits.MaxDecodedStreamBytes);
         Security = security;
+        _outputIntentColorTransform = PdfOutputIntentColorTransform.TryCreate(
+            FindCatalog(),
+            _objects,
+            _options.Limits.MaxDecodedStreamBytes,
+            _outputIntentMetadataRetentionBudget);
         Pages = CollectPages();
         RepairReport = repairReport.Append(PdfSemanticRepairDiagnostics.AnalyzeAndRepair(_objects, FindCatalog(), Pages, _options));
         _metadata = ExtractMetadata();
@@ -72,6 +86,7 @@ public sealed partial class PdfReadDocument {
         CatalogPageLayout = ExtractCatalogName("PageLayout");
         CatalogVersion = ExtractCatalogName("Version");
         CatalogLanguage = ExtractCatalogString("Lang");
+        _decodedStreamBytes = _decodedStreamBudget.UsedBytes;
     }
 
     /// <summary>All page objects discovered in document order.</summary>

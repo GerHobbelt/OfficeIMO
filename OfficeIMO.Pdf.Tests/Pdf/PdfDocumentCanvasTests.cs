@@ -741,7 +741,8 @@ public class PdfDocumentCanvasTests {
 
         string content = Encoding.ASCII.GetString(bytes);
 
-        Assert.Contains("/Group << /S /Transparency /I true /K false >>", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Subtype /Form", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Group << /S /Transparency", content, StringComparison.Ordinal);
 
         using var pdf = PdfPigDocument.Open(new MemoryStream(bytes));
         var letters = pdf.GetPage(1).Letters;
@@ -1220,6 +1221,49 @@ public class PdfDocumentCanvasTests {
         Assert.Contains("Name", text, StringComparison.Ordinal);
         Assert.Contains("OfficeIMO", text, StringComparison.Ordinal);
         Assert.Contains("99", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CanvasTable_EmitsNestedTableRowAndCellStructure() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions {
+                TaggedStructureMode = PdfTaggedStructureMode.CatalogMarkers
+            })
+            .Canvas(canvas => canvas.Structure(PdfCanvasStructureRole.Section, section => section
+                .Table(new[] {
+                    new[] { PdfTableCell.Span("Summary", 2) },
+                    new[] { PdfTableCell.Merge("OfficeIMO", rowSpan: 2), PdfTableCell.TextCell("Ready") },
+                    new[] { PdfTableCell.TextCell("Released") }
+                }, 30, 30, 180, 90, new PdfTableStyle {
+                    HeaderRowCount = 1,
+                    AlternativeText = "Release summary"
+                })
+                .Text("After table", 30, 130, 180, 20)))
+            .ToBytes();
+
+        PdfReadDocument pdf = PdfReadDocument.Open(bytes);
+        PdfTaggedContentInfo tagged = Assert.IsType<PdfTaggedContentInfo>(pdf.TaggedContent);
+        PdfStructureElementInfo section = Assert.Single(tagged.StructureElements, element => element.StructureType == "Sect");
+        PdfStructureElementInfo table = Assert.Single(tagged.StructureElements, element => element.StructureType == "Table");
+        PdfStructureElementInfo[] rows = tagged.StructureElements.Where(element => element.StructureType == "TR").ToArray();
+        PdfStructureElementInfo header = Assert.Single(tagged.StructureElements, element => element.StructureType == "TH");
+        PdfStructureElementInfo[] cells = tagged.StructureElements.Where(element => element.StructureType == "TD").ToArray();
+        PdfStructureElementInfo afterTable = Assert.Single(tagged.StructureElements, element => element.StructureType == "P");
+
+        Assert.Equal("Release summary", table.AlternateText);
+        Assert.Contains(table.ObjectNumber, section.ChildElementObjectNumbers);
+        Assert.Contains(afterTable.ObjectNumber, section.ChildElementObjectNumbers);
+        Assert.Equal(3, rows.Length);
+        Assert.All(rows, row => Assert.Contains(row.ObjectNumber, table.ChildElementObjectNumbers));
+        Assert.Contains(header.ObjectNumber, rows[0].ChildElementObjectNumbers);
+        Assert.Equal(2, rows[1].ChildElementObjectNumbers.Count);
+        Assert.All(rows[1].ChildElementObjectNumbers, cell => Assert.Contains(cell, cells.Select(element => element.ObjectNumber)));
+        Assert.Single(rows[2].ChildElementObjectNumbers);
+        Assert.Contains(rows[2].ChildElementObjectNumbers[0], cells.Select(element => element.ObjectNumber));
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("/Scope /Column", raw, StringComparison.Ordinal);
+        Assert.Contains("/ColSpan 2", raw, StringComparison.Ordinal);
+        Assert.Contains("/RowSpan 2", raw, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1805,6 +1849,56 @@ public class PdfDocumentCanvasTests {
             canvas.Effect(OfficeTransform.Identity, double.NaN, _ => { })));
         Assert.Throws<ArgumentNullException>(() => PdfDocument.Create().Canvas(canvas =>
             canvas.Effect(OfficeTransform.Identity, 1D, null!)));
+    }
+
+    [Fact]
+    public void CanvasEffect_IdentityOpaqueInlinesContentWithoutRedundantFormXObject() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .Canvas(canvas => canvas.Effect(
+                OfficeTransform.Identity,
+                1D,
+                nested => nested.Text("IDENTITY-EFFECT-TEXT", 20D, 20D, 160D, 20D)))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("IDENTITY-EFFECT-TEXT", PdfReadDocument.Open(bytes).ExtractText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("/Subtype /Form", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Group << /S /Transparency", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CanvasEffect_OpaqueTransformInlinesContentAndTransformsLinks() {
+        const string uri = "https://evotec.xyz/opaque-effect";
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .Canvas(canvas => canvas.Effect(
+                OfficeTransform.Translate(12D, 7D),
+                1D,
+                nested => nested.Text(new[] { PdfTextRun.Link("OPAQUE-EFFECT-TEXT", uri) }, 20D, 20D, 160D, 20D)))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        PdfLinkAnnotation link = Assert.Single(PdfInspector.Inspect(bytes).LinkAnnotations);
+        Assert.Contains("OPAQUE-EFFECT-TEXT", PdfReadDocument.Open(bytes).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("1 0 0 1 12 -7 cm", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Subtype /Form", raw, StringComparison.Ordinal);
+        Assert.InRange(link.X1, 31.9D, 32.1D);
+    }
+
+    [Fact]
+    public void DrawingEffect_OpaqueTranslationInlinesContentWithoutRedundantFormXObject() {
+        OfficeDrawing source = new OfficeDrawing(100D, 30D)
+            .AddText("OPAQUE-DRAWING-EFFECT", 0D, 0D, 100D, 30D);
+        OfficeDrawing drawing = new OfficeDrawing(120D, 40D)
+            .AddEffectDrawing(source, OfficeTransform.Translate(10D, 5D));
+
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .Drawing(drawing)
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("OPAQUE-DRAWING-EFFECT", PdfReadDocument.Open(bytes).ExtractText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("/Subtype /Form", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Group << /S /Transparency", raw, StringComparison.Ordinal);
     }
 
     [Fact]

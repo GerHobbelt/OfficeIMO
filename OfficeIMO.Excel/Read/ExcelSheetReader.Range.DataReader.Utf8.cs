@@ -15,6 +15,9 @@ namespace OfficeIMO.Excel {
             private const int MaximumIndexedCells = 1_000_000;
             private const int StringCacheSize = 256;
             private const int MaximumCachedStringBytes = 256;
+            private const byte DateStyleCellKindFlag = 0x80;
+            private const byte CellKindMask = 0x7F;
+            private const int SharedStringIndexValueLength = -2;
 
             private readonly ExcelSheetReader _owner;
             private readonly ExcelReadOptions _options;
@@ -27,7 +30,6 @@ namespace OfficeIMO.Excel {
             private int[]? _valueLengths;
             private int[]? _formulaStarts;
             private int[]? _formulaLengths;
-            private int[]? _styleIndexes;
             private byte[]? _cellKinds;
             private int _length;
             private int _rowCount;
@@ -39,6 +41,9 @@ namespace OfficeIMO.Excel {
             private int _maximumCellColumn;
             private int _sheetDataContentStart = -1;
             private int _sheetDataEndTagStart = -1;
+            private int _repeatedRowSuffixStart = -1;
+            private int _repeatedRowSuffixLength;
+            private bool _repeatedRowIsEmpty;
             private bool _sheetDataSupportsFastValidation = true;
             private int _lastDateStyleIndex = -1;
             private bool _lastDateStyleResult;
@@ -82,9 +87,6 @@ namespace OfficeIMO.Excel {
                 int cellCapacity = checked(rowCapacity * fieldCount);
                 _valueStarts = ArrayPool<int>.Shared.Rent(cellCapacity);
                 _valueLengths = ArrayPool<int>.Shared.Rent(cellCapacity);
-                _formulaStarts = ArrayPool<int>.Shared.Rent(cellCapacity);
-                _formulaLengths = ArrayPool<int>.Shared.Rent(cellCapacity);
-                _styleIndexes = ArrayPool<int>.Shared.Rent(cellCapacity);
                 _cellKinds = ArrayPool<byte>.Shared.Rent(cellCapacity);
             }
 
@@ -220,6 +222,7 @@ namespace OfficeIMO.Excel {
                     return true;
                 }
 
+                owner.RequireSdkWorksheetPart();
                 using var stream = owner._wsPart.GetStream(FileMode.Open, FileAccess.Read);
                 RewindWorksheetStream(stream);
                 return TryReadWorksheetBuffer(stream, ct, out buffer, out length);
@@ -274,14 +277,25 @@ namespace OfficeIMO.Excel {
                 objectValue = null;
 
                 int cellIndex = _currentRowOffset + ordinal;
-                if ((Utf8CellKind)_cellKinds![cellIndex] == Utf8CellKind.Missing) {
+                byte encodedCellKind = _cellKinds![cellIndex];
+                Utf8CellKind cellKind = (Utf8CellKind)(encodedCellKind & CellKindMask);
+                if (cellKind == Utf8CellKind.Missing) {
                     return;
                 }
 
-                bool useFormula = _formulaLengths![cellIndex] >= 0
-                    && (!_options.UseCachedFormulaResult || _valueLengths![cellIndex] < 0);
+                bool useFormula = _formulaLengths != null
+                    && _formulaLengths[cellIndex] >= 0
+                    && (!_options.UseCachedFormulaResult
+                        || (_valueLengths![cellIndex] < 0
+                            && _valueLengths[cellIndex] != SharedStringIndexValueLength));
                 int start = useFormula ? _formulaStarts![cellIndex] : _valueStarts![cellIndex];
                 int length = useFormula ? _formulaLengths![cellIndex] : _valueLengths![cellIndex];
+                if (!useFormula
+                    && cellKind == Utf8CellKind.SharedString
+                    && length == SharedStringIndexValueLength) {
+                    objectValue = _owner.GetSharedString(start);
+                    return;
+                }
                 if (length < 0) {
                     return;
                 }
@@ -293,7 +307,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 ReadOnlySpan<byte> value = _buffer!.AsSpan(start, length);
-                switch ((Utf8CellKind)_cellKinds![cellIndex]) {
+                switch (cellKind) {
                     case Utf8CellKind.SharedString:
                         if (TryParseInt32(value, out int sharedStringIndex)) {
                             objectValue = _owner.GetSharedString(sharedStringIndex);
@@ -333,10 +347,11 @@ namespace OfficeIMO.Excel {
                         objectValue = DecodeString(start, length);
                         return;
                     case Utf8CellKind.Number:
+                        bool dateStyle = (encodedCellKind & DateStyleCellKindFlag) != 0;
                         deferObjectMaterialization =
                             targetKind == XmlDataReaderTargetKind.Numeric
-                            && IsDateStyle(_styleIndexes![cellIndex]);
-                        ReadNumberValue(cellIndex, value, targetKind, out primitiveKind, out doubleValue, out dateTimeValue, out objectValue);
+                            && dateStyle;
+                        ReadNumberValue(cellIndex, value, dateStyle, targetKind, out primitiveKind, out doubleValue, out dateTimeValue, out objectValue);
                         return;
                     default:
                         return;
@@ -360,7 +375,6 @@ namespace OfficeIMO.Excel {
                 ReturnRowArray(ref _valueLengths);
                 ReturnRowArray(ref _formulaStarts);
                 ReturnRowArray(ref _formulaLengths);
-                ReturnRowArray(ref _styleIndexes);
                 if (_cellKinds != null) {
                     ArrayPool<byte>.Shared.Return(_cellKinds);
                     _cellKinds = null;
@@ -450,8 +464,24 @@ namespace OfficeIMO.Excel {
 
                 int nextImplicitRow = 1;
                 int previousRow = 0;
-                while (TryReadNextTag(ref position, _length, out Utf8Tag tag)) {
+                bool repeatedRowShapeValidated = false;
+                while (position < _length) {
                     ct.ThrowIfCancellationRequested();
+                    int tagSearchStart = position;
+                    Utf8Tag tag = default;
+                    int rowIndex = 0;
+                    bool repeatedRow = repeatedRowShapeValidated
+                        && TryReadRepeatedRowStartTag(
+                            ref position,
+                            out tag,
+                            out rowIndex);
+                    if (!repeatedRow
+                        && !TryReadNextTag(ref position, _length, out tag)) {
+                        return false;
+                    }
+                    if (!repeatedRow && ContainsNonWhitespace(tagSearchStart, tag.Start)) {
+                        _sheetDataSupportsFastValidation = false;
+                    }
                     if (tag.IsEnd && IsUnprefixedTag(tag) && LocalNameEquals(tag, "sheetData")) {
                         _sheetDataEndTagStart = tag.Start;
                         return !_parseFailed;
@@ -461,32 +491,38 @@ namespace OfficeIMO.Excel {
                         return false;
                     }
 
-                    if (!ValidateCanonicalTagAttributes(
+                    if (!repeatedRow) {
+                        bool rowSupportsFastValidation = ValidateCanonicalTagAttributes(
                             tag,
                             out bool rowDeclaresDefaultNamespace,
                             out _,
                             out bool rowHasPrefixedAttributes)
-                        || rowDeclaresDefaultNamespace
-                        || rowHasPrefixedAttributes
-                            && (!hasCanonicalRootNamespaces
-                                || !ValidateCanonicalNamespaceUsage(
+                            && !rowDeclaresDefaultNamespace
+                            && (!rowHasPrefixedAttributes
+                                || hasCanonicalRootNamespaces
+                                && ValidateCanonicalNamespaceUsage(
                                     tag,
                                     isRootStartTag: false,
                                     namespacePrefixStarts,
                                     namespacePrefixLengths,
                                     namespaceUriStarts,
                                     namespaceUriLengths,
-                                    ref namespacePrefixCount))) {
-                        _sheetDataSupportsFastValidation = false;
-                    }
+                                    ref namespacePrefixCount));
+                        if (!rowSupportsFastValidation) {
+                            _sheetDataSupportsFastValidation = false;
+                        }
 
-                    if (!TryGetAttribute(tag, "r", out bool hasRowReference, out int rowReferenceStart, out int rowReferenceLength)) {
-                        return false;
-                    }
+                        if (!TryGetAttribute(tag, "r", out bool hasRowReference, out int rowReferenceStart, out int rowReferenceLength)) {
+                            return false;
+                        }
 
-                    int rowIndex = hasRowReference
-                        ? ParsePositiveInt(_buffer!, rowReferenceStart, rowReferenceLength)
-                        : nextImplicitRow;
+                        rowIndex = hasRowReference
+                            ? ParsePositiveInt(_buffer!, rowReferenceStart, rowReferenceLength)
+                            : nextImplicitRow;
+                        if (rowSupportsFastValidation) {
+                            repeatedRowShapeValidated = TryCaptureRepeatedRowShape(tag, rowIndex);
+                        }
+                    }
                     if (rowIndex <= 0 || rowIndex <= previousRow) {
                         return false;
                     }
@@ -501,8 +537,19 @@ namespace OfficeIMO.Excel {
                         InitializeMetadataRow(rowOffset);
                     }
 
-                    if (!tag.IsEmpty && !TryIndexRow(ref position, rowIndex, rowOffset, includeRow, ct)) {
-                        return false;
+                    if (!tag.IsEmpty) {
+                        int rowContentStart = position;
+                        bool indexedCanonicalRow = rowOffset >= 0
+                            && TryIndexCanonicalDenseRow(ref position, rowIndex, rowOffset, ct);
+                        if (!indexedCanonicalRow) {
+                            position = rowContentStart;
+                            if (rowOffset >= 0) {
+                                InitializeMetadataRow(rowOffset);
+                            }
+                            if (!TryIndexRow(ref position, rowIndex, rowOffset, includeRow, ct)) {
+                                return false;
+                            }
+                        }
                     }
 
                     if (includeRow) {
@@ -541,6 +588,10 @@ namespace OfficeIMO.Excel {
                             return false;
                         }
                         if (tag.IsEnd && IsUnprefixedTag(tag) && LocalNameEquals(tag, "row")) {
+                            if (ContainsNonWhitespace(originalPosition, tag.Start)) {
+                                _sheetDataSupportsFastValidation = false;
+                            }
+                            UpdateUsedBounds(rowIndex, previousColumn);
                             return true;
                         }
                         _sheetDataSupportsFastValidation = false;
@@ -555,11 +606,12 @@ namespace OfficeIMO.Excel {
                         return false;
                     }
 
+                    int firstColumnInRow = previousColumn == 0 ? columnIndex : 0;
                     previousColumn = columnIndex;
-                    if (rowIndex < _minimumCellRow) _minimumCellRow = rowIndex;
-                    if (rowIndex > _maximumCellRow) _maximumCellRow = rowIndex;
-                    if (columnIndex < _minimumCellColumn) _minimumCellColumn = columnIndex;
-                    if (columnIndex > _maximumCellColumn) _maximumCellColumn = columnIndex;
+                    if (firstColumnInRow > 0
+                        && (_minimumCellColumn == int.MaxValue || firstColumnInRow < _minimumCellColumn)) {
+                        _minimumCellColumn = firstColumnInRow;
+                    }
                     int ordinal = columnIndex - _firstColumn;
                     if (!rowWithinRange || (uint)ordinal >= (uint)_fieldCount) {
                         _cellsFitWithinRange = false;
@@ -568,10 +620,6 @@ namespace OfficeIMO.Excel {
                     int cellIndex = rowOffset >= 0 && (uint)ordinal < (uint)_fieldCount
                         ? rowOffset + ordinal
                         : -1;
-                    if (cellIndex >= 0) {
-                        _cellKinds![cellIndex] = (byte)kind;
-                        _styleIndexes![cellIndex] = styleIndex;
-                    }
 
                     bool sharedFormulaFollower = false;
                     bool hasCachedValue = false;
@@ -600,7 +648,7 @@ namespace OfficeIMO.Excel {
                         }
                     }
 
-                    ValidateIndexedCell(
+                    int sharedStringIndex = ValidateIndexedCell(
                         rowIndex,
                         columnIndex,
                         kind,
@@ -609,9 +657,30 @@ namespace OfficeIMO.Excel {
                         hasCachedValue,
                         valueStart,
                         valueLength);
+                    if (cellIndex >= 0) {
+                        if (sharedStringIndex >= 0) {
+                            _valueStarts![cellIndex] = sharedStringIndex;
+                            _valueLengths![cellIndex] = SharedStringIndexValueLength;
+                        }
+                        _cellKinds![cellIndex] = EncodeCellKind(kind, styleIndex);
+                    }
                 }
 
                 return false;
+            }
+
+            private void UpdateUsedBounds(int rowIndex, int lastColumnInRow) {
+                if (lastColumnInRow <= 0) {
+                    return;
+                }
+
+                if (_minimumCellRow == int.MaxValue) {
+                    _minimumCellRow = rowIndex;
+                }
+                _maximumCellRow = rowIndex;
+                if (lastColumnInRow > _maximumCellColumn) {
+                    _maximumCellColumn = lastColumnInRow;
+                }
             }
 
             private bool TryIndexSimpleInlineStringCell(ref int position, Utf8Tag inlineStringTag, int cellIndex) {
@@ -677,6 +746,7 @@ namespace OfficeIMO.Excel {
             private void ReadNumberValue(
                 int ordinal,
                 ReadOnlySpan<byte> value,
+                bool dateStyle,
                 XmlDataReaderTargetKind targetKind,
                 out XmlDataReaderPrimitiveKind primitiveKind,
                 out double doubleValue,
@@ -687,7 +757,6 @@ namespace OfficeIMO.Excel {
                 dateTimeValue = default;
                 objectValue = null;
                 ReadOnlySpan<byte> trimmed = TrimAsciiWhitespace(value);
-                bool dateStyle = IsDateStyle(_styleIndexes![ordinal]);
                 if (targetKind == XmlDataReaderTargetKind.String) {
                     if (dateStyle && TryParseDouble(trimmed, out double serialDate)) {
                         objectValue = _owner.FromExcelSerialDate(serialDate).ToString(_options.Culture);
@@ -860,9 +929,10 @@ namespace OfficeIMO.Excel {
                 int nextCellCapacity = checked(nextCapacity * _fieldCount);
                 GrowRowArray(ref _valueStarts, nextCellCapacity, currentCellCount);
                 GrowRowArray(ref _valueLengths, nextCellCapacity, currentCellCount);
-                GrowRowArray(ref _formulaStarts, nextCellCapacity, currentCellCount);
-                GrowRowArray(ref _formulaLengths, nextCellCapacity, currentCellCount);
-                GrowRowArray(ref _styleIndexes, nextCellCapacity, currentCellCount);
+                if (_formulaStarts != null) {
+                    GrowRowArray(ref _formulaStarts, nextCellCapacity, currentCellCount);
+                    GrowRowArray(ref _formulaLengths, nextCellCapacity, currentCellCount);
+                }
                 GrowCellKindArray(nextCellCapacity, currentCellCount);
             }
 
@@ -872,9 +942,33 @@ namespace OfficeIMO.Excel {
                     _cellKinds![i] = (byte)Utf8CellKind.Missing;
                     _valueStarts![i] = 0;
                     _valueLengths![i] = -1;
-                    _formulaStarts![i] = 0;
-                    _formulaLengths![i] = -1;
-                    _styleIndexes![i] = -1;
+                    if (_formulaStarts != null) {
+                        _formulaStarts[i] = 0;
+                        _formulaLengths![i] = -1;
+                    }
+                }
+            }
+
+            private byte EncodeCellKind(Utf8CellKind kind, int styleIndex) {
+                byte encoded = (byte)kind;
+                if (kind == Utf8CellKind.Number && styleIndex >= 0 && IsDateStyle(styleIndex)) {
+                    encoded |= DateStyleCellKindFlag;
+                }
+                return encoded;
+            }
+
+            private void EnsureFormulaMetadata() {
+                if (_formulaStarts != null) {
+                    return;
+                }
+
+                int capacity = _valueStarts!.Length;
+                _formulaStarts = ArrayPool<int>.Shared.Rent(capacity);
+                _formulaLengths = ArrayPool<int>.Shared.Rent(capacity);
+                int initializedCellCount = checked((_rowCount + 1) * _fieldCount);
+                Array.Clear(_formulaStarts, 0, initializedCellCount);
+                for (int index = 0; index < initializedCellCount; index++) {
+                    _formulaLengths[index] = -1;
                 }
             }
 
@@ -900,7 +994,7 @@ namespace OfficeIMO.Excel {
             }
 
             private static bool TryParseDouble(ReadOnlySpan<byte> value, out double result) {
-                return Utf8Parser.TryParse(value, out result, out int consumed) && consumed == value.Length;
+                return ExcelUtf8NumberParser.TryParseDouble(value, out result);
             }
 
             private static bool TryParseInt32(ReadOnlySpan<byte> value, out int result) {

@@ -9,7 +9,13 @@ This guide contains version-to-version changes that require application code, pa
 
 OfficeIMO 3.2 is a coordinated package-ownership cleanup. Upgrade every OfficeIMO package in an application to the same `3.2.x` version and perform a clean restore after changing versions.
 
+## OfficeIMO 3.2: editable HTML layout projection defaults
+
+HTML imports to Word and RTF now project bounded positioned, floating, flex, or grid regions into destination-native editable geometry by default when that destination supports the region. Excel and PowerPoint apply the same projection on their ordinary-HTML `Auto` and `Generic` import paths; their default `Semantic` modes remain strict round-trip paths and do not project ordinary HTML. Older ordinary-HTML imports kept the same content only in semantic flow. Applications that require the previous flow-only output can set `ImportEditableLayoutRegions = false` on the applicable `HtmlToWordOptions`, `HtmlToRtfOptions`, `HtmlToExcelOptions`, or `HtmlToPowerPointOptions`. Regions that cannot be represented safely or natively continue in semantic flow or produce stable simplification and omission diagnostics.
+
 ## OfficeIMO 3.2: bounded object-table and MHTML ingestion defaults
+
+Remote MHTML fallback now uses `MhtmlRemoteResourcePolicy.ResourceFetcher`, whose callback returns one `MhtmlRemoteResourceResponse` without automatically following redirects. Move remote MHTML network logic out of `HtmlRenderOptions.ResourceResolver`, disable automatic redirect handling in the application fetcher, and return `MhtmlRemoteResourceResponse.Redirect(location)` for each redirect. OfficeIMO validates every hop before the next request. Embedded `cid:` and `Content-Location` resolution is unchanged.
 
 Direct `ObjectFlattener.Flatten`, `GetPaths`, and `ResolvePaths` calls and object-backed Excel and PowerPoint tables now default to at most 16,384 projected columns. Object tables additionally default to at most 1,000,000 cells, including the header row. Set `ObjectFlattenerOptions.MaxColumns` or `MaxCells` explicitly when a trusted workflow needs a different application-level limit. Excel output remains constrained by worksheet dimensions. The object and explicit-binding `PowerPointSlide.AddTable` overloads apply stricter format-safety ceilings of 1,024 columns and 100,000 cells; split larger trusted datasets into multiple tables.
 
@@ -180,13 +186,14 @@ implementation and options belong to `OfficeIMO.Pdf`.
 | --- | --- |
 | HTML to/from RTF | Add `OfficeIMO.Html.Rtf`. Existing APIs remain in the `OfficeIMO.Html` namespace. |
 | Load or save MHT/MHTML | Add `OfficeIMO.Mhtml` and replace `using OfficeIMO.Html;` for `MhtmlDocument` or `MhtmlResource` with `using OfficeIMO.Mhtml;`. |
+| Select and sanitize an email body or resolve CID/Content-Location resources | Add `OfficeIMO.Email.Html` and call `EmailBodyProjection.Create(message)`. The base `OfficeIMO.Email` package stays HTML-free. |
 | Render an `EmailDocument` to images | Add `OfficeIMO.Email.Image`. Existing APIs remain in the `OfficeIMO.Email` namespace. |
 | Convert MHT/MHTML to PDF | Add `OfficeIMO.Mhtml.Pdf` plus `OfficeIMO.Mhtml`; use the `OfficeIMO.Mhtml` extension namespace. Plain HTML/PDF remains in `OfficeIMO.Html.Pdf`. |
 | Register HTML with Reader | `AddHtmlHandler()` now registers `.html`, `.htm`, and `.xhtml` only. |
 | Register MHT/MHTML with Reader | Reference `OfficeIMO.Reader.Email`, import `OfficeIMO.Reader.Email`, and call `AddMhtmlHandler()`. `AddEmailHandlers()` and `OfficeIMO.Reader.All` include it automatically. |
 | Read EPUB through Reader | No source change. `OfficeIMO.Reader.Epub` still reuses the HTML projection but no longer receives Email, RTF, or MHTML transitively. |
 
-No `OfficeIMO.Html.Core`, separate document-model package, or `OfficeIMO.Reader.Mhtml` package was introduced. The base HTML and Reader APIs stay focused; optional bridges carry the extra dependency edges.
+No `OfficeIMO.Html.Core`, separate document-model package, or `OfficeIMO.Reader.Mhtml` package was introduced. The base HTML, Email, and Reader APIs stay focused; optional bridges carry the extra dependency edges. `OfficeIMO.Email.Image` and `OfficeIMO.Reader.Email` now reuse `OfficeIMO.Email.Html` for body choice, RTF fallback, sanitization, and embedded-resource resolution instead of maintaining adapter-specific policies.
 
 ## OfficeIMO 3.1
 
@@ -742,7 +749,7 @@ The 3.1 PDF adapters use destination-shaped names for general conversion and exp
 
 Excel remains explicitly table-shaped because its PDF adapter recovers detected tables rather than arbitrary page content. Keep using `PdfExcelTableImportOptions`, `PdfExcelTableImportReport`, `PdfExcelTableImportResult`, `ImportTablesToExcelDocument`, and `SaveTablesAsExcel`.
 
-PowerPoint behavior broadens in 3.1: an opened `PdfDocument` creates one rendered page per slide by default. Use `PdfPowerPointImportOptions.CreateEditableTables()` when editable table recovery is the intended result. The visual route does not claim that arbitrary PDF text, vectors, groups, clipping, forms, or annotations become editable PowerPoint objects.
+PowerPoint behavior broadens in 3.1: an opened `PdfDocument` now reconstructs supported text, detected tables, safe vector primitives, and images as editable slide objects by default. `PdfPowerPointImportOptions.Mode` defaults to `Auto`, which resolves an opened PDF to `EditableContent` and an already reduced `PdfLogicalDocument` to `EditableTables`. This intentionally changes the no-options behavior of `ToPowerPointPresentation*`, `SaveAsPowerPoint*`, and the opened-PDF-to-ODP bridge. Use `PdfPowerPointImportOptions.CreateVisualPages()` to retain the previous one-rendered-page-image-per-slide behavior. Use `CreateHybrid()` for visual pages with editable table overlays or `CreateEditableTables()` for detected tables only. None of these profiles claims recovery of original themes, masters, charts, groups, animations, notes, or authoring intent.
 
 Use `PdfWordImportOptions.CreateTablesOnly()` for narrow Word table recovery. PowerPoint table details remain available through `PdfPowerPointConversionReport.TableEntries` when the editable-table profile is selected.
 
@@ -774,12 +781,13 @@ The reverse-route boundaries are:
 | --- | --- | --- |
 | PDF to Word | Semantic headings, paragraphs, lists, tables, supported images, and links | Not fixed-layout page reconstruction |
 | PDF to Excel | Detected tables and structured data | Non-table page content is reported rather than placed on a worksheet canvas |
-| PDF to PowerPoint | One rendered PDF page per slide | The slide image is movable, but its internals are not editable |
+| PDF to PowerPoint | Native text boxes, detected tables, safe basic shapes, and supported images | Unsupported or ambiguous page content is simplified or omitted with diagnostics |
+| PDF to PowerPoint with `VisualPages` | One rendered PDF page per slide | The slide image is movable, but its internals are not editable |
 | PDF to PowerPoint with `EditableTables` | Detected tables on editable slides | Other page content is reported as omitted |
 | PDF to RTF | Semantic text, lists, page breaks, and detected run styling | Unsupported tables, images, links, and widgets produce loss diagnostics |
 | PDF to HTML | Semantic or positioned review HTML | Neither profile claims browser-clone fidelity for arbitrary PDFs |
 | PDF to Markdown | Logical readable text through `pdf.Read.Markdown(...)` | Portable text rather than visual fidelity |
-| PDF to ODT, ODS, or ODP | Composed Word, Excel-table, or PowerPoint-visual routes | Inspect both conversion stages and their loss reports |
+| PDF to ODT, ODS, or ODP | Composed Word-semantic, Excel-table, or PowerPoint-editable routes | Inspect both conversion stages and their loss reports; logical PDF input remains table-shaped for ODP |
 
 `PdfResourcePolicy.CreateDefault()` is the balanced adapter default: installed and document fonts are available while arbitrary local-file and remote-resource access remains denied. Use `PdfResourcePolicy.CreatePortableDeterministic()` for untrusted or reproducible conversion. Use `PdfResourcePolicy.CreateTrustedHost()` only when the operation intentionally resolves host or remote resources.
 

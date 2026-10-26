@@ -7,6 +7,12 @@ $failures = [System.Collections.Generic.List[string]]::new()
 
 function Add-Failure([string] $Message) { $failures.Add($Message) }
 
+$siteConfiguration = Get-Content -LiteralPath (Join-Path $SiteRoot 'site.json') -Raw | ConvertFrom-Json
+$contentSecurityPolicy = [string] $siteConfiguration.AgentReadiness.SecurityHeaders.ContentSecurityPolicyValue
+if ($contentSecurityPolicy -notmatch '(?:^|;)\s*img-src\s+[^;]*\bblob:') {
+    Add-Failure 'The site Content Security Policy must allow blob: images so browser-local conversion previews can render.'
+}
+
 function Test-ResponsiveImageRule([string] $Path, [string] $Label) {
     $css = Get-Content -LiteralPath $Path -Raw
     if ($css -notmatch '(?s)(?:^|})\s*img\s*\{[^}]*\bheight\s*:\s*auto\s*;?[^}]*\}') {
@@ -65,6 +71,20 @@ foreach ($doc in $docs) {
     }
     if ($raw -match '(?i)Market Position|Out Of Scope Here|should position itself|What we do not have yet') {
         Add-Failure "'$relativePath' contains internal positioning or planning copy that does not belong in customer documentation."
+    }
+}
+
+$navigationPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+if (@($toc | Where-Object href -EQ '/docs/').Count -eq 1) {
+    [void] $navigationPaths.Add('index.md')
+}
+foreach ($entry in $tocEntries) {
+    [void] $navigationPaths.Add(([string] $entry.path).Replace('\', '/'))
+}
+foreach ($doc in $docs) {
+    $relativePath = [System.IO.Path]::GetRelativePath($docsRoot, $doc.FullName).Replace('\', '/')
+    if (-not $navigationPaths.Contains($relativePath)) {
+        Add-Failure "'$relativePath' is missing from the documentation navigation."
     }
 }
 
@@ -288,14 +308,16 @@ $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json
 if ($catalog.repository.productionComponentCount -ne @($catalog.components).Count) {
     Add-Failure 'The OfficeIMO component summary does not match the generated component list.'
 }
+if ([int] $catalog.repository.conceptualPageCount -ne $docs.Count) {
+    Add-Failure "The generated conceptual page count is $($catalog.repository.conceptualPageCount); expected $($docs.Count) from the current documentation source."
+}
 $expectedRepositoryCounts = [ordered]@{
-    projectCount = 169
-    productionComponentCount = 99
-    testProjectCount = 33
+    projectCount = 174
+    productionComponentCount = 101
+    testProjectCount = 34
     benchmarkProjectCount = 16
-    validationProjectCount = 22
+    validationProjectCount = 24
     apiReferenceCount = 21
-    conceptualPageCount = 95
 }
 foreach ($expectedCount in $expectedRepositoryCounts.GetEnumerator()) {
     $actual = [int] $catalog.repository.($expectedCount.Key)
@@ -332,6 +354,20 @@ foreach ($expectedGuide in $expectedIntegrationGuides.GetEnumerator()) {
 
 $pipelinePath = Join-Path $SiteRoot 'pipeline.json'
 $pipeline = Get-Content -LiteralPath $pipelinePath -Raw | ConvertFrom-Json
+$psWriteOfficeSource = @($siteConfiguration.Sources | Where-Object Slug -eq 'pswriteoffice')
+if ($psWriteOfficeSource.Count -ne 1 -or
+    $psWriteOfficeSource[0].Repo -ne 'EvotecIT/PSWriteOffice' -or
+    $psWriteOfficeSource[0].Clean -ne $true -or
+    -not [string]::IsNullOrWhiteSpace([string] $psWriteOfficeSource[0].Ref)) {
+    Add-Failure 'The default PSWriteOffice source must cleanly clone the repository default branch.'
+}
+$sourceSyncStep = @($pipeline.steps | Where-Object id -eq 'sync-sources')
+if ($sourceSyncStep.Count -ne 1 -or
+    $sourceSyncStep[0].lockMode -ne 'off' -or
+    $sourceSyncStep[0].writeManifest -ne $true -or
+    -not [string]::IsNullOrWhiteSpace([string] $sourceSyncStep[0].lockPath)) {
+    Add-Failure 'The default source sync must follow remote repositories without a commit lock and record the resolved source manifest.'
+}
 $expectedApiDocsHomes = [ordered]@{
     'build-apidocs-html-rtf' = '/docs/html/'
     'build-apidocs-mhtml' = '/docs/html/'
@@ -345,15 +381,20 @@ foreach ($expectedHome in $expectedApiDocsHomes.GetEnumerator()) {
     }
 }
 
+$converterPublishStep = @($pipeline.steps | Where-Object id -eq 'publish-browser-converter')
+if ($converterPublishStep.Count -ne 1 -or $converterPublishStep[0].clean -ne $true) {
+    Add-Failure 'The browser converter publish step must clean its output so stale fingerprinted WebAssembly assets cannot be deployed or counted by the size gate.'
+}
+
 $aotMatrixPath = Join-Path $SiteRoot 'static\data\aot-compatibility.json'
 $aotMatrix = Get-Content -LiteralPath $aotMatrixPath -Raw | ConvertFrom-Json
 if ($aotMatrix.summary.productionProjectCount -ne $catalog.repository.productionComponentCount) {
     Add-Failure 'The NativeAOT matrix does not account for every production project.'
 }
-if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 97) {
-    Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 97."
+if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 99) {
+    Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 99."
 }
-if ($aotMatrix.summary.fullyRootedLibraryCount -ne 95 -or
+if ($aotMatrix.summary.fullyRootedLibraryCount -ne 97 -or
     $aotMatrix.summary.boundedWorkflowLibraryCount -ne 1 -or
     $aotMatrix.summary.nativeExecutableCount -ne 1 -or
     $aotMatrix.summary.managedCrossPlatformProjectCount -ne 1 -or

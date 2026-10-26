@@ -8,6 +8,8 @@ using Xunit;
 namespace OfficeIMO.Shared.Tests;
 
 public sealed partial class ProvenanceCoreContracts {
+    internal static byte[] CreateManifestStoreForLifecycleTests() => CreateManifestStore();
+
     [Fact]
     public void JpegRemovesExactApp11SequenceAndPreservesOtherSegments() {
         byte[] manifest = CreateManifestStore(324);
@@ -459,9 +461,9 @@ public sealed partial class ProvenanceCoreContracts {
     }
 
     [Fact]
-    public void ZipBlocksProducerSpecificOdfSignatureMutationByDefault() {
+    public void ZipBlocksNativeOdfSignatureMutationByDefault() {
         byte[] package = CreateZip(
-            ("META-INF/customsignatures.xml", Encoding.UTF8.GetBytes("<signature/>")),
+            ("META-INF/documentsignatures.xml", Encoding.UTF8.GetBytes("<signature/>")),
             ("META-INF/content_credential.c2pa", CreateManifestStore()));
 
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>

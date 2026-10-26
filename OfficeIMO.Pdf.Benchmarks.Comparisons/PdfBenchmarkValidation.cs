@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -92,7 +93,8 @@ internal static class PdfBenchmarkValidation {
         }
     }
 
-    private static void ValidateScenarioContent(string actual, PdfBenchmarkScenario scenario, string engine) {
+    internal static void ValidateScenarioContent(string actual, PdfBenchmarkScenario scenario, string engine) {
+        actual = Normalize(actual);
         var requiredCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         for (int page = 1; page <= scenario.PageCount; page++) {
             foreach (string fragment in ExpectedPage(scenario, page).RequiredFragments) {
@@ -108,6 +110,29 @@ internal static class PdfBenchmarkValidation {
                     $"{engine} preserved {actualCount} of {requiredCount} required occurrences for '{fragment}'.");
             }
         }
+    }
+
+    internal static void ValidateTableScenarioContent(string actual, PdfBenchmarkScenario scenario, string engine) {
+        actual = Normalize(actual);
+        for (int page = 1; page <= scenario.PageCount; page++) {
+            foreach (string[] row in scenario.TableRows(page).Skip(1)) {
+                string exactFragment = Normalize(string.Concat(row));
+                string semanticFragment = string.Concat(row.Select(NormalizeTableCell));
+                if (!actual.Contains(exactFragment, StringComparison.Ordinal) &&
+                    !actual.Contains(semanticFragment, StringComparison.Ordinal)) {
+                    throw new InvalidDataException(
+                        $"{engine} did not preserve required table row '{exactFragment}'.");
+                }
+            }
+        }
+    }
+
+    private static string NormalizeTableCell(string value) {
+        if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal number)) {
+            return Normalize(number.ToString("G29", CultureInfo.InvariantCulture));
+        }
+
+        return Normalize(value);
     }
 
     internal static string Normalize(string value) {

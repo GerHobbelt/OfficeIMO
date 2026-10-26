@@ -85,6 +85,7 @@ internal static partial class HtmlPdfRenderedConverter {
 
         var conversionReport = new PdfCore.PdfConversionReport();
         PdfCore.PdfOptions documentOptions = options.PdfOptions.Clone();
+        documentOptions.UseContentStreamCompressionByDefault();
         PdfCore.PdfDocument pdf = PdfCore.PdfDocument.Create(documentOptions);
         pdf.Options.ReportDiagnosticsTo(conversionReport, "OfficeIMO.Html.Pdf");
         if (rendered.Metadata.Title != null
@@ -217,6 +218,10 @@ internal static partial class HtmlPdfRenderedConverter {
             AddPathClipGroup(canvas, pathClipGroup, webFonts, conversionReport, surfaceWidth, surfaceHeight, interactiveFormControls, cancellationToken, textAsSpan, activeClip);
         } else if (visual is HtmlRenderEffectGroup effectGroup) {
             AddEffectGroup(canvas, effectGroup, webFonts, conversionReport, surfaceWidth, surfaceHeight, interactiveFormControls, cancellationToken, textAsSpan, activeClip);
+        } else if (visual is HtmlRenderLayoutRegion layoutRegion) {
+            foreach (HtmlRenderVisual child in layoutRegion.Visuals.OrderBy(item => item.PaintOrder)) {
+                AddVisual(canvas, child, webFonts, conversionReport, surfaceWidth, surfaceHeight, interactiveFormControls, cancellationToken, textAsSpan, activeClip);
+            }
         } else if (visual is HtmlRenderSemanticGroup semanticGroup) {
             AddSemanticGroup(canvas, semanticGroup, webFonts, conversionReport, surfaceWidth, surfaceHeight, interactiveFormControls, cancellationToken, textAsSpan, activeClip);
         } else if (visual is HtmlRenderLogicalTextGroup logicalTextGroup) {
@@ -354,6 +359,7 @@ internal static partial class HtmlPdfRenderedConverter {
 
     private static bool ContainsPaintableVisual(HtmlRenderVisual visual) {
         if (visual is HtmlRenderBookmarkAnchor) return false;
+        if (visual is HtmlRenderLayoutRegion layoutRegion) return layoutRegion.Visuals.Any(ContainsPaintableVisual);
         if (visual is HtmlRenderSemanticGroup semanticGroup) return semanticGroup.Visuals.Any(ContainsPaintableVisual);
         if (visual is HtmlRenderLogicalTextGroup logicalTextGroup) return logicalTextGroup.Visuals.Any(ContainsPaintableVisual);
         if (visual is HtmlRenderClipGroup clipGroup) return clipGroup.Visuals.Any(ContainsPaintableVisual);

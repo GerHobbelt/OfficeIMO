@@ -1,6 +1,6 @@
 param(
     [string] $SiteRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path,
-    [string] $PSWriteOfficeRoot = '',
+    [string] $PSWriteOfficeRoot = $env:PSWRITEOFFICE_ROOT,
     [switch] $SkipDocumentation,
     [switch] $SkipExamples
 )
@@ -13,12 +13,21 @@ function Resolve-RepoRoot {
         [string] $RequestedRoot
     )
 
-    $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($RequestedRoot)) {
-        $candidates += $RequestedRoot
+        try {
+            $resolvedRequestedRoot = (Resolve-Path -LiteralPath $RequestedRoot -ErrorAction Stop).Path
+        } catch {
+            throw "The explicit PSWriteOffice repository root '$RequestedRoot' was not found."
+        }
+
+        if (-not (Test-Path -LiteralPath (Join-Path $resolvedRequestedRoot 'PSWriteOffice.psd1') -PathType Leaf)) {
+            throw "The explicit PSWriteOffice repository root '$resolvedRequestedRoot' does not contain PSWriteOffice.psd1."
+        }
+
+        return $resolvedRequestedRoot
     }
 
-    $candidates += @(
+    $candidates = @(
         (Join-Path $SiteRootPath 'projects\pswriteoffice'),
         (Join-Path (Split-Path -Parent $SiteRootPath) 'PSWriteOffice'),
         'C:\Support\GitHub\PSWriteOffice',
@@ -104,6 +113,105 @@ function Sync-DocumentationPages {
 
         Copy-Item -LiteralPath $sourceFile.FullName -Destination $targetPath -Force
     }
+}
+
+function Get-DocumentationTitle {
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][string] $Fallback
+    )
+
+    $lines = @(Get-Content -LiteralPath $Path)
+    if ($lines.Count -gt 0 -and $lines[0].Trim() -eq '---') {
+        for ($index = 1; $index -lt $lines.Count; $index++) {
+            $line = $lines[$index].Trim()
+            if ($line -eq '---') {
+                break
+            }
+            if ($line.StartsWith('title:', [StringComparison]::OrdinalIgnoreCase)) {
+                $title = $line.Substring('title:'.Length).Trim().Trim('"').Trim("'")
+                if (-not [string]::IsNullOrWhiteSpace($title)) {
+                    return $title
+                }
+            }
+        }
+    }
+
+    return $Fallback
+}
+
+function Sync-DocumentationToc {
+    param(
+        [Parameter(Mandatory)][string] $Source,
+        [Parameter(Mandatory)][string] $TocPath
+    )
+
+    $toc = @(Get-Content -LiteralPath $TocPath -Raw | ConvertFrom-Json)
+    $sections = @($toc | Where-Object title -EQ 'PSWriteOffice')
+    if ($sections.Count -ne 1) {
+        throw "The OfficeIMO documentation TOC must contain exactly one PSWriteOffice section."
+    }
+
+    $sourcePages = foreach ($sourceFile in Get-ChildItem -LiteralPath $Source -File -Filter '*.md' | Sort-Object Name) {
+        $sourceSlug = [System.IO.Path]::GetFileNameWithoutExtension($sourceFile.Name)
+        $key = if ($sourceSlug -eq '_index') { '__index__' } else { $sourceSlug }
+        $fallbackTitle = if ($sourceSlug -eq '_index') {
+            'PSWriteOffice Overview'
+        } else {
+            [System.Globalization.CultureInfo]::InvariantCulture.TextInfo.ToTitleCase($sourceSlug.Replace('-', ' '))
+        }
+        $targetPath = if ($sourceSlug -eq '_index') {
+            'pswriteoffice/index.md'
+        } else {
+            "pswriteoffice/$sourceSlug/index.md"
+        }
+        $href = if ($sourceSlug -eq '_index') {
+            '/docs/pswriteoffice/'
+        } else {
+            "/docs/pswriteoffice/$sourceSlug/"
+        }
+
+        [PSCustomObject]@{
+            Key = $key
+            Title = Get-DocumentationTitle -Path $sourceFile.FullName -Fallback $fallbackTitle
+            Path = $targetPath
+            Href = $href
+        }
+    }
+
+    $pageByKey = @{}
+    foreach ($page in $sourcePages) {
+        $pageByKey[$page.Key] = $page
+    }
+
+    $usedKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $items = [System.Collections.Generic.List[object]]::new()
+    foreach ($existing in @($sections[0].items)) {
+        $existingPath = ([string] $existing.path).Replace('\', '/')
+        $key = if ($existingPath -eq 'pswriteoffice/index.md') {
+            '__index__'
+        } elseif ($existingPath -match '^pswriteoffice/(?<slug>[^/]+)/index\.md$') {
+            $Matches['slug']
+        } else {
+            $null
+        }
+
+        if ($key -and $pageByKey.ContainsKey($key) -and $usedKeys.Add($key)) {
+            $items.Add($existing)
+        }
+    }
+
+    foreach ($page in @($sourcePages | Where-Object { -not $usedKeys.Contains($_.Key) } | Sort-Object Title, Key)) {
+        $items.Add([PSCustomObject]@{
+            title = $page.Title
+            path = $page.Path
+            href = $page.Href
+        })
+        [void] $usedKeys.Add($page.Key)
+    }
+
+    $sections[0].items = $items.ToArray()
+    $toc | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $TocPath -Encoding utf8
 }
 
 function Get-ManifestCommandNames {
@@ -198,6 +306,7 @@ $summary = [ordered]@{
     examplesUpdated = $false
     documentationSource = $null
     documentationUpdated = $false
+    documentationNavigationUpdated = $false
     documentationCatalogSource = $null
     documentationCatalogUpdated = $false
     fallbackUsed = $true
@@ -294,6 +403,10 @@ if (-not $SkipDocumentation) {
 
     if ($sourceDocumentationAvailable -and $sourceCatalogValid) {
         Sync-DocumentationPages -Source $sourceDocumentationPath -Destination $targetDocumentationPath
+        Sync-DocumentationToc `
+            -Source $sourceDocumentationPath `
+            -TocPath (Join-Path $resolvedSiteRoot 'content\docs\toc.json')
+        $summary.documentationNavigationUpdated = $true
         Copy-Item -LiteralPath $sourceCatalogPath -Destination $targetCatalogPath -Force
         $summary.documentationSource = $sourceDocumentationPath
         $summary.documentationUpdated = $true

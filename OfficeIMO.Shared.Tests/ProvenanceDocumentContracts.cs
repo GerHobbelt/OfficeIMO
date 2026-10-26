@@ -225,7 +225,7 @@ public sealed partial class ProvenanceDocumentContracts {
             Convert.ToBase64String(CreateManifestStore()) +
             "</c2pa:manifest></metadata></svg>";
         string dataUri = "data:image/svg+xml," + Uri.EscapeDataString(svg).Replace("%2C", ",").Replace("%2c", ",");
-        string html = $"<html><head></head><body><source srcset=\"{dataUri} 1x\"></body></html>";
+        string html = $"<html><head></head><body><picture><source srcset=\"{dataUri} 1x\"></picture></body></html>";
 
         OfficeProvenanceRemovalResult result = HtmlProvenance.Remove(html);
 
@@ -239,7 +239,7 @@ public sealed partial class ProvenanceDocumentContracts {
         byte[] image = CreatePngWithManifest(CreateManifestStore());
         string first = "data:image/png;base64," + Convert.ToBase64String(image);
         string second = "data:image/png;base64," + Convert.ToBase64String(image);
-        string html = $"<html><head></head><body><source srcset=\"{first}, {second} 2x\"></body></html>";
+        string html = $"<html><head></head><body><picture><source srcset=\"{first}, {second} 2x\"></picture></body></html>";
 
         OfficeProvenanceRemovalResult result = HtmlProvenance.Remove(html);
 
@@ -568,7 +568,7 @@ public sealed partial class ProvenanceDocumentContracts {
     }
 
     [Fact]
-    public void OpenXmlOwnerFailsClosedWhenOrphanSignatureEvidenceCannotBeRemoved() {
+    public void OpenXmlOwnerIgnoresOrphanNativeSignatureEvidence() {
         string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO-Provenance-{Guid.NewGuid():N}.docx");
         try {
             CreateOpenXmlPackage(path, "docx");
@@ -584,19 +584,20 @@ public sealed partial class ProvenanceDocumentContracts {
             AddZipEntry(path, "media/provenance.png", CreatePngWithManifest(CreateManifestStore()));
             byte[] package = File.ReadAllBytes(path);
 
-            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
-                WordDocument.RemoveProvenance(package, options: new OfficeProvenanceRemovalOptions {
-                    SignatureMutationPolicy = OfficeSignatureMutationPolicy.RemoveInvalidatedSignatures
-                }));
+            OfficeProvenanceRemovalResult result = WordDocument.RemoveProvenance(package, options: new OfficeProvenanceRemovalOptions {
+                SignatureMutationPolicy = OfficeSignatureMutationPolicy.RemoveInvalidatedSignatures
+            });
 
-            Assert.Contains("could not remove", exception.Message, StringComparison.Ordinal);
+            Assert.True(result.WasChanged);
+            Assert.False(result.WereInvalidatedSignaturesRemoved);
+            Assert.Empty(result.After.Evidence);
         } finally {
             if (File.Exists(path)) File.Delete(path);
         }
     }
 
     [Theory]
-    [InlineData("odt", "META-INF/customsignatures.xml")]
+    [InlineData("odt", "META-INF/documentsignatures.xml")]
     [InlineData("epub", "META-INF/signatures.xml")]
     public void ZipDocumentOwnersRemoveInvalidatedNativeSignatures(string extension, string signaturePath) {
         byte[] package = CreateZipPackage(extension, signaturePath, CreatePngWithManifest(CreateManifestStore()));
@@ -617,8 +618,8 @@ public sealed partial class ProvenanceDocumentContracts {
     }
 
     [Fact]
-    public void OdfDefaultPolicyBlocksProducerSpecificNativeSignature() {
-        byte[] package = CreateZipPackage("odt", "META-INF/customsignatures.xml", CreatePngWithManifest(CreateManifestStore()));
+    public void OdfDefaultPolicyBlocksNativeDocumentSignature() {
+        byte[] package = CreateZipPackage("odt", "META-INF/documentsignatures.xml", CreatePngWithManifest(CreateManifestStore()));
 
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
             OdfDocument.RemoveProvenance(package, "document.odt"));
@@ -659,11 +660,13 @@ public sealed partial class ProvenanceDocumentContracts {
         using (var output = new MemoryStream()) {
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true)) {
                 WriteEntry(archive, "mimetype", "application/vnd.oasis.opendocument.text", CompressionLevel.NoCompression);
-                WriteEntry(archive, "META-INF/customsignatures.xml", "<signatures/>", CompressionLevel.Optimal);
+                WriteEntry(archive, "META-INF/manifest.xml", ValidOdfManifestXml, CompressionLevel.Optimal);
+                WriteEntry(archive, "content.xml", "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\"/>", CompressionLevel.Optimal);
+                WriteEntry(archive, "META-INF/documentsignatures.xml", "<signatures/>", CompressionLevel.Optimal);
                 WriteEntry(archive, "META-INF/content_credential.c2pa", CreateManifestStore(), CompressionLevel.Optimal);
                 WriteEntry(archive, "media/provenance.png", CreatePngWithManifest(CreateManifestStore()), CompressionLevel.Optimal);
             }
-            package = output.ToArray();
+            package = RewriteFixtureWithStoredMimetype(output.ToArray());
         }
         var options = new OfficeProvenanceRemovalOptions {
             ProcessEmbeddedAssets = false,
@@ -684,11 +687,12 @@ public sealed partial class ProvenanceDocumentContracts {
         using (var output = new MemoryStream()) {
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true)) {
                 WriteEntry(archive, "mimetype", "application/vnd.oasis.opendocument.text", CompressionLevel.NoCompression);
-                WriteEntry(archive, "META-INF/customsignatures.xml", "<signatures/>", CompressionLevel.Optimal);
+                WriteEntry(archive, "META-INF/manifest.xml", ValidOdfManifestXml, CompressionLevel.Optimal);
+                WriteEntry(archive, "META-INF/documentsignatures.xml", "<signatures/>", CompressionLevel.Optimal);
                 WriteEntry(archive, "media/first.png", image, CompressionLevel.Optimal);
                 WriteEntry(archive, "media/second.png", image, CompressionLevel.Optimal);
             }
-            package = output.ToArray();
+            package = RewriteFixtureWithStoredMimetype(output.ToArray());
         }
         var options = new OfficeProvenanceRemovalOptions {
             SignatureMutationPolicy = OfficeSignatureMutationPolicy.RemoveInvalidatedSignatures
@@ -758,7 +762,7 @@ public sealed partial class ProvenanceDocumentContracts {
         using (var output = new MemoryStream()) {
             using (Package packageHandle = Package.Open(output, FileMode.Create, FileAccess.ReadWrite)) {
                 Uri documentUri = PackUriHelper.CreatePartUri(new Uri("/visio/document.xml", UriKind.Relative));
-                PackagePart document = packageHandle.CreatePart(documentUri, "application/xml", CompressionOption.Maximum);
+                PackagePart document = packageHandle.CreatePart(documentUri, "application/vnd.ms-visio.drawing.main+xml", CompressionOption.Maximum);
                 using (Stream target = document.GetStream()) {
                     byte[] content = Encoding.UTF8.GetBytes("<document>keep</document>");
                     target.Write(content, 0, content.Length);
@@ -767,6 +771,10 @@ public sealed partial class ProvenanceDocumentContracts {
                     documentUri,
                     TargetMode.Internal,
                     "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/origin");
+                packageHandle.CreateRelationship(
+                    documentUri,
+                    TargetMode.Internal,
+                    "http://schemas.microsoft.com/visio/2010/relationships/document");
                 Uri manifestUri = PackUriHelper.CreatePartUri(new Uri("/META-INF/content_credential.c2pa", UriKind.Relative));
                 using Stream manifestTarget = packageHandle.CreatePart(
                     manifestUri,
@@ -849,6 +857,12 @@ public sealed partial class ProvenanceDocumentContracts {
     private static byte[] CreateSignedVisioProvenancePackage(int paddingCharacters, bool includeExternalSignatureRelationship = false) {
         using var output = new MemoryStream();
         using (Package package = Package.Open(output, FileMode.Create, FileAccess.ReadWrite)) {
+            Uri documentUri = PackUriHelper.CreatePartUri(new Uri("/visio/document.xml", UriKind.Relative));
+            using (Stream document = package.CreatePart(documentUri, "application/vnd.ms-visio.drawing.main+xml", CompressionOption.Maximum).GetStream()) {
+                byte[] xml = Encoding.UTF8.GetBytes("<VisioDocument xmlns=\"http://schemas.microsoft.com/office/visio/2012/main\"/>");
+                document.Write(xml, 0, xml.Length);
+            }
+            package.CreateRelationship(documentUri, TargetMode.Internal, "http://schemas.microsoft.com/visio/2010/relationships/document");
             Uri manifestUri = PackUriHelper.CreatePartUri(new Uri("/META-INF/content_credential.c2pa", UriKind.Relative));
             using (Stream target = package.CreatePart(manifestUri, "application/c2pa", CompressionOption.Maximum).GetStream()) {
                 byte[] manifest = CreateManifestStore();
@@ -886,6 +900,10 @@ public sealed partial class ProvenanceDocumentContracts {
 
             Uri appUri = PackUriHelper.CreatePartUri(new Uri("/docProps/app.xml", UriKind.Relative));
             PackagePart app = package.CreatePart(appUri, "application/vnd.openxmlformats-officedocument.extended-properties+xml", CompressionOption.Maximum);
+            package.CreateRelationship(
+                appUri,
+                TargetMode.Internal,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties");
             using (var writer = new StreamWriter(app.GetStream(), new UTF8Encoding(false), 4096, leaveOpen: false)) {
                 writer.Write("<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">");
                 writer.Write(new string(' ', paddingCharacters));
@@ -920,12 +938,32 @@ public sealed partial class ProvenanceDocumentContracts {
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true)) {
             WriteEntry(archive, "mimetype", extension == "odt" ? "application/vnd.oasis.opendocument.text" : "application/epub+zip", CompressionLevel.NoCompression);
+            if (extension == "odt") {
+                WriteEntry(archive, "META-INF/manifest.xml", ValidOdfManifestXml, CompressionLevel.Optimal);
+                WriteEntry(archive, "content.xml", "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\"/>", CompressionLevel.Optimal);
+            } else {
+                WriteEntry(archive, "META-INF/container.xml",
+                    "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" version=\"1.0\"><rootfiles>" +
+                    "<rootfile full-path=\"package.opf\" media-type=\"application/oebps-package+xml\"/>" +
+                    "</rootfiles></container>", CompressionLevel.Optimal);
+                WriteEntry(archive, "package.opf",
+                    "<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"id\">" +
+                    "<metadata><identifier xmlns=\"http://purl.org/dc/elements/1.1/\" id=\"id\">fixture</identifier></metadata>" +
+                    "<manifest/><spine/></package>", CompressionLevel.Optimal);
+            }
             WriteEntry(archive, signaturePath, "<signatures/>", CompressionLevel.Optimal);
-            WriteEntry(archive, signaturePath, "<signatures duplicate=\"true\"/>", CompressionLevel.Optimal);
+            if (extension != "odt") {
+                WriteEntry(archive, signaturePath, "<signatures duplicate=\"true\"/>", CompressionLevel.Optimal);
+            }
             WriteEntry(archive, "media/provenance.png", image, CompressionLevel.Optimal);
         }
-        return output.ToArray();
+        return RewriteFixtureWithStoredMimetype(output.ToArray());
     }
+
+    private const string ValidOdfManifestXml =
+        "<manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\">" +
+        "<manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.text\"/>" +
+        "</manifest:manifest>";
 
     private static void WriteEntry(ZipArchive archive, string name, string content, CompressionLevel level) =>
         WriteEntry(archive, name, Encoding.UTF8.GetBytes(content), level);
@@ -964,8 +1002,9 @@ public sealed partial class ProvenanceDocumentContracts {
         byte[] header = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
         return Join(
             header,
-            CreatePngChunk("IHDR", new byte[13]),
+            CreatePngChunk("IHDR", new byte[] { 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0 }),
             CreatePngChunk("caBX", manifest),
+            CreatePngChunk("IDAT", new byte[] { 0x78, 0x9C, 0x63, 0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x04, 0x00, 0x01 }),
             CreatePngChunk("IEND", Array.Empty<byte>()));
     }
 

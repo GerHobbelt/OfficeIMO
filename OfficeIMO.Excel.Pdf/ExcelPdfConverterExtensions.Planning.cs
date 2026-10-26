@@ -5,6 +5,7 @@ namespace OfficeIMO.Excel.Pdf {
     public static partial class ExcelPdfConverterExtensions {
         private static PdfCore.PdfOptions CreatePdfOptions(ExcelPdfSaveOptions options, out bool preserveConfiguredFontSlots) {
             PdfCore.PdfOptions pdfOptions = options.PdfOptions?.Clone() ?? new PdfCore.PdfOptions();
+            pdfOptions.UseContentStreamCompressionByDefault();
             pdfOptions.ReportDiagnosticsTo(options.Report, "OfficeIMO.Excel.Pdf");
 
             pdfOptions.CreateOutlineFromHeadings = true;
@@ -30,13 +31,28 @@ namespace OfficeIMO.Excel.Pdf {
             PdfCore.PdfOptions pdfOptions,
             ExcelPdfSaveOptions options,
             bool preserveConfiguredFontSlots,
-            IEnumerable<PdfCore.PdfStandardFont> reservedFontSlots) {
+            IEnumerable<PdfCore.PdfStandardFont> reservedFontSlots,
+            IReadOnlyList<WorksheetPdfExportPlan> exportPlans) {
             if (!options.ResourcePolicy.AllowSystemFontEmbedding ||
                 options.TextFallbacks == PdfCore.PdfTextFallbackFeatures.None) {
                 return;
             }
 
             PdfCore.PdfTextFallbackFeatures fallbackFeatures = options.TextFallbacks;
+            if (!exportPlans.Any(plan => plan.Charts.Count > 0) &&
+                (!options.UseWorksheetHeadersAndFooters ||
+                 !WorksheetHeaderFootersRequireConservativeTextFallbacks(exportPlans))) {
+                fallbackFeatures = PdfCore.PdfTextDiagnostics.ResolveRequiredFallbackFeatures(
+                    fallbackFeatures,
+                    EnumerateWorksheetFallbackText(
+                        exportPlans,
+                        options.EmptyCellText,
+                        options.UseWorksheetHeadersAndFooters));
+            }
+            if (fallbackFeatures == PdfCore.PdfTextFallbackFeatures.None) {
+                return;
+            }
+
             if (preserveConfiguredFontSlots || pdfOptions.HasEmbeddedStandardFontFamily(pdfOptions.DefaultFont)) {
                 fallbackFeatures &= ~PdfCore.PdfTextFallbackFeatures.DocumentFont;
             }
@@ -46,6 +62,84 @@ namespace OfficeIMO.Excel.Pdf {
                 reservedFontSlots,
                 options.ResourcePolicy.AllowSystemFontEmbedding,
                 preserveConfiguredFontSlots);
+        }
+
+        private static IEnumerable<string?> EnumerateWorksheetFallbackText(
+            IReadOnlyList<WorksheetPdfExportPlan> exportPlans,
+            string emptyCellText,
+            bool includeHeaderFooterText) {
+            yield return emptyCellText;
+            foreach (WorksheetPdfExportPlan plan in exportPlans) {
+                yield return plan.SheetName;
+                object?[,] values = plan.ExportData.Values;
+                ExcelCellStyleSnapshot?[,]? styles = plan.ExportData.Styles;
+                for (int row = 0; row < values.GetLength(0); row++) {
+                    for (int column = 0; column < values.GetLength(1); column++) {
+                        if (values[row, column] is string text) {
+                            yield return text;
+                        }
+
+                        if (styles != null &&
+                            row < styles.GetLength(0) &&
+                            column < styles.GetLength(1)) {
+                            yield return styles[row, column]?.NumberFormatCode;
+                        }
+                    }
+                }
+
+                if (includeHeaderFooterText && plan.HeaderFooter != null) {
+                    foreach (string? text in EnumerateHeaderFooterTextZones(plan.HeaderFooter)) {
+                        yield return text;
+                    }
+                }
+            }
+        }
+
+        private static bool WorksheetHeaderFootersRequireConservativeTextFallbacks(
+            IReadOnlyList<WorksheetPdfExportPlan> exportPlans) {
+            foreach (WorksheetPdfExportPlan plan in exportPlans) {
+                if (plan.HeaderFooter == null) {
+                    continue;
+                }
+
+                foreach (string? text in EnumerateHeaderFooterTextZones(plan.HeaderFooter)) {
+                    if (HeaderFooterContainsDynamicTextField(text)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HeaderFooterContainsDynamicTextField(string? text) {
+            if (string.IsNullOrEmpty(text)) {
+                return false;
+            }
+
+            for (int index = 0; index < text!.Length - 1; index++) {
+                if (text[index] != '&') {
+                    continue;
+                }
+
+                char token = text[index + 1];
+                if (token == '&') {
+                    index++;
+                    continue;
+                }
+
+                if (token == '"' &&
+                    TryReadHeaderFooterQuotedToken(text, index + 1, out _, out int endIndex)) {
+                    index = endIndex;
+                    continue;
+                }
+
+                if (token is 'D' or 'T' or 'F' or 'Z') {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool TryApplyPdfFontFamily(string? familyName, PdfCore.PdfOptions pdfOptions, bool embedSystemFont, bool requireEmbeddedFont = false) {
@@ -259,7 +353,7 @@ namespace OfficeIMO.Excel.Pdf {
                 object?[,] values = exportData.Values;
                 int rows = values.GetLength(0);
                 int columns = values.GetLength(1);
-                bool hasTable = rows > 0 && columns > 0;
+                bool hasTable = rows > 0 && columns > 0 && HasWorksheetTableContent(exportData);
                 int exportedRows = options.MaxRowsPerSheet.HasValue
                     ? Math.Min(rows, options.MaxRowsPerSheet.Value)
                     : rows;
@@ -311,6 +405,56 @@ namespace OfficeIMO.Excel.Pdf {
 
             return plans;
         }
+
+        private static bool HasWorksheetTableContent(SheetExportData exportData) {
+            object?[,] values = exportData.Values;
+            for (int row = 0; row < values.GetLength(0); row++) {
+                for (int column = 0; column < values.GetLength(1); column++) {
+                    object? value = values[row, column];
+                    if (value is string text ? text.Length > 0 : value != null) {
+                        return true;
+                    }
+                }
+            }
+
+            ExcelCellStyleSnapshot?[,]? styles = exportData.Styles;
+            if (styles != null) {
+                for (int row = 0; row < styles.GetLength(0); row++) {
+                    for (int column = 0; column < styles.GetLength(1); column++) {
+                        if (styles[row, column] is ExcelCellStyleSnapshot style && HasVisibleBlankCellStyle(style)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            string?[,]? cellReferences = exportData.CellReferences;
+            if (cellReferences == null || exportData.StructuredTables.Count == 0) {
+                return false;
+            }
+
+            for (int row = 0; row < cellReferences.GetLength(0); row++) {
+                for (int column = 0; column < cellReferences.GetLength(1); column++) {
+                    if (GetStructuredTableCellVisual(exportData.StructuredTables, cellReferences, row, column) != null) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasVisibleBlankCellStyle(ExcelCellStyleSnapshot style) =>
+            style.FillColorArgb != null ||
+            style.FillPatternType != null ||
+            style.FillPatternForegroundColorArgb != null ||
+            style.FillPatternBackgroundColorArgb != null ||
+            style.FillGradientUnsupported ||
+            style.FillGradientStartColorArgb != null ||
+            style.FillGradientEndColorArgb != null ||
+            style.FillGradientStops.Count > 0 ||
+            style.FillGradientDegree.HasValue ||
+            style.Border != null;
 
         private static int GetRangeRowCount(string normalizedRange) {
             return A1.TryParseRange(normalizedRange, out int firstRow, out _, out int lastRow, out _)

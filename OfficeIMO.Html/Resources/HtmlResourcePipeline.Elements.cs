@@ -15,14 +15,12 @@ public static partial class HtmlResourcePipeline {
                 AddImage(manifest, element, baseUri, options);
                 break;
             case "image":
-                AddAttribute(manifest, HtmlResourceKind.Image, element, "href", baseUri, options, skipFragmentOnly: true);
-                AddAttribute(manifest, HtmlResourceKind.Image, element, "xlink:href", baseUri, options, skipFragmentOnly: true);
+                AddPreferredSvgHref(manifest, HtmlResourceKind.Image, element, baseUri, options);
                 AddAttribute(manifest, HtmlResourceKind.Image, element, "src", baseUri, options);
                 break;
             case "feimage":
             case "use":
-                AddAttribute(manifest, HtmlResourceKind.Image, element, "href", baseUri, options, skipFragmentOnly: true);
-                AddAttribute(manifest, HtmlResourceKind.Image, element, "xlink:href", baseUri, options, skipFragmentOnly: true);
+                AddPreferredSvgHref(manifest, HtmlResourceKind.Image, element, baseUri, options);
                 break;
             case "source":
                 AddSource(manifest, element, baseUri, options);
@@ -59,8 +57,7 @@ public static partial class HtmlResourcePipeline {
             case "script":
                 if (IsExecutableScriptElement(element)) {
                     AddAttribute(manifest, HtmlResourceKind.Script, element, "src", baseUri, options);
-                    AddAttribute(manifest, HtmlResourceKind.Script, element, "href", baseUri, options);
-                    AddAttribute(manifest, HtmlResourceKind.Script, element, "xlink:href", baseUri, options);
+                    AddPreferredSvgHref(manifest, HtmlResourceKind.Script, element, baseUri, options);
                 }
 
                 break;
@@ -154,11 +151,6 @@ public static partial class HtmlResourcePipeline {
                     && HasPictureSourceCandidate(element)
                     && IsApplicableMedia(element.GetAttribute("media") ?? string.Empty, options)
                     && IsSupportedPictureSourceType(element.GetAttribute("type"))) {
-                    AddAttribute(manifest, HtmlResourceKind.Image, element, "src", baseUri, options);
-                    AddAttribute(manifest, HtmlResourceKind.Image, element, "data-src", baseUri, options);
-                    AddAttribute(manifest, HtmlResourceKind.Image, element, "data-original", baseUri, options);
-                    AddAttribute(manifest, HtmlResourceKind.Image, element, "data-original-src", baseUri, options);
-                    AddAttribute(manifest, HtmlResourceKind.Image, element, "data-lazy-src", baseUri, options);
                     AddSrcSet(manifest, HtmlResourceKind.Image, element, "srcset", baseUri, options);
                     AddSrcSet(manifest, HtmlResourceKind.Image, element, "data-srcset", baseUri, options);
                     AddSrcSet(manifest, HtmlResourceKind.Image, element, "data-original-srcset", baseUri, options);
@@ -186,6 +178,10 @@ public static partial class HtmlResourcePipeline {
         foreach (IElement sibling in parent.Children) {
             if (ReferenceEquals(sibling, element)) {
                 return true;
+            }
+
+            if (string.Equals(sibling.LocalName, "img", StringComparison.OrdinalIgnoreCase)) {
+                return false;
             }
 
             if (!string.Equals(sibling.TagName, "source", StringComparison.OrdinalIgnoreCase)) {
@@ -267,12 +263,7 @@ public static partial class HtmlResourcePipeline {
         return HasNonEmptyAttribute(element, "srcset")
             || HasNonEmptyAttribute(element, "data-srcset")
             || HasNonEmptyAttribute(element, "data-original-srcset")
-            || HasNonEmptyAttribute(element, "data-lazy-srcset")
-            || HasNonEmptyAttribute(element, "src")
-            || HasNonEmptyAttribute(element, "data-src")
-            || HasNonEmptyAttribute(element, "data-original")
-            || HasNonEmptyAttribute(element, "data-original-src")
-            || HasNonEmptyAttribute(element, "data-lazy-src");
+            || HasNonEmptyAttribute(element, "data-lazy-srcset");
     }
 
     private static bool HasAllowedPictureSourceCandidate(IElement element, Uri? baseUri, HtmlResourcePipelineOptions options) {
@@ -282,12 +273,6 @@ public static partial class HtmlResourcePipeline {
                 if (IsAllowedResourceCandidate(HtmlResourceKind.Image, candidate.Url, baseUri, resourcePolicy)) {
                     return true;
                 }
-            }
-        }
-
-        foreach (string attribute in new[] { "src", "data-src", "data-original", "data-original-src", "data-lazy-src" }) {
-            if (IsAllowedResourceCandidate(HtmlResourceKind.Image, element.GetAttribute(attribute), baseUri, resourcePolicy)) {
-                return true;
             }
         }
 
@@ -395,6 +380,10 @@ public static partial class HtmlResourcePipeline {
         char quote = '\0';
         for (int i = 0; i < text.Length; i++) {
             char current = text[i];
+            if (current == '\\') {
+                i++;
+                continue;
+            }
             if (quote != '\0') {
                 if (current == quote && !IsEscaped(text, i)) {
                     quote = '\0';
@@ -450,18 +439,38 @@ public static partial class HtmlResourcePipeline {
 
 
     internal static bool IsCssStyleElement(IElement styleElement) {
-        string type = (styleElement.GetAttribute("type") ?? string.Empty).Trim();
+        bool supportsStylesheets = string.Equals(
+                styleElement.NamespaceUri,
+                "http://www.w3.org/1999/xhtml",
+                StringComparison.Ordinal) ||
+            string.Equals(
+                styleElement.NamespaceUri,
+                "http://www.w3.org/2000/svg",
+                StringComparison.Ordinal);
+        if (!supportsStylesheets) return false;
+        string type = TrimHtmlAsciiWhitespace(styleElement.GetAttribute("type") ?? string.Empty);
         if (type.Length == 0) {
             return true;
         }
 
         int parameterStart = type.IndexOf(';');
         if (parameterStart >= 0) {
-            type = type.Substring(0, parameterStart).Trim();
+            type = TrimHtmlAsciiWhitespace(type.Substring(0, parameterStart));
         }
 
         return string.Equals(type, "text/css", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static string TrimHtmlAsciiWhitespace(string value) {
+        int start = 0;
+        while (start < value.Length && IsHtmlAsciiWhitespace(value[start])) start++;
+        int end = value.Length;
+        while (end > start && IsHtmlAsciiWhitespace(value[end - 1])) end--;
+        return start == 0 && end == value.Length ? value : value.Substring(start, end - start);
+    }
+
+    private static bool IsHtmlAsciiWhitespace(char value) =>
+        value is '\t' or '\n' or '\f' or '\r' or ' ';
 
     private static bool IsSupportedPictureSourceType(string? type) {
         return HtmlPictureSourceSupport.IsSupportedConversionContentType(type);

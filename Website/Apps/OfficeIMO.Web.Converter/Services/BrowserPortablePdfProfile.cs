@@ -30,6 +30,27 @@ internal static class BrowserPortablePdfProfile {
         "BlinkMacSystemFont"
     ];
 
+    private static readonly string[] PortableSerifAliases = [
+        "Times",
+        "Times Roman",
+        "Times-Roman",
+        "Times New Roman",
+        "serif"
+    ];
+
+    private static readonly string[] PortableMonospaceAliases = [
+        "Courier",
+        "Courier New",
+        "monospace",
+        "ui-monospace"
+    ];
+
+    private static readonly string[] PortableSymbolAliases = [
+        "Symbol",
+        "ZapfDingbats",
+        "Zapf Dingbats"
+    ];
+
     internal const string DefaultFontFamily = "Carlito";
     internal const string ArabicFallbackFontFamily = "Noto Sans Arabic";
     internal const string SymbolFallbackFontFamily = "Noto Sans Symbols 2";
@@ -42,6 +63,8 @@ internal static class BrowserPortablePdfProfile {
     internal static string FontPackFingerprint => Data.Value.Fingerprint;
     internal static IReadOnlyList<PdfFontFamilySubstitution> FontFamilySubstitutions =>
         Data.Value.Substitutions;
+
+    internal static OfficeFontFaceCollection CreateDrawingFonts() => CreateLayoutFonts(Data.Value);
 
     internal static PdfOptions CreateOptions(BrowserPdfProfile profile) {
         ArgumentNullException.ThrowIfNull(profile);
@@ -64,24 +87,9 @@ internal static class BrowserPortablePdfProfile {
 
         options.RegisterFontFamily(
             PdfStandardFont.Helvetica,
-            new PdfEmbeddedFontFamily(
-                DefaultFontFamily,
-                data.CarlitoRegular,
-                data.CarlitoBold,
-                data.CarlitoItalic,
-                data.CarlitoBoldItalic));
-        options.RegisterNamedFontFamily(
-            new PdfEmbeddedFontFamily(
-                DefaultFontFamily,
-                data.CarlitoRegular,
-                data.CarlitoBold,
-                data.CarlitoItalic,
-                data.CarlitoBoldItalic));
-        options.RegisterEmbeddedFontFallbacks(
-            new PdfEmbeddedFontFallbackSet([
-                new PdfEmbeddedFontFallbackCandidate(ArabicFallbackFontFamily, data.NotoSansArabic),
-                new PdfEmbeddedFontFallbackCandidate(SymbolFallbackFontFamily, data.NotoSansSymbols)
-            ]));
+            data.DefaultPdfFontFamily);
+        options.RegisterNamedFontFamily(data.DefaultPdfFontFamily);
+        options.RegisterEmbeddedFontFallbacks(data.PdfFontFallbacks);
         foreach (PdfFontFamilySubstitution substitution in data.Substitutions) {
             options.RegisterFontFamilySubstitution(
                 substitution.SourceFontFamily,
@@ -98,12 +106,7 @@ internal static class BrowserPortablePdfProfile {
             DefaultFontFamily = DefaultLayoutFontFamilies,
             Fonts = CreateLayoutFonts(data),
             PdfOptions = CreateOptions(profile),
-            FontFamily = new PdfEmbeddedFontFamily(
-                DefaultFontFamily,
-                data.CarlitoRegular,
-                data.CarlitoBold,
-                data.CarlitoItalic,
-                data.CarlitoBoldItalic),
+            FontFamily = data.DefaultPdfFontFamily,
             TextShapingMode = PdfTextShapingMode.LatinLigatures,
             TextShapingProvider = OfficeHarfBuzzTextShapingProvider.Instance,
             ResourcePolicy = PdfResourcePolicy.CreatePortableDeterministic()
@@ -119,9 +122,18 @@ internal static class BrowserPortablePdfProfile {
         foreach (string alias in PortableSansSerifAliases) {
             fonts.AddAlias(alias, DefaultFontFamily);
         }
+        foreach (string alias in PortableSerifAliases) {
+            fonts.AddAlias(alias, DefaultFontFamily);
+        }
+        foreach (string alias in PortableMonospaceAliases) {
+            fonts.AddAlias(alias, DefaultFontFamily);
+        }
+        fonts.Add(SymbolFallbackFontFamily, data.NotoSansSymbols);
+        foreach (string alias in PortableSymbolAliases) {
+            fonts.AddAlias(alias, SymbolFallbackFontFamily);
+        }
         return fonts
             .Add(ArabicFallbackFontFamily, data.NotoSansArabic)
-            .Add(SymbolFallbackFontFamily, data.NotoSansSymbols)
             .AddFallbackFamily(ArabicFallbackFontFamily)
             .AddFallbackFamily(SymbolFallbackFontFamily);
     }
@@ -168,6 +180,16 @@ internal static class BrowserPortablePdfProfile {
             carlitoBoldItalic,
             notoSansArabic,
             notoSansSymbols,
+            new PdfEmbeddedFontFamily(
+                DefaultFontFamily,
+                carlitoRegular,
+                carlitoBold,
+                carlitoItalic,
+                carlitoBoldItalic),
+            new PdfEmbeddedFontFallbackSet([
+                new PdfEmbeddedFontFallbackCandidate(ArabicFallbackFontFamily, notoSansArabic),
+                new PdfEmbeddedFontFallbackCandidate(SymbolFallbackFontFamily, notoSansSymbols)
+            ]),
             substitutions,
             fingerprint);
     }
@@ -245,6 +267,8 @@ internal static class BrowserPortablePdfProfile {
         byte[] CarlitoBoldItalic,
         byte[] NotoSansArabic,
         byte[] NotoSansSymbols,
+        PdfEmbeddedFontFamily DefaultPdfFontFamily,
+        PdfEmbeddedFontFallbackSet PdfFontFallbacks,
         IReadOnlyList<PdfFontFamilySubstitution> Substitutions,
         string Fingerprint);
 
