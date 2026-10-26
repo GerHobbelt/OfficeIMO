@@ -13,6 +13,32 @@ namespace OfficeIMO.Word {
 
             internal HashSet<string> ActiveNoteKeys { get; } = new(StringComparer.Ordinal);
             internal IReadOnlyDictionary<string, string?> ParagraphStyleNames { get; }
+            private Dictionary<Paragraph, bool[]> ComplexFieldPrefixes { get; } = new();
+            private HashSet<OpenXmlElement> ScannedFieldStories { get; } = new();
+
+            internal Stack<bool> ComplexFieldResultsFor(Paragraph paragraph) {
+                OpenXmlElement story = paragraph.Ancestors().FirstOrDefault(element =>
+                    element is Footnote or Endnote or DocumentFormat.OpenXml.Wordprocessing.Header
+                        or DocumentFormat.OpenXml.Wordprocessing.Footer)
+                    ?? paragraph.Ancestors().LastOrDefault() ?? paragraph;
+                if (ScannedFieldStories.Add(story) && story.Descendants<FieldChar>().Any()) {
+                    var stack = new Stack<bool>();
+                    foreach (Paragraph candidate in story.Descendants<Paragraph>()) {
+                        if (stack.Count > 0) ComplexFieldPrefixes[candidate] = stack.Reverse().ToArray();
+                        foreach (FieldChar marker in candidate.Descendants<FieldChar>()) {
+                            if (marker.FieldCharType?.Value == FieldCharValues.Begin) stack.Push(false);
+                            else if (marker.FieldCharType?.Value == FieldCharValues.Separate && stack.Count > 0) {
+                                stack.Pop();
+                                stack.Push(true);
+                            } else if (marker.FieldCharType?.Value == FieldCharValues.End && stack.Count > 0) {
+                                stack.Pop();
+                            }
+                        }
+                    }
+                }
+                return ComplexFieldPrefixes.TryGetValue(paragraph, out bool[]? prefix)
+                    ? new Stack<bool>(prefix) : new Stack<bool>();
+            }
         }
 
         /// <summary>Creates an independent snapshot of document metadata, sections, stories, paragraphs, tables, notes, and images.</summary>
@@ -204,14 +230,44 @@ namespace OfficeIMO.Word {
                     : int.TryParse(bookmarkStart?.Id?.Value, out var bookmarkId) ? bookmarkId : null,
             };
 
-            foreach (var run in paragraph.GetRuns()) {
+            // Walk runs and simple fields together so a field's insertion index uses the
+            // same run sequence that is stored in the inspection snapshot.
+            int runIndex = 0;
+            var fieldVisibility = new WordComplexFieldRunVisibility(
+                expansionContext.ComplexFieldResultsFor(paragraph._paragraph).Reverse());
+            foreach (OpenXmlElement item in EnumerateInspectionInlineItems(paragraph._paragraph)) {
+                if (item is SimpleField field) {
+                    Hyperlink? containingLink = field.Ancestors<Hyperlink>().FirstOrDefault();
+                    bool nestedInUnsupportedContainer = field.Ancestors().Any(ancestor =>
+                        ancestor is Hyperlink or CustomXmlRun or SdtRun);
+                    AddInlineField(field, runIndex, nestedInUnsupportedContainer, containingLink);
+                    continue;
+                }
+
+                IReadOnlyList<OpenXmlElement>? visibleSourceChildren = null;
+                Run? visibleRun = item is Run sourceRun
+                    ? fieldVisibility.GetVisibleRun(sourceRun, out visibleSourceChildren) : null;
+                if (item is Run && visibleRun == null) continue;
+                if (item is SdtRun && !fieldVisibility.IsVisible) continue;
+                var run = visibleRun != null
+                    ? new WordParagraph(this, paragraph._paragraph, (Run)item) {
+                        _visibleRun = ReferenceEquals(visibleRun, item) ? null : visibleRun,
+                        _visibleRunSourceChildren = visibleSourceChildren
+                    }
+                    : new WordParagraph(this, paragraph._paragraph, (SdtRun)item);
+                // Read the content control itself before attaching hyperlink metadata;
+                // WordParagraph.Text otherwise reads the entire enclosing hyperlink.
+                string runText = run.Text;
+                var nonTextBreaks = run.GetNonTextBreakPositions();
+                var images = run.GetPositionedImages().Select(positionedImage =>
+                    new WordPositionedImageSnapshot(positionedImage.Offset,
+                        BuildInlineImageSnapshot(positionedImage.Image))).ToArray();
+                run._hyperlink = item.Ancestors<Hyperlink>().FirstOrDefault();
                 var hyperlink = run.Hyperlink;
-                var images = run.GetPositionedImages().Select(item =>
-                    new WordPositionedImageSnapshot(item.Offset, BuildInlineImageSnapshot(item.Image))).ToArray();
 
                 snapshot.AddRun(new WordRunSnapshot {
-                    Text = run.Text,
-                    NonTextBreaks = run.GetNonTextBreakPositions(),
+                    Text = runText,
+                    NonTextBreaks = nonTextBreaks,
                     Bold = run.Bold,
                     Italic = run.Italic,
                     Underline = run.Underline.HasValue && run.Underline.Value != WordUnderlineStyle.None,
@@ -239,6 +295,30 @@ namespace OfficeIMO.Word {
                     InlineImage = images.FirstOrDefault()?.Image,
                     PositionedImages = images,
                 });
+                runIndex++;
+            }
+
+            void AddInlineField(SimpleField field, int index, bool nestedInHyperlink, Hyperlink? containingLink = null) {
+                WordHyperLink? link = containingLink == null ? null
+                    : new WordHyperLink(paragraph._document, paragraph._paragraph, containingLink);
+                snapshot.AddInlineField(new WordInlineFieldSnapshot {
+                    RunIndex = index,
+                    Instruction = field.Instruction?.Value ?? string.Empty,
+                    ResultText = WordParagraph.ReadVisibleText(field),
+                    IsLocked = field.FieldLock?.Value ?? false,
+                    IsDirty = field.Dirty?.Value ?? false,
+                    HasUnsupportedContainer = nestedInHyperlink || fieldVisibility.HasOpenField,
+                    HyperlinkUri = link?.Uri?.ToString(),
+                    HyperlinkAnchor = link?.Anchor,
+                    IsHiddenInstructionContent = !fieldVisibility.IsVisible,
+                    HasFormattedResult = field.Descendants<Run>().Any(resultRun =>
+                        resultRun.RunProperties?.ChildElements.Any(child => child is not NoProof) == true),
+                    HasUnsupportedResultContent = field.Descendants<SimpleField>().Any() ||
+                        field.ChildElements.Any(child => child is not Run) ||
+                        field.Descendants<Run>().Any(resultRun => resultRun.ChildElements.Any(child =>
+                            child is not RunProperties and not Text) ||
+                            resultRun.RunProperties?.ChildElements.Any(child => child is not NoProof) == true)
+                });
             }
 
             foreach (var tabStop in paragraph.TabStops) {
@@ -250,6 +330,25 @@ namespace OfficeIMO.Word {
             }
 
             return snapshot;
+        }
+
+        private static IEnumerable<OpenXmlElement> EnumerateInspectionInlineItems(OpenXmlCompositeElement container) {
+            foreach (OpenXmlElement item in container.ChildElements) {
+                if (item is SimpleField or Run) {
+                    yield return item;
+                } else if (item is SdtRun contentControl) {
+                    if (contentControl.Descendants<SimpleField>().Any() ||
+                        contentControl.Descendants<FieldChar>().Any()) {
+                        foreach (OpenXmlElement nested in EnumerateInspectionInlineItems(contentControl))
+                            yield return nested;
+                    } else {
+                        yield return contentControl;
+                    }
+                } else if (item is Hyperlink or CustomXmlRun or SdtContentRun) {
+                    foreach (OpenXmlElement nested in EnumerateInspectionInlineItems((OpenXmlCompositeElement)item))
+                        yield return nested;
+                }
+            }
         }
 
         private static WordInlineImageSnapshot BuildInlineImageSnapshot(WordImage image) => new WordInlineImageSnapshot {
@@ -383,7 +482,8 @@ namespace OfficeIMO.Word {
                     ReferenceId = footNote.ReferenceId,
                 };
 
-                foreach (var paragraphGroup in GroupParagraphs(paragraphs).Where(paragraph => paragraph.GetRuns().Any(run => run.FootNote == null))) {
+                foreach (var paragraphGroup in GroupParagraphs(paragraphs).Where(paragraph =>
+                    !paragraph.GetRuns().Any() || paragraph.GetRuns().Any(run => run.FootNote == null))) {
                     snapshot.AddParagraph(BuildParagraphSnapshot(paragraphGroup, expansionContext));
                 }
 
@@ -414,7 +514,8 @@ namespace OfficeIMO.Word {
                     ReferenceId = endnote.ReferenceId,
                 };
 
-                foreach (var paragraphGroup in GroupParagraphs(paragraphs).Where(paragraph => paragraph.GetRuns().Any(run => run.EndNote == null))) {
+                foreach (var paragraphGroup in GroupParagraphs(paragraphs).Where(paragraph =>
+                    !paragraph.GetRuns().Any() || paragraph.GetRuns().Any(run => run.EndNote == null))) {
                     snapshot.AddParagraph(BuildParagraphSnapshot(paragraphGroup, expansionContext));
                 }
 

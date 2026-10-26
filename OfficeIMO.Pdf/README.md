@@ -427,7 +427,7 @@ IReadOnlyList<OfficeImageExportResult> pages = markdown
     .Export();
 ```
 
-Source conversion warnings are copied into every page result. Use `PdfReadPage.ToDrawing()` only when an intermediate `OfficeDrawing` is needed. The returned `OfficeDrawingText.Text` keeps decoded, editable text, including multi-letter ligatures. Raster rendering uses the PDF's painted glyphs where the embedded font requires them.
+Source conversion warnings are copied into every page result. Use `PdfReadPage.ToDrawing()` only when an intermediate `OfficeDrawing` is needed. The returned `OfficeDrawingText.Text` keeps decoded, editable text, including multi-letter ligatures. Raster and SVG rendering use the PDF's painted glyphs where the embedded font requires them, preserving the painted order of shaped Arabic text.
 
 Supply replacement fonts and any shaping provider during projection so glyph visibility uses the final font profile:
 
@@ -438,6 +438,24 @@ OfficeDrawing drawing = document.Pages[0].ToDrawing(fonts);
 ```
 
 Use the PDF's resolved font family name when registering a replacement. The overload also accepts `textShapingProvider`, `textShapingLanguage`, and `cancellationToken`. Supplied faces replace matching embedded faces and apply to nested drawings. Adding fonts after `ToDrawing()` cannot restore glyphs already discarded by visibility checks.
+
+### Embedded-font Latin ligatures
+
+Generated PDFs use `PdfTextShapingMode.OpenTypeLigatures` by default. Embedded
+TrueType and OpenType/CFF fonts apply supported `liga`, `clig`, and `rlig`
+lookups from their default Latin language system, or the default script when
+no Latin script is present. Measurement and painting use the same glyph run;
+Unicode mappings retain the source text for extraction, search, and redaction.
+
+Set `PdfOptions.TextShapingMode = PdfTextShapingMode.UnicodeScalar` to retain
+separate scalar glyphs and the previous wrapping behavior. Per-run feature
+settings such as `OfficeTextFeatureSettings.Default.With("liga", 0)` disable
+that feature. `LatinLigatures` remains available for the presentation-character
+substitutions supported by that mode.
+
+Unsupported GSUB lookups retain scalar output and conversion diagnostics.
+Automatic Latin ligatures do not enable complex-script shaping or GPOS
+positioning; use `TextShapingProvider` for those contracts.
 
 ### Write a generated PDF
 
@@ -535,6 +553,12 @@ These recipes compose normal flow, table, and panel primitives. `IPdfContextComp
 uses the existing deferred replay path when content must react to the live page number;
 it does not introduce another layout engine.
 
+### Floating tables
+
+Set `PdfTableStyle.Position` to a `PdfTablePosition` to place a table relative to the current text flow, page margins, or page edges. Offsets and text clearances are measured in points; positive vertical offsets move down the page. Paragraphs wrap beside the table and regain their full width below it. Wide inline objects move below the table when the side interval is too narrow. Headings, lists, images, and other structured blocks use space below intersecting floating tables.
+
+Floating placement does not advance the text cursor. Deferred tables apply their top anchor once across all batches. Center and bottom alignment require an eager table because a deferred table's total height is not known before its rows are streamed. Floating placement is supported in document flow; Word multi-column sections retain an approximation diagnostic.
+
 ### Hyphenation and inline visuals
 
 ```csharp
@@ -617,6 +641,17 @@ IReadOnlyList<PdfExtractedImage> images = pdf.Images.Extract();
 IReadOnlyList<PdfImagePlacement> placements = pdf.Images.Placements("1-2");
 IReadOnlyList<PdfExtractedAttachment> attachments = pdf.Attachments.Extract();
 ```
+
+For documents with many embedded images, `pdf.Images.Visit(image => { ... }, cancellationToken)`
+processes images one at a time. Inside the callback, `image.CopyTo(output, cancellationToken)`
+copies its file bytes to a stream without cloning the payload. Check `image.IsImageFile`
+before saving it as a standalone image file.
+
+When the application needs only one embedded file, select its metadata from
+`pdf.Inspect().Attachments` and call `pdf.Attachments.Extract(selected, maximumDecodedBytes)`.
+This bounds the selected decoded payload and avoids decoding the other files.
+`pdf.Attachments.Remove(selected)` removes the matching file specification when
+more than one attachment uses the same display name.
 
 `PdfDocument.Read(...)` is the only semantic reconstruction entry point. Both
 profiles return `PdfDocumentReadResult`; they do not maintain separate logical
@@ -1481,6 +1516,8 @@ if (!proof.CanClaimConformance || !declaredClaims.CanClaimAllDeclaredConformance
 ```
 
 Formal generation gates are available for PDF/A-2a/b/u, PDF/A-3a/b/u, PDF/A-4/4e/4f, PDF/UA-1, PDF/UA-2, PDF/X-1a:2003, PDF/X-4, Factur-X, and ZUGFeRD. `RequireCompliance(...)` rejects incomplete generation settings. PDF/X additionally inspects the complete serialized artifact before any bytes are returned or committed to a destination. A conformance claim still requires a passing external result for the same profile, SHA-256, and byte length; validators are build-time tools and are not runtime dependencies of `OfficeIMO.Pdf`.
+
+For an opened PDF, `pdf.AssessCompliance(profile, cancellationToken)` checks readback readiness and observes cancellation during inspection. Readiness does not replace external conformance validation.
 
 PDF authoring accepts font faces up to 128 MiB each. `EmbedStandardFont` and `PdfEmbeddedFontFamily.FromFiles` check file size before reading and recheck while reading, so use their path overloads when loading files. Byte-array inputs are checked before OfficeIMO copies them. An oversized face throws `InvalidDataException` without changing the authoring options.
 

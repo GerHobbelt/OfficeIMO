@@ -3,6 +3,7 @@ using OfficeIMO.OpenDocument;
 using OfficeIMO.Spreadsheet;
 using System.Globalization;
 using System.Text;
+using System.Xml.Linq;
 
 namespace OfficeIMO.Excel.OpenDocument;
 
@@ -32,6 +33,7 @@ public static partial class ExcelOpenDocumentConversionExtensions {
         long materializedCells = 0, skippedCells = 0, skippedRows = 0, skippedColumns = 0, skippedMerges = 0;
         bool truncated = false;
         var dataStyles = new Dictionary<uint, string>();
+        var convertedCellsBySheet = new Dictionary<string, HashSet<(int Row, int Column)>>(StringComparer.Ordinal);
         int worksheetOrdinal = 0;
         foreach (ExcelWorksheetSnapshot worksheet in snapshot.Worksheets) {
             worksheetOrdinal++;
@@ -300,6 +302,7 @@ public static partial class ExcelOpenDocumentConversionExtensions {
             }
             convertedConditionalRules += ApplyExcelConditionalFormatting(source.Sheets[worksheetOrdinal - 1],
                 worksheet, target, sheet, effective, materializedCoordinates, ref materializedCells, ref truncated);
+            convertedCellsBySheet.Add(worksheet.Name, materializedCoordinates);
             tables += worksheet.Tables.Count;
             if (worksheet.AutoFilter != null) filters++;
             if (worksheet.FrozenRowCount > 0 || worksheet.FrozenColumnCount > 0 || worksheet.RightToLeft || !worksheet.ShowGridlines) {
@@ -309,6 +312,8 @@ public static partial class ExcelOpenDocumentConversionExtensions {
             if (worksheet.Protection != null) report.Add("worksheet-protection", OdfConversionMappingStatus.Unsupported, 1);
         }
 
+        int convertedCharts = ConvertExcelCharts(source, target, effective, convertedCellsBySheet,
+            ref materializedCells, ref truncated, out int sourceChartFrames);
         foreach (NamedRangeConversionEntry named in namedRangePlan.Entries) {
             target.AddNamedRange(named.OutputName, named.Address);
         }
@@ -365,7 +370,12 @@ public static partial class ExcelOpenDocumentConversionExtensions {
         AddUnsupported(report, "built-in-names", builtInNames, "Excel print-area and print-title names are not translated.");
         AddUnsupported(report, "named-expressions", unsupportedNamedExpressions,
             "Excel defined names that contain constants or formulas instead of representable A1 ranges are not translated to ODS.");
-        AddUnsupported(report, "charts", snapshot.ChartPartCount, "Excel chart parts are not translated to ODS.");
+        if (convertedCharts > 0) report.Add("charts", OdfConversionMappingStatus.Approximated, convertedCharts,
+            "Bounded column, bar, and line charts retain worksheet-linked categories, numeric series, title, and approximate placement; Excel chart styling, axes, legends, and interactions are not transferred.");
+        int sourceChartObjects = sourceChartFrames +
+            Math.Max(0, snapshot.ChartPartCount - CountReferencedChartParts(source));
+        AddUnsupported(report, "charts", Math.Max(0, sourceChartObjects - convertedCharts),
+            "Excel charts outside the bounded worksheet-linked column, bar, and line subset are not translated to ODS.");
         AddUnsupported(report, "pivot-tables", snapshot.PivotTablePartCount, "Excel pivot-table parts are not translated to ODS.");
         AddUnsupported(report, "slicers", snapshot.SlicerPartCount, null);
         AddUnsupported(report, "timelines", snapshot.TimelinePartCount, null);
@@ -407,8 +417,12 @@ public static partial class ExcelOpenDocumentConversionExtensions {
         int cells = 0, formulas = 0, formulaTranslationFailures = 0, styles = 0, hyperlinks = 0, externalHyperlinks = 0, comments = 0, combinedComments = 0, metadataTranscriptComments = 0, merges = 0, rowLayouts = 0, columnLayouts = 0;
         int invalidValues = 0, normalizedDateTimeOffsets = 0, validations = 0, convertedValidations = 0, unsupportedValidationAssignments = 0, sortedValidationLists = 0, unsupportedHyperlinks = 0, unsupportedMeasurements = 0, unsupportedDataStyleFormats = 0, skippedStyles = 0, renamedSheets = 0, worksheetCount = 0;
         int approximatedFontFamilyLists = 0, unsupportedFontFamilies = 0;
-        int approximatedTextDecorations = 0, unsupportedCapitalization = 0;
+        int approximatedTextDecorations = 0, unsupportedCapitalization = 0, unsupportedCellLayout = 0;
+        int unsupportedInheritedBlankStyles = 0;
+        int unsupportedRowGroups = 0, unsupportedColumnGroups = 0;
+        int filteredRows = 0, filteredColumns = 0;
         int forcedVisibleWorksheets = 0;
+        var chartTargets = new List<(OdsSheet Source, ExcelSheet Target)>();
         bool truncated = false;
         ExcelSheet? activeTarget = null;
         ExcelSheet? firstTarget = null;
@@ -417,6 +431,7 @@ public static partial class ExcelOpenDocumentConversionExtensions {
         int conditionalTargetLimitFailures = 0;
         foreach (OdsSheet odsSheet in source.Sheets) {
             ExcelSheet sheet = target.AddWorksheet(odsSheet.Name);
+            chartTargets.Add((odsSheet, sheet));
             var validationTargets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             var conditionalTargets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             var conditionalTargetLimits = new HashSet<string>(StringComparer.Ordinal);
@@ -425,8 +440,32 @@ public static partial class ExcelOpenDocumentConversionExtensions {
             if (!string.Equals(sheet.Name, odsSheet.Name, StringComparison.Ordinal)) renamedSheets++;
             sheet.SetHidden(odsSheet.Hidden);
             if (!odsSheet.Hidden && activeTarget == null) activeTarget = sheet;
+            unsupportedRowGroups += odsSheet.Element.Descendants(OdfNamespaces.Table + "table-row-group").Count();
+            unsupportedColumnGroups += odsSheet.Element.Descendants(OdfNamespaces.Table + "table-column-group").Count();
+            filteredRows += odsSheet.Element.Descendants(OdfNamespaces.Table + "table-row").Count(row =>
+                (string?)row.Attribute(OdfNamespaces.Table + "visibility") == "filter");
+            filteredColumns += odsSheet.Element.Descendants(OdfNamespaces.Table + "table-column").Count(column =>
+                (string?)column.Attribute(OdfNamespaces.Table + "visibility") == "filter");
 
-            foreach (OdsColumnRun columnRun in odsSheet.ColumnRuns) {
+            IReadOnlyList<OdsColumnRun> columnRuns = odsSheet.ColumnRuns;
+            var blankStyleCache = new Dictionary<string, bool>(StringComparer.Ordinal);
+            bool AffectsBlankCell(string? styleName) =>
+                HasVisibleBlankCellStyle(source, styleName, blankStyleCache);
+            OdfStyle? defaultCellStyle = source.Styles.FindDefault(OdfStyleFamily.TableCell);
+            XElement? defaultCellProperties = defaultCellStyle?.Element.Element(OdfNamespaces.Style + "table-cell-properties");
+            bool hasDefaultCellStyle = defaultCellProperties != null &&
+                (defaultCellProperties.HasAttributes || defaultCellProperties.HasElements);
+            bool hasPopulatedDefaultCellStyle = defaultCellStyle != null &&
+                (defaultCellStyle.Element.Elements().Any(properties => properties.HasAttributes || properties.HasElements) ||
+                 defaultCellStyle.Element.Attribute(OdfNamespaces.Style + "data-style-name") != null);
+            double? uniformDefaultColumnWidth = effective.MaximumColumns == 16_384
+                ? TryGetUniformColumnWidth(columnRuns) : null;
+            if (uniformDefaultColumnWidth.HasValue) {
+                sheet.SetDefaultColumnWidth(uniformDefaultColumnWidth.Value);
+                columnLayouts = (int)Math.Min(int.MaxValue, (long)columnLayouts + effective.MaximumColumns);
+            }
+            foreach (OdsColumnRun columnRun in uniformDefaultColumnWidth.HasValue
+                ? Array.Empty<OdsColumnRun>() : columnRuns) {
                 long columnEnd = SaturatingAdd(columnRun.StartColumn, columnRun.RepeatCount);
                 long lastExclusive = Math.Min(columnEnd, effective.MaximumColumns);
                 for (long column = columnRun.StartColumn; column < lastExclusive; column++) {
@@ -442,27 +481,78 @@ public static partial class ExcelOpenDocumentConversionExtensions {
                 if (columnEnd > effective.MaximumColumns) truncated = true;
             }
 
-            foreach (OdsRowRun rowRun in odsSheet.RowRuns) {
+            IReadOnlyList<OdsRowRun> rowRuns = odsSheet.GetRowRuns(columnRuns);
+            double? uniformDefaultRowHeight = effective.MaximumRows == 1_048_576
+                ? TryGetUniformRowHeight(rowRuns) : null;
+            if (uniformDefaultRowHeight.HasValue) sheet.SetDefaultRowHeight(uniformDefaultRowHeight.Value);
+            foreach (OdsRowRun rowRun in rowRuns) {
+                IReadOnlyList<OdsCellRun> cellRuns = rowRun.CellRuns;
+                // Producer ODS files commonly encode the unused tail as one very large empty row run.
+                // No worksheet output depends on expanding that run.
+                bool emptyRun = !rowRun.Hidden
+                    && cellRuns.All(cellRun => cellRun.IsCovered || !IsSignificant(cellRun));
+                if (emptyRun && (!rowRun.Height.HasValue || uniformDefaultRowHeight.HasValue)) {
+                    long count = Math.Min(SaturatingAdd(rowRun.StartRow, rowRun.RepeatCount), effective.MaximumRows)
+                        - rowRun.StartRow;
+                    if (unsupportedInheritedBlankStyles < int.MaxValue && rowRun.StartRow < effective.MaximumRows &&
+                        (cellRuns.Any(cellRun => !cellRun.IsCovered && cellRun.StartColumn < effective.MaximumColumns &&
+                            HasInheritedStyleOnBlankRun(rowRun, cellRun, columnRuns, hasDefaultCellStyle, AffectsBlankCell)) ||
+                         HasInheritedStyleOnUnserializedTail(rowRun, cellRuns, columnRuns,
+                             hasDefaultCellStyle, effective.MaximumColumns, AffectsBlankCell)))
+                        unsupportedInheritedBlankStyles = (int)Math.Min(int.MaxValue, (long)unsupportedInheritedBlankStyles + count);
+                    if (uniformDefaultRowHeight.HasValue && count > 0)
+                        rowLayouts = (int)Math.Min(int.MaxValue, (long)rowLayouts + count);
+                    if (SaturatingAdd(rowRun.StartRow, rowRun.RepeatCount) > effective.MaximumRows) truncated = true;
+                    continue;
+                }
                 long rowEnd = SaturatingAdd(rowRun.StartRow, rowRun.RepeatCount);
                 long lastRowExclusive = Math.Min(rowEnd, effective.MaximumRows);
                 if (rowEnd > effective.MaximumRows) truncated = true;
+                bool inheritedUnserializedTail = HasInheritedStyleOnUnserializedTail(rowRun, cellRuns,
+                    columnRuns, hasDefaultCellStyle, effective.MaximumColumns, AffectsBlankCell);
+                // A repeated row reuses the same cell and column definitions for every logical row.
+                bool[]? inheritedBlankStyles = null;
+                if (lastRowExclusive - rowRun.StartRow > 1 &&
+                    unsupportedInheritedBlankStyles < int.MaxValue) {
+                    inheritedBlankStyles = new bool[cellRuns.Count];
+                    for (int cellIndex = 0; cellIndex < cellRuns.Count; cellIndex++) {
+                        OdsCellRun blankRun = cellRuns[cellIndex];
+                        if (!blankRun.IsCovered && !IsSignificant(blankRun) &&
+                            blankRun.StartColumn < effective.MaximumColumns)
+                            inheritedBlankStyles[cellIndex] = HasInheritedStyleOnBlankRun(rowRun, blankRun,
+                                columnRuns, hasDefaultCellStyle, AffectsBlankCell);
+                    }
+                }
                 for (long row = rowRun.StartRow; row < lastRowExclusive; row++) {
                     int excelRow = checked((int)row + 1);
                     if (rowRun.Hidden) { sheet.SetRowHidden(excelRow, true); rowLayouts++; }
-                    if (rowRun.Height.HasValue) {
+                    if (rowRun.Height.HasValue && !uniformDefaultRowHeight.HasValue) {
                         if (rowRun.Height.Value.TryToPoints(out double points)) sheet.SetRowHeight(excelRow, points);
                         else unsupportedMeasurements++;
                         rowLayouts++;
+                    } else if (rowRun.Height.HasValue) {
+                        rowLayouts++;
                     }
 
-                    foreach (OdsCellRun cellRun in rowRun.CellRuns) {
+                    for (int cellIndex = 0; cellIndex < cellRuns.Count; cellIndex++) {
+                        OdsCellRun cellRun = cellRuns[cellIndex];
                         long cellColumnEnd = SaturatingAdd(cellRun.StartColumn, cellRun.RepeatCount);
                         long lastColumnExclusive = Math.Min(cellColumnEnd, effective.MaximumColumns);
                         if (cellColumnEnd > effective.MaximumColumns) truncated = true;
-                        if (cellRun.IsCovered || !IsSignificant(cellRun)) continue;
+                        if (cellRun.IsCovered) continue;
+                        if (!IsSignificant(cellRun)) {
+                            if (unsupportedInheritedBlankStyles < int.MaxValue && cellRun.StartColumn < effective.MaximumColumns &&
+                                (inheritedBlankStyles?[cellIndex] ?? HasInheritedStyleOnBlankRun(rowRun, cellRun,
+                                    columnRuns, hasDefaultCellStyle, AffectsBlankCell)))
+                                unsupportedInheritedBlankStyles++;
+                            continue;
+                        }
                         for (long column = cellRun.StartColumn; column < lastColumnExclusive; column++) {
                             if (expandedCells >= effective.MaximumExpandedCells) { truncated = true; break; }
                             expandedCells++;
+                            OdsCellRun styledCellRun = cellRun.StyleName == null
+                                ? cellRun.WithInheritedStyle(OdsSheet.GetDefaultCellStyleName(rowRun, column, columnRuns))
+                                : cellRun;
                             int excelColumn = checked((int)column + 1);
                             ExcelCell converted = sheet.CellAt(excelRow, excelColumn);
                             ExcelValueProjectionStatus valueStatus = SetExcelValue(converted, cellRun.Value);
@@ -509,16 +599,18 @@ public static partial class ExcelOpenDocumentConversionExtensions {
                                     if (IsExternalOdfHref(href)) externalHyperlinks++;
                                 }
                             }
-                            if (effective.IncludeBasicStyles && cellRun.StyleName != null) {
-                                unsupportedMeasurements += ApplyOdsStyle(converted, cellRun, dataStyles,
+                            bool hasCellStyle = styledCellRun.EffectiveStyleName != null || hasPopulatedDefaultCellStyle;
+                            if (effective.IncludeBasicStyles && hasCellStyle) {
+                                unsupportedMeasurements += ApplyOdsStyle(converted, styledCellRun, dataStyles,
                                     out bool unsupportedDataStyleFormat, ref approximatedFontFamilyLists,
                                     ref unsupportedFontFamilies, ref approximatedTextDecorations,
-                                    ref unsupportedCapitalization, textCaseCulture);
+                                    ref unsupportedCapitalization, ref unsupportedCellLayout, textCaseCulture);
                                 if (unsupportedDataStyleFormat) unsupportedDataStyleFormats++;
                                 styles++;
-                                CollectOdsConditionalTarget(source, cellRun.StyleName, excelRow, excelColumn,
-                                    conditionalPlans, conditionalTargets, conditionalTargetLimits);
-                            } else if (cellRun.StyleName != null) {
+                                if (styledCellRun.EffectiveStyleName != null)
+                                    CollectOdsConditionalTarget(source, styledCellRun.EffectiveStyleName, excelRow, excelColumn,
+                                        conditionalPlans, conditionalTargets, conditionalTargetLimits);
+                            } else if (hasCellStyle) {
                                 skippedStyles++;
                             }
                             if (cellRun.ValidationName != null) {
@@ -558,6 +650,8 @@ public static partial class ExcelOpenDocumentConversionExtensions {
                         }
                         if (expandedCells >= effective.MaximumExpandedCells) break;
                     }
+                    if (unsupportedInheritedBlankStyles < int.MaxValue && inheritedUnserializedTail)
+                        unsupportedInheritedBlankStyles++;
                     if (expandedCells >= effective.MaximumExpandedCells) break;
                 }
                 if (expandedCells >= effective.MaximumExpandedCells) break;
@@ -588,6 +682,8 @@ public static partial class ExcelOpenDocumentConversionExtensions {
         }
         if (activeTarget != null) target.SetActiveWorksheet(activeTarget);
 
+        int convertedCharts = ConvertOdsCharts(source, chartTargets, effective, ref expandedCells, ref truncated);
+
         foreach (NamedRangeConversionEntry named in namedRangePlan.Entries) {
             target.SetNamedRange(named.OutputName, named.Address, save: false,
                 validationMode: ExcelDefinedNameValidationMode.Strict);
@@ -597,6 +693,12 @@ public static partial class ExcelOpenDocumentConversionExtensions {
         AddConverted(report, "worksheets", worksheetCount);
         AddConverted(report, "cells", cells);
         AddConverted(report, "row-layout", rowLayouts);
+        AddUnsupported(report, "row-groups", unsupportedRowGroups,
+            "ODS row-group structure was flattened; collapsed groups became hidden Excel rows.");
+        AddUnsupported(report, "column-groups", unsupportedColumnGroups,
+            "ODS column-group structure was flattened; collapsed groups became hidden Excel columns.");
+        AddUnsupported(report, "filtered-visibility", filteredRows + filteredColumns,
+            "Filtered ODS rows and columns became hidden Excel rows and columns without their filter rules.");
         if (columnLayouts > 0) report.Add("column-layout", OdfConversionMappingStatus.Approximated, columnLayouts,
             "Physical ODF column widths are converted to approximate Excel character widths.");
         AddConverted(report, "merges", merges);
@@ -635,6 +737,8 @@ public static partial class ExcelOpenDocumentConversionExtensions {
         if (forcedVisibleWorksheets > 0) report.Add("worksheet-visibility", OdfConversionMappingStatus.Approximated,
             forcedVisibleWorksheets, "The first worksheet was made visible because XLSX requires at least one visible worksheet.");
         AddConverted(report, "validations", convertedValidations);
+        if (convertedCharts > 0) report.Add("charts", OdfConversionMappingStatus.Approximated, convertedCharts,
+            "Bounded ODS column, bar, and line charts retain cached categories, numeric series, title, and approximate placement; chart styling, axis settings, legends, and live source links are not transferred.");
         int convertedConditionalMapCount = convertedConditionalStyles.Sum(styleName => conditionalPlans[styleName]!.Count);
         if (convertedConditionalMapCount > 0) report.Add("source-conditional-style-maps",
             OdfConversionMappingStatus.Approximated, convertedConditionalMapCount,
@@ -651,12 +755,16 @@ public static partial class ExcelOpenDocumentConversionExtensions {
             "Offset-bearing ODF date/time values were normalized to their UTC instant before Excel serial storage; Excel cannot retain the authored offset.");
         AddUnsupported(report, "relative-measurements", unsupportedMeasurements,
             "Relative or unsupported ODF row, column, or text measurements could not be projected to fixed Excel sizes and were omitted.");
+        AddUnsupported(report, "cell-layout", unsupportedCellLayout,
+            "ODF cell alignment or wrapping outside the mapped subset was not transferred to Excel.");
+        AddUnsupported(report, "blank-cell-styles", unsupportedInheritedBlankStyles,
+            "Blank ODF cells styled only through row, column, or family defaults were not materialized in Excel.");
         AddUnsupported(report, "cell-format-details", unsupportedDataStyleFormats,
             $"ODF data styles with locale-sensitive or unsupported components, or that exceed Excel's {OdsDataStyle.MaximumExcelNumberFormatCodeLength}-character custom number-format limit, were omitted.");
         if (truncated) report.Add("expansion-limits", OdfConversionMappingStatus.Skipped, 1,
             "Content outside the configured row, column, or expanded-cell limits was not materialized.");
         AddUnmappedOdfFindings(source.InspectFeatures(), report, formulas, convertedValidations,
-            externalHyperlinks, comments, namedRanges, convertedConditionalMapCount);
+            externalHyperlinks, comments, namedRanges, convertedConditionalMapCount, convertedCharts);
         target = Normalize(target);
         return new OdfConversionResult<ExcelDocument>(target, report).ApplyPolicy(effective.LossPolicy);
     }
@@ -664,6 +772,68 @@ public static partial class ExcelOpenDocumentConversionExtensions {
     private static bool IsSignificant(OdsCellRun cell) => cell.Value.Kind != OdsCellValueKind.Empty ||
         cell.Formula != null || cell.StyleName != null || cell.ValidationName != null || cell.HyperlinkHref != null ||
         cell.Annotations.Count > 0 || cell.RowSpan > 1 || cell.ColumnSpan > 1;
+
+    private static bool HasInheritedStyleOnBlankRun(OdsRowRun row, OdsCellRun cell,
+        IReadOnlyList<OdsColumnRun> columns, bool hasDefaultCellStyle,
+        Func<string?, bool> affectsBlankCell) {
+        if (affectsBlankCell(row.DefaultCellStyleName) || hasDefaultCellStyle) return true;
+        long cellEnd = SaturatingAdd(cell.StartColumn, cell.RepeatCount);
+        return columns.Any(column => affectsBlankCell(column.DefaultCellStyleName) &&
+            column.StartColumn < cellEnd &&
+            SaturatingAdd(column.StartColumn, column.RepeatCount) > cell.StartColumn);
+    }
+
+    private static bool HasInheritedStyleOnUnserializedTail(OdsRowRun row,
+        IReadOnlyList<OdsCellRun> cells, IReadOnlyList<OdsColumnRun> columns,
+        bool hasDefaultCellStyle, int maximumColumns, Func<string?, bool> affectsBlankCell) {
+        long serializedEnd = cells.Count == 0 ? 0 :
+            SaturatingAdd(cells[cells.Count - 1].StartColumn, cells[cells.Count - 1].RepeatCount);
+        if (serializedEnd >= maximumColumns) return false;
+        if (affectsBlankCell(row.DefaultCellStyleName) || hasDefaultCellStyle) return true;
+        return columns.Any(column => affectsBlankCell(column.DefaultCellStyleName) &&
+            column.StartColumn < maximumColumns &&
+            SaturatingAdd(column.StartColumn, column.RepeatCount) > serializedEnd);
+    }
+
+    private static bool HasVisibleBlankCellStyle(OdsDocument source, string? styleName,
+        IDictionary<string, bool> cache) {
+        if (string.IsNullOrWhiteSpace(styleName)) return false;
+        if (cache.TryGetValue(styleName!, out bool visible)) return visible;
+        OdfStyle? style = source.Styles.FindInPart(OdfStyleFamily.TableCell, styleName!, "content.xml");
+        visible = style != null && source.Styles.Resolve(style).Any(candidate => {
+            XElement? properties = candidate.Element.Element(OdfNamespaces.Style + "table-cell-properties");
+            return properties != null && (properties.HasAttributes || properties.HasElements);
+        });
+        cache[styleName!] = visible;
+        return visible;
+    }
+
+    private static double? TryGetUniformRowHeight(IReadOnlyList<OdsRowRun> runs) {
+        if (runs.Count == 0 || runs[0].StartRow != 0
+            || SaturatingAdd(runs[runs.Count - 1].StartRow, runs[runs.Count - 1].RepeatCount) != 1_048_576) return null;
+        double? height = null;
+        foreach (OdsRowRun run in runs) {
+            if (run.Hidden || !run.Height.HasValue || !run.Height.Value.TryToPoints(out double points)
+                || points <= 0 || points > 409 ||
+                (height.HasValue && Math.Abs(height.Value - points) > 0.0001D)) return null;
+            height = points;
+        }
+        return height;
+    }
+
+    private static double? TryGetUniformColumnWidth(IReadOnlyList<OdsColumnRun> runs) {
+        if (runs.Count == 0 || runs[0].StartColumn != 0
+            || SaturatingAdd(runs[runs.Count - 1].StartColumn, runs[runs.Count - 1].RepeatCount) != 16_384) return null;
+        double? width = null;
+        foreach (OdsColumnRun run in runs) {
+            if (run.Hidden || !run.Width.HasValue || !run.Width.Value.TryToPoints(out double points)) return null;
+            double converted = PointsToExcelWidth(points);
+            if (converted <= 0 || converted > 255 ||
+                (width.HasValue && Math.Abs(width.Value - converted) > 0.0001D)) return null;
+            width = converted;
+        }
+        return width;
+    }
 
     private static string FormatAnnotationForExcel(OdsAnnotation annotation) {
         var header = new List<string>();
