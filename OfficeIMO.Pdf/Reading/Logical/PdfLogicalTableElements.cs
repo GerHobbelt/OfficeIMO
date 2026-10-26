@@ -36,7 +36,11 @@ public sealed class PdfLogicalTable : IPdfLogicalElement {
         IReadOnlyList<IReadOnlyList<string>> rows,
         IReadOnlyList<PdfLogicalTableCell> cells,
         PdfLogicalContentSourceKind sourceKind = PdfLogicalContentSourceKind.Native,
-        PdfLogicalVisualBounds? visualBounds = null) {
+        PdfTableCoordinateSpace coordinateSpace = PdfTableCoordinateSpace.PdfUserSpace,
+        PdfLogicalVisualBounds? visualBounds = null,
+        double? confidence = null,
+        IReadOnlyList<PdfInferenceEvidence>? evidence = null,
+        IReadOnlyList<PdfUnderstandingLine>? sourceLines = null) {
         PageNumber = pageNumber;
         DetectionKind = kind;
         YTop = yTop;
@@ -45,12 +49,14 @@ public sealed class PdfLogicalTable : IPdfLogicalElement {
         Rows = rows;
         Cells = cells;
         SourceKind = sourceKind;
+        CoordinateSpace = coordinateSpace;
         VisualBounds = visualBounds;
+        SourceLines = sourceLines ?? Array.Empty<PdfUnderstandingLine>();
         int expectedCells = rows.Count * columns.Count;
         int filledCells = rows.Sum(static row => row.Count(static cell => !string.IsNullOrWhiteSpace(cell)));
         double completeness = expectedCells == 0 ? 0D : (double)filledCells / expectedCells;
-        Confidence = PdfInference.Clamp((columns.Count > 1 ? 0.45D : 0.2D) + (completeness * 0.45D) + (visualBounds is not null || yTop > yBottom ? 0.1D : 0D));
-        Evidence = new[] {
+        Confidence = PdfInference.Clamp(confidence ?? ((columns.Count > 1 ? 0.45D : 0.2D) + (completeness * 0.45D) + (visualBounds is not null || yTop > yBottom ? 0.1D : 0D)));
+        Evidence = evidence ?? new[] {
             new PdfInferenceEvidence("table.detection-kind", "The table was produced by the " + kind + " detector.", 0.5D),
             new PdfInferenceEvidence("table.cell-completeness", "Filled-cell completeness is " + completeness.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + ".", (completeness * 2D) - 1D),
             new PdfInferenceEvidence("table.column-geometry", columns.Count > 1 ? "Multiple column boundaries were detected." : "Fewer than two column boundaries were detected.", columns.Count > 1 ? 0.7D : -0.5D)
@@ -66,13 +72,13 @@ public sealed class PdfLogicalTable : IPdfLogicalElement {
     /// <summary>Detection heuristic that produced the table.</summary>
     public string DetectionKind { get; }
 
-    /// <summary>Top Y coordinate of the detected table band.</summary>
+    /// <summary>Top Y coordinate in <see cref="CoordinateSpace"/>.</summary>
     public double YTop { get; }
 
-    /// <summary>Bottom Y coordinate of the detected table band.</summary>
+    /// <summary>Bottom Y coordinate in <see cref="CoordinateSpace"/>.</summary>
     public double YBottom { get; }
 
-    /// <summary>Detected table columns.</summary>
+    /// <summary>Detected table columns in <see cref="CoordinateSpace"/>.</summary>
     public IReadOnlyList<PdfLogicalTableColumn> Columns { get; }
 
     /// <summary>Extracted table rows.</summary>
@@ -82,12 +88,15 @@ public sealed class PdfLogicalTable : IPdfLogicalElement {
     public IReadOnlyList<PdfLogicalTableCell> Cells { get; }
     /// <summary>Whether table evidence came from native PDF operations or accepted OCR geometry.</summary>
     public PdfLogicalContentSourceKind SourceKind { get; }
+    /// <summary>Coordinate system used by the table bounds and columns.</summary>
+    public PdfTableCoordinateSpace CoordinateSpace { get; }
     /// <summary>Direct top-left visual geometry when the detector operates on rendered OCR coordinates.</summary>
     public PdfLogicalVisualBounds? VisualBounds { get; }
     /// <summary>Normalized table-detection confidence.</summary>
     public double Confidence { get; }
     /// <summary>Evidence supporting the table detection.</summary>
     public IReadOnlyList<PdfInferenceEvidence> Evidence { get; }
+    internal IReadOnlyList<PdfUnderstandingLine> SourceLines { get; }
 
     internal static PdfLogicalTable From(int pageNumber, StructuredTable table) {
         var columns = new List<PdfLogicalTableColumn>(table.Columns.Count);
@@ -116,33 +125,40 @@ public sealed class PdfLogicalTable : IPdfLogicalElement {
             cells.AsReadOnly());
     }
 
-    internal static PdfLogicalTable FromOcr(
-        int pageNumber,
-        double top,
-        double bottom,
-        IReadOnlyList<(double From, double To)> columnBounds,
-        IReadOnlyList<IReadOnlyList<string>> sourceRows) {
-        var columns = columnBounds.Select(static column => new PdfLogicalTableColumn(column.From, column.To)).ToArray();
-        var rows = sourceRows.Select(static row => (IReadOnlyList<string>)Array.AsReadOnly(row.ToArray())).ToArray();
-        var cells = new List<PdfLogicalTableCell>(rows.Length * columns.Length);
+    internal static PdfLogicalTable From(int pageNumber, PdfUnderstandingTableCandidate table) {
+        var columns = table.Columns
+            .Select(static column => new PdfLogicalTableColumn(column.From, column.To))
+            .ToArray();
+        var rows = table.Rows
+            .Select(static row => (IReadOnlyList<string>)Array.AsReadOnly(row.ToArray()))
+            .ToArray();
+        int cellCount = 0;
+        for (int rowIndex = 0; rowIndex < rows.Length; rowIndex++) {
+            cellCount = checked(cellCount + rows[rowIndex].Count);
+        }
+        var cells = new List<PdfLogicalTableCell>(cellCount);
         for (int rowIndex = 0; rowIndex < rows.Length; rowIndex++) {
             for (int columnIndex = 0; columnIndex < rows[rowIndex].Count; columnIndex++) {
-                cells.Add(new PdfLogicalTableCell(pageNumber, rowIndex, columnIndex, rows[rowIndex][columnIndex], columns[columnIndex]));
+                PdfLogicalTableColumn? column = columnIndex < columns.Length ? columns[columnIndex] : null;
+                cells.Add(new PdfLogicalTableCell(pageNumber, rowIndex, columnIndex, rows[rowIndex][columnIndex], column));
             }
         }
-        double left = columnBounds.Min(static column => column.From);
-        double right = columnBounds.Max(static column => column.To);
         return new PdfLogicalTable(
             pageNumber,
-            "OcrAlignedColumns",
-            top,
-            bottom,
+            table.DetectionKind,
+            table.YTop,
+            table.YBottom,
             columns,
             rows,
             cells.AsReadOnly(),
-            PdfLogicalContentSourceKind.Ocr,
-            new PdfLogicalVisualBounds(left, top, right, bottom));
+            table.SourceKind,
+            table.CoordinateSpace,
+            table.VisualBounds,
+            table.Confidence,
+            table.Evidence,
+            table.SourceLines);
     }
+
 }
 
 /// <summary>
@@ -182,9 +198,9 @@ public sealed class PdfLogicalTableColumn {
         To = to;
     }
 
-    /// <summary>Left X coordinate in PDF points.</summary>
+    /// <summary>Left X coordinate in the owning table's coordinate space.</summary>
     public double From { get; }
 
-    /// <summary>Right X coordinate in PDF points.</summary>
+    /// <summary>Right X coordinate in the owning table's coordinate space.</summary>
     public double To { get; }
 }

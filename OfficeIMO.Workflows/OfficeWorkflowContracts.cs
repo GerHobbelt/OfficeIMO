@@ -17,7 +17,15 @@ public enum OfficeWorkflowOperation {
     /// <summary>Create a verified normalized artifact from explicitly recovered PDF defects.</summary>
     Repair,
     /// <summary>Remove forbidden active content and embedded payloads from a PDF.</summary>
-    Sanitize
+    Sanitize,
+    /// <summary>Extract an ordered selection of PDF pages into a separate PDF.</summary>
+    ExtractPages,
+    /// <summary>Create a separate PDF with new or replacement password protection.</summary>
+    ProtectPdf,
+    /// <summary>Create a separate unencrypted PDF after owner authorization.</summary>
+    RemovePdfProtection,
+    /// <summary>Create a separate PDF with a cryptographically verified certificate signature.</summary>
+    SignPdf
 }
 
 /// <summary>Controls how an existing output path is handled.</summary>
@@ -49,7 +57,9 @@ public enum OfficeWorkflowStatus {
     /// <summary>The request was cancelled cooperatively and no staged artifact was published.</summary>
     Cancelled,
     /// <summary>The request failed and no staged artifact was published.</summary>
-    Failed
+    Failed,
+    /// <summary>A provider write began but its final contents could not be verified. Check the destination before retrying.</summary>
+    Unconfirmed
 }
 
 /// <summary>Stable category describing why a workflow did not complete.</summary>
@@ -161,8 +171,17 @@ public sealed class OfficeWorkflowRequest {
     /// <summary>Primary input file.</summary>
     public required string InputPath { get; set; }
 
+    /// <summary>Optional provider access for <see cref="InputPath"/>. The path remains the original location or absolute URI.</summary>
+    public OfficeWorkflowStreamInput? InputStream { get; set; }
+
+    /// <summary>Ordered one-based pages for ExtractPages, including intentional repeats. Limited to 100,000 entries.</summary>
+    public int[]? PageNumbers { get; set; }
+
     /// <summary>Comparison input used by <see cref="OfficeWorkflowOperation.Compare"/>.</summary>
     public string? ComparisonPath { get; set; }
+
+    /// <summary>Optional provider access for <see cref="ComparisonPath"/>.</summary>
+    public OfficeWorkflowStreamInput? ComparisonStream { get; set; }
 
     /// <summary>Conversion route identifier from <see cref="OfficeWorkflowCatalog"/>.</summary>
     public string? ConversionRouteId { get; set; }
@@ -170,8 +189,14 @@ public sealed class OfficeWorkflowRequest {
     /// <summary>Requested output file. Inspect does not require one; compare emits HTML when one is supplied.</summary>
     public string? OutputPath { get; set; }
 
+    /// <summary>Optional verified direct-write access for the original <see cref="OutputPath"/> provider location.</summary>
+    public OfficeWorkflowStreamOutput? OutputStream { get; set; }
+
     /// <summary>Conflict behavior used when publishing an artifact.</summary>
     public OfficeWorkflowConflictPolicy ConflictPolicy { get; set; } = OfficeWorkflowConflictPolicy.Rename;
+
+    /// <summary>Optional live application ownership check for final publication candidates.</summary>
+    public IOfficeWorkflowPublicationGuard? PublicationGuard { get; set; }
 
     /// <summary>Cross-format output intent.</summary>
     public OfficeWorkflowOutputProfile OutputProfile { get; set; } = OfficeWorkflowOutputProfile.Faithful;
@@ -184,6 +209,21 @@ public sealed class OfficeWorkflowRequest {
     /// It is used only while executing and is never copied to results or reports.
     /// </summary>
     public string? ComparisonPdfPassword { get; set; }
+
+    /// <summary>New password protection for ProtectPdf. Cloned before execution; credentials remain request-only.</summary>
+    public OfficeIMO.Pdf.PdfStandardEncryptionOptions? OutputEncryption { get; set; }
+
+    /// <summary>Current owner password for replacing or removing protection. Falls back to PdfPassword when omitted.</summary>
+    public string? PdfOwnerPassword { get; set; }
+
+    /// <summary>Runtime signer for SignPdf. The caller retains ownership and must keep it alive until execution completes.</summary>
+    public OfficeIMO.Pdf.IPdfExternalSigner? OutputSigner { get; set; }
+
+    /// <summary>Signature and appearance settings for SignPdf, copied before asynchronous execution.</summary>
+    public OfficeIMO.Pdf.PdfExternalSignatureOptions? OutputSignatureOptions { get; set; }
+
+    /// <summary>Required runtime cryptographic verifier for SignPdf. Chain trust is reported independently from signature math.</summary>
+    public OfficeIMO.Pdf.IPdfSignatureCryptographyProvider? OutputSignatureValidator { get; set; }
 
     /// <summary>Shared request resource limits.</summary>
     public OfficeWorkflowLimits Limits { get; set; } = new();
@@ -209,7 +249,7 @@ public interface IOfficeWorkflowRunner {
 
 /// <summary>One supported conversion route projected from the canonical OfficeIMO capability catalog.</summary>
 public sealed class OfficeWorkflowRoute {
-    internal OfficeWorkflowRoute(OfficeConversionCapability capability) {
+    internal OfficeWorkflowRoute(OfficeConversionCapability capability, bool canExecute) {
         Id = capability.Id;
         Source = capability.Source;
         Target = capability.Target;
@@ -220,6 +260,15 @@ public sealed class OfficeWorkflowRoute {
         SupportLevel = capability.SupportLevel.ToString();
         KnownLimitations = capability.KnownLimitations;
         Engine = capability.PackageId;
+        Api = capability.Api;
+        ResultContract = capability.ResultContract;
+        InputKind = capability.InputKind;
+        SupportEvidence = capability.SupportEvidence;
+        TextFormatting = capability.TextFormatting;
+        TextFormattingContract = capability.TextFormattingContract;
+        BrowserAvailable = capability.BrowserAvailable;
+        AgentDiscoverable = capability.AgentDiscoverable;
+        CanExecute = canExecute;
     }
 
     /// <summary>Stable route identifier.</summary>
@@ -242,29 +291,83 @@ public sealed class OfficeWorkflowRoute {
     public string KnownLimitations { get; }
     /// <summary>First-party package that owns conversion semantics.</summary>
     public string Engine { get; }
+    /// <summary>Representative public API owned by the route package.</summary>
+    public string Api { get; }
+    /// <summary>Public result type returned by the representative API.</summary>
+    public string ResultContract { get; }
+    /// <summary>How the route accepts its source.</summary>
+    public OfficeConversionInputKind InputKind { get; }
+    /// <summary>Evidence supporting the assigned support level.</summary>
+    public string SupportEvidence { get; }
+    /// <summary>Text and font formatting fidelity classification.</summary>
+    public OfficeConversionTextFormattingKind TextFormatting { get; }
+    /// <summary>Explicit text and font formatting promise.</summary>
+    public string TextFormattingContract { get; }
+    /// <summary>Whether the route is available in the shipped browser converter.</summary>
+    public bool BrowserAvailable { get; }
+    /// <summary>Whether the route is advertised through agent discovery.</summary>
+    public bool AgentDiscoverable { get; }
+    /// <summary>Whether this local workflow package can execute the route directly.</summary>
+    public bool CanExecute { get; }
     /// <summary>User-facing route label.</summary>
     public string Label => Source + " to " + Target;
 }
 
 /// <summary>Canonical desktop/service conversion route view.</summary>
 public static class OfficeWorkflowCatalog {
-    private static readonly HashSet<string> SupportedIds = new(StringComparer.Ordinal) {
+    private static readonly HashSet<string> ExecutableIds = new(StringComparer.Ordinal) {
         "docx-pdf", "xlsx-pdf", "pptx-pdf", "html-pdf",
         "pdf-docx", "pdf-xlsx", "pdf-pptx", "pdf-html"
     };
 
-    private static readonly IReadOnlyList<OfficeWorkflowRoute> RoutesValue = Array.AsReadOnly(
+    private static readonly IReadOnlyList<OfficeWorkflowRoute> AllRoutesValue = Array.AsReadOnly(
         OfficeConversionCapabilityCatalog.All
-            .Where(capability => SupportedIds.Contains(capability.Id))
-            .Select(capability => new OfficeWorkflowRoute(capability))
+            .Select(capability => new OfficeWorkflowRoute(capability, ExecutableIds.Contains(capability.Id)))
             .OrderBy(route => route.Source, StringComparer.Ordinal)
             .ThenBy(route => route.Target, StringComparer.Ordinal)
             .ToArray());
 
-    /// <summary>The eight first-party Office/PDF conversion routes exposed by the local runner.</summary>
-    public static IReadOnlyList<OfficeWorkflowRoute> Routes => RoutesValue;
+    private static readonly IReadOnlyList<OfficeWorkflowRoute> ExecutableRoutesValue = Array.AsReadOnly(
+        AllRoutesValue.Where(static route => route.CanExecute).ToArray());
 
-    /// <summary>Finds a supported route by stable identifier.</summary>
+    /// <summary>All first-party conversion routes from the canonical capability catalog.</summary>
+    public static IReadOnlyList<OfficeWorkflowRoute> Routes => AllRoutesValue;
+
+    /// <summary>Routes this local workflow package can execute directly.</summary>
+    public static IReadOnlyList<OfficeWorkflowRoute> ExecutableRoutes => ExecutableRoutesValue;
+
+    /// <summary>Finds a catalog route by stable identifier.</summary>
     public static OfficeWorkflowRoute? Find(string? id) =>
-        RoutesValue.FirstOrDefault(route => string.Equals(route.Id, id, StringComparison.Ordinal));
+        AllRoutesValue.FirstOrDefault(route => string.Equals(route.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Finds a locally executable route by stable identifier.</summary>
+    public static OfficeWorkflowRoute? FindExecutable(string? id) =>
+        ExecutableRoutesValue.FirstOrDefault(route => string.Equals(route.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Finds the unique catalog route matching source and target extensions.</summary>
+    public static OfficeWorkflowRoute? Find(string sourceExtension, string targetExtension, bool executableOnly = false) {
+        string source = NormalizeExtension(sourceExtension);
+        string target = NormalizeExtension(targetExtension);
+        IReadOnlyList<OfficeWorkflowRoute> routes = executableOnly ? ExecutableRoutesValue : AllRoutesValue;
+        OfficeWorkflowRoute? match = null;
+        foreach (OfficeWorkflowRoute route in routes) {
+            if (!route.SourceExtensions.Contains(source, StringComparer.OrdinalIgnoreCase) ||
+                !string.Equals(route.TargetExtension, target, StringComparison.OrdinalIgnoreCase)) {
+                continue;
+            }
+
+            // Some text-oriented routes intentionally share .txt. Ambiguous extension pairs
+            // require an explicit route id instead of selecting a format by catalog order.
+            if (match != null) return null;
+            match = route;
+        }
+
+        return match;
+    }
+
+    private static string NormalizeExtension(string extension) {
+        if (string.IsNullOrWhiteSpace(extension)) throw new ArgumentException("Extension cannot be empty.", nameof(extension));
+        string value = extension.Trim();
+        return (value.StartsWith(".", StringComparison.Ordinal) ? value : "." + value).ToLowerInvariant();
+    }
 }

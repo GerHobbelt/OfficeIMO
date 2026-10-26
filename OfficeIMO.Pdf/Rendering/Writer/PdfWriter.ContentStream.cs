@@ -58,10 +58,19 @@ internal sealed class ContentStreamBuilder {
         return this;
     }
 
+    public ContentStreamBuilder MiterLimit(double miterLimit) {
+        _sb.Append(F(miterLimit)).Append(" M\n");
+        return this;
+    }
+
     public ContentStreamBuilder StrokeDash(params double[] pattern) {
+        return StrokeDash(pattern, 0D);
+    }
+
+    public ContentStreamBuilder StrokeDash(IReadOnlyList<double> pattern, double phase) {
         Guard.NotNull(pattern, nameof(pattern));
         _sb.Append('[');
-        for (int i = 0; i < pattern.Length; i++) {
+        for (int i = 0; i < pattern.Count; i++) {
             if (i > 0) {
                 _sb.Append(' ');
             }
@@ -69,7 +78,7 @@ internal sealed class ContentStreamBuilder {
             _sb.Append(F(pattern[i]));
         }
 
-        _sb.Append("] 0 d\n");
+        _sb.Append("] ").Append(F(phase)).Append(" d\n");
         return this;
     }
 
@@ -252,13 +261,13 @@ internal sealed class ContentStreamBuilder {
         return this;
     }
 
-    public ContentStreamBuilder ShowText(PdfTextShowCommand command, double fontSize, double currentTextRise = 0D) {
+    public ContentStreamBuilder ShowText(PdfTextShowCommand command, double fontSize, double currentTextRise = 0D, bool suppressActualText = false) {
         Guard.NotNull(command, nameof(command));
         if (fontSize <= 0 || double.IsNaN(fontSize) || double.IsInfinity(fontSize)) {
             throw new ArgumentOutOfRangeException(nameof(fontSize), "PDF text font size must be positive and finite.");
         }
 
-        if (command.ActualText != null) {
+        if (!suppressActualText && command.ActualText != null) {
             _sb.Append("/Span << /ActualText ")
                 .Append(PdfSyntaxEscaper.TextString(command.ActualText))
                 .Append(" >> BDC\n");
@@ -270,7 +279,7 @@ internal sealed class ContentStreamBuilder {
             AppendPositionedGlyphs(command.PositionedGlyphs!, fontSize, currentTextRise);
         }
 
-        if (command.ActualText != null) {
+        if (!suppressActualText && command.ActualText != null) {
             _sb.Append("EMC\n");
         }
 

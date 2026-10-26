@@ -202,6 +202,52 @@ public sealed partial class HtmlRenderingTests {
     }
 
     [Fact]
+    public void HtmlRender_SelectsNumericWeightStretchAndObliqueFontFaces() {
+        string encoded = Convert.ToBase64String(ManagedTextShapingTestAssets.CreateFont('A', 'B', 'C'));
+        string source = "src:url('data:font/ttf;base64," + encoded + "');";
+        string html = "<style>"
+            + "@font-face{font-family:Scoped;" + source + "font-weight:300}"
+            + "@font-face{font-family:Scoped;" + source + "font-weight:500}"
+            + "@font-face{font-family:Scoped;" + source + "font-weight:700;font-stretch:condensed}"
+            + "@font-face{font-family:Scoped;" + source + "font-weight:700;font-style:oblique 10deg}"
+            + "@font-face{font-family:Scoped;" + source + "font-weight:700;font-style:oblique 20deg}"
+            + "span{font-family:Scoped;font-size:20px}"
+            + "</style><span style='font-weight:450'>A</span>"
+            + "<span style='font-weight:650;font-stretch:condensed'>B</span>"
+            + "<span style='font-weight:700;font-style:oblique 16deg'>C</span>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html));
+        HtmlRenderText[] runs = rendered.Pages[0].Visuals.OfType<HtmlRenderText>().ToArray();
+
+        Assert.Equal(5, rendered.Fonts.Faces.Count);
+        Assert.Equal(500, Assert.Single(rendered.Fonts.Faces, face => face.ResourceFamilyName == runs[0].Font.FamilyName).Descriptor.Weight);
+        Assert.Equal(75D, Assert.Single(rendered.Fonts.Faces, face => face.ResourceFamilyName == runs[1].Font.FamilyName).Descriptor.StretchPercent);
+        Assert.Equal(20D, Assert.Single(rendered.Fonts.Faces, face => face.ResourceFamilyName == runs[2].Font.FamilyName).Descriptor.ObliqueAngleDegrees);
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.FontFaceInvalid);
+    }
+
+    [Fact]
+    public void HtmlRender_KeepsRawFontDescriptorsAlignedWithApplicableMediaRules() {
+        string encoded = Convert.ToBase64String(ManagedTextShapingTestAssets.CreateFont('A'));
+        string source = "src:url('data:font/ttf;base64," + encoded + "');";
+        string html = "<style>"
+            + "@media screen{@font-face{font-family:Scoped;" + source + "font-weight:300;font-style:oblique 10deg}}"
+            + "@media print{@font-face{font-family:Scoped;" + source + "font-weight:700;font-style:oblique 20deg}}"
+            + "p{font-family:Scoped;font-weight:700;font-style:oblique 18deg}"
+            + "</style><p>A</p>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(
+            HtmlConversionDocument.Parse(html),
+            new HtmlRenderOptions { Mode = HtmlRenderMode.Paged });
+
+        OfficeFontFace face = Assert.Single(rendered.Fonts.Faces);
+        Assert.Equal(700, face.Descriptor.Weight);
+        Assert.Equal(OfficeFontSlant.Oblique, face.Descriptor.Slant);
+        Assert.Equal(20D, face.Descriptor.ObliqueAngleDegrees);
+        Assert.Contains(rendered.Pages[0].Visuals.OfType<HtmlRenderText>(), text => text.Font.FamilyName == face.ResourceFamilyName);
+    }
+
+    [Fact]
     public void HtmlRender_DiagnosesInvalidUnicodeRangeWithoutActivatingTheFace() {
         string encoded = Convert.ToBase64String(ManagedTextShapingTestAssets.CreateFont('A'));
         string html = "<style>@font-face{font-family:Scoped;src:url('data:font/ttf;base64,"
@@ -252,7 +298,7 @@ public sealed partial class HtmlRenderingTests {
         string html = "<style>@font-face{font-family:'Pdf Web Demo';src:url(\"data:font/ttf;base64,"
             + Convert.ToBase64String(fontData)
             + "\") format('truetype')}p{font-family:'Pdf Web Demo',sans-serif}</style><p>EmbeddedWebFontMarker</p>";
-        HtmlPdfSaveOptions options = new HtmlPdfSaveOptions();
+        HtmlToPdfOptions options = new HtmlToPdfOptions();
 
         PdfCore.PdfDocumentConversionResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfDocumentResult(options);
         byte[] pdf = result.ToBytes();
@@ -283,7 +329,7 @@ public sealed partial class HtmlRenderingTests {
             + Convert.ToBase64String(Encoding.UTF8.GetBytes(svg))
             + "' alt='clipped font sample'>";
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html));
-        HtmlPdfSaveOptions options = new HtmlPdfSaveOptions();
+        HtmlToPdfOptions options = new HtmlToPdfOptions();
 
         PdfCore.PdfDocumentConversionResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfDocumentResult(options);
         byte[] pdf = result.ToBytes();
@@ -305,11 +351,41 @@ public sealed partial class HtmlRenderingTests {
             + "' alt='scoped font sample'>";
 
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html));
-        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdf(new HtmlPdfSaveOptions());
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdfBytes(new HtmlToPdfOptions());
 
         HtmlRenderDrawing drawing = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>());
         Assert.Contains(drawing.InnerDrawing.Elements.OfType<OfficeDrawingText>(), text => text.Text == "A");
         Assert.True(PdfCore.PdfDiagnostics.Analyze(pdf).EmbeddedFontCount > 0);
+    }
+
+    [Fact]
+    public void HtmlPdf_DirectRenderer_KeepsPaintedSvgTextVectorAndSearchable() {
+        byte[] fontData = ManagedTextShapingTestAssets.CreateFont('A', 'B');
+        const string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 28'>"
+            + "<defs><linearGradient id='ink'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient></defs>"
+            + "<text x='4' y='21' font-family='PaintedSvg' font-size='18' fill='url(#ink)' stroke='black'>AB</text></svg>";
+        string html = "<style>@font-face{font-family:PaintedSvg;src:url('data:font/ttf;base64,"
+            + Convert.ToBase64String(fontData)
+            + "')}</style><img style='width:80px;height:28px' src='data:image/svg+xml;base64,"
+            + Convert.ToBase64String(Encoding.UTF8.GetBytes(svg))
+            + "'>";
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html));
+        string exportedSvg = HtmlConversionDocument.Parse(html).ToSvg();
+        var pdfOptions = new HtmlToPdfOptions();
+        pdfOptions.PdfOptions.CompressContentStreams = false;
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
+
+        HtmlRenderDrawing visual = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>());
+        OfficeDrawingGroup logicalPaint = Assert.Single(
+            visual.InnerDrawing.Elements.OfType<OfficeDrawingGroup>(),
+            group => group.ActualText == "AB");
+        Assert.NotEmpty(logicalPaint.Drawing.Shapes);
+        Assert.Contains("aria-label=\"AB\"", exportedSvg, StringComparison.Ordinal);
+        Assert.Contains("<linearGradient", exportedSvg, StringComparison.Ordinal);
+        Assert.Contains("/ActualText", Encoding.ASCII.GetString(pdf), StringComparison.Ordinal);
+        Assert.Contains("AB", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Empty(PdfCore.PdfImageExtractor.ExtractImages(pdf));
     }
 
     [Fact]
@@ -318,13 +394,13 @@ public sealed partial class HtmlRenderingTests {
         string html = "<style>@font-face{font-family:Scoped;src:url('data:font/ttf;base64,"
             + Convert.ToBase64String(fontData)
             + "');unicode-range:U+0020,U+0041}p{font-family:Scoped,serif}</style><p>A</p><p>B</p>";
-        var options = new HtmlPdfSaveOptions {
+        var options = new HtmlToPdfOptions {
             TextFallbacks = PdfCore.PdfTextFallbackFeatures.None
         };
         options.ResourcePolicy.AllowSystemFontEmbedding = false;
         options.PdfOptions.CompressContentStreams = false;
 
-        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdf(options);
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdfBytes(options);
         string rawPdf = Encoding.ASCII.GetString(pdf);
 
         Assert.Contains("/BaseFont /Scoped", rawPdf, StringComparison.Ordinal);
@@ -386,7 +462,7 @@ public sealed partial class HtmlRenderingTests {
             + "');background-size:120px 24px;background-repeat:repeat\"></div>";
 
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html));
-        PdfCore.PdfDocumentConversionResult result = HtmlConversionDocument.Parse(html).ToPdfDocumentResult(new HtmlPdfSaveOptions());
+        PdfCore.PdfDocumentConversionResult result = HtmlConversionDocument.Parse(html).ToPdfDocumentResult(new HtmlToPdfOptions());
         byte[] pdf = result.ToBytes();
 
         HtmlRenderDrawing background = Assert.Single(
@@ -435,7 +511,7 @@ public sealed partial class HtmlRenderingTests {
             + "@font-face{font-family:WebTwo;src:url('data:font/ttf;base64," + encoded + "')}"
             + ".one{font-family:WebOne}.two{font-family:WebTwo}.serif{font-family:'Times New Roman'}.mono{font-family:Courier}"
             + "</style><p class='one'>Web one</p><p class='two'>Web two</p><p class='serif'>Standard serif</p><p class='mono'>Standard mono</p>";
-        HtmlPdfSaveOptions options = new HtmlPdfSaveOptions();
+        HtmlToPdfOptions options = new HtmlToPdfOptions();
 
         PdfCore.PdfDocumentConversionResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfDocumentResult(options);
         byte[] pdf = result.ToBytes();
@@ -478,7 +554,7 @@ public sealed partial class HtmlRenderingTests {
                 .Append("</p>");
         }
 
-        PdfCore.PdfDocumentConversionResult result = HtmlConversionDocument.Parse(html.ToString()).ToPdfDocumentResult(new HtmlPdfSaveOptions());
+        PdfCore.PdfDocumentConversionResult result = HtmlConversionDocument.Parse(html.ToString()).ToPdfDocumentResult(new HtmlToPdfOptions());
         byte[] pdf = result.ToBytes();
         string rawPdf = Encoding.ASCII.GetString(pdf);
         string extracted = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
@@ -507,7 +583,7 @@ public sealed partial class HtmlRenderingTests {
             + "@font-face{font-family:BeyondBudget;src:url('data:font/ttf;base64," + encoded + "')}"
             + "</style><p style='font-family:WithinBudget'>Embedded text</p>"
             + "<p style='font-family:BeyondBudget'>Fallback text</p>";
-        var options = new HtmlPdfSaveOptions {
+        var options = new HtmlToPdfOptions {
             TextFallbacks = PdfCore.PdfTextFallbackFeatures.None
         };
         options.ResourcePolicy.AllowSystemFontEmbedding = false;

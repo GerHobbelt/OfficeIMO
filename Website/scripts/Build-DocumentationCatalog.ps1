@@ -30,7 +30,7 @@ function Get-ComponentCategory {
         '^OfficeIMO\.(Pdf|Html|Markdown|Rtf|AsciiDoc|Latex)' { return 'Publishing and conversion' }
         '^OfficeIMO\.(Email|OneNote|OpenDocument|Epub|CSV|Visio|IWork)' { return 'Formats and interoperability' }
         '^OfficeIMO\.GoogleWorkspace|Google(Docs|Sheets|Slides)$' { return 'Google Workspace' }
-        '^OfficeIMO\.(Drawing|Provenance|Security|Zip|Markup|Adf|Confluence)' { return 'Foundations and integrations' }
+        '^OfficeIMO\.(Drawing|Ocr|Provenance|Security|Zip|Markup|Adf|Confluence)' { return 'Foundations and integrations' }
         default { return 'Specialized components' }
     }
 }
@@ -64,7 +64,7 @@ $allProjects = @(Get-ChildItem -LiteralPath $RepositoryRoot -Recurse -File -Filt
     Where-Object {
         $relativeProjectPath = [System.IO.Path]::GetRelativePath($RepositoryRoot, $_.FullName).Replace('\', '/')
         $relativeProjectPath -notmatch '(^|/)(?:bin|obj)(?:/|$)' -and
-            $relativeProjectPath -notmatch '(^|/)(?:\.ci-artifacts|\.playwright-cli|\.powerforge-runner|artifacts|Ignore|_worktrees)(?:/|$)' -and
+            $relativeProjectPath -notmatch '(^|/)(?:\.ci-artifacts|\.playwright-cli|\.powerforge-runner|\.?artifacts|Ignore|_worktrees)(?:/|$)' -and
             $relativeProjectPath -notmatch '^Website/projects/'
     })
 

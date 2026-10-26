@@ -180,6 +180,25 @@ public sealed class ContentSafetyContracts {
     }
 
     [Fact]
+    public void SignatureHandlingUsesTheContentCleanupResourcePolicy() {
+        var cleanup = new OfficeContentCleanupOptions {
+            SignatureMutationPolicy = OfficeSignatureMutationPolicy.RemoveInvalidatedSignatures
+        };
+        cleanup.Inspection.MaxInputBytes = 768L * 1024L * 1024L;
+        cleanup.Inspection.MaxPackageEntries = 1234;
+        cleanup.Inspection.MaxExpandedPackageBytes = 1536L * 1024L * 1024L;
+
+        OfficeProvenanceRemovalOptions provenance =
+            OfficeContentSafetyProvenanceOptions.CreateSignatureRemovalOptions(cleanup);
+
+        Assert.Equal(cleanup.SignatureMutationPolicy, provenance.SignatureMutationPolicy);
+        Assert.Equal(cleanup.Inspection.MaxInputBytes, provenance.Limits.MaxAssetBytes);
+        Assert.Equal(cleanup.Inspection.MaxInputBytes, provenance.MaxOutputBytes);
+        Assert.Equal(cleanup.Inspection.MaxPackageEntries, provenance.Limits.MaxContainerEntries);
+        Assert.Equal(cleanup.Inspection.MaxExpandedPackageBytes, provenance.Limits.MaxExpandedContainerBytes);
+    }
+
+    [Fact]
     public void ZeroWidthCleanupIsSelectiveAndDoesNotTreatJoinersAsAiProof() {
         const string text = "pay\u200Bload and family \U0001F469\u200D\U0001F4BB";
         OfficeTextIntegrityReport report = OfficeTextIntegrityInspector.Inspect(text);
@@ -483,7 +502,7 @@ public sealed class ContentSafetyContracts {
             rtf,
             new OfficeContentCleanupSelection(new[] { prompt.Id }));
 
-        RtfDocument reopened = RtfDocument.Load(cleaned.Output).Document;
+        RtfDocument reopened = RtfDocument.LoadResult(cleaned.Output).Document;
         Assert.DoesNotContain("Ignore previous", string.Join(" ", reopened.Paragraphs.Select(item => item.ToPlainText())), StringComparison.Ordinal);
         Assert.Contains("ordinary visible value", string.Join(" ", reopened.Paragraphs.Select(item => item.ToPlainText())), StringComparison.Ordinal);
         Assert.DoesNotContain(cleaned.After.Findings, item => item.Id == prompt.Id);
@@ -497,7 +516,7 @@ public sealed class ContentSafetyContracts {
 
         OfficeContentCleanupResult cleaned = RtfDocument.RemoveSelectedContent(rtf, new OfficeContentCleanupSelection(new[] { finding.Id }));
 
-        RtfDocument reopened = RtfDocument.Load(cleaned.Output).Document;
+        RtfDocument reopened = RtfDocument.LoadResult(cleaned.Output).Document;
         Assert.Null(reopened.HtmlEncapsulation);
         Assert.Contains("ordinary visible", string.Join(" ", reopened.Paragraphs.Select(item => item.ToPlainText())), StringComparison.Ordinal);
     }
@@ -512,7 +531,7 @@ public sealed class ContentSafetyContracts {
 
         OfficeContentCleanupResult cleaned = RtfDocument.RemoveSelectedContent(bytes, new OfficeContentCleanupSelection(new[] { finding.Id }));
 
-        RtfDocument reopened = RtfDocument.Load(cleaned.Output).Document;
+        RtfDocument reopened = RtfDocument.LoadResult(cleaned.Output).Document;
         Assert.Contains("payload", string.Join(" ", reopened.Paragraphs.Select(item => item.ToPlainText())), StringComparison.Ordinal);
     }
 

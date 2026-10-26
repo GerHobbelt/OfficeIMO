@@ -8,6 +8,8 @@ using OfficeIMO.OpenDocument;
 using OfficeIMO.OpenDocument.Odp.Pdf;
 using OfficeIMO.OpenDocument.Ods.Pdf;
 using OfficeIMO.OpenDocument.Odt.Pdf;
+using OfficeIMO.Ocr;
+using OfficeIMO.Pdf.Ocr;
 using OfficeIMO.PowerPoint.Pdf;
 using OfficeIMO.Word.Pdf;
 using Xunit;
@@ -79,15 +81,15 @@ public sealed class PdfReverseConversionScorecardTests {
         byte[] scanned = PdfCore.PdfDocument.Create()
             .Image(PdfPngTestImages.CreateRgbPng(230, 230, 230), 220, 90, alternativeText: "Scanned source")
             .ToBytes();
-        var scannedProvider = new ScorecardOcrProvider(request => new PdfCore.PdfOcrResponse(new[] {
+        var scannedProvider = new ScorecardOcrProvider(request => Result(new[] {
             OcrAt(request, "Scanned", 36, 120, 52, 14),
             OcrAt(request, "invoice", 96, 120, 44, 14)
         }));
-        PdfCore.PdfOcrMergeResult scannedResult = await PdfCore.PdfDocument.Load(scanned).Reader.OcrAsync(scannedProvider);
+        PdfOcrMergeResult scannedResult = await PdfCore.PdfDocument.Load(scanned).ReadWithOcrAsync(scannedProvider);
         Assert.Empty(scannedResult.NativeDocument.TextBlocks);
         Assert.Equal(2, scannedResult.AcceptedWordCount);
-        Assert.All(scannedResult.EnrichedDocument.TextBlocks, block => Assert.Equal(PdfCore.PdfLogicalContentSourceKind.Ocr, block.SourceKind));
-        using (OfficeIMO.Word.WordDocument word = scannedResult.EnrichedDocument.ToWordDocument()) {
+        Assert.All(scannedResult.Document.TextBlocks, block => Assert.Equal(PdfCore.PdfLogicalContentSourceKind.Ocr, block.SourceKind));
+        using (OfficeIMO.Word.WordDocument word = scannedResult.Document.ToWordDocument()) {
             using WordprocessingDocument package = WordprocessingDocument.Open(new MemoryStream(word.ToBytes()), false);
             Assert.Contains("Scanned invoice", package.MainDocumentPart!.Document.InnerText, StringComparison.Ordinal);
         }
@@ -97,14 +99,14 @@ public sealed class PdfReverseConversionScorecardTests {
             .Image(PdfPngTestImages.CreateRgbPng(120, 140, 160), 100, 40, alternativeText: "Mixed source")
             .ToBytes();
         PdfCore.PdfSelectionQuad nativeQuad = PdfCore.PdfPageInteractionMap.Create(mixed, 1).TextRegions[0].Quad;
-        var mixedProvider = new ScorecardOcrProvider(request => new PdfCore.PdfOcrResponse(new[] {
+        var mixedProvider = new ScorecardOcrProvider(request => Result(new[] {
             OcrAt(request, "duplicate", nativeQuad.Left, nativeQuad.Top, nativeQuad.Width, nativeQuad.Height),
             OcrAt(request, "OCR-retained", 36, 260, 74, 14)
         }));
-        PdfCore.PdfOcrMergeResult mixedResult = await PdfCore.PdfDocument.Load(mixed).Reader.OcrAsync(mixedProvider);
+        PdfOcrMergeResult mixedResult = await PdfCore.PdfDocument.Load(mixed).ReadWithOcrAsync(mixedProvider);
         Assert.Equal(1, mixedResult.Pages[0].RejectedNativeOverlapCount);
-        Assert.Contains(mixedResult.EnrichedDocument.TextBlocks, block => block.SourceKind == PdfCore.PdfLogicalContentSourceKind.Native && block.Text.Contains("Native retained", StringComparison.Ordinal));
-        Assert.Contains(mixedResult.EnrichedDocument.TextBlocks, block => block.SourceKind == PdfCore.PdfLogicalContentSourceKind.Ocr && block.Text.Contains("OCR-retained", StringComparison.Ordinal));
+        Assert.Contains(mixedResult.Document.TextBlocks, block => block.SourceKind == PdfCore.PdfLogicalContentSourceKind.Native && block.Text.Contains("Native retained", StringComparison.Ordinal));
+        Assert.Contains(mixedResult.Document.TextBlocks, block => block.SourceKind == PdfCore.PdfLogicalContentSourceKind.Ocr && block.Text.Contains("OCR-retained", StringComparison.Ordinal));
 
         byte[] encrypted = PdfCore.PdfDocument.Create(new PdfCore.PdfOptions().SetEncryption("open", "owner"))
             .Paragraph(paragraph => paragraph.Text("Credentialed conversion"))
@@ -142,14 +144,14 @@ public sealed class PdfReverseConversionScorecardTests {
                 }
                 return;
             case "pdf-to-html":
-                string html = logical.ToHtml(new PdfHtmlSaveOptions { Profile = PdfHtmlProfile.Semantic });
+                string html = logical.ToHtml(new PdfToHtmlOptions { Profile = PdfHtmlProfile.Semantic });
                 Assert.Contains("<!doctype html", html, StringComparison.OrdinalIgnoreCase);
                 Assert.Equal(logical.Pages.Count, Regex.Matches(html, "class=\"pdf-page\"[^>]*data-page-number=", RegexOptions.CultureInvariant).Count);
                 AssertTokenRecall(sourceTokens, Regex.Replace(html, "<[^>]+>", " "), routeConfiguration.GetProperty("minimumTokenRecall").GetDouble(), route);
                 return;
             case "pdf-to-xlsx":
                 using (var stream = new MemoryStream()) {
-                    PdfExcelTableImportReport report = logical.SaveTablesAsExcel(stream);
+                    PdfExcelTableImportReport report = logical.SaveTablesAsExcel(stream).RequireSuccess().Report!;
                     byte[] workbook = stream.ToArray();
                     if (expectedTables) Assert.NotEmpty(report.Entries);
                     HashSet<string>? tableTokens = null;
@@ -171,7 +173,7 @@ public sealed class PdfReverseConversionScorecardTests {
                 return;
             case "pdf-to-pptx":
                 PdfPowerPointConversionResult result = PdfCore.PdfDocument.Load(source)
-                    .ToPowerPointPresentationResult(PdfPowerPointImportOptions.CreateEditableContent());
+                    .ToPowerPointPresentationResult(PdfToPowerPointOptions.CreateEditableContent());
                 using (result.Value) {
                     using var stream = new MemoryStream();
                     result.Value.Save(stream);
@@ -207,7 +209,7 @@ public sealed class PdfReverseConversionScorecardTests {
                 return;
             }
             case "pdf-to-odp": {
-                PdfOdpConversionResult odpResult = logical.ToOdpPresentationResult(PdfPowerPointImportOptions.CreateEditableContent());
+                PdfOdpConversionResult odpResult = logical.ToOdpPresentationResult(PdfToPowerPointOptions.CreateEditableContent());
                 byte[] artifact = odpResult.Value.ToBytes();
                 OdpPresentation reopened = OdpPresentation.Load(new MemoryStream(artifact));
                 Assert.Equal(logical.Pages.Count, reopened.Slides.Count);
@@ -283,20 +285,34 @@ public sealed class PdfReverseConversionScorecardTests {
         Assert.Equal("IHDR", System.Text.Encoding.ASCII.GetString(artifact, 12, 4));
     }
 
-    private static PdfCore.PdfOcrWord OcrAt(
-        PdfCore.PdfOcrRequest request,
+    private static OcrTextSpan OcrAt(
+        OcrRequest request,
         string text,
         double x,
         double y,
         double width,
         double height) =>
-        new PdfCore.PdfOcrWord(text, x * request.Scale, y * request.Scale, width * request.Scale, height * request.Scale, 0.98D);
+        new OcrTextSpan {
+            Level = OcrTextSpanLevel.Word,
+            Text = text,
+            Confidence = 0.98D,
+            CoordinateUnit = OcrCoordinateUnit.Points,
+            Region = new OcrRegion { X = x, Y = y, Width = width, Height = height }
+        };
 
-    private sealed class ScorecardOcrProvider : PdfCore.IPdfOcrProvider {
-        private readonly Func<PdfCore.PdfOcrRequest, PdfCore.PdfOcrResponse> _response;
-        internal ScorecardOcrProvider(Func<PdfCore.PdfOcrRequest, PdfCore.PdfOcrResponse> response) { _response = response; }
-        public System.Threading.Tasks.Task<PdfCore.PdfOcrResponse> RecognizeAsync(
-            PdfCore.PdfOcrRequest request,
+    private static OcrResult Result(IEnumerable<OcrTextSpan> spans) => new OcrResult { Spans = spans.ToArray() };
+
+    private sealed class ScorecardOcrProvider : IOcrEngine {
+        private readonly Func<OcrRequest, OcrResult> _response;
+        internal ScorecardOcrProvider(Func<OcrRequest, OcrResult> response) { _response = response; }
+        public string Id => "scorecard-fixture";
+        public OcrEngineCapabilities Capabilities { get; } = new OcrEngineCapabilities {
+            SupportedMediaTypes = new[] { "image/png" },
+            SupportsWordSpans = true,
+            SupportsConfidence = true
+        };
+        public System.Threading.Tasks.Task<OcrResult> RecognizeAsync(
+            OcrRequest request,
             System.Threading.CancellationToken cancellationToken = default) {
             cancellationToken.ThrowIfCancellationRequested();
             return System.Threading.Tasks.Task.FromResult(_response(request));

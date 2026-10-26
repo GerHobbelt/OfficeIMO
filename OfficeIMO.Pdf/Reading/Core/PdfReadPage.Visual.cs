@@ -4,6 +4,10 @@ using System.Threading;
 namespace OfficeIMO.Pdf;
 
 public sealed partial class PdfReadPage {
+    private readonly object _rootInvokedResourceNamesSync = new();
+    private PdfPageInvokedResourceNames? _rootInvokedResourceNames;
+    private bool _rootInvokedResourceNamesInitialized;
+
     internal bool WouldAppendingTextChangeVisibleStacking(IReadOnlyList<PdfTextSpan> sourceSpans, IReadOnlyList<PdfAppendedTextBounds>? appendedBounds = null) {
         if (sourceSpans.Count == 0) return false;
         if (HasUnboundedUnsupportedPaint()) return true;
@@ -110,11 +114,17 @@ public sealed partial class PdfReadPage {
     internal OfficeDrawing ToDrawing(CancellationToken cancellationToken) {
         cancellationToken.ThrowIfCancellationRequested();
         _demandContentExtraction?.Invoke("visual content");
+        return ToDisplayDrawing(cancellationToken);
+    }
+
+    // Used only by the raster display path; never return this drawing through a public viewing API.
+    internal OfficeDrawing ToDisplayDrawing(CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         (double Width, double Height) size = GetVisualPageSize();
         Matrix2D pageTransform = GetVisualPageTransform();
         var drawing = new OfficeDrawing(size.Width, size.Height);
         var textOutputBudget = CreateTextOutputBudget();
-        var pageContentBudget = new PageContentBudget(this);
+        var pageContentBudget = new PageContentBudget(this, cancellationToken);
         var type3GlyphBudget = new Type3GlyphBudget(_limits.MaxType3GlyphInvocationsPerPage);
         var invocationTextClippingBudget = new PdfTextClippingBudget();
         var patternTextClippingBudget = new PdfTextClippingBudget();
@@ -150,7 +160,12 @@ public sealed partial class PdfReadPage {
 
         foreach (PdfFontResource font in ResourceResolver.GetFontsForResources(resources, _objects).Values) {
             if (font.EmbeddedTrueTypeFont == null) continue;
-            OfficeFontInfo info = ToOfficeFontInfo(font.BaseFont, 12D, font.DrawingFontFamily);
+            OfficeFontInfo info = ToOfficeFontInfo(
+                font.BaseFont,
+                12D,
+                font.DrawingFontFamily,
+                font.IsBold,
+                font.IsItalic);
             drawing.Fonts.TryAdd(info.FamilyName, font.EmbeddedTrueTypeFont, info.Style);
         }
 
@@ -208,7 +223,7 @@ public sealed partial class PdfReadPage {
 
         IReadOnlyList<PdfImagePlacement> placements = GetVisualImagePlacements(pageHeight, pageTransform, pageContentBudget);
         if (placements.Count > 0) {
-            IReadOnlyList<PdfExtractedImage> images = GetImages(0, placements, colorizeImageMasks: true, pageContentBudget);
+            IReadOnlyList<PdfExtractedImage> images = GetImages(0, placements, colorizeImageMasks: true, pageContentBudget, cancellationToken);
             for (int i = 0; i < placements.Count; i++) {
                 PdfImagePlacement placement = placements[i];
                 PdfExtractedImage? image = FindImage(images, placement);
@@ -391,6 +406,7 @@ public sealed partial class PdfReadPage {
         shape.StrokeRadialGradient = primitive.StrokeRadialGradient;
         shape.StrokeWidth = primitive.StrokeWidth;
         shape.StrokeDashStyle = primitive.StrokeDashStyle;
+        ApplyExactStrokeDash(shape, primitive);
         shape.StrokeLineCap = primitive.StrokeLineCap;
         shape.StrokeLineJoin = primitive.StrokeLineJoin;
         shape.FillOpacity = primitive.FillOpacity;
@@ -423,6 +439,7 @@ public sealed partial class PdfReadPage {
         shape.StrokeRadialGradient = primitive.StrokeRadialGradient;
         shape.StrokeWidth = primitive.StrokeWidth;
         shape.StrokeDashStyle = primitive.StrokeDashStyle;
+        ApplyExactStrokeDash(shape, primitive);
         shape.StrokeLineCap = primitive.StrokeLineCap;
         shape.StrokeLineJoin = primitive.StrokeLineJoin;
         shape.StrokeOpacity = primitive.StrokeOpacity;
@@ -450,6 +467,7 @@ public sealed partial class PdfReadPage {
         shape.StrokeRadialGradient = primitive.StrokeRadialGradient;
         shape.StrokeWidth = primitive.StrokeWidth;
         shape.StrokeDashStyle = primitive.StrokeDashStyle;
+        ApplyExactStrokeDash(shape, primitive);
         shape.StrokeLineCap = primitive.StrokeLineCap;
         shape.StrokeLineJoin = primitive.StrokeLineJoin;
         shape.FillOpacity = primitive.FillOpacity;
@@ -462,6 +480,12 @@ public sealed partial class PdfReadPage {
 
         if (HasPositiveArea(primitive.X, primitive.Y, primitive.Width, primitive.Height, drawing.Width, drawing.Height)) {
             drawing.AddShape(shape, primitive.X, primitive.Y);
+        }
+    }
+
+    private static void ApplyExactStrokeDash(OfficeShape shape, PdfPageVisualPrimitive primitive) {
+        if (primitive.StrokeDashPattern.HasValue && primitive.StrokeDashPattern.Value.Array.Count > 0) {
+            shape.SetStrokeDashArray(primitive.StrokeDashPattern.Value.Array, primitive.StrokeDashPattern.Value.Phase);
         }
     }
 
@@ -651,7 +675,8 @@ public sealed partial class PdfReadPage {
         OfficeIccRenderingIntent initialRenderingIntent = OfficeIccRenderingIntent.RelativeColorimetric,
         PdfPaintColorSelection? initialFillColorSelection = null,
         PdfPaintColorSelection? initialStrokeColorSelection = null,
-        PdfStrokeDashPattern? initialStrokeDashPattern = null) {
+        PdfStrokeDashPattern? initialStrokeDashPattern = null,
+        PdfPageInvokedResourceNames? invokedResourceNames = null) {
         EnsureContentNestingBudget(contentNestingDepth);
         pageContentBudget ??= new PageContentBudget(this);
         invocationTextClippingBudget ??= new PdfTextClippingBudget();
@@ -659,7 +684,7 @@ public sealed partial class PdfReadPage {
         activeType3Glyphs ??= new HashSet<PdfStream>();
         renderedType3PaintOrders ??= new RenderedType3TextTracker();
         type3GlyphBudget ??= new Type3GlyphBudget(_limits.MaxType3GlyphInvocationsPerPage);
-        PdfPageInvokedResourceNames invokedResources = GetInvokedResourceNames(content, resources);
+        PdfPageInvokedResourceNames invokedResources = invokedResourceNames ?? GetInvokedResourceNames(content, resources);
         Dictionary<string, PdfFontResource> fonts = ResourceResolver.GetFontsForResources(resources, _objects);
         Dictionary<string, Func<byte[], double>> widthProviders = resources == null
             ? new Dictionary<string, Func<byte[], double>>(StringComparer.Ordinal)
@@ -1751,6 +1776,7 @@ public sealed partial class PdfReadPage {
             PdfStrokeDashPattern? strokeDashPattern = ReadStrokeDashPattern(state);
             OfficeStrokeLineCap? strokeLineCap = ReadStrokeLineCap(state);
             OfficeStrokeLineJoin? strokeLineJoin = ReadStrokeLineJoin(state);
+            bool hasInvalidFont = !TryReadExtGStateFont(state, out string? fontResource, out double? fontSize);
             OfficeBlendMode? blendMode = ReadBlendMode(state);
             bool hasInvalidRenderingIntent = !TryReadSupportedExtGStateRenderingIntent(
                 state,
@@ -1759,9 +1785,10 @@ public sealed partial class PdfReadPage {
             bool hasUnsupportedType = state.Items.TryGetValue("Type", out PdfObject? typeObject) &&
                 ResolveEffectObject(typeObject) is not PdfNull and not PdfName { Name: "ExtGState" };
             bool hasUnsupportedEntries = state.Items.Keys.Any(static key => key is not (
-                "Type" or "ca" or "CA" or "LW" or "D" or "LC" or "LJ" or "BM" or "SMask" or "RI")) ||
+                "Type" or "ca" or "CA" or "LW" or "D" or "LC" or "LJ" or "BM" or "SMask" or "RI" or "Font")) ||
                 hasUnsupportedType ||
                 hasInvalidRenderingIntent ||
+                hasInvalidFont ||
                 HasInvalidStrictNumber(state, "ca", static value => value >= 0D && value <= 1D) ||
                 HasInvalidStrictNumber(state, "CA", static value => value >= 0D && value <= 1D) ||
                 HasInvalidStrictNumber(state, "LW", static value => value >= 0D) ||
@@ -1771,7 +1798,7 @@ public sealed partial class PdfReadPage {
             bool? softMaskEnabled = ReadSoftMaskEnabled(state);
             PdfPageSoftMaskResource? softMask = softMaskEnabled == true ? ReadSoftMask(state, resources) : null;
             bool unsupportedSoftMask = softMaskEnabled == true && softMask == null;
-            bool unsupportedTextRestampEffect = hasInvalidRenderingIntent || HasUnsupportedTextRestampEffect(state);
+            bool unsupportedTextRestampEffect = hasInvalidRenderingIntent || hasInvalidFont || HasUnsupportedTextRestampEffect(state);
             result[entry.Key] = new PdfPageGraphicsStateResource(
                 fillOpacity,
                 strokeOpacity,
@@ -1787,7 +1814,9 @@ public sealed partial class PdfReadPage {
                 hasUnsupportedBlendMode: hasUnsupportedBlendMode,
                 hasUnsupportedEntries: hasUnsupportedEntries,
                 hasUnsupportedTextRestampEffect: unsupportedTextRestampEffect,
-                strokeDashPattern: strokeDashPattern);
+                strokeDashPattern: strokeDashPattern,
+                fontResource: fontResource,
+                fontSize: fontSize);
         }
 
         return result;
@@ -1824,8 +1853,23 @@ public sealed partial class PdfReadPage {
         return values.Count == 0;
     }
 
+    private bool TryReadExtGStateFont(PdfDictionary state, out string? fontResource, out double? fontSize) {
+        fontResource = null;
+        fontSize = null;
+        if (!state.Items.TryGetValue("Font", out PdfObject? value)) return true;
+        PdfObject? resolved = ResolveEffectObject(value);
+        if (resolved is PdfNull) return true;
+        if (resolved is not PdfArray font || font.Items.Count != 2 ||
+            ResolveEffectObject(font.Items[0]) is not PdfName name ||
+            ResolveEffectObject(font.Items[1]) is not PdfNumber size ||
+            !IsFinite(size.Value) || size.Value < 0D) return false;
+        fontResource = name.Name;
+        fontSize = size.Value;
+        return true;
+    }
+
     private static bool HasUnsupportedTextRestampEffect(PdfDictionary state) {
-        string[] keys = { "op", "OPM", "Font", "BG", "BG2", "UCR", "UCR2", "TR", "TR2", "HT", "FL", "SM", "SA", "AIS", "TK" };
+        string[] keys = { "op", "OPM", "BG", "BG2", "UCR", "UCR2", "TR", "TR2", "HT", "FL", "SM", "SA", "AIS", "TK" };
         for (int index = 0; index < keys.Length; index++) if (state.Items.ContainsKey(keys[index])) return true;
         return false;
     }
@@ -1910,7 +1954,8 @@ public sealed partial class PdfReadPage {
 
     private PdfPageInvokedResourceNames GetInvokedResourceNames(
         string content,
-        PdfDictionary? resources) {
+        PdfDictionary? resources,
+        Action? operationCheck = null) {
         var names = new PdfPageInvokedResourceNames();
         Dictionary<string, PdfPageColorSpace> placeholders = GetColorSpaceResourcePlaceholders(resources);
         (double Width, double Height) pageSize = GetVisualPageSize();
@@ -1936,8 +1981,23 @@ public sealed partial class PdfReadPage {
                     : PdfType3PaintChannels.Visible;
             },
             inlineImageArrayComponentCount: array => GetDeclaredColorSpaceComponentCount(array),
-            visibleColorSpaceVisitor: name => names.ColorSpaces.Add(name));
+            visibleColorSpaceVisitor: name => names.ColorSpaces.Add(name),
+            operationCheck: operationCheck);
         return names;
+    }
+
+    private PdfPageInvokedResourceNames GetRootInvokedResourceNames(
+        string content,
+        PdfDictionary? resources,
+        Action? operationCheck = null) {
+        lock (_rootInvokedResourceNamesSync) {
+            if (!_rootInvokedResourceNamesInitialized) {
+                _rootInvokedResourceNames = GetInvokedResourceNames(content, resources, operationCheck);
+                _rootInvokedResourceNamesInitialized = true;
+            }
+
+            return _rootInvokedResourceNames!;
+        }
     }
 
     private Dictionary<string, PdfPageColorSpace> GetColorSpaceResourcePlaceholders(PdfDictionary? resources) {
@@ -2288,7 +2348,7 @@ public sealed partial class PdfReadPage {
                     0,
                     imagePlacements,
                     colorizeImageMasks: true,
-                    pageContentBudget);
+                    pageContentBudget, cancellationToken);
                 for (int imageIndex = 0; imageIndex < imagePlacements.Count; imageIndex++) {
                     cancellationToken.ThrowIfCancellationRequested();
                     PdfImagePlacement placement = imagePlacements[imageIndex];
@@ -2394,43 +2454,9 @@ public sealed partial class PdfReadPage {
     }
 
     private Matrix2D CreateAnnotationAppearanceTransform((double X1, double Y1, double X2, double Y2) rectangle, PdfDictionary appearanceDictionary) {
-        double bboxX1 = 0D;
-        double bboxY1 = 0D;
-        double bboxWidth = rectangle.X2 - rectangle.X1;
-        double bboxHeight = rectangle.Y2 - rectangle.Y1;
-        if (TryReadBox(appearanceDictionary.Items.TryGetValue("BBox", out PdfObject? bboxObject) ? bboxObject : null, out (double X1, double Y1, double X2, double Y2) bbox)) {
-            bboxX1 = bbox.X1;
-            bboxY1 = bbox.Y1;
-            bboxWidth = bbox.X2 - bbox.X1;
-            bboxHeight = bbox.Y2 - bbox.Y1;
-        }
-
-        double scaleX = bboxWidth > 0D ? (rectangle.X2 - rectangle.X1) / bboxWidth : 1D;
-        double scaleY = bboxHeight > 0D ? (rectangle.Y2 - rectangle.Y1) / bboxHeight : 1D;
-        var rectangleTransform = new Matrix2D(
-            scaleX,
-            0D,
-            0D,
-            scaleY,
-            rectangle.X1 - (bboxX1 * scaleX),
-            rectangle.Y1 - (bboxY1 * scaleY));
-        return Matrix2D.Multiply(rectangleTransform, ReadAppearanceMatrix(appearanceDictionary));
-    }
-
-    private Matrix2D ReadAppearanceMatrix(PdfDictionary appearanceDictionary) {
-        if (!appearanceDictionary.Items.TryGetValue("Matrix", out PdfObject? matrixObject) ||
-            ResolveObject(matrixObject) is not PdfArray matrix ||
-            matrix.Items.Count < 6) {
-            return Matrix2D.Identity;
-        }
-
-        return new Matrix2D(
-            ReadMatrixNumber(matrix, 0, 1D),
-            ReadMatrixNumber(matrix, 1, 0D),
-            ReadMatrixNumber(matrix, 2, 0D),
-            ReadMatrixNumber(matrix, 3, 1D),
-            ReadMatrixNumber(matrix, 4, 0D),
-            ReadMatrixNumber(matrix, 5, 0D));
+        Matrix2D placement = PdfAppearancePlacement.Read(appearanceDictionary, value => ResolveObject(value),
+            rectangle.X1, rectangle.Y1, rectangle.X2 - rectangle.X1, rectangle.Y2 - rectangle.Y1, out Matrix2D matrix);
+        return Matrix2D.Multiply(placement, matrix);
     }
 
     private double ReadMatrixNumber(PdfArray matrix, int index, double fallback) =>
@@ -2496,12 +2522,7 @@ public sealed partial class PdfReadPage {
         }
 
         for (int index = 0; index < spans.Count; index++) {
-            PdfTextSpan span = spans[index];
-            double visualFontSize = span.RestampFontSize;
-            if (visualFontSize > 0D && !double.IsNaN(visualFontSize) && !double.IsInfinity(visualFontSize) &&
-                Math.Abs(visualFontSize - span.FontSize) > 0.000001D) {
-                spans[index] = span.WithVisualFontSize(visualFontSize);
-            }
+            spans[index] = spans[index].WithPageFontSize();
         }
         return spans.Count == 0 ? Array.Empty<PdfTextSpan>() : spans.AsReadOnly();
     }
@@ -2509,173 +2530,16 @@ public sealed partial class PdfReadPage {
     private TextContentParser.TextOutputBudget CreateTextOutputBudget() =>
         new(_limits.MaxActualTextCharacters, _limits.MaxDecodedTextCharacters);
 
-    private static void AddTextSpan(OfficeDrawing drawing, double pageHeight, PdfTextSpan span) {
-        if (string.IsNullOrEmpty(span.Text) || !span.IsVisible) {
-            return;
-        }
-
-        double height = Math.Max(1D, span.FontSize * 1.25D);
-        double width = Math.Max(span.Advance, span.Text.Length * span.FontSize * 0.55D);
-        double rawX = span.X;
-        double rawY = pageHeight - span.Y - span.FontSize;
-        if (!HasVisibleOverlap(rawX, rawY, width, height, drawing.Width, drawing.Height)) {
-            return;
-        }
-
-        double x = rawX;
-        double y = rawY;
-        double clippedRight = Math.Min(rawX + width, drawing.Width);
-        double clippedBottom = Math.Min(rawY + height, drawing.Height);
-        double baselineY = pageHeight - span.Y;
-        if (!span.ClipPath.HasValue &&
-            (rawX < 0D || rawY < 0D || rawX + width > drawing.Width || rawY + height > drawing.Height)) {
-            PdfPageClipPath pageClip = PdfPageClipPath.Rectangle(0D, 0D, drawing.Width, drawing.Height);
-            if (TryAddClippedTextSpan(drawing, span, x, y, width, height, baselineY, pageClip)) {
-                return;
-            }
-        }
-
-        x = Clamp(rawX, 0D, drawing.Width);
-        y = Clamp(rawY, 0D, drawing.Height);
-        baselineY = Clamp(baselineY, 0D, drawing.Height);
-        width = Math.Max(1D, clippedRight - x);
-        height = Math.Max(1D, clippedBottom - y);
-        if (TryAddClippedTextSpan(drawing, span, x, y, width, height, baselineY)) {
-            return;
-        }
-
-        if (IsEffectivelyUnrotated(span.RotationDegrees) && TryGetSafePositionedAdvance(span, out double textAdvance)) {
-            drawing.AddPositionedText(
-                span.Text,
-                x,
-                y,
-                width,
-                height,
-                ToOfficeFontInfo(span.BaseFont, span.FontSize, span.DrawingFontFamily),
-                span.Color ?? OfficeColor.Black,
-                textAdvanceWidth: textAdvance);
-        } else {
-            drawing.AddText(
-                span.Text,
-                x,
-                y,
-                width,
-                height,
-                ToOfficeFontInfo(span.BaseFont, span.FontSize, span.DrawingFontFamily),
-                span.Color ?? OfficeColor.Black,
-                rotationDegrees: -span.RotationDegrees,
-                rotationCenterX: x,
-                rotationCenterY: baselineY,
-                wrapText: false);
-        }
-    }
-
-    private static bool TryAddClippedTextSpan(OfficeDrawing drawing, PdfTextSpan span, double x, double y, double width, double height, double baselineY, PdfPageClipPath? overrideClipPath = null) {
-        PdfPageClipPath? activeClipPath = overrideClipPath ?? span.ClipPath;
-        if (!activeClipPath.HasValue) {
-            return false;
-        }
-
-        PdfPageClipPath clip = activeClipPath.Value;
-        if (clip.Width <= 0D || clip.Height <= 0D) {
-            return true;
-        }
-
-        OfficeClipPath? officeClipPath = clip.ToOfficeClipPath(clip.X, clip.Y);
-        if (officeClipPath == null) {
-            return false;
-        }
-
-        double clipRight = clip.X + clip.Width;
-        double clipBottom = clip.Y + clip.Height;
-        if (clip.IsRectangle && x >= clip.X && y >= clip.Y && x + width <= clipRight && y + height <= clipBottom) {
-            return false;
-        }
-
-        if (x + width <= clip.X || y + height <= clip.Y || x >= clipRight || y >= clipBottom) {
-            return true;
-        }
-
-        double localX = x - clip.X;
-        double localY = y - clip.Y;
-        if (clip.X < 0D ||
-            clip.Y < 0D ||
-            clipRight > drawing.Width ||
-            clipBottom > drawing.Height) {
-            if (!TryFitClipToDrawing(clip, drawing.Width, drawing.Height, out PdfPageClipPath drawingClip)) {
-                return true;
-            }
-
-            clip = drawingClip;
-            officeClipPath = clip.ToOfficeClipPath(clip.X, clip.Y);
-            if (officeClipPath == null) {
-                return false;
-            }
-
-            localX = x - clip.X;
-            localY = y - clip.Y;
-        }
-
-        double textWidth = Math.Max(1D, width);
-        double textHeight = Math.Max(1D, height);
-        if (IsEffectivelyUnrotated(span.RotationDegrees) && TryGetSafePositionedAdvance(span, out double textAdvance)) {
-            drawing.AddClippedPositionedText(
-                span.Text,
-                x,
-                y,
-                textWidth,
-                textHeight,
-                clip.X,
-                clip.Y,
-                officeClipPath,
-                ToOfficeFontInfo(span.BaseFont, span.FontSize, span.DrawingFontFamily),
-                span.Color ?? OfficeColor.Black,
-                textAdvanceWidth: textAdvance);
-        } else {
-            drawing.AddClippedText(
-                span.Text,
-                x,
-                y,
-                textWidth,
-                textHeight,
-                clip.X,
-                clip.Y,
-                officeClipPath,
-                ToOfficeFontInfo(span.BaseFont, span.FontSize, span.DrawingFontFamily),
-                span.Color ?? OfficeColor.Black,
-                rotationDegrees: -span.RotationDegrees,
-                rotationCenterX: x,
-                rotationCenterY: baselineY,
-                wrapText: false);
-        }
-        return true;
-    }
-
-    private static bool IsEffectivelyUnrotated(double rotationDegrees) {
-        double normalized = rotationDegrees % 360D;
-        return Math.Abs(normalized) <= 0.0001D || Math.Abs(Math.Abs(normalized) - 360D) <= 0.0001D;
-    }
-
-    private static bool TryGetSafePositionedAdvance(PdfTextSpan span, out double advance) {
-        advance = span.Advance;
-        return span.CanScaleAggregateAdvance && advance > 0D && !double.IsNaN(advance) && !double.IsInfinity(advance);
-    }
-
-    private static OfficeFontInfo ToOfficeFontInfo(string? baseFont, double size, string? drawingFontFamily = null) {
+    private static OfficeFontInfo ToOfficeFontInfo(
+        string? baseFont,
+        double size,
+        string? drawingFontFamily,
+        bool isBold,
+        bool isItalic) {
         string normalized = StripSubsetPrefix(baseFont);
         OfficeFontStyle style = OfficeFontStyle.Regular;
-        if (ContainsFontStyleToken(normalized, "Bold") ||
-            ContainsFontStyleToken(normalized, "Black") ||
-            ContainsFontStyleToken(normalized, "Heavy") ||
-            ContainsFontStyleToken(normalized, "Demi") ||
-            ContainsFontStyleToken(normalized, "SemiBold")) {
-            style |= OfficeFontStyle.Bold;
-        }
-
-        if (ContainsFontStyleToken(normalized, "Italic") ||
-            ContainsFontStyleToken(normalized, "Oblique")) {
-            style |= OfficeFontStyle.Italic;
-        }
+        if (isBold) style |= OfficeFontStyle.Bold;
+        if (isItalic) style |= OfficeFontStyle.Italic;
 
         string family = string.IsNullOrWhiteSpace(drawingFontFamily)
             ? ResolveOfficeFontFamily(normalized)
@@ -2741,9 +2605,6 @@ public sealed partial class PdfReadPage {
         return value;
     }
 
-    private static bool ContainsFontStyleToken(string fontName, string token) =>
-        System.Globalization.CultureInfo.InvariantCulture.CompareInfo.IndexOf(fontName, token, System.Globalization.CompareOptions.IgnoreCase) >= 0;
-
     private static string RemoveFontSuffix(string value, string suffix) =>
         value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
             ? value.Substring(0, value.Length - suffix.Length)
@@ -2795,7 +2656,7 @@ public sealed partial class PdfReadPage {
     }
 
     private static void AddImagePlacement(OfficeDrawing drawing, double pageHeight, PdfImagePlacement placement, PdfExtractedImage image) {
-        if (!image.IsImageFile || placement.Width <= 0D || placement.Height <= 0D) {
+        if (placement.Width <= 0D || placement.Height <= 0D || placement.ImageOpacity <= 0D) {
             return;
         }
 
@@ -2806,6 +2667,13 @@ public sealed partial class PdfReadPage {
                 drawing.Height,
                 out OfficeImageProjection projection,
                 allowAxisAlignedFallback: !placement.RequireExactProjection)) {
+            return;
+        }
+
+        if (!image.IsImageFile) {
+            if (image.RequiresScanDecode && !IsInvisibleImagePlacement(placement, pageHeight, drawing.Width, drawing.Height)) {
+                throw new NotSupportedException("The scanned image could not be decoded or projected: " + image.Filter + ".");
+            }
             return;
         }
 
@@ -3096,10 +2964,10 @@ public sealed partial class PdfReadPage {
         PdfDictionary? fallbackResources,
         PdfImagePlacement placement,
         bool colorizeImageMasks,
-        PageContentBudget? pageContentBudget = null) {
+        PageContentBudget? pageContentBudget = null, CancellationToken cancellationToken = default) {
         PdfDictionary? resourceContext = placement.EffectiveResources ?? placement.InlineImageResources ?? fallbackResources;
         return FindImage(
-            GetImagesForResources(resourceContext, 0, new[] { placement }, colorizeImageMasks, pageContentBudget),
+            GetImagesForResources(resourceContext, 0, new[] { placement }, colorizeImageMasks, pageContentBudget, cancellationToken),
             placement);
     }
 

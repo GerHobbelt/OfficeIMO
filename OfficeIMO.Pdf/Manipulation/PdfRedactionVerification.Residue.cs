@@ -1,20 +1,23 @@
+using OfficeIMO.Drawing;
 using OfficeIMO.Pdf.Filters;
+using System.Threading;
 
 namespace OfficeIMO.Pdf;
 
 internal static partial class PdfRedactionVerification {
     private const int MaxDecodedRedactionVerificationStreamBytes = 16 * 1024 * 1024;
 
-    private static bool ContainsEncodedPdfMarker(byte[] pdf, string marker, bool matchCase) {
+    private static bool ContainsEncodedPdfMarker(byte[] pdf, string marker, bool matchCase, CancellationToken cancellationToken) {
         if (string.IsNullOrEmpty(marker)) {
             return false;
         }
 
         byte[][] encodings = BuildMarkerEncodings(marker, matchCase);
         for (int i = 0; i < encodings.Length; i++) {
-            if (ContainsBytes(pdf, encodings[i], matchCase) ||
-                ContainsLiteralStringBytes(pdf, encodings[i], matchCase) ||
-                ContainsHexStringBytes(pdf, encodings[i], matchCase)) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ContainsBytes(pdf, encodings[i], matchCase, cancellationToken) ||
+                ContainsLiteralStringBytes(pdf, encodings[i], matchCase, cancellationToken) ||
+                ContainsHexStringBytes(pdf, encodings[i], matchCase, cancellationToken)) {
                 return true;
             }
         }
@@ -22,20 +25,23 @@ internal static partial class PdfRedactionVerification {
         return false;
     }
 
-    private static bool ContainsDecodedStreamMarker(byte[] pdf, string marker, bool matchCase, PdfLoadOptions readOptions) {
+    private static bool ContainsDecodedStreamMarker(byte[] pdf, string marker, bool matchCase, PdfLoadOptions readOptions, CancellationToken cancellationToken) {
         if (string.IsNullOrEmpty(marker)) {
             return false;
         }
 
         Dictionary<int, PdfIndirectObject> objects;
         try {
-            objects = PdfSyntax.ParseObjects(pdf, readOptions).Map;
+            objects = PdfSyntax.ParseObjects(pdf, readOptions, out _, out _, cancellationToken).Map;
+        } catch (OperationCanceledException) {
+            throw;
         } catch (Exception ex) when (ex is not OutOfMemoryException) {
             return false;
         }
 
         byte[][] encodings = BuildMarkerEncodings(marker, matchCase);
         foreach (PdfIndirectObject indirect in objects.Values) {
+            cancellationToken.ThrowIfCancellationRequested();
             if (indirect.Value is not PdfStream stream || stream.DecodingFailed) {
                 continue;
             }
@@ -46,9 +52,9 @@ internal static partial class PdfRedactionVerification {
             }
 
             for (int i = 0; i < encodings.Length; i++) {
-                if (ContainsBytes(decoded, encodings[i], matchCase) ||
-                    ContainsLiteralStringBytes(decoded, encodings[i], matchCase) ||
-                    ContainsHexStringBytes(decoded, encodings[i], matchCase)) {
+                if (ContainsBytes(decoded, encodings[i], matchCase, cancellationToken) ||
+                    ContainsLiteralStringBytes(decoded, encodings[i], matchCase, cancellationToken) ||
+                    ContainsHexStringBytes(decoded, encodings[i], matchCase, cancellationToken)) {
                     return true;
                 }
             }
@@ -57,11 +63,13 @@ internal static partial class PdfRedactionVerification {
         return false;
     }
 
-    private static List<PdfRedactionVerificationIssue> FindUndecodableStreamIssues(byte[] pdf, PdfLoadOptions readOptions) {
+    private static List<PdfRedactionVerificationIssue> FindUndecodableStreamIssues(byte[] pdf, PdfLoadOptions readOptions, CancellationToken cancellationToken) {
         var issues = new List<PdfRedactionVerificationIssue>();
         Dictionary<int, PdfIndirectObject> objects;
         try {
-            objects = PdfSyntax.ParseObjects(pdf, readOptions).Map;
+            objects = PdfSyntax.ParseObjects(pdf, readOptions, out _, out _, cancellationToken).Map;
+        } catch (OperationCanceledException) {
+            throw;
         } catch (Exception ex) when (ex is not OutOfMemoryException) {
             issues.Add(new PdfRedactionVerificationIssue(
                 "DecodedPdfStreamInspection",
@@ -71,7 +79,12 @@ internal static partial class PdfRedactionVerification {
         }
 
         foreach (PdfIndirectObject indirect in objects.Values) {
+            cancellationToken.ThrowIfCancellationRequested();
             if (indirect.Value is not PdfStream stream) {
+                continue;
+            }
+
+            if (IsOpaqueImageCodecStream(stream, objects, readOptions, cancellationToken)) {
                 continue;
             }
 
@@ -90,6 +103,66 @@ internal static partial class PdfRedactionVerification {
         }
 
         return issues;
+    }
+
+    private static bool IsOpaqueImageCodecStream(
+        PdfStream stream,
+        Dictionary<int, PdfIndirectObject> objects,
+        PdfLoadOptions readOptions,
+        CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (PdfObjectLookup.ResolveChain(
+                objects,
+                stream.Dictionary.Items.TryGetValue("Subtype", out PdfObject? subtype) ? subtype : null) is not PdfName { Name: "Image" }) {
+            return false;
+        }
+
+        if (!StreamDecoder.TryGetDeclaredFilterNames(stream.Dictionary, objects, out IReadOnlyList<string> filters) ||
+            filters.Count == 0 ||
+            !IsOpaqueImageCodec(filters[filters.Count - 1])) {
+            return false;
+        }
+
+        if (filters.Count == 1) return true;
+        for (int index = 0; index < filters.Count - 1; index++) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!StreamDecoder.IsSupportedFilter(filters[index])) return false;
+        }
+
+        var prefixDictionary = new PdfDictionary();
+        var prefixFilters = new PdfArray();
+        for (int index = 0; index < filters.Count - 1; index++) {
+            cancellationToken.ThrowIfCancellationRequested();
+            prefixFilters.Items.Add(new PdfName(filters[index]));
+        }
+        prefixDictionary.Items["Filter"] = prefixFilters;
+
+        PdfObject? decodeParameters = stream.Dictionary.Items.TryGetValue("DecodeParms", out PdfObject? fullName)
+            ? fullName
+            : stream.Dictionary.Items.TryGetValue("DP", out PdfObject? abbreviatedName)
+                ? abbreviatedName
+                : null;
+        PdfObject? resolvedDecodeParameters = PdfObjectLookup.ResolveChain(objects, decodeParameters);
+        if (resolvedDecodeParameters is not null and not PdfNull) {
+            if (resolvedDecodeParameters is not PdfArray decodeParametersArray ||
+                decodeParametersArray.Items.Count != filters.Count) return false;
+            var prefixDecodeParameters = new PdfArray();
+            for (int index = 0; index < filters.Count - 1; index++) {
+                cancellationToken.ThrowIfCancellationRequested();
+                prefixDecodeParameters.Items.Add(decodeParametersArray.Items[index]);
+            }
+            prefixDictionary.Items["DecodeParms"] = prefixDecodeParameters;
+        }
+
+        int maximumDecodedBytes = Math.Min(MaxDecodedRedactionVerificationStreamBytes, readOptions.Limits.MaxDecodedStreamBytes);
+        if (!StreamDecoder.TryDecode(prefixDictionary, stream.Data, maximumDecodedBytes, out byte[] opaquePayload, objects)) return false;
+        return filters[filters.Count - 1] is not ("DCTDecode" or "DCT") || OfficeJpegCodec.IsJpeg(opaquePayload);
+
+        static bool IsOpaqueImageCodec(string filter) => filter is
+            "DCTDecode" or "DCT" or
+            "JPXDecode" or
+            "CCITTFaxDecode" or "CCF" or
+            "JBIG2Decode";
     }
 
     private static PdfRedactionVerificationIssue CreateUndecodableStreamIssue(string objectReference, string reason) {
@@ -126,12 +199,13 @@ internal static partial class PdfRedactionVerification {
         encodings.Add(candidate);
     }
 
-    private static bool ContainsBytes(byte[] haystack, byte[] needle, bool matchCase) {
+    private static bool ContainsBytes(byte[] haystack, byte[] needle, bool matchCase, CancellationToken cancellationToken) {
         if (needle.Length == 0 || needle.Length > haystack.Length) {
             return false;
         }
 
         for (int i = 0; i <= haystack.Length - needle.Length; i++) {
+            if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
             int j = 0;
             while (j < needle.Length && BytesEqual(haystack[i + j], needle[j], matchCase)) {
                 j++;
@@ -145,14 +219,15 @@ internal static partial class PdfRedactionVerification {
         return false;
     }
 
-    private static bool ContainsLiteralStringBytes(byte[] pdf, byte[] markerBytes, bool matchCase) {
+    private static bool ContainsLiteralStringBytes(byte[] pdf, byte[] markerBytes, bool matchCase, CancellationToken cancellationToken) {
         for (int i = 0; i < pdf.Length; i++) {
+            if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (pdf[i] != (byte)'(') {
                 continue;
             }
 
-            if (TryReadLiteralStringBytes(pdf, i, out byte[] literalBytes, out int end)) {
-                if (ContainsBytes(literalBytes, markerBytes, matchCase)) {
+            if (TryReadLiteralStringBytes(pdf, i, cancellationToken, out byte[] literalBytes, out int end)) {
+                if (ContainsBytes(literalBytes, markerBytes, matchCase, cancellationToken)) {
                     return true;
                 }
 
@@ -163,10 +238,11 @@ internal static partial class PdfRedactionVerification {
         return false;
     }
 
-    private static bool TryReadLiteralStringBytes(byte[] pdf, int start, out byte[] literalBytes, out int end) {
+    private static bool TryReadLiteralStringBytes(byte[] pdf, int start, CancellationToken cancellationToken, out byte[] literalBytes, out int end) {
         var bytes = new List<byte>();
         int depth = 1;
         for (int i = start + 1; i < pdf.Length; i++) {
+            if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
             byte value = pdf[i];
             if (value == (byte)'\\') {
                 if (i + 1 >= pdf.Length) {
@@ -273,18 +349,19 @@ internal static partial class PdfRedactionVerification {
         }
     }
 
-    private static bool ContainsHexStringBytes(byte[] pdf, byte[] markerBytes, bool matchCase) {
+    private static bool ContainsHexStringBytes(byte[] pdf, byte[] markerBytes, bool matchCase, CancellationToken cancellationToken) {
         for (int i = 0; i < pdf.Length; i++) {
+            if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (pdf[i] != (byte)'<' || (i + 1 < pdf.Length && pdf[i + 1] == (byte)'<')) {
                 continue;
             }
 
-            int end = FindHexStringEnd(pdf, i + 1);
+            int end = FindHexStringEnd(pdf, i + 1, cancellationToken);
             if (end < 0) {
                 continue;
             }
 
-            if (HexStringContains(pdf, i + 1, end, markerBytes, matchCase)) {
+            if (HexStringContains(pdf, i + 1, end, markerBytes, matchCase, cancellationToken)) {
                 return true;
             }
 
@@ -294,8 +371,9 @@ internal static partial class PdfRedactionVerification {
         return false;
     }
 
-    private static int FindHexStringEnd(byte[] pdf, int start) {
+    private static int FindHexStringEnd(byte[] pdf, int start, CancellationToken cancellationToken) {
         for (int i = start; i < pdf.Length; i++) {
+            if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (pdf[i] == (byte)'>') {
                 return i;
             }
@@ -308,9 +386,10 @@ internal static partial class PdfRedactionVerification {
         return -1;
     }
 
-    private static bool HexStringContains(byte[] pdf, int start, int end, byte[] markerBytes, bool matchCase) {
+    private static bool HexStringContains(byte[] pdf, int start, int end, byte[] markerBytes, bool matchCase, CancellationToken cancellationToken) {
         var builder = new System.Text.StringBuilder(end - start);
         for (int i = start; i < end; i++) {
+            if ((i & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
             byte value = pdf[i];
             if (IsHexDigit(value)) {
                 builder.Append((char)ToUpperAscii(value));
@@ -319,7 +398,7 @@ internal static partial class PdfRedactionVerification {
 
         if ((builder.Length & 1) != 0) builder.Append('0');
         byte[] decoded = PdfTextString.DecodeHexBytes(builder.ToString());
-        return ContainsBytes(decoded, markerBytes, matchCase);
+        return ContainsBytes(decoded, markerBytes, matchCase, cancellationToken);
     }
 
     private static bool BytesEqual(byte[] left, byte[] right) {

@@ -385,6 +385,7 @@ internal static partial class PdfWriter {
         public System.Collections.Generic.List<int>? AdditionalAnnotationObjectIds { get; set; }
         public int? AnnotationStructParentIndex { get; set; }
         public System.Collections.Generic.List<int>? AdditionalAnnotationStructParentIndexes { get; set; }
+        public bool SpansPages { get; set; }
         public int ObjectId { get; set; }
     }
 
@@ -404,6 +405,7 @@ internal static partial class PdfWriter {
         public string Name { get; set; } = string.Empty;
         public double FillOpacity { get; set; } = 1D;
         public double StrokeOpacity { get; set; } = 1D;
+        public OfficeBlendMode BlendMode { get; set; } = OfficeBlendMode.Normal;
     }
 
     private sealed class PageShading {

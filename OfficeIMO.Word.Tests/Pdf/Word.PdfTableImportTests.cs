@@ -35,7 +35,7 @@ public partial class Word {
             .ToBytes();
 
         using var document = new MemoryStream();
-        PdfWordConversionResult result = LoadTables(pdf).ToWordDocumentResult(PdfWordImportOptions.CreateTablesOnly());
+        PdfWordConversionResult result = LoadTables(pdf).ToWordDocumentResult(PdfToWordOptions.CreateTablesOnly());
         using (result.Value) {
             result.Value.Save(document);
         }
@@ -83,7 +83,7 @@ public partial class Word {
             .ToBytes();
 
         using var document = new MemoryStream();
-        PdfWordImportOptions tablesOnly = PdfWordImportOptions.CreateTablesOnly();
+        PdfToWordOptions tablesOnly = PdfToWordOptions.CreateTablesOnly();
         tablesOnly.MaxTableRows = 2;
         PdfWordConversionResult result = LoadTables(pdf, PdfCore.PdfPageRange.From(1, 1)).ToWordDocumentResult(tablesOnly);
         using (result.Value) {
@@ -97,14 +97,13 @@ public partial class Word {
             Assert.Empty(new OpenXmlValidator().Validate(package).ToList());
             Table table = Assert.Single(GetBody(package).Descendants<Table>());
             List<TableRow> rows = table.Elements<TableRow>().ToList();
-            Assert.Equal(3, rows.Count);
-            Assert.Equal(new[] { "Key", "Value" }, ReadRowText(rows[0]));
-            Assert.Equal(new[] { "InvoiceId", "INV-001" }, ReadRowText(rows[1]));
-            Assert.Equal(new[] { "Customer", "Evotec" }, ReadRowText(rows[2]));
+            Assert.Equal(2, rows.Count);
+            Assert.Equal(new[] { "InvoiceId", "INV-001" }, ReadRowText(rows[0]));
+            Assert.Equal(new[] { "Customer", "Evotec" }, ReadRowText(rows[1]));
         }
 
         using var emptyDocument = new MemoryStream();
-        PdfWordImportOptions emptyOptions = PdfWordImportOptions.CreateTablesOnly();
+        PdfToWordOptions emptyOptions = PdfToWordOptions.CreateTablesOnly();
         emptyOptions.EmptyDocumentMessage = "Nothing tabular was detected.";
         PdfWordConversionResult emptyResult = LoadTables(pdf, PdfCore.PdfPageRange.From(2, 2)).ToWordDocumentResult(emptyOptions);
         using (emptyResult.Value) {

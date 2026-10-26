@@ -49,6 +49,7 @@ namespace OfficeIMO.Examples {
             Pdf.LinksAndRules.Example_Pdf_LinksAndRules(folderPath, false);
             Pdf.WriterStyleCheatsheet.Example_Pdf_StyleCheatsheet(folderPath, false);
             Pdf.DrawingGalleryPdf.Example_Pdf_DrawingGallery(folderPath, false);
+            Pdf.AuthoringModelPdf.Example_Pdf_AuthoringModel(folderPath, false);
             Pdf.RowColumnsPdf.Example_Pdf_RowColumns(folderPath, false);
             Pdf.TableStyleGalleryPdf.Example_Pdf_TableStyleGallery(folderPath, false);
             Pdf.ProfessionalReportPdf.Example_Pdf_ProfessionalReport(folderPath, false);
@@ -173,6 +174,11 @@ namespace OfficeIMO.Examples {
                 return;
             }
 
+            if (HasArgument(args, "--showcase-features")) {
+                Showcase.DocumentFeatureShowcase.Example(folderPath, GetArgumentValue(args, "--showcase-group"));
+                return;
+            }
+
             if (HasArgument(args, "--modern-powerpoint")) {
                 PowerPoint.ModernPowerPointDeck.Example_ModernPowerPointDeck(folderPath, false);
                 return;
@@ -225,6 +231,11 @@ namespace OfficeIMO.Examples {
 
             if (HasArgument(args, "--html-renderer-gallery")) {
                 Html.Html.Example_HtmlManagedRendererGallery(folderPath, HasArgument(args, "--open-pdf"));
+                return;
+            }
+
+            if (HasArgument(args, "--html-feature-showcase")) {
+                Html.Html.Example_HtmlFeatureShowcase(folderPath);
                 return;
             }
 

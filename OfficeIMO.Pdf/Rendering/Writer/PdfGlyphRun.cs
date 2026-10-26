@@ -82,7 +82,7 @@ internal readonly struct PdfGlyphInfo {
 }
 
 internal readonly struct PdfTextShapingOptions {
-    public PdfTextShapingOptions(bool recordGlyphUsage, bool throwOnMissingGlyph, bool skipLayoutControls, bool reportControlCharacters, string source, string fontName, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null, Action<string, string, bool>? providerShapedTextRecorder = null, string? language = null) {
+    public PdfTextShapingOptions(bool recordGlyphUsage, bool throwOnMissingGlyph, bool skipLayoutControls, bool reportControlCharacters, string source, string fontName, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null, Action<string, string, bool>? providerShapedTextRecorder = null, string? language = null, OfficeTextFeatureSettings? featureSettings = null) {
         RecordGlyphUsage = recordGlyphUsage;
         ThrowOnMissingGlyph = throwOnMissingGlyph;
         SkipLayoutControls = skipLayoutControls;
@@ -93,6 +93,7 @@ internal readonly struct PdfTextShapingOptions {
         ShapingProvider = shapingProvider;
         ProviderShapedTextRecorder = providerShapedTextRecorder;
         Language = string.IsNullOrWhiteSpace(language) ? null : language;
+        FeatureSettings = featureSettings ?? OfficeTextFeatureSettings.Default;
     }
 
     public bool RecordGlyphUsage { get; }
@@ -105,9 +106,10 @@ internal readonly struct PdfTextShapingOptions {
     public IOfficeTextShapingProvider? ShapingProvider { get; }
     public Action<string, string, bool>? ProviderShapedTextRecorder { get; }
     public string? Language { get; }
+    public OfficeTextFeatureSettings FeatureSettings { get; }
 
-    public static PdfTextShapingOptions ForRendering(string fontName, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null, Action<string, string, bool>? providerShapedTextRecorder = null, string? language = null) =>
-        new PdfTextShapingOptions(recordGlyphUsage: true, throwOnMissingGlyph: true, skipLayoutControls: false, reportControlCharacters: false, source: string.Empty, fontName: fontName, shapingMode: shapingMode, shapingProvider: shapingProvider, providerShapedTextRecorder: providerShapedTextRecorder, language: language);
+    public static PdfTextShapingOptions ForRendering(string fontName, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null, Action<string, string, bool>? providerShapedTextRecorder = null, string? language = null, OfficeTextFeatureSettings? featureSettings = null) =>
+        new PdfTextShapingOptions(recordGlyphUsage: true, throwOnMissingGlyph: true, skipLayoutControls: false, reportControlCharacters: false, source: string.Empty, fontName: fontName, shapingMode: shapingMode, shapingProvider: shapingProvider, providerShapedTextRecorder: providerShapedTextRecorder, language: language, featureSettings: featureSettings);
 
     public static PdfTextShapingOptions ForDiagnostics(string source, string fontName, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null) =>
         new PdfTextShapingOptions(recordGlyphUsage: false, throwOnMissingGlyph: false, skipLayoutControls: true, reportControlCharacters: true, source: source, fontName: fontName, shapingMode: shapingMode, shapingProvider: shapingProvider);
@@ -170,7 +172,13 @@ internal sealed class PdfUnicodeScalarTextShaper : IPdfTextShaper {
             glyphs.Add(new PdfGlyphInfo(glyphId, scalar, scalarStart, font.GetGlyphWidth1000(glyphId)));
         }
 
-        return new PdfGlyphRun(glyphs, diagnostics);
+        // The scalar fallback does not perform bidirectional layout. Preserve the
+        // caller's logical string as ActualText so readers do not have to guess
+        // whether the emitted glyph order is logical or visual.
+        string? actualText = OfficeTextElements.ResolveBaseDirection(text) == OfficeTextDirection.RightToLeft
+            ? text
+            : null;
+        return new PdfGlyphRun(glyphs, diagnostics, actualText);
     }
 
     private static string ResolveFontName(PdfTrueTypeFontProgram font, PdfTextShapingOptions options) =>

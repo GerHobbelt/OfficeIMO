@@ -28,17 +28,17 @@ This **Markdown** becomes a browser preview or an editable Word document.
     private const string DefaultHtml = """
 <article>
   <h1>OfficeIMO HTML sample</h1>
-  <p>This HTML becomes <strong>portable Markdown</strong>.</p>
+  <p>A short report with <strong>headings and a list</strong>.</p>
   <ul><li>Headings</li><li>Lists</li><li>Links</li></ul>
 </article>
 """;
 
     [Inject] private HttpClient Http { get; set; } = null!;
     [Inject] private IJSRuntime JS { get; set; } = null!;
-    [Inject] private NavigationManager Navigation { get; set; } = null!;
     [Inject] private BrowserConversionService ConversionService { get; set; } = null!;
 
     private ConverterInterop? _interop;
+    private DotNetObjectReference<ConverterWorkspace>? _webMcpReference;
     private ConversionRoute ActiveRoute { get; set; } = ConversionRouteCatalog.Default;
     private SelectedDocument? SelectedFile { get; set; }
     private ConversionResult? Output { get; set; }
@@ -89,8 +89,21 @@ This **Markdown** becomes a browser preview or an editable Word document.
 
     protected override void OnInitialized() {
         _interop = new ConverterInterop(JS);
-        ActiveRoute = ConversionRouteCatalog.Find(GetQueryValue("route"));
+        ActiveRoute = ConversionRouteCatalog.Find(RouteId);
         TextInput = IsHtmlInputRoute(ActiveRoute) ? DefaultHtml : DefaultMarkdown;
+    }
+
+    [Parameter] public string? RouteId { get; set; }
+
+    protected override Task OnParametersSetAsync() => SelectRouteAsync(ConversionRouteCatalog.Find(RouteId));
+
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (!firstRender || _interop is null) {
+            return;
+        }
+
+        _webMcpReference = DotNetObjectReference.Create(this);
+        await _interop.RegisterWebMcpToolAsync(_webMcpReference);
     }
 
     private async Task SelectRouteAsync(ConversionRoute route) {
@@ -104,12 +117,6 @@ This **Markdown** becomes a browser preview or an editable Word document.
         GenerateDebugOverlay = false;
         IncludeDocumentContentInSupportBundle = false;
         Diagnostics.Clear();
-        var values = new Dictionary<string, object?> {
-            ["workspace"] = null,
-            ["tool"] = null,
-            ["route"] = route.Id
-        };
-        Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(values), replace: true);
     }
 
     private async Task HandleFileSelectedAsync(InputFileChangeEventArgs args) {
@@ -210,11 +217,65 @@ This **Markdown** becomes a browser preview or an editable Word document.
             Diagnostics.Add(new($"{fidelity} conversion", $"Created {Output.FileName} locally in {ElapsedLabel}. {Output.ProvenanceSummary}", tone));
         } catch (Exception ex) {
             stopwatch.Stop();
+            ElapsedMilliseconds = stopwatch.ElapsedMilliseconds;
             Output = null;
             Diagnostics.Add(new("Conversion failed", DescribeFailure(ex), "ocx-dot--bad"));
         } finally {
             IsBusy = false;
         }
+    }
+
+    [JSInvokable]
+    public async Task<WebMcpConversionResult> ConvertSelectedDocumentForWebMcpAsync() {
+        if (ActiveRoute.InputKind != ConversionInputKind.File) {
+            return new(false, ActiveRoute.Id, ActiveRoute.Source, ActiveRoute.Target, null, 0, 0, 0,
+                "This tool converts a file already selected in the visible workspace; choose a file-based route first.");
+        }
+        if (SelectedFile is null) {
+            Diagnostics.Clear();
+            Diagnostics.Add(new("Select a document", "Choose or load a sample document in the visible workspace before using the Website Tool.", "ocx-dot--warn"));
+            await InvokeAsync(StateHasChanged);
+            return new(false, ActiveRoute.Id, ActiveRoute.Source, ActiveRoute.Target, null, 0, 0, 0,
+                "No document is selected. Choose or load a sample document in the visible workspace, then try again.");
+        }
+        if (IsBusy) {
+            return new(false, ActiveRoute.Id, ActiveRoute.Source, ActiveRoute.Target, null, 0, 0, 0,
+                "A conversion is already running in this browser tab.");
+        }
+
+        await ConvertAsync();
+        await InvokeAsync(StateHasChanged);
+        if (Output is null) {
+            return new(false, ActiveRoute.Id, ActiveRoute.Source, ActiveRoute.Target, null, 0, 0, ElapsedMilliseconds,
+                BoundWebMcpText(Diagnostics.LastOrDefault()?.Message ?? "The browser-local conversion did not produce an output.", 300));
+        }
+
+        return new(
+            true,
+            ActiveRoute.Id,
+            ActiveRoute.Source,
+            ActiveRoute.Target,
+            BoundWebMcpText(Output.FileName, 180),
+            Output.Bytes.LongLength,
+            ReviewWarnings.Count,
+            ElapsedMilliseconds,
+            "Conversion completed locally. Review the visible preview, warnings, and download action before saving the result.");
+    }
+
+    private static string BoundWebMcpText(string? value, int maximumCharacters) {
+        string text = value?.Trim() ?? string.Empty;
+        if (text.Length <= maximumCharacters) {
+            return text;
+        }
+
+        int length = maximumCharacters;
+        if (length > 0 &&
+            char.IsHighSurrogate(text[length - 1]) &&
+            length < text.Length &&
+            char.IsLowSurrogate(text[length])) {
+            length--;
+        }
+        return text[..length];
     }
 
     private static bool IsHtmlInputRoute(ConversionRoute route) =>
@@ -286,19 +347,6 @@ This **Markdown** becomes a browser preview or an editable Word document.
         ElapsedMilliseconds = 0;
     }
 
-    private string GetQueryValue(string name) {
-        string query = new Uri(Navigation.Uri).Query;
-        if (query.Length <= 1) {
-            return string.Empty;
-        }
-        foreach (string pair in query[1..].Split('&', StringSplitOptions.RemoveEmptyEntries)) {
-            string[] parts = pair.Split('=', 2);
-            if (string.Equals(Uri.UnescapeDataString(parts[0]), name, StringComparison.OrdinalIgnoreCase)) {
-                return parts.Length == 2 ? Uri.UnescapeDataString(parts[1].Replace("+", " ")) : string.Empty;
-            }
-        }
-        return string.Empty;
-    }
 
     internal static string FormatBytes(long bytes) {
         string[] units = ["B", "KB", "MB", "GB"];
@@ -330,11 +378,13 @@ This **Markdown** becomes a browser preview or an editable Word document.
 
     public async ValueTask DisposeAsync() {
         if (_interop is not null) {
+            await _interop.UnregisterWebMcpToolAsync();
             await _interop.RevokeObjectUrlAsync(OutputUrl);
             await _interop.RevokeObjectUrlAsync(OutputReportUrl);
             await _interop.RevokeObjectUrlAsync(OutputOverlayUrl);
             await _interop.RevokeObjectUrlAsync(OutputSupportUrl);
             await _interop.DisposeAsync();
         }
+        _webMcpReference?.Dispose();
     }
 }

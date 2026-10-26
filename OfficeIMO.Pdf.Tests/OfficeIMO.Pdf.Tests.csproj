@@ -43,11 +43,14 @@
     <ProjectReference Include="..\OfficeIMO.OpenDocument.Odp.Pdf\OfficeIMO.OpenDocument.Odp.Pdf.csproj" />
     <ProjectReference Include="..\OfficeIMO.OpenDocument.Ods.Pdf\OfficeIMO.OpenDocument.Ods.Pdf.csproj" />
     <ProjectReference Include="..\OfficeIMO.OpenDocument.Odt.Pdf\OfficeIMO.OpenDocument.Odt.Pdf.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Ocr\OfficeIMO.Ocr.csproj" />
     <ProjectReference Include="..\OfficeIMO.Pdf\OfficeIMO.Pdf.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Pdf.Ocr\OfficeIMO.Pdf.Ocr.csproj" />
     <ProjectReference Include="..\OfficeIMO.Security\OfficeIMO.Security.csproj" />
     <ProjectReference Include="..\OfficeIMO.PowerPoint\OfficeIMO.PowerPoint.csproj" />
     <ProjectReference Include="..\OfficeIMO.PowerPoint.Pdf\OfficeIMO.PowerPoint.Pdf.csproj" />
     <ProjectReference Include="..\OfficeIMO.Reader.Core\OfficeIMO.Reader.Core.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Reader.Ocr\OfficeIMO.Reader.Ocr.csproj" />
     <ProjectReference Include="..\OfficeIMO.Reader.Pdf\OfficeIMO.Reader.Pdf.csproj" />
     <ProjectReference Include="..\OfficeIMO.Rtf.Pdf\OfficeIMO.Rtf.Pdf.csproj" />
     <ProjectReference Include="..\OfficeIMO.Word\OfficeIMO.Word.csproj" />
@@ -59,6 +62,7 @@
 
   <ItemGroup>
     <Compile Include="..\OfficeIMO.TestAssets\HtmlRenderingCorpus.cs" Link="Shared\HtmlRenderingCorpus.cs" />
+    <Compile Include="..\OfficeIMO.TestAssets\SparseAnnotationTestSource.cs" Link="Shared\SparseAnnotationTestSource.cs" />
     <Compile Include="..\OfficeIMO.TestAssets\VisualBaselineTestSupport.cs" Link="Shared\VisualBaselineTestSupport.cs" />
     <Compile Include="..\OfficeIMO.TestAssets\ManagedTextShapingTestAssets.cs" Link="Shared\ManagedTextShapingTestAssets.cs" />
   </ItemGroup>
@@ -69,6 +73,8 @@
 
   <ItemGroup>
     <None Include="..\OfficeIMO.TestAssets\Images\**" Link="Images\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\OfficeIMO.TestAssets\ScanQuality\phototest-skew.pdf" Link="ScanQuality\phototest-skew.pdf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\OfficeIMO.TestAssets\MultilingualLayout\*-native.pdf;..\OfficeIMO.TestAssets\MultilingualLayout\manifest.json" Link="MultilingualLayout\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net472'">

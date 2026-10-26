@@ -36,7 +36,7 @@ internal sealed partial class PdfDocumentReader {
         return PdfImageExportEngine.Export(
             token => {
                 token.ThrowIfCancellationRequested();
-                PdfReadDocument document = ReadDocument(readOptions);
+                PdfReadDocument document = _document.GetReadDocument(ResolveReadOptions(readOptions), token);
                 token.ThrowIfCancellationRequested();
                 return document;
             },
@@ -44,7 +44,7 @@ internal sealed partial class PdfDocumentReader {
             options?.Clone() ?? new PdfImageExportOptions(),
             _ => selection,
             initialDiagnostics: null,
-            cancellationToken);
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>Renders all pages or a caller-ordered selection through the managed batch renderer.</summary>

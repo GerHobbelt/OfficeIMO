@@ -29,9 +29,9 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportEntry result = Assert.Single(logical.SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false
-            }).Entries);
+            }).RequireSuccess().Report!.Entries);
 
         Assert.Equal(3, result.RowCount);
         using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
@@ -70,9 +70,9 @@ public partial class Excel {
         PdfExcelTableImportReport report = PdfExcelTableConverterExtensions.SaveTablesAsExcel(
             LoadTables(pdf),
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false
-            });
+            }).RequireSuccess().Report!;
 
         PdfExcelTableImportEntry result = Assert.Single(report.Entries);
         Assert.Equal(1, result.PageNumber);
@@ -131,9 +131,9 @@ public partial class Excel {
         PdfExcelTableImportReport report = PdfExcelTableConverterExtensions.SaveTablesAsExcel(
             LoadTables(pdf),
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false
-            });
+            }).RequireSuccess().Report!;
 
         PdfExcelTableImportEntry result = Assert.Single(report.Entries);
         using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
@@ -169,9 +169,9 @@ public partial class Excel {
         PdfExcelTableImportReport report = PdfExcelTableConverterExtensions.SaveTablesAsExcel(
             LoadTables(pdf),
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false
-            });
+            }).RequireSuccess().Report!;
 
         PdfExcelTableImportEntry result = Assert.Single(report.Entries);
         byte[] workbookBytes = workbook.ToArray();
@@ -200,10 +200,10 @@ public partial class Excel {
         PdfExcelTableConverterExtensions.SaveTablesAsExcel(
             LoadTables(pdf),
             textWorkbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false,
                 ConvertNumericColumns = false
-            });
+            }).RequireSuccess();
 
         using SpreadsheetDocument textSpreadsheet = SpreadsheetDocument.Open(new MemoryStream(textWorkbook.ToArray()), false);
         SheetData textSheetData = GetOnlySheetData(textSpreadsheet);
@@ -252,10 +252,10 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportReport report = logical.SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false,
                 SuppressRepeatedBodyHeaderRows = true
-            });
+            }).RequireSuccess().Report!;
 
         string tableDetails = string.Join("; ", logical.Pages.SelectMany((page, pageIndex) => page.Tables.Select((table, tableIndex) =>
             $"P{page.PageNumber}/T{tableIndex}: {table.YTop:0.##}-{table.YBottom:0.##}, {table.DetectionKind}, rows={table.Rows.Count}, headers={string.Join("|", PdfCore.PdfLogicalTableAnalysis.Extract(table).Columns)}")));
@@ -341,10 +341,10 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportReport report = logical.SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false,
                 ContinuationGeometryTolerancePoints = 8D
-            });
+            }).RequireSuccess().Report!;
 
         string details = string.Join("; ", logical.Pages.SelectMany((page, pageIndex) => page.Tables.Select((table, tableIndex) => {
             PdfCore.PdfLogicalTableData data = PdfCore.PdfLogicalTableAnalysis.Extract(table);
@@ -389,10 +389,10 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportEntry entry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false,
                 ContinuationGeometryTolerancePoints = 8D
-            }).Entries);
+            }).RequireSuccess().Report!.Entries);
 
         Assert.True(entry.SourceTableCount > 1);
         Assert.Equal(30, entry.RowCount);
@@ -402,7 +402,7 @@ public partial class Excel {
         using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
         object?[,] values = reader.GetSheet(entry.SheetName).ReadRange(entry.Range);
         Assert.Equal("Pending", values[30, 0]);
-        Assert.Equal("TeamA", values[30, 1]);
+        Assert.Equal("Team A", values[30, 1]);
     }
 
     [Fact]
@@ -418,10 +418,10 @@ public partial class Excel {
             })
             .Table(new[] {
                 new[] { "Active", "Completion" },
-                new[] { "Yes", "12.5%" },
-                new[] { "No", "100.0%" },
-                new[] { "Yes", "50.0%" },
-                new[] { "No", "00.0%" }
+                new[] { "true", "12.5%" },
+                new[] { "false", "100.0%" },
+                new[] { "true", "50.0%" },
+                new[] { "false", "00.0%" }
             }, style: new PdfCore.PdfTableStyle {
                 HeaderRowCount = 1,
                 ColumnWidthPoints = new List<double?> { 120, 120 }
@@ -443,7 +443,7 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportReport report = logical.SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions { AutoFitColumns = false });
+            new PdfTablesToExcelOptions { AutoFitColumns = false }).RequireSuccess().Report!;
 
         Assert.Equal(2, report.Entries.Count);
         Assert.Equal(new[] {
@@ -497,7 +497,7 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportReport report = LoadTables(pdf).SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions { AutoFitColumns = false });
+            new PdfTablesToExcelOptions { AutoFitColumns = false }).RequireSuccess().Report!;
 
         PdfExcelTableImportEntry entry = Assert.Single(report.Entries);
         Assert.Equal(PdfExcelTableColumnKind.Text, entry.ColumnKinds[0]);
@@ -523,7 +523,7 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportEntry entry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions { AutoFitColumns = false }).Entries);
+            new PdfTablesToExcelOptions { AutoFitColumns = false }).RequireSuccess().Report!.Entries);
 
         Assert.Equal(PdfExcelTableColumnKind.Time, entry.ColumnKinds[0]);
         Assert.Equal(PdfExcelTableColumnKind.Time, entry.ColumnKinds[1]);
@@ -556,7 +556,7 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportEntry entry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions { AutoFitColumns = false }).Entries);
+            new PdfTablesToExcelOptions { AutoFitColumns = false }).RequireSuccess().Report!.Entries);
 
         Assert.Equal(PdfExcelTableColumnKind.Text, entry.ColumnKinds[0]);
         using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
@@ -583,7 +583,7 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportEntry entry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions { AutoFitColumns = false }).Entries);
+            new PdfTablesToExcelOptions { AutoFitColumns = false }).RequireSuccess().Report!.Entries);
 
         Assert.Equal(PdfExcelTableColumnKind.Text, entry.ColumnKinds[0]);
         using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
@@ -611,12 +611,81 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportEntry entry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions { AutoFitColumns = false }).Entries);
+            new PdfTablesToExcelOptions { AutoFitColumns = false }).RequireSuccess().Report!.Entries);
 
         Assert.Equal(PdfExcelTableColumnKind.Text, entry.ColumnKinds[0]);
         using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
         object?[,] values = reader.GetSheet(entry.SheetName).ReadRange(entry.Range);
         Assert.Equal(value, values[1, 0]);
+    }
+
+    [Fact]
+    public void PdfTables_SaveTablesAsExcel_ConvertsLocalizedDatesOnlyWithAnExplicitDateTimeCulture() {
+        byte[] pdf = PdfCore.PdfDocument.Create()
+            .Table(new[] {
+                new[] { "Termin", "Etap" },
+                new[] { "31.12.2026", "Pierwszy" },
+                new[] { "01.01.2027", "Drugi" }
+            }, style: new PdfCore.PdfTableStyle {
+                HeaderRowCount = 1,
+                ColumnWidthPoints = new List<double?> { 120, 120 }
+            })
+            .ToBytes();
+
+        using var workbook = new MemoryStream();
+        PdfExcelTableImportEntry entry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
+            workbook,
+            new PdfTablesToExcelOptions {
+                AutoFitColumns = false,
+                DateTimeCulture = CultureInfo.GetCultureInfo("pl-PL")
+            }).RequireSuccess().Report!.Entries);
+
+        Assert.Equal(PdfExcelTableColumnKind.DateTime, entry.ColumnKinds[0]);
+        using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
+        object?[,] values = reader.GetSheet(entry.SheetName).ReadRange(entry.Range);
+        Assert.Equal(new DateTime(2026, 12, 31), Convert.ToDateTime(values[1, 0], CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void PdfTables_SaveTablesAsExcel_DoesNotConvertDottedDatesToGroupedIntegers() {
+        byte[] pdf = PdfCore.PdfDocument.Create()
+            .Table(new[] {
+                new[] { "Termin", "Etap" },
+                new[] { "31.12.2026", "Erste" },
+                new[] { "30.11.2026", "Zweite" }
+            }, style: new PdfCore.PdfTableStyle {
+                HeaderRowCount = 1,
+                ColumnWidthPoints = new List<double?> { 120, 120 }
+            })
+            .ToBytes();
+        var culture = CultureInfo.GetCultureInfo("de-DE");
+
+        using var textWorkbook = new MemoryStream();
+        PdfExcelTableImportEntry textEntry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
+            textWorkbook,
+            new PdfTablesToExcelOptions {
+                AutoFitColumns = false,
+                NumericCulture = culture
+            }).RequireSuccess().Report!.Entries);
+        Assert.Equal(PdfExcelTableColumnKind.Text, textEntry.ColumnKinds[0]);
+        using (ExcelDocumentReader reader = ExcelDocumentReader.Open(textWorkbook.ToArray())) {
+            object?[,] values = reader.GetSheet(textEntry.SheetName).ReadRange(textEntry.Range);
+            Assert.Equal("31.12.2026", values[1, 0]);
+        }
+
+        using var dateWorkbook = new MemoryStream();
+        PdfExcelTableImportEntry dateEntry = Assert.Single(LoadTables(pdf).SaveTablesAsExcel(
+            dateWorkbook,
+            new PdfTablesToExcelOptions {
+                AutoFitColumns = false,
+                NumericCulture = culture,
+                DateTimeCulture = culture
+            }).RequireSuccess().Report!.Entries);
+        Assert.Equal(PdfExcelTableColumnKind.DateTime, dateEntry.ColumnKinds[0]);
+        using (ExcelDocumentReader reader = ExcelDocumentReader.Open(dateWorkbook.ToArray())) {
+            object?[,] values = reader.GetSheet(dateEntry.SheetName).ReadRange(dateEntry.Range);
+            Assert.Equal(new DateTime(2026, 12, 31), Convert.ToDateTime(values[1, 0], CultureInfo.InvariantCulture));
+        }
     }
 
     [Fact]
@@ -644,7 +713,7 @@ public partial class Excel {
         using var workbook = new MemoryStream();
         PdfExcelTableImportReport report = logical.SaveTablesAsExcel(
             workbook,
-            new PdfExcelTableImportOptions { AutoFitColumns = false });
+            new PdfTablesToExcelOptions { AutoFitColumns = false }).RequireSuccess().Report!;
 
         IReadOnlyList<PdfCore.PdfTextSpan> spans = logical.Pages[0].TextBlocks.SelectMany(static block => block.Spans).ToArray();
         List<PdfCore.TextLayoutEngine.TextLine> lines = PdfCore.TextLayoutEngine.BuildLines(spans);
@@ -700,7 +769,9 @@ public partial class Excel {
     [InlineData("Metric", "FY2025")]
     [InlineData("Metric", "Q1")]
     [InlineData("Employee", "Salary")]
-    public void PdfTables_BandGroupingStopsAtANewEmphasizedHeader(string headerLeft, string headerRight) {
+    [InlineData("Kwartał", "Wartość")]
+    [InlineData("指標", "年度")]
+    public void PdfTables_BandGroupingStopsAtAStructurallySeparatedEmphasizedHeader(string headerLeft, string headerRight) {
         static PdfCore.TextLayoutEngine.TextLine Row(double y, bool emphasized, string left, string right) {
             string? baseFont = emphasized ? "Helvetica-Bold" : "Helvetica";
             var spans = new List<PdfCore.PdfTextSpan> {
@@ -714,9 +785,9 @@ public partial class Excel {
             new() { Row(700, true, "Code", "Qty") },
             new() { Row(680, false, "A-100", "12") },
             new() { Row(660, false, "B-200", "14") },
-            new() { Row(640, true, headerLeft, headerRight) },
-            new() { Row(620, false, "Alpha", "22") },
-            new() { Row(600, false, "Beta", "24") }
+            new() { Row(625, true, headerLeft, headerRight) },
+            new() { Row(605, false, "Alpha", "22") },
+            new() { Row(585, false, "Beta", "24") }
         };
 
         List<PdfCore.StructuredTable> tables = PdfCore.TableDetector.DetectTablesFromBands(bands);
@@ -818,7 +889,12 @@ public partial class Excel {
     [InlineData("C-300", "Closed")]
     [InlineData("Enabled", "Yes")]
     [InlineData("Central", "N/A")]
-    public void PdfTables_BandGroupingKeepsEmphasizedDataRows(string label, string value) {
+    [InlineData("2025", "North")]
+    [InlineData("4100", "North")]
+    [InlineData("Q1", "Metric")]
+    [InlineData("٢٠٢٥", "المنطقة")]
+    [InlineData("年度", "東京")]
+    public void PdfTables_BandGroupingKeepsStructurallyAmbiguousEmphasizedRows(string label, string value) {
         static PdfCore.TextLayoutEngine.TextLine Row(double y, bool emphasized, string left, string right) {
             string? baseFont = emphasized ? "Helvetica-Bold" : "Helvetica";
             var spans = new List<PdfCore.PdfTextSpan> {
@@ -974,9 +1050,9 @@ public partial class Excel {
         var bands = new List<List<PdfCore.TextLayoutEngine.TextLine>> {
             new() { new PdfCore.TextLayoutEngine.TextLine(700, 20, 220, "Code Qty", attachedHeaderSpans) },
             new() { Row(680, false, "A-100", "12") },
-            new() { Row(660, true, "Name", "Total") },
-            new() { Row(640, false, "Alpha", "22") },
-            new() { Row(620, false, "Beta", "24") }
+            new() { Row(645, true, "Name", "Total") },
+            new() { Row(625, false, "Alpha", "22") },
+            new() { Row(605, false, "Beta", "24") }
         };
 
         PdfCore.StructuredTable[] grouped = PdfCore.TableDetector.DetectTablesFromBands(bands)
@@ -1195,9 +1271,9 @@ public partial class Excel {
             new() { Row(700, true, "Code", "Qty") },
             new() { Row(680, false, "A-100", "12") },
             new() { Row(660, false, "B-200", "14") },
-            new() { Row(640, true, "Account", "Annual"), Row(632, true, "Name", "Total") },
-            new() { Row(610, false, "North", "1250") },
-            new() { Row(590, false, "South", "980") }
+            new() { Row(625, true, "Account", "Annual"), Row(617, true, "Name", "Total") },
+            new() { Row(595, false, "North", "1250") },
+            new() { Row(575, false, "South", "980") }
         };
 
         PdfCore.StructuredTable[] grouped = PdfCore.TableDetector.DetectTablesFromBands(bands)
@@ -1373,6 +1449,7 @@ public partial class Excel {
         Assert.Equal(new[] { "Code", "Qty" }, tables[0].Rows[0]);
         Assert.Equal(new[] { "Name", "Total" }, tables[1].Rows[0]);
         Assert.All(tables, table => Assert.Equal("positioned-cells-bounded", table.Kind));
+        Assert.Empty(tables[0].SourceRuns.Intersect(tables[1].SourceRuns));
     }
 
     [Fact]
@@ -1443,10 +1520,10 @@ public partial class Excel {
         PdfExcelTableImportReport report = PdfExcelTableConverterExtensions.SaveTablesAsExcel(
             LoadTables(pdf, PdfCore.PdfPageRange.From(1, 1)),
             workbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 MaxRows = 2,
                 AutoFitColumns = false
-            });
+            }).RequireSuccess().Report!;
 
         PdfExcelTableImportEntry result = Assert.Single(report.Entries);
         Assert.Equal(1, result.PageNumber);
@@ -1458,7 +1535,8 @@ public partial class Excel {
 
         using ExcelDocumentReader reader = ExcelDocumentReader.Open(workbook.ToArray());
         object?[,] values = reader.GetSheet(result.SheetName).ReadRange(result.Range);
-        Assert.Equal("Key", values[0, 0]);
+        Assert.Equal("Column1", values[0, 0]);
+        Assert.Equal("Column2", values[0, 1]);
         Assert.Equal("InvoiceId", values[1, 0]);
         Assert.Equal("Customer", values[2, 0]);
 
@@ -1466,9 +1544,9 @@ public partial class Excel {
         PdfExcelTableImportReport emptyReport = PdfExcelTableConverterExtensions.SaveTablesAsExcel(
             LoadTables(pdf, PdfCore.PdfPageRange.From(2, 2)),
             emptyWorkbook,
-            new PdfExcelTableImportOptions {
+            new PdfTablesToExcelOptions {
                 AutoFitColumns = false
-            });
+            }).RequireSuccess().Report!;
 
         Assert.Empty(emptyReport.Entries);
         using ExcelDocumentReader emptyReader = ExcelDocumentReader.Open(emptyWorkbook.ToArray());

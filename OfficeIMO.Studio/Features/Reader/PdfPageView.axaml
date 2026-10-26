@@ -1,0 +1,87 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+                          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                          xmlns:loc="using:OfficeIMO.Studio.Infrastructure.Localization"
+             xmlns:reader="using:OfficeIMO.Studio.Features.Reader"
+             x:Class="OfficeIMO.Studio.Features.Reader.PdfPageView"
+             x:DataType="reader:PdfPageViewModel">
+  <StackPanel Width="{Binding DisplayWidth}" Margin="24,14" HorizontalAlignment="Center" Spacing="8">
+    <Border Width="{Binding DisplayWidth}"
+            Height="{Binding DisplayHeight}"
+            Background="White"
+            BorderBrush="{DynamicResource StudioBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="2"
+            BoxShadow="0 5 18 0 #30000000">
+      <Grid>
+        <reader:PdfPageCanvas x:Name="PageCanvas"
+                              AutomationProperties.Name="{Binding PageLabel}"
+                              AutomationProperties.HelpText="{loc:Loc PdfPage.KeyboardHelp}"
+                              Scene="{Binding Scene}"
+                              SearchHighlights="{Binding SearchHighlights}"
+                              ActiveSearchHighlight="{Binding ActiveSearchHighlight}"
+                              EditorTool="{Binding EditorTool}"
+                              SelectedObject="{Binding SelectedObject}"
+                              CommentAnchorObjectNumber="{Binding CommentAnchorObjectNumber}"
+                              FormAnchorFieldName="{Binding FormAnchorFieldName}"
+                              SelectionMode="{Binding SelectionMode}"
+                              PendingRedactionArea="{Binding PendingRedactionArea}"
+                              FallbackImage="{Binding PageImage}"
+                              IsVisible="{Binding HasScene}" />
+
+        <Border IsVisible="{Binding IsNightMode}"
+                IsHitTestVisible="False"
+                Background="White"
+                RenderOptions.BitmapBlendingMode="Difference" />
+
+        <StackPanel IsVisible="{Binding IsRendering}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="10">
+          <ProgressBar Width="120" IsIndeterminate="True" />
+          <TextBlock Text="{loc:Loc PdfPage.RenderingPage}"
+                     Foreground="{DynamicResource StudioMutedTextBrush}"
+                     HorizontalAlignment="Center" />
+        </StackPanel>
+
+        <Border IsVisible="{Binding HasRenderError}"
+                Background="{DynamicResource StudioErrorSoftBrush}"
+                Padding="24"
+                Margin="24"
+                CornerRadius="8"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                MaxWidth="480">
+          <StackPanel Spacing="8">
+            <TextBlock Text="{loc:Loc PdfPage.ThisPageCouldNotBeRendered}"
+                       Foreground="{DynamicResource StudioErrorBrush}"
+                       FontWeight="SemiBold"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding RenderError}"
+                       Foreground="{DynamicResource StudioErrorBrush}"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid ColumnDefinitions="*,Auto,*" MinHeight="22">
+      <TextBlock Grid.Column="1"
+                 Text="{Binding PageLabel}"
+                 Foreground="{DynamicResource StudioMutedTextBrush}"
+                 FontSize="12" />
+      <Button Grid.Column="2" Classes="ghost" IsVisible="{Binding HasDiagnostics}"
+              Background="{DynamicResource StudioAccentSoftBrush}" Foreground="{DynamicResource StudioAccentBrush}"
+              CornerRadius="6" Padding="8,2" Margin="8,0,0,0" HorizontalAlignment="Left"
+              Content="{loc:Loc PdfPage.RenderingNotes}" AutomationProperties.Name="{loc:Loc PdfPage.RenderingNotes}">
+        <Button.Flyout>
+          <Flyout>
+            <ScrollViewer MaxHeight="280" MaxWidth="420" VerticalScrollBarVisibility="Auto">
+              <TextBlock Text="{Binding DiagnosticsDetails}" TextWrapping="Wrap" />
+            </ScrollViewer>
+          </Flyout>
+        </Button.Flyout>
+      </Button>
+    </Grid>
+  </StackPanel>
+</UserControl>

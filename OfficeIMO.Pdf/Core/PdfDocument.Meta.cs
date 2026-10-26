@@ -5,7 +5,7 @@ namespace OfficeIMO.Pdf;
 
 /// <summary>
 /// Root PDF lifecycle and capability container.
-/// Author content through <see cref="Create(System.Action{PdfCompose}, PdfOptions)"/> or <see cref="Compose"/>;
+/// Author content through <see cref="Create(System.Action{PdfDocumentBuilder}, PdfOptions)"/> or <see cref="Compose"/>;
 /// use the focused capability properties for reading and existing-document operations.
 /// </summary>
 public sealed partial class PdfDocument {
@@ -32,7 +32,6 @@ public sealed partial class PdfDocument {
         _reader = new PdfDocumentReader(this);
         Render = new PdfDocumentRenderer(this);
         Resources = new PdfDocumentResources(this);
-        Ocr = new PdfDocumentOcr(this);
         Text = new PdfDocumentTextEditor(this);
         Images = new PdfDocumentImageEditor(this);
         Stamp = new PdfDocumentStamper(this);
@@ -62,7 +61,18 @@ public sealed partial class PdfDocument {
     /// </summary>
     /// <param name="options">Page size, margins and default font options. When null, sensible defaults are used.</param>
     /// <returns>New <see cref="PdfDocument"/> instance.</returns>
-    internal static PdfDocument Create(PdfOptions? options = null) => new PdfDocument(options);
+    public static PdfDocument Create(PdfOptions? options = null) => new PdfDocument(options);
+
+    /// <summary>
+    /// Gets the content builder for ordinary incremental authoring. It uses the same document
+    /// flow as <see cref="Compose"/> and cannot add generated content to a loaded PDF.
+    /// </summary>
+    public PdfContentBuilder Content {
+        get {
+            EnsureGeneratedDocument();
+            return new PdfContentBuilder(this);
+        }
+    }
 
     /// <summary>
     /// Creates and composes a PDF document through the canonical authoring DSL.
@@ -70,7 +80,7 @@ public sealed partial class PdfDocument {
     /// <param name="compose">Document composition callback.</param>
     /// <param name="options">Optional document-wide rendering, catalog, security, and compliance options.</param>
     /// <returns>The composed <see cref="PdfDocument"/>.</returns>
-    public static PdfDocument Create(System.Action<PdfCompose> compose, PdfOptions? options = null) {
+    public static PdfDocument Create(System.Action<PdfDocumentBuilder> compose, PdfOptions? options = null) {
         Guard.NotNull(compose, nameof(compose));
         return new PdfDocument(options).Compose(compose);
     }
@@ -152,9 +162,6 @@ public sealed partial class PdfDocument {
 
     /// <summary>Bounded font and raw object-resource inspection.</summary>
     public PdfDocumentResources Resources { get; }
-
-    /// <summary>Caller-provider OCR enrichment over the canonical logical result.</summary>
-    public PdfDocumentOcr Ocr { get; }
 
     /// <summary>Existing-page text search and editing operations.</summary>
     public PdfDocumentTextEditor Text { get; }
@@ -246,7 +253,7 @@ public sealed partial class PdfDocument {
 
     internal void AddPageBlock(PageBlock pageBlock) { Guard.NotNull(pageBlock, nameof(pageBlock)); AddBlock(pageBlock); }
 
-    internal void AddComposedPage(System.Action<PdfPageCompose> configure) {
+    internal void AddComposedPage(System.Action<PdfPageBuilder> configure) {
         EnsureGeneratedDocument();
         Guard.NotNull(configure, nameof(configure));
         var snapshot = _options.Clone();
@@ -255,7 +262,7 @@ public sealed partial class PdfDocument {
         }
         var block = new PageBlock(snapshot);
         using (PushBlockScope(block.AddBlock)) {
-            var page = new PdfPageCompose(this, snapshot);
+            var page = new PdfPageBuilder(this, snapshot);
             configure(page);
         }
         AddPageBlock(block);

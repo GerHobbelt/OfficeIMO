@@ -145,13 +145,13 @@ public sealed class PdfLogicalReadingOrderTests {
             "1 0 0 1 230 150 Tm (Right bottom) Tj ET");
         PdfDocumentReadResult logical = PdfDocumentReadResult.Load(pdf);
 
-        using (OfficeIMO.Word.WordDocument word = logical.ToWordDocument(new PdfWordImportOptions { UseSharedPageReadingOrder = true })) {
+        using (OfficeIMO.Word.WordDocument word = logical.ToWordDocument(new PdfToWordOptions { UseSharedPageReadingOrder = true })) {
             using WordprocessingDocument package = WordprocessingDocument.Open(new MemoryStream(word.ToBytes()), false);
             string wordText = string.Join(" ", package.MainDocumentPart!.Document.Body!.Descendants<Text>().Select(static text => text.Text));
             AssertInOrder(wordText, "Left top", "Left bottom", "Right top", "Right bottom");
         }
 
-        string html = logical.ToHtml(new PdfHtmlSaveOptions {
+        string html = logical.ToHtml(new PdfToHtmlOptions {
             Profile = PdfHtmlProfile.Semantic,
             UseSharedPageReadingOrder = true
         });
@@ -183,13 +183,13 @@ public sealed class PdfLogicalReadingOrderTests {
             item => item.Kind == PdfLogicalReadingOrderKind.TextBlock &&
                 firstPage.TextBlocks[item.SourceIndex].Kind == PdfLogicalElementKind.Header);
 
-        using (OfficeIMO.Word.WordDocument word = logical.ToWordDocument(new PdfWordImportOptions { UseSharedPageReadingOrder = true })) {
+        using (OfficeIMO.Word.WordDocument word = logical.ToWordDocument(new PdfToWordOptions { UseSharedPageReadingOrder = true })) {
             using WordprocessingDocument package = WordprocessingDocument.Open(new MemoryStream(word.ToBytes()), false);
             string wordText = string.Join(" ", package.MainDocumentPart!.Document.Body!.Descendants<Text>().Select(static text => text.Text));
             AssertArtifactSequence(wordText, header, "First page body marker.", footer);
         }
 
-        string html = logical.ToHtml(new PdfHtmlSaveOptions {
+        string html = logical.ToHtml(new PdfToHtmlOptions {
             Profile = PdfHtmlProfile.Semantic,
             UseSharedPageReadingOrder = true
         });
@@ -273,18 +273,6 @@ public sealed class PdfLogicalReadingOrderTests {
         Assert.Contains("Follow-up", logical.Text, StringComparison.Ordinal);
         AssertInOrder(logical.Text, "Identity systems", "Content below the table");
         AssertInOrder(logical.Text, "Follow-up", "Content below the table");
-    }
-
-    [Fact]
-    public void TableOwnership_RecognizesCompleteWordSequencesWithinWrappedCellText() {
-        string longPrefix = string.Join(" ", Enumerable.Range(0, 180).Select(index => "prefix" + index.ToString(CultureInfo.InvariantCulture)));
-        string[] cells = { "this wrapped table cell contains multiple visual lines", longPrefix + " target wrapped suffix" };
-
-        Assert.True(PdfLogicalReadingOrderAnalysis.IsRepresentedByTableCell(cells, "this wrapped table cell"));
-        Assert.True(PdfLogicalReadingOrderAnalysis.IsRepresentedByTableCell(cells, "contains multiple visual lines"));
-        Assert.True(PdfLogicalReadingOrderAnalysis.IsRepresentedByTableCell(cells, "target wrapped suffix"));
-        Assert.False(PdfLogicalReadingOrderAnalysis.IsRepresentedByTableCell(cells, "wrapped table cell contains multiple visual" + "x"));
-        Assert.False(PdfLogicalReadingOrderAnalysis.IsRepresentedByTableCell(cells, "rap"));
     }
 
     private static void AssertInOrder(string value, params string[] markers) {

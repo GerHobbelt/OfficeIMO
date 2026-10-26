@@ -44,10 +44,22 @@ public sealed class PdfPageRegion {
     }
 }
 
-/// <summary>Style overrides for existing-page text editing. Null values preserve detected style when possible.</summary>
+/// <summary>Controls horizontal fitting for text added to or replacing a bounded page region.</summary>
+public enum PdfTextRegionWidthPolicy {
+    /// <summary>Preserves the resolved font size even when a line exceeds the region's baseline extent.</summary>
+    PreserveFontSize,
+    /// <summary>Rejects the edit before mutation when a line exceeds the region's baseline extent.</summary>
+    RejectOverflow,
+    /// <summary>Reduces the resolved font size to fit every line, subject to <see cref="PdfTextEditOptions.MinimumFontSize"/>.</summary>
+    ShrinkToFit
+}
+
+/// <summary>Style and bounded-layout overrides for existing-page text editing. Null style values preserve detected style when possible.</summary>
 public sealed class PdfTextEditOptions {
     private PdfStandardFont? _font;
     private double? _fontSize;
+    private double _minimumFontSize = 6D;
+    private PdfTextRegionWidthPolicy _regionWidthPolicy;
     private double? _rotationDegrees;
 
     /// <summary>Standard PDF font. Null preserves the detected family/style or uses Helvetica for new text.</summary>
@@ -80,11 +92,41 @@ public sealed class PdfTextEditOptions {
         }
     }
 
+    /// <summary>
+    /// Allows editing non-Type3 text painted with PDF rendering mode 3 while preserving that
+    /// invisible rendering mode. Other invisible or clipping text modes remain unsupported.
+    /// </summary>
+    public bool AllowTextRenderingMode3 { get; set; }
+
+    /// <summary>
+    /// Horizontal width policy for <c>Add(region, ...)</c> and <c>Replace(region, ...)</c>.
+    /// Match-based replacement keeps its existing local text-flow reflow behavior.
+    /// </summary>
+    public PdfTextRegionWidthPolicy RegionWidthPolicy {
+        get => _regionWidthPolicy;
+        set {
+            if (value is < PdfTextRegionWidthPolicy.PreserveFontSize or > PdfTextRegionWidthPolicy.ShrinkToFit) throw new ArgumentOutOfRangeException(nameof(RegionWidthPolicy), "Text region width policy is undefined.");
+            _regionWidthPolicy = value;
+        }
+    }
+
+    /// <summary>Smallest font size permitted when <see cref="RegionWidthPolicy"/> is <see cref="PdfTextRegionWidthPolicy.ShrinkToFit"/>.</summary>
+    public double MinimumFontSize {
+        get => _minimumFontSize;
+        set {
+            if (value <= 0D || double.IsNaN(value) || double.IsInfinity(value)) throw new ArgumentOutOfRangeException(nameof(MinimumFontSize), "Minimum text edit font size must be finite and greater than zero.");
+            _minimumFontSize = value;
+        }
+    }
+
     internal PdfTextEditOptions Snapshot() => new PdfTextEditOptions {
         Font = Font,
         FontSize = FontSize,
         Color = Color,
-        RotationDegrees = RotationDegrees
+        RotationDegrees = RotationDegrees,
+        AllowTextRenderingMode3 = AllowTextRenderingMode3,
+        RegionWidthPolicy = RegionWidthPolicy,
+        MinimumFontSize = MinimumFontSize
     };
 }
 
@@ -130,6 +172,8 @@ public sealed class PdfTextSearchOptions {
     public bool MatchCase { get; set; }
     /// <summary>Requires complete word boundaries around matches when true.</summary>
     public bool WholeWords { get; set; }
+    /// <summary>Includes non-Type3 invisible OCR-style text painted with PDF rendering mode 3.</summary>
+    public bool IncludeTextRenderingMode3 { get; set; }
     /// <summary>Optional one-based pages to search. Null or empty searches every page.</summary>
     public int[]? PageNumbers {
         get => _pageNumbers is null ? null : (int[])_pageNumbers.Clone();
@@ -140,13 +184,15 @@ public sealed class PdfTextSearchOptions {
         }
     }
 
-    internal PdfTextSearchOptions Snapshot() => new PdfTextSearchOptions { MatchCase = MatchCase, WholeWords = WholeWords, PageNumbers = PageNumbers };
+    internal PdfTextSearchOptions Snapshot() => new PdfTextSearchOptions { MatchCase = MatchCase, WholeWords = WholeWords, IncludeTextRenderingMode3 = IncludeTextRenderingMode3, PageNumbers = PageNumbers };
 }
 
 /// <summary>One located text occurrence in PDF user space.</summary>
 public sealed class PdfTextMatch {
-    internal PdfTextMatch(int pageNumber, string text, double x, double y, double width, double height, double fontSize, PdfStandardFont suggestedFont, string? sourceFont, PdfColor color, double rotationDegrees) {
+    internal PdfTextMatch(int pageNumber, string text, double x, double y, double width, double height, double fontSize, PdfStandardFont suggestedFont, string? sourceFont, PdfColor color, double rotationDegrees, PdfSelectionQuad visualBounds, bool usesTextRenderingMode3 = false) {
         PageNumber = pageNumber; Text = text; X = x; Y = y; Width = width; Height = height; FontSize = fontSize; SuggestedFont = suggestedFont; SourceFont = sourceFont; Color = color; RotationDegrees = rotationDegrees;
+        IsTextRenderingMode3 = usesTextRenderingMode3;
+        VisualBounds = visualBounds;
     }
 
     /// <summary>One-based page number.</summary>
@@ -171,6 +217,11 @@ public sealed class PdfTextMatch {
     public PdfColor Color { get; }
     /// <summary>Source baseline rotation.</summary>
     public double RotationDegrees { get; }
+    /// <summary>True when the occurrence includes OCR-style text painted with rendering mode 3.</summary>
+    public bool IsTextRenderingMode3 { get; }
+
+    /// <summary>Axis-aligned occurrence bounds in rendered top-left page coordinates, including the effective page box, page rotation, and user-unit scale.</summary>
+    public PdfSelectionQuad VisualBounds { get; }
 }
 
 /// <summary>Result of an existing-page text edit.</summary>

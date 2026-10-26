@@ -46,9 +46,7 @@ internal static class HtmlCssBoxStrokeParser {
         string widthValue = computed.GetValue("border-width").Trim();
         string styleValue = computed.GetValue("border-style").Trim();
         string colorValue = computed.GetValue("border-color").Trim();
-        var sides = Enumerable.Range(0, 4)
-            .Select(_ => new HtmlRenderBorderSide(3D, "none", currentColor))
-            .ToArray();
+
         borders = HtmlRenderBorderEdges.Uniform(0D, "none", currentColor);
         detail = string.Empty;
         bool declared = shorthand.Length > 0 || widthValue.Length > 0 || styleValue.Length > 0 || colorValue.Length > 0
@@ -56,6 +54,11 @@ internal static class HtmlCssBoxStrokeParser {
         if (!declared) {
             return true;
         }
+        var sides = new HtmlRenderBorderSide[4];
+        for (int index = 0; index < sides.Length; index++) sides[index] = new HtmlRenderBorderSide(3D, "none", currentColor);
+        var widthSources = new string[4];
+        var styleSources = new string[4];
+        var colorSources = new string[4];
         if (shorthand.Length > 0) {
             double width = 3D;
             string style = "none";
@@ -64,32 +67,49 @@ internal static class HtmlCssBoxStrokeParser {
                 detail = "border=" + shorthand;
                 return false;
             }
-            for (int index = 0; index < sides.Length; index++) sides[index] = new HtmlRenderBorderSide(width, style, color);
+            for (int index = 0; index < sides.Length; index++) {
+                sides[index] = new HtmlRenderBorderSide(width, style, color);
+                widthSources[index] = "border";
+                styleSources[index] = "border";
+                colorSources[index] = "border";
+            }
         }
         if (widthValue.Length > 0) {
             if (!TryParseWidths(widthValue, reference, fontSize, rootFontSize, viewportWidth, viewportHeight, containerWidth, containerHeight, out double[] widths)) {
                 detail = "border-width=" + widthValue;
                 return false;
             }
-            for (int index = 0; index < sides.Length; index++) sides[index] = sides[index].WithWidth(widths[index]);
+            for (int index = 0; index < sides.Length; index++) {
+                if (!CanOverride(computed, "border-width", widthSources[index])) continue;
+                sides[index] = sides[index].WithWidth(widths[index]);
+                widthSources[index] = "border-width";
+            }
         }
         if (styleValue.Length > 0) {
             if (!TryParseStyles(styleValue, out string[] styles)) {
                 detail = "border-style=" + styleValue;
                 return false;
             }
-            for (int index = 0; index < sides.Length; index++) sides[index] = sides[index].WithStyle(styles[index]);
+            for (int index = 0; index < sides.Length; index++) {
+                if (!CanOverride(computed, "border-style", styleSources[index])) continue;
+                sides[index] = sides[index].WithStyle(styles[index]);
+                styleSources[index] = "border-style";
+            }
         }
         if (colorValue.Length > 0) {
             if (!TryParseColors(colorValue, currentColor, out OfficeColor[] colors)) {
                 detail = "border-color=" + colorValue;
                 return false;
             }
-            for (int index = 0; index < sides.Length; index++) sides[index] = sides[index].WithColor(colors[index]);
+            for (int index = 0; index < sides.Length; index++) {
+                if (!CanOverride(computed, "border-color", colorSources[index])) continue;
+                sides[index] = sides[index].WithColor(colors[index]);
+                colorSources[index] = "border-color";
+            }
         }
 
         for (int index = 0; index < SideNames.Length; index++) {
-            string prefix = "border-" + SideNames[index];
+            string prefix = SideProperties[index * 4];
             string sideShorthand = computed.GetValue(prefix).Trim();
             if (sideShorthand.Length > 0) {
                 double width = 3D;
@@ -99,40 +119,66 @@ internal static class HtmlCssBoxStrokeParser {
                     detail = prefix + "=" + sideShorthand;
                     return false;
                 }
-                sides[index] = new HtmlRenderBorderSide(width, style, color);
+                if (CanOverride(computed, prefix, widthSources[index])) {
+                    sides[index] = sides[index].WithWidth(width);
+                    widthSources[index] = prefix;
+                }
+                if (CanOverride(computed, prefix, styleSources[index])) {
+                    sides[index] = sides[index].WithStyle(style);
+                    styleSources[index] = prefix;
+                }
+                if (CanOverride(computed, prefix, colorSources[index])) {
+                    sides[index] = sides[index].WithColor(color);
+                    colorSources[index] = prefix;
+                }
             }
 
-            string sideWidth = computed.GetValue(prefix + "-width").Trim();
+            string sideWidth = computed.GetValue(SideProperties[index * 4 + 1]).Trim();
             if (sideWidth.Length > 0) {
                 if (!TryStrokeWidth(sideWidth, reference, fontSize, rootFontSize, viewportWidth, viewportHeight, containerWidth, containerHeight, out double width)) {
                     detail = prefix + "-width=" + sideWidth;
                     return false;
                 }
-                sides[index] = sides[index].WithWidth(width);
+                string property = SideProperties[index * 4 + 1];
+                if (CanOverride(computed, property, widthSources[index])) {
+                    sides[index] = sides[index].WithWidth(width);
+                    widthSources[index] = property;
+                }
             }
 
-            string sideStyle = computed.GetValue(prefix + "-style").Trim();
+            string sideStyle = computed.GetValue(SideProperties[index * 4 + 2]).Trim();
             if (sideStyle.Length > 0) {
                 if (!TryStrokeStyle(sideStyle, out string parsedStyle)) {
                     detail = prefix + "-style=" + sideStyle;
                     return false;
                 }
-                sides[index] = sides[index].WithStyle(parsedStyle);
+                string property = SideProperties[index * 4 + 2];
+                if (CanOverride(computed, property, styleSources[index])) {
+                    sides[index] = sides[index].WithStyle(parsedStyle);
+                    styleSources[index] = property;
+                }
             }
 
-            string sideColor = computed.GetValue(prefix + "-color").Trim();
+            string sideColor = computed.GetValue(SideProperties[index * 4 + 3]).Trim();
             if (sideColor.Length > 0) {
                 if (!TryStrokeColor(sideColor, currentColor, out OfficeColor parsedColor)) {
                     detail = prefix + "-color=" + sideColor;
                     return false;
                 }
-                sides[index] = sides[index].WithColor(parsedColor);
+                string property = SideProperties[index * 4 + 3];
+                if (CanOverride(computed, property, colorSources[index])) {
+                    sides[index] = sides[index].WithColor(parsedColor);
+                    colorSources[index] = property;
+                }
             }
         }
 
         borders = new HtmlRenderBorderEdges(sides[0], sides[1], sides[2], sides[3]);
         return true;
     }
+
+    private static bool CanOverride(HtmlComputedStyle computed, string candidateProperty, string? existingProperty) =>
+        string.IsNullOrEmpty(existingProperty) || computed.ShouldOverride(candidateProperty, existingProperty!);
 
     internal static bool TryParseOutline(
         HtmlComputedStyle computed,
@@ -145,6 +191,7 @@ internal static class HtmlCssBoxStrokeParser {
         out double width,
         out string style,
         out OfficeColor color,
+        out bool invertColor,
         out double offset,
         out string detail) {
         string shorthand = computed.GetValue("outline").Trim();
@@ -155,12 +202,16 @@ internal static class HtmlCssBoxStrokeParser {
         width = 3D;
         style = "none";
         color = currentColor;
+        invertColor = false;
         offset = 0D;
         detail = string.Empty;
         bool declared = shorthand.Length > 0 || widthValue.Length > 0 || styleValue.Length > 0 || colorValue.Length > 0 || offsetValue.Length > 0;
         if (!declared) {
             width = 0D;
             return true;
+        }
+        if (shorthand.Length > 0) {
+            shorthand = ReplaceOutlineInvertColor(shorthand, ref invertColor);
         }
         if (shorthand.Length > 0 && !TryParseStrokeShorthand(shorthand, reference, fontSize, rootFontSize, viewportWidth, viewportHeight, currentColor, ref width, ref style, ref color)) {
             width = 0D;
@@ -177,7 +228,10 @@ internal static class HtmlCssBoxStrokeParser {
             detail = "outline-style=" + styleValue;
             return false;
         }
-        if (colorValue.Length > 0 && !TryStrokeColor(colorValue, currentColor, out color)) {
+        if (string.Equals(colorValue, "invert", StringComparison.OrdinalIgnoreCase)) {
+            color = currentColor;
+            invertColor = true;
+        } else if (colorValue.Length > 0 && !TryStrokeColor(colorValue, currentColor, out color)) {
             width = 0D;
             detail = "outline-color=" + colorValue;
             return false;
@@ -200,13 +254,26 @@ internal static class HtmlCssBoxStrokeParser {
         return TryParseStrokeShorthand(value, 100D, 16D, 16D, 100D, 100D, OfficeColor.Black, ref width, ref style, ref color);
     }
 
-    internal static bool IsSupportedOutlineSyntax(string value) => IsSupportedBorderSyntax(value);
+    internal static bool IsSupportedOutlineSyntax(string value) {
+        bool invert = false;
+        return IsSupportedBorderSyntax(ReplaceOutlineInvertColor(value, ref invert));
+    }
     internal static bool IsSupportedWidthSyntax(string value) => TryParseWidths(value, 100D, 16D, 16D, 100D, 100D, out _);
     internal static bool IsSupportedStyleSyntax(string value) => TryParseStyles(value, out _);
     internal static bool IsSupportedColorSyntax(string value) => TryParseColors(value, OfficeColor.Black, out _);
     internal static bool IsSupportedSideWidthSyntax(string value) => TryStrokeWidth(value, 100D, 16D, 16D, 100D, 100D, out _);
     internal static bool IsSupportedSideStyleSyntax(string value) => TryStrokeStyle(value, out _);
-    internal static bool IsSupportedSideColorSyntax(string value) => TryStrokeColor(value, OfficeColor.Black, out _);
+    internal static bool IsSupportedSideColorSyntax(string value) =>
+        string.Equals(value.Trim(), "invert", StringComparison.OrdinalIgnoreCase)
+        || TryStrokeColor(value, OfficeColor.Black, out _);
+
+    private static string ReplaceOutlineInvertColor(string value, ref bool invertColor) {
+        IReadOnlyList<string> tokens = HtmlRenderCssValues.SplitWhitespace(value);
+        if (!tokens.Any(token => string.Equals(token, "invert", StringComparison.OrdinalIgnoreCase))) return value;
+        invertColor = true;
+        return string.Join(" ", tokens.Select(token =>
+            string.Equals(token, "invert", StringComparison.OrdinalIgnoreCase) ? "currentcolor" : token));
+    }
 
     private static bool TryParseStrokeShorthand(
         string value,
@@ -316,7 +383,8 @@ internal static class HtmlCssBoxStrokeParser {
 
     private static bool TryStrokeStyle(string value, out string style) {
         style = value.Trim().ToLowerInvariant();
-        return style == "none" || style == "hidden" || style == "solid" || style == "dashed" || style == "dotted" || style == "double";
+        return style == "none" || style == "hidden" || style == "solid" || style == "dashed" || style == "dotted" || style == "double"
+            || style == "groove" || style == "ridge" || style == "inset" || style == "outset";
     }
 
     private static bool TryStrokeColor(string value, OfficeColor currentColor, out OfficeColor color) {

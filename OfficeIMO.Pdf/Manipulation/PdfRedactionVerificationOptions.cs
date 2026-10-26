@@ -1,3 +1,5 @@
+using System.Threading;
+
 namespace OfficeIMO.Pdf;
 
 /// <summary>
@@ -27,7 +29,8 @@ public sealed class PdfRedactionVerificationOptions {
     public bool FailOnUndecodablePdfStreams { get; set; } = true;
 
     /// <summary>
-    /// True when every PDF stream must be inspectable even when decoded-stream marker checks or undecodable-stream failures were disabled.
+    /// True when every semantic PDF stream must be inspectable even when decoded-stream marker checks or undecodable-stream failures were disabled.
+    /// Opaque image-codec payloads are inspected through image placement and mutation evidence instead of generic stream decoding.
     /// Use this for plan-aware verification where image or annotation removal also requires fail-closed proof.
     /// </summary>
     public bool RequireCompleteStreamInspection { get; set; }
@@ -38,7 +41,13 @@ public sealed class PdfRedactionVerificationOptions {
     /// <summary>Render every page through the managed renderer and fail when a page cannot produce output.</summary>
     public bool CheckManagedRendering { get; set; }
 
-    /// <summary>Optional development-time external validators.</summary>
+    /// <summary>Cooperatively cancels parsing, marker inspection, managed rendering, and external validation boundaries.</summary>
+    public CancellationToken CancellationToken { get; set; }
+
+    /// <summary>
+    /// Optional independent validators. Implement <see cref="IPdfRedactionCancellationAwareExternalValidator"/>
+    /// when the validator starts a process or another potentially long-running operation.
+    /// </summary>
     public IList<IPdfRedactionExternalValidator> ExternalValidators => _externalValidators;
 
     /// <summary>Adds text markers that must be removed and returns this options object for fluent setup.</summary>

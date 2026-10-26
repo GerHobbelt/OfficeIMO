@@ -7,7 +7,245 @@ This guide contains version-to-version changes that require application code, pa
 - Use support matrices for current coverage and limits.
 - Use this guide when an upgrade no longer compiles or changes an existing workflow.
 
-OfficeIMO 3.3 contains intentional PDF API cleanup and moves Apple iWork destination projections into opt-in adapter packages. Upgrade every OfficeIMO package in an application to the same `3.3.x` version and perform a clean restore after changing versions.
+OfficeIMO 3.4 completes the document-lifecycle, conversion, and PDF API cleanup. Upgrade every OfficeIMO package in an application to the same `3.4.x` version and perform a clean restore after changing versions.
+
+## OfficeIMO 3.4: one document and conversion grammar
+
+### Rendering loss and gallery evidence
+
+Scanned PDF rendering no longer returns a blank successful page when a CCITT or
+JPEG 2000 image cannot be projected. Check `PdfPageRenderResult.Succeeded` and
+`Diagnostics`, or handle the rendering exception when using fail-fast rendering
+or OCR. Supply `PdfPageRenderOptions.ImageCodec` or `PdfOcrMergeOptions.ImageCodec`
+for supported JPEG 2000 images. OCR page diagnostics now retain rendering warnings;
+applications that present or count diagnostics should include that additional evidence.
+
+PDF warnings now retain the existing `OfficeConversionLossKind` classification
+used by upstream converters. Read `PdfConversionWarning.LossKind` for fidelity
+impact and `Severity` for diagnostic severity. The existing `HasLoss`,
+`RequireNoLoss()`, and PDF-to-image acceptance policies now use that classification,
+so an informational diagnostic describing an omission still counts as loss.
+The existing warning constructor keeps its severity-based defaults; the overload
+with `lossKind` preserves an upstream renderer's explicit classification.
+
+PDF-to-image exports from `PdfDocumentConversionResult` refresh diagnostics after
+serialization and retain loss reported by earlier source-conversion stages. Strict
+exports may therefore reject input that previously passed after dropping a warning.
+
+HTML gallery manifests use schema `1.1` with optional artifact `evidence` and an
+explicit `expectationStatus`. Update readers that reject unknown schema versions.
+The Markdown section previously labelled `Roundtrip Expectations` is now
+`Declared Expectations`; executed checks are attached to the artifact they inspect.
+
+### Document and conversion entry points
+
+OfficeIMO 3.4 deliberately breaks inconsistent convenience and diagnostic names so native documents, conversion adapters, and PDF operations follow the same rules:
+
+- `Parse(...)` and `Load(...)` return the native document model.
+- `ParseResult(...)` and `LoadResult(...)` return the model plus diagnostics or source evidence.
+- `To{TargetModel}(...)` returns the destination document model.
+- `To{TargetModel}Result(...)` returns the model plus a conversion report.
+- `To{Format}Bytes(...)` returns serialized bytes.
+- `SaveAs{Format}(...)` writes an artifact and throws on failure.
+- `SaveAs{Format}Result(...)` captures a structured failure instead of throwing.
+- Async I/O methods use the same name with `Async`; their `CancellationToken` is the final parameter.
+- Conversion and PDF-operation `Try...` members are reserved for the .NET
+  boolean/out pattern and no longer name structured result-returning operations.
+
+The shared zero-dependency contracts live in `OfficeIMO.Core`: `IOfficeResult`,
+`IOfficeResult<T>`, and `IOfficeConversionResult<TValue, TReport>`. Format-specific
+results retain their useful typed reports while exposing a common `Succeeded`,
+`Value`, and value-requirement vocabulary to generic applications and workflows.
+Concrete result types continue to expose their typed diagnostics, warnings, and
+exceptions.
+
+Markdown, RTF, AsciiDoc, and LaTeX now expose the same native lifecycle. For example:
+
+```csharp
+MarkdownDoc document = MarkdownDoc.Load("README.md");
+MarkdownParseResult parsed = MarkdownDoc.LoadResult("README.md");
+
+AsciiDocDocument manual = AsciiDocDocument.Parse(source);
+AsciiDocParseResult manualResult = AsciiDocDocument.ParseResult(source);
+
+LatexDocument article = await LatexDocument.LoadAsync(path, cancellationToken: cancellationToken);
+RtfReadResult richText = await RtfDocument.LoadResultAsync(path, cancellationToken: cancellationToken);
+```
+
+Forward PDF adapters use source-specific options and the same direct/result pairs:
+
+| OfficeIMO 3.3 | OfficeIMO 3.4 |
+| --- | --- |
+| `WordPdfSaveOptions` | `WordToPdfOptions` |
+| `ExcelPdfSaveOptions` | `ExcelToPdfOptions` |
+| `PowerPointPdfSaveOptions` | `PowerPointToPdfOptions` |
+| `MarkdownPdfSaveOptions` | `MarkdownToPdfOptions` |
+| `HtmlPdfSaveOptions` | `HtmlToPdfOptions` |
+| `RtfPdfSaveOptions` | `RtfToPdfOptions` |
+| `AsciiDocPdfSaveOptions` | `AsciiDocToPdfOptions` |
+| `LatexPdfSaveOptions` | `LatexToPdfOptions` |
+| `OneNotePdfSaveOptions` | `OneNoteToPdfOptions` |
+| `VisioPdfSaveOptions` | `VisioToPdfOptions` |
+| `ToPdf(...)` | `ToPdfBytes(...)` |
+| `ToPdfAsync(...)` | `ToPdfBytesAsync(...)` |
+| `TrySaveAsPdf(...)` | `SaveAsPdfResult(...)` |
+| `TrySaveAsPdfAsync(...)` | `SaveAsPdfResultAsync(...)` |
+
+The OneNote visual adapter follows the same grammar: replace `ToVisualPdf(...)`
+with `ToVisualPdfBytes(...)`. Its model, result, and save methods accept a final
+cancellation token, and `SaveAsVisualPdfResult[Async]` captures output failures
+while allowing cancellation to propagate.
+
+PDF conversion options use directional names in both directions:
+
+| Previous reverse options | Current options |
+| --- | --- |
+| `PdfWordImportOptions` | `PdfToWordOptions` |
+| `PdfPowerPointImportOptions` | `PdfToPowerPointOptions` |
+| `PdfExcelTableImportOptions` | `PdfTablesToExcelOptions` |
+| `PdfRtfImportOptions` | `PdfToRtfOptions` |
+| `PdfHtmlSaveOptions` | `PdfToHtmlOptions` |
+
+Pass `CancellationToken` as the final conversion or save argument in either
+direction, including synchronous methods. Options contain reusable configuration.
+Tokens propagate through supported reading, reconstruction, PDF layout, and output
+stages. Native OpenDocument and AsciiDoc/LaTeX source projections and synchronous
+native-format writers cannot interrupt an individual projection or write; use
+async output where available for cancellation during output. Cancellation throws
+`OperationCanceledException`, including from `SaveAsPdfResult`.
+The browser-capture bridge also accepts a final token in
+`ToPdfDocumentResult(...)`; synchronous PDF loading checks cancellation before
+and after the load, while `ToPdfDocumentResultAsync(...)` supports cancellation
+during asynchronous input.
+
+`OfficeDocumentPdfConverter.EmailToPdfBytes`, `EpubToPdfBytes`, and
+`VisioToPdfBytes` return `byte[]`. Use their `ToPdfDocumentResult` counterparts
+when the generated document and conversion report are needed.
+
+Reverse saves return `OfficeOutputResult<TReport>`. Read `Report` for typed
+fidelity evidence, `OutputPath` for a file destination, and `Succeeded` through
+`IOfficeOutputResult` or `IOfficeResult`. Ordinary saves still throw on failure;
+`OfficeOutputResult<TReport>.FromFailure` supports application-owned failure
+boundaries. `RequireNoLoss()` first requires successful output. `PdfSaveResult`
+implements the same output-status interface and enforces the same guard.
+
+PDF stream saves leave the caller's stream open. They overwrite, truncate, and
+rewind seekable streams after success; non-seekable streams receive output at the
+current position. Direct document saves, conversion-result saves, and source
+adapters use this same writer. Cancellation or a failed write can leave partial
+bytes in a caller-owned stream; file saves use the canonical file-commit path.
+
+PDF operations use the same direct/result distinction. `PdfDocument.Merge(...)`
+returns the merged document, while `PdfDocument.MergeResult(...)` returns
+`PdfMergeResult`; `document.MergeWithResult(...)` retains mutation-oriented
+wording. Production splitting is available through both
+`pdf.Pages.SplitForProduction(...)` and `pdf.Pages.SplitForProductionResult(...)`.
+Result-returning `Try...` members were renamed with a `Result` suffix throughout
+loading, saving, inspection, forms, attachments, security, manipulation, and
+rendering. Boolean/out methods such as `TryGet...(..., out value)` keep their
+names.
+
+The workflow layer projects every route from the canonical conversion catalog
+through `OfficeWorkflowCatalog.Routes`. Use `ExecutableRoutes` when a host needs
+only the routes implemented by its local workflow runner. Each route includes its
+extensions, owning package, representative API/result, support and fidelity
+contracts, browser/agent availability, evidence, known limits, and `CanExecute`.
+The fluent entry point infers a route only when the extension pair identifies one
+locally executable route; ambiguous pairs require `Via(routeId)`:
+
+```csharp
+OfficeWorkflowResult result = await OfficeWorkflow
+    .Convert("report.docx")
+    .To("report.pdf")
+    .WithProfile(OfficeWorkflowOutputProfile.PrintReady)
+    .OnConflict(OfficeWorkflowConflictPolicy.Replace)
+    .RunAsync(cancellationToken: cancellationToken);
+```
+
+## OfficeIMO 3.4: one PDF content builder
+
+PDF creation still starts at `PdfDocument.Create(...)`. The authoring model now
+uses one content builder at every flow boundary, builder names describe their
+roles, row widths are explicit, and document defaults are configured through
+`PdfOptions`.
+
+| OfficeIMO 3.3 | OfficeIMO 3.4 |
+| --- | --- |
+| `PdfCompose` | `PdfDocumentBuilder` |
+| `PdfPageCompose` | `PdfPageBuilder` |
+| `PdfItemCompose`, `PdfContentCompose`, `PdfColumnCompose`, `PdfElementCompose`, `PdfRowColumnCompose` | `PdfContentBuilder` |
+| `PdfRowCompose` | `PdfRowBuilder` |
+| `PdfHeaderCompose` / `PdfFooterCompose` | `PdfHeaderBuilder` / `PdfFooterBuilder` |
+| `PdfTextStyleCompose` | `PdfTextStyleBuilder` |
+| `PanelStyle` | `PdfPanelStyle` |
+| `row.Column(40, content => ...)` | `row.PercentColumn(40, content => ...)` |
+| `content.Container(content => ..., style)` | `content.Element(element => element...Content(content => ...))` |
+| `compose.Defaults(page => ...)` | `compose.Settings(options => ...)` |
+
+The content callback has one type at document, page, grouping, component, and
+row-column boundaries:
+
+```csharp
+PdfDocument.Create(document => document
+    .Settings(options => {
+        options.PageSize = PageSizes.A4;
+        options.Margins = PageMargins.Uniform(36);
+    })
+    .Content(content => content
+        .H1("Service report")
+        .Text("Ready")
+        .Row(row => row
+            .FixedColumn(72, cell => cell.Text("ID"))
+            .AutoColumn(cell => cell.Text("Owner"), maximum: 120)
+            .RelativeColumn(cell => cell.Text("Description")))));
+```
+
+For incremental authoring, create the document with options and add content through
+its document-owned builder. It uses the same operations as callback composition:
+
+```csharp
+var report = PdfDocument.Create(new PdfOptions());
+report.Content.H1("Service report");
+report.Content.Text("Ready");
+report.Save("report.pdf");
+```
+
+`Panel` now preserves headings, tables, rules, bookmarks, and fields through the
+same decorated container owner as `Element`. `PanelParagraph` adds one ordinary
+paragraph inside that container. Paragraph spacing and page-scoped defaults apply
+consistently. `KeepTogether` rejects content taller than a complete frame; set it
+to false to allow splitting. Vertical padding must leave room for content.
+`PdfSaveResult.RequireNoLoss()` also requires a successful save.
+
+Use `FixedColumn` for points, `AutoColumn` for measured content with optional
+bounds, `RelativeColumn` for a weighted share of remaining width, and
+`PercentColumn` for an explicit percentage. The general `Column` overload accepts
+a `PdfColumnWidth` value when sizing is computed or shared. Percentages are literal
+in every row: 30% and 20% leave half of the column area unassigned. Use relative
+weights 3 and 2 for proportional fill. Mixed rows assign only uncommitted width to
+relative columns. Committed widths that cannot fit fail during layout instead of
+overlapping adjacent content, and a mixed row with no positive width left for a
+relative column now fails instead of rendering a zero-width column. Automatic
+columns include panel text and horizontal padding in their preferred width.
+
+`Item(...)` and `Column(...)` are zero-cost logical grouping conveniences on
+`PdfContentBuilder`. `Element(...)` is the uniform visual and semantic envelope:
+configure its background, border, padding, width, alignment, keep rules, or tagged
+role, then provide the same `PdfContentBuilder` through `Content(...)`. An element
+without decorators or semantics is also a zero-cost group and can contain a page
+break. Layout blocks whose pagination contract cannot be nested directly inside a
+row fail during composition. Rows support decorated elements, block-preserving panels, semantic groups, static
+components, and static flow with capture or keep-together rules. Place page
+boundaries, sections, automatic multi-column layouts, layers, contextual or
+conditional flow, and nested rows outside row columns.
+
+`KeepTogether` and `KeepWithNext` now fail closed when the complete constrained
+content cannot be measured before rendering. Dynamic page callbacks, automatic
+multi-column flow, deferred tables, generated tables of contents, canvases, and
+explicit page boundaries should be moved outside that constraint. This replaces
+earlier best-effort behavior that could silently split a promised group.
+
+OfficeIMO 3.3 contains intentional PDF and OCR API cleanup and moves Apple iWork destination projections into opt-in adapter packages. Applications upgrading through 3.3 must also apply the following changes.
 
 Before restoring 3.3, remove any `PackageReference` or `ProjectReference` to `OfficeIMO.Word.Legacy` or `OfficeIMO.Excel.Legacy`. Their public namespaces and types now ship from `OfficeIMO.Word` and `OfficeIMO.Excel`; there are no separate 3.3 legacy packages. Do not retain an earlier preview package alongside the 3.3 main package because the duplicate fully qualified types can cause `CS0433` compile errors.
 
@@ -24,6 +262,53 @@ Before restoring 3.3, remove any `PackageReference` or `ProjectReference` to `Of
 Reading and conversion now have separate options. Keep package and projection limits in `IWorkReadOptions`; move `IWorkReadOptions.ImportMode` to `IWorkConversionOptions.Mode`, whose enum is `IWorkConversionMode`. The destination result types are `PagesToWordResult`, `NumbersToExcelResult`, and `KeynoteToPowerPointResult`, and the shared report is `IWorkConversionReport`. They use the common conversion vocabulary: `Value`, `Report`, `HasLoss`, `RequireValue()`, and `RequireNoLoss()`. Static path and stream conveniences remain available as `ConvertPagesToWord*`, `ConvertNumbersToExcel*`, and `ConvertKeynoteToPowerPoint*`.
 
 Applications that only use Word, Excel, or PowerPoint need no iWork package and no code change.
+
+## OfficeIMO 3.3: reusable OCR packages
+
+OCR contracts no longer belong to Reader, and PDF no longer owns a second provider interface. Applications can configure one `OfficeIMO.Ocr.IOcrEngine` and reuse it for Reader candidates, PDF pages, direct images, and future format integrations.
+
+Add only the integrations and providers the application uses:
+
+```powershell
+dotnet add package OfficeIMO.Ocr                 # contracts or a custom provider
+dotnet add package OfficeIMO.Reader.Ocr          # Reader candidate execution
+dotnet add package OfficeIMO.Pdf.Ocr             # PDF page OCR/searchable output
+dotnet add package OfficeIMO.Ocr.Process         # optional executable provider
+dotnet add package OfficeIMO.Ocr.Tesseract       # optional Tesseract provider
+```
+
+`OfficeIMO.Reader.Core`, `OfficeIMO.Reader.All`, and `OfficeIMO.Pdf` do not bring an OCR integration, process runner, Tesseract provider, native executable, language data, or cloud SDK transitively.
+
+| OfficeIMO 3.2 | OfficeIMO 3.3 |
+| --- | --- |
+| `OfficeIMO.Reader.IOfficeOcrEngine` | `OfficeIMO.Ocr.IOcrEngine` |
+| `DelegateOfficeOcrEngine` | `DelegateOcrEngine` |
+| `OfficeOcrEngineRequest` / `OfficeOcrEngineResult` | `OcrRequest` / `OcrResult` |
+| `OfficeOcrEngineCapabilities` | `OcrEngineCapabilities` |
+| `OfficeOcrTextSpan`, `OfficeOcrTextSpanLevel`, `OfficeOcrCoordinateUnit` | `OcrTextSpan`, `OcrTextSpanLevel`, `OcrCoordinateUnit` |
+| Reader-owned `OfficeDocumentRegion` in provider results | Format-neutral `OcrRegion` |
+| `ValueTask<OfficeOcrEngineResult> RecognizeAsync(...)` | `Task<OcrResult> RecognizeAsync(...)` |
+| `OfficeIMO.Reader.Ocr.Process` package and namespace | `OfficeIMO.Ocr.Process` |
+| `ProcessOfficeOcrEngine` / `ProcessOfficeOcrEngineOptions` | `ProcessOcrEngine` / `ProcessOcrEngineOptions` |
+| `OfficeIMO.Reader.Ocr.Tesseract` package and namespace | `OfficeIMO.Ocr.Tesseract` |
+| `OfficeOcr`, `OfficeOcrSession`, `OfficeOcrOptions` | `TesseractOcr`, `TesseractOcrSession`, `TesseractOcrSessionOptions` |
+| `OfficeOcrLanguage` / `OfficeOcrRuntimeEvidence` | `TesseractOcrLanguage` / `TesseractOcrRuntimeEvidence` |
+| `IPdfOcrProvider`, `PdfOcrRequest`, `PdfOcrResponse`, `PdfOcrWord` | Use `IOcrEngine`, `OcrRequest`, `OcrResult`, and `OcrTextSpan` directly |
+| `OfficeOcrEnginePdfProvider` | Removed; `OfficeIMO.Pdf.Ocr` accepts the configured engine directly |
+| `pdf.Ocr.ReadAsync(provider, options)` | `pdf.ReadWithOcrAsync(engine, options)` |
+| `pdf.Ocr.MakeSearchableAsync(provider, options)` | `pdf.MakeSearchableAsync(engine, options)` |
+
+Reader-specific candidate and asset objects are no longer passed to providers. `OcrRequest` exposes neutral payload, media type, file/source/candidate identifiers, candidate kind, page number, pixel dimensions, source region, language, and scalar provider options. `OcrResult.Diagnostics` now uses the neutral `OcrDiagnostic` type; `OfficeIMO.Reader.Ocr` maps those diagnostics into Reader results.
+
+Reader and PDF integrations invoke engines through `OcrEngineRunner.RecognizeAsync`. The runner applies a total per-call timeout and one process-wide per-instance gate when `SupportsConcurrentRequests` is `false`; a provider that ignores cancellation keeps that gate until its task settles. Custom integrations should use the runner too. Direct calls to `IOcrEngine.RecognizeAsync` are raw provider calls and do not receive shared serialization or timeout supervision.
+
+`OfficeDocumentOcrExecutionOptions` now separately bounds top-level text, total spans, aggregate span text/metadata, result metadata, provider diagnostic count/text, and provider diagnostic attribute count/text. `PdfOcrMergeOptions.ProviderTimeout` bounds each rendered-page call, while `MaxOcrSpansPerPage`, `MaxOcrHierarchyCharactersPerPage`, and `MaxProviderMetadataCharactersPerPage` bound provider-controlled collections, hierarchy identifiers, and provenance before PDF projection.
+
+The former all-in-one `OfficeOcrOptions` is intentionally split. Move Tesseract language, engine, language-data, and provisioning settings to `TesseractOcrSessionOptions`; pass PDF rendering and merge settings through `PdfOcrMergeOptions`. `OutputConflictPolicy` is no longer hidden in an OCR facade: call `PdfDocument.SaveAsync(...)` with the required `OfficeConversionFileConflictPolicy` after `MakeSearchableAsync(...)`. Direct image recognition is now `TesseractOcr.RecognizeFileAsync(...)` or `TesseractOcrSession.RecognizeAsync(...)`.
+
+The process protocol is intentionally incompatible with the Reader-owned version. Update bridges to request schema `officeimo.ocr.process-request`, response schema `officeimo.ocr.process-response`, and schema version `2`. The payload contains neutral request/result objects rather than Reader models.
+
+PDF OCR providers should return span bounds in pixels relative to the supplied raster, points relative to the request region, or normalized `0..1` coordinates. `OfficeIMO.Pdf.Ocr` projects each unit into cropped and rotated visual PDF points. Provider sequence and optional block/paragraph/line identifiers carry logical order; language settings are recognition configuration and are not structure-classification hints.
 
 ## OfficeIMO 3.3: one PDF load and semantic read contract
 
@@ -99,7 +384,7 @@ intentionally larger inputs.
 | `pdf.Read.RenderPages(...)` / `pdf.Read.Drawing(...)` | `pdf.Render.Pages(...)` / `pdf.Render.Drawing(...)` |
 | `pdf.Read.ExportImages(...)` | `pdf.Render.ExportImages(...)` |
 | `pdf.Read.LayoutDebugOverlay(...)` / `pdf.Read.RenderCapabilityDiagnostics(...)` | `pdf.Render.LayoutDebugOverlay(...)` / `pdf.Render.CapabilityDiagnostics(...)` |
-| `pdf.Read.OcrAsync(...)` | `pdf.Ocr.ReadAsync(...)` |
+| `pdf.Read.OcrAsync(...)` | Add `OfficeIMO.Pdf.Ocr`, then call `pdf.ReadWithOcrAsync(engine, options)` |
 | `pdf.Read.Attachments()` / `TryAttachments()` | `pdf.Attachments.Extract()` / `pdf.Attachments.TryExtract()`; metadata remains on `result.Attachments` |
 | `pdf.Read.JavaScripts()` | `pdf.JavaScript.List()` |
 | `pdf.Read.TryJavaScripts()` | Check `pdf.Preflight().Can(PdfPreflightCapability.ReadLogicalObjects)`, then call `pdf.JavaScript.List()` inside the application's existing exception or result boundary |
@@ -145,6 +430,134 @@ Page-local `page.Tables`, `page.Paragraphs`, `page.Headings`, and the other
 logical collections remain available. `Analyze()` continues to report PDF
 health, preflight, and rewrite safety; it does not build the semantic document
 model and is not an alternative to `Read()`.
+
+### Language-neutral PDF semantics and OCR hierarchy
+
+OCR reads now expose their canonical parsed result as
+`PdfOcrMergeResult.Document`; replace uses of `EnrichedDocument`. The accepted
+OCR evidence is always projected through the configured understanding stages.
+`PdfOcrMergeOptions.BuildEnrichedLogicalDocument` was removed because it could
+report accepted OCR words while returning a native-only logical model.
+
+OCR-specific structure switches and thresholds were also removed from
+`PdfOcrMergeOptions`: `DetectAlignedTables`, `MinimumAlignedTableRows`,
+`MinimumTableColumnGapPoints`, `TableColumnTolerancePoints`, and
+`MaxInferredTablesPerPage`. OCR now supplies normalized word, hierarchy,
+confidence, and visual-geometry evidence to the same bounded table,
+segmentation, reading-order, and semantic stages used for native PDF text.
+`PdfOcrMergeOptions.Selection` was replaced by
+`PdfOcrMergeOptions.ReadOptions.PageSelection`; configure the shared layout,
+profile, limits, and replaceable stages through this `PdfReadOptions` instance.
+OCR no longer owns a second public structure policy.
+
+`PdfUnderstandingWord` now accepts optional baseline `advance`, direct visual
+bounds, and `sourceSequence` so custom positioned-word stages can preserve
+geometry and provider order used by rotated, bidirectional, and OCR text. The
+source call remains optional-argument compatible, but assemblies compiled
+against the previous constructor must be rebuilt because the constructor
+signature changed.
+
+PDF structure inference no longer joins text fragments, detects captions,
+classifies table columns, or infers cross-page paragraph continuation from
+English word lists or letter casing. Positioned character advances, whitespace,
+alignment, typography, rules, tagged-PDF roles, and Unicode marker categories
+now supply that evidence. The semantic pipeline's regions also own the
+paragraph, heading, and list projection returned by `Read()`; a custom semantic
+stage is no longer reinterpreted by the older structured extractor afterward.
+`PdfLogicalParagraphContinuationEvidence.LowercaseContinuation` was removed
+because case is not continuation evidence. The old visible-hyphen heuristic was
+removed as well: replace `RejoinLineEndingHyphens`, `HyphenatedBreak`, and
+`RejoinedHyphenCount` with `RejoinSoftHyphens`, `SoftHyphenBreak`, and
+`RejoinedSoftHyphenCount`. Only an explicit U+00AD soft hyphen can now be
+removed; an ordinary visible `-` is always preserved.
+
+Visible line-ending hyphens are always preserved. Setting
+`PdfTextLayoutOptions.JoinSoftHyphensAcrossLines = true` rejoins only explicit
+soft hyphens, which are the unambiguous discretionary-break signal. Untagged
+words such as `Table` and `Figure` no longer
+prove that a line is a caption. A compact, typographically distinct line
+immediately adjacent to and aligned with a validated table can still be
+classified from layout evidence, while
+tagged-PDF or caller-supplied semantics remain authoritative.
+
+Table value profiling no longer treats localized yes/no words as Boolean or
+uses English column names to infer dates. `true` and `false` remain Boolean;
+other natural-language values remain text unless the application applies its
+own locale-aware domain mapping. The culture argument on
+`PdfLogicalTableValueAnalysis.Analyze(...)` was replaced by
+`PdfLogicalTableValueAnalysisOptions`, which separates `NumericCulture` from
+the optional `DateTimeCulture`. Date inference without `DateTimeCulture` is
+limited to unambiguous invariant forms; setting it enables localized date
+parsing for values that contain a four-digit year. Numeric fallback parsing
+now validates the complete cell instead of deleting unrelated letters around
+digits, and normalizes Unicode decimal digits plus equivalent decimal,
+grouping, sign, parenthesis, and percent characters. Period and comma roles
+follow `NumericCulture`, which defaults to invariant culture; digit counts are
+no longer used to guess which separator is decimal.
+
+`PdfExcelTableImportOptions.NumericCulture` now controls only numbers and
+percentages. Set both cultures to preserve the former single-culture behavior
+for localized Excel imports:
+
+```csharp
+var culture = CultureInfo.GetCultureInfo("de-DE");
+var options = new PdfExcelTableImportOptions {
+    NumericCulture = culture,
+    DateTimeCulture = culture
+};
+```
+
+Leaving `DateTimeCulture` null intentionally limits automatic date conversion
+to invariant year-first forms; localized numeric date shapes remain text and
+are never reinterpreted as grouped integers.
+
+`PdfLogicalTableStructure.IsKeyValueTable` and
+`PdfLogicalTableAnalysis.LooksLikeKeyValueTable(...)` were removed. A
+headerless two-column grid cannot be distinguished reliably from a key/value
+record by digit shape alone. Inspect `PdfLogicalTableStructure.SchemaKind`,
+`SchemaConfidence`, and `SchemaEvidence`; ambiguous untagged layouts now report
+`PdfLogicalTableSchemaKind.Unknown`, expose one empty column name per detected
+column, and retain every source row as data. A first row is promoted to
+`HeaderRow` only when tagged-PDF structure or distinct header typography
+supplies evidence. Numeric or otherwise typed body values never establish a
+header. Structurally established headers preserve duplicate, numeric, and empty
+cell text instead of rejecting valid source schemas.
+
+`ReaderChunkDiagnostics.FallbackTableColumnNameCount` was replaced by
+`UnnamedTableColumnCount`. The normalized JSON property is now
+`unnamedTableColumnCount`, and PDF document metadata uses
+`pdf-table-unnamed-column-count` with property name `UnnamedColumnCount`.
+HTML table export omits `<thead>` when schema is unknown; Markdown emits the
+empty header row required by Markdown table syntax without inventing labels.
+
+`OcrTextSpan` and `PdfRecognizedWord` can carry optional
+block, paragraph, and line identifiers. OCR adapters should preserve the
+provider's logical sequence and hierarchy, particularly for right-to-left and
+mixed-direction text. Line identifiers are scoped by their block and paragraph
+identifiers when those are supplied; providers do not need to manufacture one
+globally unique line string. Hierarchy identifiers longer than 256 characters
+are ignored rather than truncated or allowed to collide, and Reader execution
+reports `ocr-hierarchy-id-limit`. Geometry is used only when provider hierarchy
+is absent; hierarchy-free words are normalized into continuous visual runs,
+while provider-owned lines stay atomic. Both then pass through the canonical
+table, region, reading-order, and semantic stages.
+`reading-order.geometry-consistent` and `reading-order.geometry-conflict`
+evidence codes were removed because they scored every result against a
+top-to-bottom, left-to-right assumption without having writing-direction data.
+Use `PdfTextLayoutOptions.ReadingDirection` to select `Auto`, `LeftToRight`, or
+`RightToLeft`. `Auto` uses the first strong Unicode directional character and
+falls back to left-to-right geometry. Explicit direction controls native and
+hierarchy-free OCR word order, line order, and recursive column traversal.
+`PdfUnderstandingWord.SourceSequence` preserves source order where geometry is
+not enough. `PdfLogicalPage.Text` and searchable OCR output now use the same
+canonical semantic order as the document result rather than a separate
+left-to-right reconstruction.
+`PdfOcrMergeOptions.ConfidenceWhenUnavailable` now defaults to zero instead of
+treating missing confidence as certain. Set an explicit fallback only when the
+selected OCR provider's missing-confidence contract is known and trusted.
+Selecting an OCR language or script is still valid recognition configuration;
+it must not be used as a shortcut for table, list, paragraph, or caption
+classification.
 
 ## OfficeIMO 3.2: aggregate Reader legacy-format registrations
 
@@ -255,7 +668,7 @@ Type 3 glyph programs now enter `MaxContentNestingDepth` one level below the con
 
 `OfficeIMO.Reader.Pdf` document results now include conservative cross-page paragraph continuation evidence by default. This adds `officeimo.pdf.paragraph-continuations` to `CapabilitiesUsed` and may add `pdf.paragraph.continuation` metadata entries. Page-local text, Markdown, chunks, and source pages remain unchanged.
 
-Applications that persist or compare the complete normalized Reader envelope and require the previous metadata shape must set `ReaderPdfOptions.IncludeParagraphContinuationMetadata = false`. Applications that enable the metadata can configure inference through `ReaderPdfOptions.ParagraphContinuationOptions`; likely line-ending hyphens are preserved unless `RejoinLineEndingHyphens` is explicitly enabled.
+Applications that persist or compare the complete normalized Reader envelope and require the previous metadata shape must set `ReaderPdfOptions.IncludeParagraphContinuationMetadata = false`. Applications that enable the metadata can configure inference through `ReaderPdfOptions.ParagraphContinuationOptions`; visible line-ending hyphens are always preserved, while explicit soft hyphens can be removed by enabling `RejoinSoftHyphens`. The corresponding metadata names now use `RejoinedSoftHyphenCount` and `rejoinedSoftHyphenCount`, and the aggregate entry id is `pdf-paragraph-continuation-rejoined-soft-hyphen-count`.
 
 ## OfficeIMO 3.2: one PDF authoring and operation model
 
@@ -308,7 +721,7 @@ methods with calls to those engines.
 Applications that intentionally rely on the former permissive behavior for trusted files must opt in:
 
 ```csharp
-RtfReadResult result = RtfDocument.Load(
+RtfReadResult result = RtfDocument.LoadResult(
     "trusted-legacy.rtf",
     RtfReadOptions.CreateCompatibilityProfile());
 ```
@@ -320,7 +733,7 @@ Do not use the compatibility profile for uploads or other untrusted inputs. Loss
 LaTeX file and stream loading now rejects encoded input larger than 64 MiB before decoding, independently of the existing decoded-character limit. Applications that intentionally load larger trusted documents must raise or disable the byte limit explicitly:
 
 ```csharp
-LatexParseResult result = LatexDocument.Load(
+LatexParseResult result = LatexDocument.LoadResult(
     "trusted-large-document.tex",
     new LatexParseOptions { MaximumInputBytes = null });
 ```
@@ -355,7 +768,7 @@ output policy.
 | `ReaderPdfAssetPolicy` | `PdfProjectionAssetPolicy` |
 | `ReaderPdfLinkPolicy` | `PdfProjectionLinkPolicy` |
 | `ReaderPdfFormPolicy` | `PdfProjectionFormPolicy` |
-| Reader options passed through `VisioPdfSaveOptions` | `VisioDocumentProjectionOptions` for source projection and `PdfProjectionOptions` for PDF output |
+| Reader options passed through `VisioToPdfOptions` | `VisioDocumentProjectionOptions` for source projection and `PdfProjectionOptions` for PDF output |
 
 `OfficeIMO.Visio.Pdf` now depends only on `OfficeIMO.Core`, `OfficeIMO.Visio`,
 and `OfficeIMO.Pdf`; it no longer installs `OfficeIMO.Reader.Visio` or
@@ -946,14 +1359,14 @@ The common conversion grammar is:
 | --- | --- | --- |
 | Return a destination model | `To{TargetModel}` | `pdf.ToWordDocument()` |
 | Return a model plus diagnostics | `To{TargetModel}Result` | `pdf.ToWordDocumentResult()` |
-| Return serialized content | `To{Format}` | `word.ToPdf()` |
+| Return serialized content | `To{Format}` | `word.ToPdfBytes()` |
 | Write a converted artifact | `SaveAs{Format}` | `pdf.SaveAsPowerPoint(...)` |
 | Write asynchronously when the operation performs asynchronous I/O | `SaveAs{Format}Async` | `pdf.SaveAsRtfAsync(...)` |
 | Persist a document in its native format | `Save` / `SaveAsync` | `word.Save(...)` |
 | Recover a narrow feature | Name the feature | `pdf.SaveTablesAsExcel(...)` |
-| Configure forward PDF output | `{Source}PdfSaveOptions` | `WordPdfSaveOptions` |
-| Configure the shared writer inside direct save options | `PdfOptions` | `HtmlPdfSaveOptions.PdfOptions` |
-| Configure an intermediate conversion stage | `{Intermediate}Options` | `OneNotePdfSaveOptions.MarkdownOptions` |
+| Configure forward PDF output | `{Source}ToPdfOptions` | `WordToPdfOptions` |
+| Configure the shared writer inside direct save options | `PdfOptions` | `HtmlToPdfOptions.PdfOptions` |
+| Configure an intermediate conversion stage | `{Intermediate}Options` | `OneNoteToPdfOptions.MarkdownOptions` |
 | Configure reconstruction from PDF | `Pdf{Target}ImportOptions` | `PdfWordImportOptions` |
 | Report a general reverse conversion | `Pdf{Target}ConversionResult` | `PdfPowerPointConversionResult` |
 | Report narrow table recovery | `Pdf{Target}TableImportResult` | `PdfExcelTableImportResult` |
@@ -1153,7 +1566,7 @@ OpenDocument save methods now return `OdfSaveResult` directly. Replace the disca
 
 Reusable conversion options no longer retain operation state in members such as `LastSaveReport`, `LastSaveDiagnostics`, `ConversionReport`, or `Warnings`. Read that evidence from the returned result.
 
-The canonical forward PDF result method is `ToPdfDocumentResult()`. Reverse PDF adapters extend `PdfDocument` and `PdfDocumentReadResult` with destination-shaped result methods such as `ToWordDocumentResult()`, `ToPowerPointPresentationResult()`, and `ToRtfDocumentResult()`. `SaveAsPdf(...)` returns `PdfSaveResult` evidence across Word, Excel, PowerPoint, HTML, Markdown, and RTF adapters, while `ToPdf()` remains the encoded-byte convenience API. Opening a generated file in another application is an explicit application action, not part of saving.
+The canonical forward PDF result method is `ToPdfDocumentResult()`. Reverse PDF adapters extend `PdfDocument` and `PdfDocumentReadResult` with destination-shaped result methods such as `ToWordDocumentResult()`, `ToPowerPointPresentationResult()`, and `ToRtfDocumentResult()`. `SaveAsPdf(...)` returns `PdfSaveResult` evidence across the first-party forward PDF adapters available in that release, while `ToPdfBytes()` remains the encoded-byte convenience API. Opening a generated file in another application is an explicit application action, not part of saving.
 
 `VisioDocument.Load(path)` and `Load(stream)` now apply a 512 MiB default input
 limit before opening the package. For trusted documents that intentionally
@@ -1197,10 +1610,10 @@ stream overload.
 | phone compatibility properties | `OutlookContact.Phones` |
 | `TrackComments` | No replacement; use `TrackChanges` or `Settings.TrackRevisions` for revision tracking. |
 | `ToPdfResult()` | `ToPdfDocumentResult()` |
-| `HtmlPdfSaveOptions.DocumentOptions` | `HtmlPdfSaveOptions.PdfOptions` |
-| `AsciiDocPdfSaveOptions.PdfOptions` | `AsciiDocPdfSaveOptions.MarkdownOptions` |
-| `LatexPdfSaveOptions.PdfOptions` | `LatexPdfSaveOptions.MarkdownOptions` |
-| `OneNotePdfSaveOptions.PdfOptions` | `OneNotePdfSaveOptions.MarkdownOptions` |
+| `HtmlToPdfOptions.DocumentOptions` | `HtmlToPdfOptions.PdfOptions` |
+| `AsciiDocToPdfOptions.PdfOptions` | `AsciiDocToPdfOptions.MarkdownOptions` |
+| `LatexToPdfOptions.PdfOptions` | `LatexToPdfOptions.MarkdownOptions` |
+| `OneNoteToPdfOptions.PdfOptions` | `OneNoteToPdfOptions.MarkdownOptions` |
 | PDF `ToWordResult()` | `ToWordDocumentResult()` |
 | `PdfSaveResult.ConversionWarnings` | `Warnings` and `Report` |
 | `RtfDocument.ToMemoryStream()` | `ToStream()` |
@@ -1211,7 +1624,7 @@ stream overload.
 | `PdfImageExportOptions.MaxPages` | `MaximumOutputCount` or `ToImages().WithMaximumPages(...)` |
 | `EmailDocument.WriteToBytes()` | `EmailDocument.ToBytes()` |
 
-Format-spelling aliases such as `SaveToPdf`, `SaveAsBytesToPdf`, and generic `WriteToBytes` were removed. Use `SaveAsPdf(...)` for a destination and `ToPdf()` or `ToBytes()` for an in-memory result. Ambiguous `SaveImage` / `SaveAsImage` names were replaced by explicit encodings such as `SaveAsPng(...)`, or by `SaveAsImages(...)` for multi-page and multi-sheet output.
+Format-spelling aliases such as `SaveToPdf`, `SaveAsBytesToPdf`, and generic `WriteToBytes` were removed. Use `SaveAsPdf(...)` for a destination and `ToPdfBytes()` or `ToBytes()` for an in-memory result. Ambiguous `SaveImage` / `SaveAsImage` names were replaced by explicit encodings such as `SaveAsPng(...)`, or by `SaveAsImages(...)` for multi-page and multi-sheet output.
 
 Image export uses `OfficeImageExportResult` and `OfficeImageExportFormat` from the `OfficeIMO.Drawing` namespace supplied by `OfficeIMO.Core`. Replace the removed scale presets as follows:
 
@@ -1252,7 +1665,7 @@ Raw HTML is parsed once into `HtmlConversionDocument`. PDF, image, Word, Markdow
 
 Reader orchestration uses an immutable `OfficeDocumentReader` built from explicit typed handlers. Native packages retain parser ownership; Reader adapters project native models into `OfficeDocumentReadResult` and return diagnostics from the operation. Do not replace removed parser classes with another public Reader parser hierarchy.
 
-Markdown HTML and PDF options use the shared `MarkdownVisualTheme` through `Theme`; PDF-only overrides use `MarkdownPdfSaveOptions.Style` and `MarkdownPdfStyle.DocumentTheme`. Visio styling and package themes are separate contracts: `VisioStyleTheme` describes reusable diagram styling, while `VisioPackageTheme` represents theme data stored in a Visio package. Shared colors and hexadecimal formatting belong to `OfficeIMO.Drawing` rather than duplicate Word or Excel helpers.
+Markdown HTML and PDF options use the shared `MarkdownVisualTheme` through `Theme`; PDF-only overrides use `MarkdownToPdfOptions.Style` and `MarkdownPdfStyle.DocumentTheme`. Visio styling and package themes are separate contracts: `VisioStyleTheme` describes reusable diagram styling, while `VisioPackageTheme` represents theme data stored in a Visio package. Shared colors and hexadecimal formatting belong to `OfficeIMO.Drawing` rather than duplicate Word or Excel helpers.
 
 PDF adapters use `PdfResourcePolicy` instead of package-specific trust switches. Replace the removed switches as follows:
 
@@ -1264,7 +1677,7 @@ PDF adapters use `PdfResourcePolicy` instead of package-specific trust switches.
 
 Profiles configure output behavior but do not grant local-file, remote-resource, or host-font access.
 
-Word `IncludePageNumbers` and Excel `IncludeSheetHeadings` now default to `false`; set the corresponding option to `true` when synthetic visible page numbers or worksheet headings are required. PowerPoint no longer exposes `UseSharedVisualSnapshot`: full-slide PDF uses the native PDF renderer, while PNG, SVG, HTML review, and thumbnails use the shared visual snapshot. OneNote PDF conversion accepts one `OneNotePdfSaveOptions` object and returns semantic-projection diagnostics through `ToPdfDocumentResult()`.
+Word `IncludePageNumbers` and Excel `IncludeSheetHeadings` now default to `false`; set the corresponding option to `true` when synthetic visible page numbers or worksheet headings are required. PowerPoint no longer exposes `UseSharedVisualSnapshot`: full-slide PDF uses the native PDF renderer, while PNG, SVG, HTML review, and thumbnails use the shared visual snapshot. OneNote PDF conversion accepts one `OneNoteToPdfOptions` object and returns semantic-projection diagnostics through `ToPdfDocumentResult()`.
 
 ## Upgrade checklist
 

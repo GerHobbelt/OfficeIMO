@@ -5,19 +5,24 @@ namespace OfficeIMO.Pdf;
 
 internal static partial class PdfWriter {
     private sealed partial class LayoutContext {
+        private OfficeTransform _canvasEffectToPage = OfficeTransform.Identity;
+
         private void RenderCanvasEffect(PdfCanvasEffectItem item) {
-            if (item.Opacity >= 1D) {
+            if (item.Opacity >= 1D && item.BlendMode == OfficeBlendMode.Normal) {
                 OfficeTransform transform = ConvertTopLeftCanvasTransform(item.Transform, currentOpts.PageHeight);
                 RenderOpaqueEffectGroupInline(transform, () => RenderCanvasBlock(new PdfCanvasBlock(item.Items)));
                 return;
             }
 
-            RenderEffectGroup(item.Transform, item.Opacity, () => RenderCanvasBlock(new PdfCanvasBlock(item.Items)));
+            RenderEffectGroup(item.Transform, item.Opacity, item.BlendMode, () => RenderCanvasBlock(new PdfCanvasBlock(item.Items)));
         }
 
-        private void RenderEffectGroup(OfficeTransform topLeftPageTransform, double opacity, Action renderContent) {
+        private void RenderEffectGroup(OfficeTransform topLeftPageTransform, double opacity, Action renderContent) =>
+            RenderEffectGroup(topLeftPageTransform, opacity, OfficeBlendMode.Normal, renderContent);
+
+        private void RenderEffectGroup(OfficeTransform topLeftPageTransform, double opacity, OfficeBlendMode blendMode, Action renderContent) {
             OfficeTransform transform = ConvertTopLeftCanvasTransform(topLeftPageTransform, currentOpts.PageHeight);
-            if (opacity >= 1D &&
+            if (opacity >= 1D && blendMode == OfficeBlendMode.Normal &&
                 (currentOpts.TaggedStructureMode != PdfTaggedStructureMode.CatalogMarkers ||
                  _suppressCanvasAccessibilityWrappers ||
                  _suppressCanvasActualTextChildren)) {
@@ -32,13 +37,16 @@ internal static partial class PdfWriter {
             int highlightAnnotationStart = currentPage.HighlightAnnotations.Count;
             int imageStart = currentPage.Images.Count;
             int formFieldStart = currentPage.FormFields.Count;
-            string? opacityState = EnsureGraphicsState(opacity, opacity);
+            string? opacityState = EnsureGraphicsState(opacity, opacity, blendMode);
             int contentStart = sb.Length;
+            OfficeTransform previousEffectToPage = _canvasEffectToPage;
+            _canvasEffectToPage = transform.Then(previousEffectToPage);
             _canvasClipDepth++;
             try {
                 renderContent();
             } finally {
                 _canvasClipDepth--;
+                _canvasEffectToPage = previousEffectToPage;
             }
 
             string groupContent = sb.ToString(contentStart, sb.Length - contentStart);
@@ -81,11 +89,14 @@ internal static partial class PdfWriter {
             if (!transform.Equals(OfficeTransform.Identity)) {
                 content.TransformMatrix(transform);
             }
+            OfficeTransform previousEffectToPage = _canvasEffectToPage;
+            _canvasEffectToPage = transform.Then(previousEffectToPage);
             _canvasClipDepth++;
             try {
                 renderContent();
             } finally {
                 _canvasClipDepth--;
+                _canvasEffectToPage = previousEffectToPage;
                 new ContentStreamBuilder(sb).RestoreState();
                 if (artifactContent) {
                     sb.Append("EMC\n");
@@ -111,7 +122,9 @@ internal static partial class PdfWriter {
             bottom = 0D;
             right = currentOpts.PageWidth;
             top = currentOpts.PageHeight;
-            if (!transform.TryInvert(out OfficeTransform inverse)) return;
+            // A nested Form is clipped before its own and its ancestors' matrices are applied.
+            // Its local bounds must retain everything that the complete transform can expose.
+            if (!transform.Then(_canvasEffectToPage).TryInvert(out OfficeTransform inverse)) return;
 
             (left, bottom, right, top) = inverse.TransformRectangleBounds(
                 0D,

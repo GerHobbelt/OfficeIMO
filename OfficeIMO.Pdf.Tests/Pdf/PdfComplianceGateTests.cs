@@ -492,7 +492,10 @@ public class PdfComplianceGateTests {
     }
 
     private static PdfDocument CreateElectronicInvoiceDocument(PdfComplianceProfile profile) {
-        byte[] invoiceXml = CreateElectronicInvoiceXml();
+        // Exercise preservation-based editing in the same artifacts sent to external invoice validators.
+        byte[] invoiceXml = PdfCiiInvoiceDocument.Load(CreateElectronicInvoiceXml())
+            .WithIssueDate(new DateTime(2026, 6, 4))
+            .ToBytes();
         return PdfDocument.Create(CreateEinvoiceOptions(profile, invoiceXml))
             .Meta(title: "OfficeIMO " + (profile == PdfComplianceProfile.FacturX ? "Factur-X" : "ZUGFeRD") + " Invoice", author: "OfficeIMO")
             .Language("en-US")
@@ -636,12 +639,12 @@ public class PdfComplianceGateTests {
             </body>
             </html>
             """;
-        var options = new HtmlPdfSaveOptions {
+        var options = new HtmlToPdfOptions {
             DefaultFontFamily = "OfficeIMO Source Serif",
             FontFamily = new PdfEmbeddedFontFamily("OfficeIMO Source Serif", fontData),
             PdfOptions = CreatePdfUa1Options()
         };
-        return HtmlConversionDocument.Parse(html).ToPdf(options);
+        return HtmlConversionDocument.Parse(html).ToPdfBytes(options);
     }
 
     private static PdfDocument CreatePdfUa1Document() {

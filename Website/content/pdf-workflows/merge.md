@@ -8,7 +8,7 @@ meta.destination_format: "Merged PDF"
 meta.package: "OfficeIMO.Pdf"
 meta.package_url: "https://www.nuget.org/packages/OfficeIMO.Pdf"
 meta.runtime: "Browser-local WebAssembly or .NET"
-meta.primary_url: "/apps/officeimo-converter/?workspace=pdf&tool=merge"
+meta.primary_url: "/convert/?workspace=pdf&tool=merge"
 meta.primary_label: "Merge PDFs in the browser"
 meta.secondary_url: "/docs/pdf/operations/"
 meta.secondary_label: "Read the .NET guide"
@@ -37,7 +37,7 @@ using OfficeIMO.Pdf;
 PdfDocument first = PdfDocument.Load("cover.pdf");
 PdfDocument second = PdfDocument.Load("report.pdf");
 
-PdfMergeResult result = PdfDocument.MergeWithReport(
+PdfMergeResult result = PdfDocument.MergeResult(
     new PdfMergeOptions(),
     first,
     second);

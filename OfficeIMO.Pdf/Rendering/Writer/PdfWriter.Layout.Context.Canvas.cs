@@ -24,6 +24,12 @@ internal static partial class PdfWriter {
                     case PdfCanvasOutlineItem outline:
                         RenderCanvasOutline(outline);
                         break;
+                    case PdfCanvasNamedDestinationItem destination:
+                        RenderCanvasNamedDestination(destination);
+                        break;
+                    case PdfCanvasNamedDestinationLinkItem destinationLink:
+                        RenderCanvasNamedDestinationLink(destinationLink);
+                        break;
                     case PdfCanvasTextItem text:
                         RenderCanvasText(text);
                         break;
@@ -96,6 +102,24 @@ internal static partial class PdfWriter {
                     bookmarkCount);
             }
             sb.Append("EMC\n");
+        }
+
+        private void RenderCanvasNamedDestination(PdfCanvasNamedDestinationItem item) {
+            AddNamedDestinationName(item.Name, currentOpts.PageHeight - item.Y);
+        }
+
+        private void RenderCanvasNamedDestinationLink(PdfCanvasNamedDestinationLinkItem item) {
+            ValidateCanvasBox(item.X, item.Y, item.Width, item.Height, "Canvas named-destination link");
+            double topY = currentOpts.PageHeight - item.Y;
+            currentPage!.Annotations.Add(new LinkAnnotation {
+                X1 = item.X,
+                Y1 = topY - item.Height,
+                X2 = item.X + item.Width,
+                Y2 = topY,
+                DestinationName = item.DestinationName,
+                Contents = item.Contents
+            });
+            pageDirty = true;
         }
 
         private static void RemoveCanvasArtifactInteractions(
@@ -179,20 +203,40 @@ internal static partial class PdfWriter {
         }
 
         private void RenderCanvasSearchableText(PdfCanvasSearchableTextItem item) {
+            if (_suppressCanvasActualTextChildren) return;
             EnsurePage();
             PdfStandardFont font = ChooseNormal(currentOpts.DefaultFont);
             string fontResource = GetFontResourceName(font, null, font);
             double baselineY = currentOpts.PageHeight - item.Y - (item.UsesBounds ? item.Height : 0D);
-            double horizontalScaling = item.Width / (SpaceWidthEmFor(font) * item.Height) * 100D;
+            double baselineX = item.X, textWidth = item.Width, textHeight = item.Height;
+            double a = 1D, b = 0D, c = 0D, d = 1D;
+            if (item.Geometry is PdfSelectionQuad quad) {
+                double advanceX = quad.BottomRight.X - quad.BottomLeft.X, advanceY = quad.BottomRight.Y - quad.BottomLeft.Y;
+                double upX = quad.TopLeft.X - quad.BottomLeft.X, upY = quad.TopLeft.Y - quad.BottomLeft.Y;
+                textWidth = Math.Sqrt(advanceX * advanceX + advanceY * advanceY);
+                textHeight = Math.Sqrt(upX * upX + upY * upY);
+                Guard.Positive(textWidth, nameof(item)); Guard.Positive(textHeight, nameof(item));
+                a = advanceX / textWidth; b = -advanceY / textWidth;
+                c = upX / textHeight; d = -upY / textHeight;
+                baselineX = quad.BottomLeft.X; baselineY = currentOpts.PageHeight - quad.BottomLeft.Y;
+            }
+            // One anchor per Unicode scalar keeps reader spacing heuristics proportional
+            // to characters instead of presenting the entire word as one stretched space.
+            int anchorCount = 0;
+            for (int index = 0; index < item.Text.Length; index++, anchorCount++) {
+                if (char.IsHighSurrogate(item.Text[index]) && index + 1 < item.Text.Length &&
+                    char.IsLowSurrogate(item.Text[index + 1])) index++;
+            }
+            double horizontalScaling = textWidth / (SpaceWidthEmFor(font) * textHeight * anchorCount) * 100D;
             int? markedContentId = RegisterTextStructureElement("Span", _canvasStructureParentElement);
 
             var content = new ContentStreamBuilder(sb)
                 .SaveState()
                 .BeginText()
-                .Font(fontResource, item.Height)
+                .Font(fontResource, textHeight)
                 .HorizontalTextScaling(horizontalScaling)
                 .TextRenderingMode(3)
-                .TextMatrix(item.X, baselineY);
+                .TextMatrix(a, b, c, d, baselineX, baselineY);
             sb.Append("/Span << /ActualText ")
                 .Append(PdfSyntaxEscaper.TextString(item.Text));
             if (markedContentId.HasValue) {
@@ -200,7 +244,7 @@ internal static partial class PdfWriter {
                     .Append(markedContentId.Value.ToString(CultureInfo.InvariantCulture));
             }
             sb.Append(" >> BDC\n");
-            content.ShowText(EncodeTextShowCommand(" ", font, currentOpts), item.Height);
+            content.ShowText(EncodeActualTextAnchor(font, currentOpts, anchorCount), textHeight);
             sb.Append("EMC\n");
             content.EndText().RestoreState();
 
@@ -209,46 +253,15 @@ internal static partial class PdfWriter {
         }
 
         private void RenderCanvasActualText(PdfCanvasActualTextItem item) {
-            EnsurePage();
-            sb.Append("/Artifact BMC\n");
-            bool previousAccessibility = _suppressCanvasAccessibilityWrappers;
-            bool previousStructure = _suppressCanvasStructureRegistration;
-            bool previousActualTextChildren = _suppressCanvasActualTextChildren;
-            _suppressCanvasAccessibilityWrappers = true;
-            _suppressCanvasStructureRegistration = true;
-            _suppressCanvasActualTextChildren = true;
-            try {
+            if (_suppressCanvasActualTextChildren) {
                 RenderCanvasBlock(new PdfCanvasBlock(item.Items));
-            } finally {
-                _suppressCanvasAccessibilityWrappers = previousAccessibility;
-                _suppressCanvasStructureRegistration = previousStructure;
-                _suppressCanvasActualTextChildren = previousActualTextChildren;
+                return;
             }
-            sb.Append("EMC\n");
-
-            PdfStandardFont font = ChooseNormal(currentOpts.DefaultFont);
-            string fontResource = GetFontResourceName(font, null, font);
-            int? markedContentId = RegisterTextStructureElement("Span", _canvasStructureParentElement);
+            EnsurePage();
             double actualTextX = item.HasPosition ? item.X : 0D;
             double actualTextY = item.HasPosition ? currentOpts.PageHeight - item.Y : 0D;
-            var content = new ContentStreamBuilder(sb)
-                .SaveState()
-                .BeginText()
-                .Font(fontResource, 1D)
-                .TextRenderingMode(3)
-                .TextMatrix(actualTextX, actualTextY);
-            sb.Append("/Span << /ActualText ")
-                .Append(PdfSyntaxEscaper.TextString(item.Text));
-            if (markedContentId.HasValue) {
-                sb.Append(" /MCID ")
-                    .Append(markedContentId.Value.ToString(CultureInfo.InvariantCulture));
-            }
-            sb.Append(" >> BDC\n");
-            content.ShowText(EncodeTextShowCommand(" ", font, currentOpts), 1D);
-            sb.Append("EMC\n");
-            content.EndText().RestoreState();
-            MarkSimpleFont(font);
-            pageDirty = true;
+            RenderLogicalText(item.Text, actualTextX, actualTextY,
+                () => RenderCanvasBlock(new PdfCanvasBlock(item.Items)));
         }
 
         private void RenderCanvasStructure(PdfCanvasStructureItem item) {
@@ -303,7 +316,8 @@ internal static partial class PdfWriter {
             if (role == PdfCanvasStructureRole.TableRow) return "TR";
             if (role == PdfCanvasStructureRole.TableHeaderCell) return "TH";
             if (role == PdfCanvasStructureRole.TableCell) return "TD";
-            return "Caption";
+            if (role == PdfCanvasStructureRole.Caption) return "Caption";
+            return "Note";
         }
 
         private static string MapCanvasTableHeaderScope(PdfCanvasTableHeaderScope? scope) {
@@ -378,7 +392,7 @@ internal static partial class PdfWriter {
                 item.Width,
                 structureType: structureType,
                 markedContentId: markedContentId,
-                structurePage: currentPage);
+                structurePage: currentPage, suppressActualText: _suppressCanvasActualTextChildren);
             MarkRichFonts(item.Runs);
             DrawDebugCanvasItemBox(item.X, bottomY, item.Width, item.Height);
             pageDirty = true;
@@ -471,7 +485,7 @@ internal static partial class PdfWriter {
                     textWidth,
                     structureType: _suppressCanvasAccessibilityWrappers ? null : "P",
                     markedContentId: markedContentId,
-                    structurePage: currentPage);
+                    structurePage: currentPage, suppressActualText: _suppressCanvasActualTextChildren);
                 MarkRichFonts(item.Runs);
                 if (rotated && annotations.Count > 0) {
                     RotateCanvasLinkAnnotations(annotations, item.X, bottomY, item.Width, item.Height, item.RotationAngle);
@@ -545,6 +559,9 @@ internal static partial class PdfWriter {
             if (markedContent || style.Decorative) {
                 _suppressCanvasAccessibilityWrappers = true;
             }
+            OfficeTransform previousEffectToPage = _canvasEffectToPage;
+            if (rotated) _canvasEffectToPage = CreateCanvasRotationTransform(item.X, bottomY, item.Width, item.Height, item.RotationAngle)
+                .Then(previousEffectToPage);
             try {
                 double scaleX = item.Width / block.Drawing.Width;
                 double scaleY = item.Height / block.Drawing.Height;
@@ -557,6 +574,7 @@ internal static partial class PdfWriter {
                     DrawDrawingElements(block.Drawing, item.X, topY);
                 }
             } finally {
+                _canvasEffectToPage = previousEffectToPage;
                 _suppressCanvasAccessibilityWrappers = previousSuppressAccessibilityWrappers;
                 AppendDrawingMarkedContentEnd(markedContent);
             }

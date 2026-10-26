@@ -26,7 +26,9 @@ internal static partial class PdfWriter {
                 backgroundColor: run.BackgroundColor,
                 fontFamily: run.FontFamily,
                 underlineStyle: run.UnderlineStyle,
-                strikeStyle: run.StrikeStyle));
+                strikeStyle: run.StrikeStyle,
+                decorationColor: run.DecorationColor)
+                .WithFeatureSettings(run.FeatureSettings));
         }
 
         return stripped;
@@ -179,9 +181,6 @@ internal static partial class PdfWriter {
         return style?.GetItemSpacing(leading) ?? leading * 0.15D;
     }
 
-    private static PanelStyle ResolvePanelStyle(PanelParagraphBlock block, PdfOptions options) {
-        return block.Style ?? options.DefaultPanelStyleSnapshot ?? new PanelStyle();
-    }
 
     private static PdfHorizontalRuleStyle ResolveHorizontalRuleStyle(HorizontalRuleBlock block, PdfOptions options) {
         return block.Style ?? options.DefaultHorizontalRuleStyleSnapshot ?? new PdfHorizontalRuleStyle();

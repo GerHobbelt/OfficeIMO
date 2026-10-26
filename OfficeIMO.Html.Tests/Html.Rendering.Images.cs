@@ -11,6 +11,27 @@ namespace OfficeIMO.Tests;
 
 public sealed partial class HtmlRenderingTests {
     [Fact]
+    public void HtmlRender_InlineSvgReceivesHostDocumentCssAndCustomProperties() {
+        const string html = "<style>svg{--accent:#ff0000} svg .host-painted{fill:var(--accent);stroke:#0000ff;stroke-width:2}</style>"
+            + "<svg id='art' viewBox='0 0 20 10' style='width:40px;height:20px'>"
+            + "<rect class='host-painted' width='20' height='10'/></svg>";
+        var options = new HtmlRenderOptions {
+            ViewportWidth = 80D,
+            ViewportHeight = 40D,
+            Margins = HtmlRenderMargins.All(0D),
+            BackgroundColor = OfficeColor.Transparent
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
+        HtmlRenderDrawing drawing = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>());
+        OfficeDrawingShape shape = Assert.Single(drawing.Drawing.Shapes);
+
+        Assert.Equal(OfficeColor.Red, shape.Shape.FillColor);
+        Assert.Equal(OfficeColor.Blue, shape.Shape.StrokeColor);
+        Assert.Equal(2D, shape.Shape.StrokeWidth);
+    }
+
+    [Fact]
     public void HtmlImages_ImageOrientationIsConsistentAcrossManagedSceneAndCssOverride() {
         var source = new OfficeRasterImage(2, 1);
         source.SetPixel(0, 0, OfficeColor.Red);
@@ -160,15 +181,15 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderDrawing vector = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>(), visual => visual.Source == "img#vector");
         OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(rendered.Pages[0].CreateDrawing());
         string exportedSvg = Encoding.UTF8.GetString(HtmlConversionDocument.Parse(html).ExportImage(OfficeImageExportFormat.Svg, options).Bytes);
-        HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
-        pdfOptions = new HtmlPdfSaveOptions {
+        HtmlToPdfOptions pdfOptions = new HtmlToPdfOptions();
+        pdfOptions = new HtmlToPdfOptions {
             Mode = HtmlRenderMode.Paged,
             PageSize = new OfficePageSize(90D / HtmlRenderOptions.CssPixelsPerInch, 55D / HtmlRenderOptions.CssPixelsPerInch),
             HonorCssPageRules = false,
             Margins = HtmlRenderMargins.All(0D),
             BackgroundColor = OfficeColor.Transparent
         };
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
         string pdfText = string.Concat(PdfCore.PdfReadDocument.Open(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
 
         Assert.Equal(3, vector.Drawing.Shapes.Count);
@@ -206,7 +227,7 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
         string exportedSvg = HtmlConversionDocument.Parse(html).ToSvg(options);
         byte[] png = HtmlConversionDocument.Parse(html).ToPng(options);
-        var pdfOptions = new HtmlPdfSaveOptions(options);
+        var pdfOptions = new HtmlToPdfOptions(options);
         PdfCore.PdfDocumentConversionResult pdfResult = HtmlConversionDocument.Parse(html).ToPdfDocumentResult(pdfOptions);
         byte[] pdf = pdfResult.ToBytes();
         OfficeRasterImage pdfRaster = OfficeDrawingRasterRenderer.Render(
@@ -221,6 +242,149 @@ public sealed partial class HtmlRenderingTests {
         Assert.True(pdfRaster.GetPixel(60, 15).B > 180);
         Assert.Contains(pdfResult.Report.Warnings, warning => warning.Code == "HtmlPdfDrawingEffectRasterized");
         Assert.Contains(PdfCore.PdfImageExtractor.ExtractImages(pdf), image => image.IsImageFile && image.MimeType == "image/png");
+    }
+
+    [Fact]
+    public void HtmlImages_SvgDropShadowsRemainManagedVectorEffectsAcrossOutputs() {
+        const string svgSource = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'><defs>"
+            + "<filter id='shadow'><feDropShadow dx='2' dy='1' stdDeviation='1' flood-color='red' flood-opacity='.8'/></filter>"
+            + "</defs><rect x='2' y='2' width='4' height='4' fill='blue' filter='url(#shadow)'/></svg>";
+        string data = Convert.ToBase64String(Encoding.UTF8.GetBytes(svgSource));
+        string html = "<body style='margin:0'><img id='filtered-vector' src='data:image/svg+xml;base64," + data
+            + "' style='display:block;width:120px;height:100px'></body>";
+        var options = new HtmlRenderOptions {
+            ViewportWidth = 120D,
+            ViewportHeight = 100D,
+            Margins = HtmlRenderMargins.All(0D)
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
+        HtmlRenderDrawing visual = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>());
+        string exportedSvg = HtmlConversionDocument.Parse(html).ToSvg(options);
+        OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(visual.Drawing);
+        PdfCore.PdfDocumentConversionResult pdfResult = HtmlConversionDocument.Parse(html)
+            .ToPdfDocumentResult(new HtmlToPdfOptions(options));
+        byte[] pdf = pdfResult.ToBytes();
+
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code is HtmlRenderDiagnosticCodes.SvgContentUnsupported or HtmlRenderDiagnosticCodes.SvgRasterFallback);
+        Assert.Empty(visual.Drawing.Images);
+        Assert.Contains("fill=\"#FF0000\"", exportedSvg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#0000FF\"", exportedSvg, StringComparison.Ordinal);
+        Assert.True(raster.GetPixel(3, 3).B > 200, raster.GetPixel(3, 3).ToString());
+        Assert.True(raster.GetPixel(8, 5).R > raster.GetPixel(8, 5).B, raster.GetPixel(8, 5).ToString());
+        Assert.Empty(PdfCore.PdfImageExtractor.ExtractImages(pdf));
+        Assert.DoesNotContain(pdfResult.Report.Warnings, warning => warning.Code == "HtmlPdfDrawingEffectRasterized");
+    }
+
+    [Fact]
+    public void HtmlImages_InlineSvgUsesTheSharedVectorEngineAcrossOutputs() {
+        const string html = "<body style='margin:0'><svg aria-label='Inline vector proof' viewBox='0 0 12 10' "
+            + "style='display:block;width:120px;height:100px' xmlns='http://www.w3.org/2000/svg'><defs>"
+            + "<filter id='shadow'><feDropShadow dx='2' dy='1' stdDeviation='1' flood-color='red' flood-opacity='.8'/></filter>"
+            + "</defs><rect x='2' y='2' width='4' height='4' fill='blue' filter='url(#shadow)'/>"
+            + "<foreignObject x='1' y='7' width='10' height='2'><div xmlns='http://www.w3.org/1999/xhtml' "
+            + "style='font:1.5px/2px Arial;color:navy'>InlineForeign</div></foreignObject></svg></body>";
+        var options = new HtmlRenderOptions {
+            ViewportWidth = 120D,
+            ViewportHeight = 100D,
+            Margins = HtmlRenderMargins.All(0D)
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
+        HtmlRenderDrawing visual = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>());
+        OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(visual.Drawing);
+        string exportedSvg = HtmlConversionDocument.Parse(html).ToSvg(options);
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdfBytes(new HtmlToPdfOptions(options));
+        string extracted = string.Concat(PdfCore.PdfReadDocument.Open(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
+
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code is HtmlRenderDiagnosticCodes.SvgContentUnsupported or HtmlRenderDiagnosticCodes.SvgRasterFallback);
+        Assert.Empty(visual.Drawing.Images);
+        Assert.Contains("fill=\"#FF0000\"", exportedSvg, StringComparison.Ordinal);
+        Assert.Contains("fill=\"#0000FF\"", exportedSvg, StringComparison.Ordinal);
+        Assert.True(raster.GetPixel(3, 3).B > 200, raster.GetPixel(3, 3).ToString());
+        Assert.True(raster.GetPixel(8, 5).R > raster.GetPixel(8, 5).B, raster.GetPixel(8, 5).ToString());
+        Assert.Contains("InlineForeign", extracted, StringComparison.Ordinal);
+        Assert.Empty(PdfCore.PdfImageExtractor.ExtractImages(pdf));
+    }
+
+    [Fact]
+    public void HtmlImages_SvgForeignObjectUsesBoundedHtmlLayoutAndStaysSearchable() {
+        const string svgSource = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 12'>"
+            + "<foreignObject x='2' y='2' width='14' height='8'>"
+            + "<div xmlns='http://www.w3.org/1999/xhtml' style='box-sizing:border-box;width:14px;height:8px;background:lime;color:navy;font:6px/8px Arial'>FX</div>"
+            + "</foreignObject></svg>";
+        string data = Convert.ToBase64String(Encoding.UTF8.GetBytes(svgSource));
+        string html = "<body style='margin:0'><img id='foreign-html' src='data:image/svg+xml;base64," + data
+            + "' style='display:block;width:100px;height:60px'></body>";
+        var options = new HtmlRenderOptions {
+            ViewportWidth = 100D,
+            ViewportHeight = 60D,
+            Margins = HtmlRenderMargins.All(0D)
+        };
+
+        HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
+        HtmlRenderDrawing visual = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>());
+        OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(visual.Drawing);
+        string exportedSvg = HtmlConversionDocument.Parse(html).ToSvg(options);
+        byte[] pdf = HtmlConversionDocument.Parse(html).ToPdfBytes(new HtmlToPdfOptions(options));
+        string extracted = string.Concat(PdfCore.PdfReadDocument.Open(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
+
+        Assert.DoesNotContain(rendered.Diagnostics, diagnostic => diagnostic.Code is HtmlRenderDiagnosticCodes.SvgContentUnsupported or HtmlRenderDiagnosticCodes.SvgRasterFallback);
+        Assert.Empty(visual.Drawing.Images);
+        OfficeColor foreignBackground = raster.GetPixel(15, 9);
+        Assert.True(foreignBackground.G > 100 && foreignBackground.G > foreignBackground.R && foreignBackground.G > foreignBackground.B, foreignBackground.ToString());
+        Assert.Contains(">FX</text>", exportedSvg, StringComparison.Ordinal);
+        Assert.Equal("FX", extracted);
+        Assert.Empty(PdfCore.PdfImageExtractor.ExtractImages(pdf));
+        Assert.Equal(4, options.Clone().MaxSvgForeignObjectDepth);
+        Assert.Equal(1000, options.Clone().MaxSvgForeignObjectHtmlNodes);
+    }
+
+    [Fact]
+    public void HtmlImages_SvgForeignObjectDepthAndNodeLimitsAreValidated() {
+        var options = new HtmlRenderOptions { MaxSvgForeignObjectDepth = 0 };
+        Assert.Throws<ArgumentOutOfRangeException>(() => HtmlRenderTestDriver.Render("<p>x</p>", options));
+
+        options.MaxSvgForeignObjectDepth = 1;
+        options.MaxSvgForeignObjectHtmlNodes = 0;
+        Assert.Throws<ArgumentOutOfRangeException>(() => HtmlRenderTestDriver.Render("<p>x</p>", options));
+    }
+
+    [Fact]
+    public void HtmlImages_SvgForeignObjectRecursionAndDomWorkStayBounded() {
+        const string deepestSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 6'>"
+            + "<foreignObject width='8' height='6'><div xmlns='http://www.w3.org/1999/xhtml'>Deep</div></foreignObject></svg>";
+        string deepestData = Convert.ToBase64String(Encoding.UTF8.GetBytes(deepestSvg));
+        string outerSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 8'>"
+            + "<foreignObject width='10' height='8'><img xmlns='http://www.w3.org/1999/xhtml' src='data:image/svg+xml;base64,"
+            + deepestData + "' style='width:8px;height:6px'/></foreignObject></svg>";
+        string recursiveHtml = "<img src='data:image/svg+xml;base64,"
+            + Convert.ToBase64String(Encoding.UTF8.GetBytes(outerSvg)) + "'>";
+        var recursiveOptions = new HtmlRenderOptions {
+            ViewportWidth = 20D,
+            ViewportHeight = 20D,
+            Margins = HtmlRenderMargins.All(0D),
+            MaxSvgForeignObjectDepth = 1
+        };
+
+        HtmlRenderDocument recursive = HtmlRenderTestDriver.Render(recursiveHtml, recursiveOptions);
+        Assert.Contains(recursive.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.SvgContentUnsupported);
+
+        string manyNodes = string.Concat(Enumerable.Repeat("<span>x</span>", 20));
+        string nodeSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 10'>"
+            + "<foreignObject width='20' height='10'><div xmlns='http://www.w3.org/1999/xhtml'>"
+            + manyNodes + "</div></foreignObject></svg>";
+        string nodeHtml = "<img src='data:image/svg+xml;base64,"
+            + Convert.ToBase64String(Encoding.UTF8.GetBytes(nodeSvg)) + "'>";
+        var nodeOptions = new HtmlRenderOptions {
+            ViewportWidth = 20D,
+            ViewportHeight = 10D,
+            Margins = HtmlRenderMargins.All(0D),
+            MaxSvgForeignObjectHtmlNodes = 12
+        };
+
+        HtmlRenderDocument boundedNodes = HtmlRenderTestDriver.Render(nodeHtml, nodeOptions);
+        Assert.Contains(boundedNodes.Diagnostics, diagnostic => diagnostic.Code == HtmlRenderDiagnosticCodes.SvgContentUnsupported);
     }
 
     [Fact]
@@ -304,15 +468,15 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderDrawing visual = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderDrawing>(), item => item.Source == "img#paint-server");
         OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(rendered.Pages[0].CreateDrawing());
         string exportedSvg = Encoding.UTF8.GetString(HtmlConversionDocument.Parse(html).ExportImage(OfficeImageExportFormat.Svg, options).Bytes);
-        HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
-        pdfOptions = new HtmlPdfSaveOptions {
+        HtmlToPdfOptions pdfOptions = new HtmlToPdfOptions();
+        pdfOptions = new HtmlToPdfOptions {
             Mode = HtmlRenderMode.Paged,
             PageSize = new OfficePageSize(90D / HtmlRenderOptions.CssPixelsPerInch, 55D / HtmlRenderOptions.CssPixelsPerInch),
             HonorCssPageRules = false,
             Margins = HtmlRenderMargins.All(0D),
             BackgroundColor = OfficeColor.Transparent
         };
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
         string pdfText = string.Concat(PdfCore.PdfReadDocument.Open(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
 
         OfficeLinearGradient first = Assert.IsType<OfficeLinearGradient>(visual.Drawing.Shapes[0].Shape.FillGradient);
@@ -374,15 +538,15 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderImage image = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderImage>());
         OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(rendered.Pages[0].CreateDrawing());
         string svg = Encoding.UTF8.GetString(HtmlConversionDocument.Parse(html).ExportImage(OfficeImageExportFormat.Svg, options).Bytes);
-        HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
-        pdfOptions = new HtmlPdfSaveOptions {
+        HtmlToPdfOptions pdfOptions = new HtmlToPdfOptions();
+        pdfOptions = new HtmlToPdfOptions {
             Mode = HtmlRenderMode.Paged,
             PageSize = new OfficePageSize(60D / HtmlRenderOptions.CssPixelsPerInch, 55D / HtmlRenderOptions.CssPixelsPerInch),
             HonorCssPageRules = false,
             Margins = HtmlRenderMargins.All(0D),
             BackgroundColor = OfficeColor.Transparent
         };
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
         string pdfText = string.Concat(PdfCore.PdfReadDocument.Open(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
 
         Assert.Equal(0D, image.X, 3);
@@ -456,7 +620,7 @@ public sealed partial class HtmlRenderingTests {
             : CreateSinglePixelBmp(0x12, 0x34, 0x56);
         string html = "<img src='data:" + contentType + ";base64," + Convert.ToBase64String(bytes) + "' style='width:10px;height:10px'>";
 
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(new HtmlPdfSaveOptions());
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(new HtmlToPdfOptions());
         IReadOnlyList<PdfCore.PdfExtractedImage> images = PdfCore.PdfImageExtractor.ExtractImages(pdf);
 
         Assert.Contains(images, image => image.IsImageFile && image.MimeType == "image/png");
@@ -615,15 +779,15 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderText after = Assert.Single(flattened.OfType<HtmlRenderText>(), text => text.Text == "After");
         OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(rendered.Pages[0].CreateDrawing());
         string svg = Encoding.UTF8.GetString(HtmlConversionDocument.Parse(html).ExportImage(OfficeImageExportFormat.Svg, options).Bytes);
-        HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
-        pdfOptions = new HtmlPdfSaveOptions {
+        HtmlToPdfOptions pdfOptions = new HtmlToPdfOptions();
+        pdfOptions = new HtmlToPdfOptions {
             Mode = HtmlRenderMode.Paged,
             PageSize = new OfficePageSize(65D / HtmlRenderOptions.CssPixelsPerInch, 45D / HtmlRenderOptions.CssPixelsPerInch),
             HonorCssPageRules = false,
             Margins = HtmlRenderMargins.All(0D),
             BackgroundColor = OfficeColor.Transparent
         };
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
         string pdfText = string.Concat(PdfCore.PdfReadDocument.Open(pdf).ExtractText().Where(character => !char.IsWhiteSpace(character)));
 
         Assert.Equal(18D, clip.Width, 3);
@@ -662,9 +826,9 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
         IReadOnlyList<OfficeImageExportResult> pngPages = HtmlConversionDocument.Parse(html).ExportImages(OfficeImageExportFormat.Png, options);
         IReadOnlyList<OfficeImageExportResult> svgPages = HtmlConversionDocument.Parse(html).ExportImages(OfficeImageExportFormat.Svg, options);
-        HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
-        pdfOptions = new HtmlPdfSaveOptions(options);
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
+        HtmlToPdfOptions pdfOptions = new HtmlToPdfOptions();
+        pdfOptions = new HtmlToPdfOptions(options);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
 
         Assert.Equal(3, rendered.Pages.Count);
         Assert.All(rendered.Pages, page => {
@@ -702,9 +866,9 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderDocument rendered = HtmlRenderTestDriver.Render(HtmlConversionDocument.Parse(html), options);
         IReadOnlyList<OfficeImageExportResult> pngPages = HtmlConversionDocument.Parse(html).ExportImages(OfficeImageExportFormat.Png, options);
         IReadOnlyList<OfficeImageExportResult> svgPages = HtmlConversionDocument.Parse(html).ExportImages(OfficeImageExportFormat.Svg, options);
-        HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
-        pdfOptions = new HtmlPdfSaveOptions(options);
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
+        HtmlToPdfOptions pdfOptions = new HtmlToPdfOptions();
+        pdfOptions = new HtmlToPdfOptions(options);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
 
         Assert.Equal(3, rendered.Pages.Count);
         Assert.All(rendered.Pages, page => {
@@ -811,15 +975,15 @@ public sealed partial class HtmlRenderingTests {
         HtmlRenderPathClipGroup group = Assert.Single(rendered.Pages[0].Visuals.OfType<HtmlRenderPathClipGroup>(), item => item.Source == "div#rounded-background:background-image:clip");
         OfficeRasterImage raster = OfficeDrawingRasterRenderer.Render(rendered.Pages[0].CreateDrawing());
         string svg = Encoding.UTF8.GetString(HtmlConversionDocument.Parse(html).ExportImage(OfficeImageExportFormat.Svg, options).Bytes);
-        HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
-        pdfOptions = new HtmlPdfSaveOptions {
+        HtmlToPdfOptions pdfOptions = new HtmlToPdfOptions();
+        pdfOptions = new HtmlToPdfOptions {
             Mode = HtmlRenderMode.Paged,
             PageSize = new OfficePageSize(35D / HtmlRenderOptions.CssPixelsPerInch, 25D / HtmlRenderOptions.CssPixelsPerInch),
             HonorCssPageRules = false,
             Margins = HtmlRenderMargins.All(0D),
             BackgroundColor = OfficeColor.Transparent
         };
-        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
+        byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfBytes(pdfOptions);
 
         Assert.Equal(OfficeClipPathKind.Path, group.ClipPath.Kind);
         Assert.True(group.ClipPath.Commands.Count >= 10);

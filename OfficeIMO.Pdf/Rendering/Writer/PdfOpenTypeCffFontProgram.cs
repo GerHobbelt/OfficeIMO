@@ -180,12 +180,12 @@ internal sealed partial class PdfOpenTypeCffFontProgram {
         return ScaleMetric(_advanceWidths[glyphId], UnitsPerEm);
     }
 
-    public double MeasureTextWidth(string? text, double fontSize, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null, string? language = null) {
+    public double MeasureTextWidth(string? text, double fontSize, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null, string? language = null, OfficeTextFeatureSettings? featureSettings = null) {
         if (string.IsNullOrEmpty(text)) {
             return 0D;
         }
 
-        return ShapeText(text!, PdfTextShapingOptions.ForRendering(FontName, shapingMode, shapingProvider, language: language)).TotalAdvanceWidth1000 * fontSize / 1000D;
+        return ShapeText(text!, PdfTextShapingOptions.ForRendering(FontName, shapingMode, shapingProvider, language: language, featureSettings: featureSettings)).TotalAdvanceWidth1000 * fontSize / 1000D;
     }
 
     public string EncodeTextAsGlyphHex(string text, PdfTextShapingMode shapingMode = PdfTextShapingMode.UnicodeScalar, IOfficeTextShapingProvider? shapingProvider = null) {
@@ -237,7 +237,13 @@ internal sealed partial class PdfOpenTypeCffFontProgram {
             glyphs.Add(new PdfGlyphInfo(glyphId, scalar, scalarStart, GetGlyphWidth1000(glyphId)));
         }
 
-        return new PdfGlyphRun(glyphs);
+        // The scalar fallback does not perform bidirectional layout. Preserve the
+        // caller's logical string as ActualText so readers do not have to guess
+        // whether the emitted glyph order is logical or visual.
+        string? actualText = OfficeTextElements.ResolveBaseDirection(text) == OfficeTextDirection.RightToLeft
+            ? text
+            : null;
+        return new PdfGlyphRun(glyphs, Array.Empty<PdfTextEncodingDiagnostic>(), actualText);
     }
 
     public double GetAscender(double fontSize) =>

@@ -11,46 +11,51 @@ namespace OfficeIMO.Excel.Pdf {
         /// <summary>Imports logical PDF tables from an opened PDF into a new editable Excel document.</summary>
         public static ExcelDocument ImportTablesToExcelDocument(
             this PdfCore.PdfDocument document,
-            PdfExcelTableImportOptions? options = null) {
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
-            return ReadForExcel(document, options).ImportTablesToExcelDocument(options);
+            return ReadForExcel(document, options, cancellationToken).ImportTablesToExcelDocument(options, cancellationToken);
         }
 
         /// <summary>Imports logical PDF tables from an opened PDF into an editable Excel document plus an explicit table-scope report.</summary>
         public static PdfExcelTableImportResult ImportTablesToExcelDocumentResult(
             this PdfCore.PdfDocument document,
-            PdfExcelTableImportOptions? options = null) {
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
-            return ReadForExcel(document, options).ImportTablesToExcelDocumentResult(options);
+            return ReadForExcel(document, options, cancellationToken).ImportTablesToExcelDocumentResult(options, cancellationToken);
         }
 
         /// <summary>Imports logical PDF tables from an opened PDF into a new Excel workbook.</summary>
-        public static PdfExcelTableImportReport SaveTablesAsExcel(
+        public static OfficeOutputResult<PdfExcelTableImportReport> SaveTablesAsExcel(
             this PdfCore.PdfDocument document,
             string workbookPath,
-            PdfExcelTableImportOptions? options = null) {
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
-            return ReadForExcel(document, options).SaveTablesAsExcel(workbookPath, options);
+            return ReadForExcel(document, options, cancellationToken).SaveTablesAsExcel(workbookPath, options, cancellationToken);
         }
 
         /// <summary>Imports logical PDF tables from an opened PDF into a caller-owned workbook stream.</summary>
-        public static PdfExcelTableImportReport SaveTablesAsExcel(
+        public static OfficeOutputResult<PdfExcelTableImportReport> SaveTablesAsExcel(
             this PdfCore.PdfDocument document,
             Stream workbookStream,
-            PdfExcelTableImportOptions? options = null) {
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
-            return ReadForExcel(document, options).SaveTablesAsExcel(workbookStream, options);
+            return ReadForExcel(document, options, cancellationToken).SaveTablesAsExcel(workbookStream, options, cancellationToken);
         }
 
         /// <summary>Imports logical PDF tables from an opened PDF and asynchronously saves a new Excel workbook.</summary>
-        public static async Task<PdfExcelTableImportReport> SaveTablesAsExcelAsync(
+        public static async Task<OfficeOutputResult<PdfExcelTableImportReport>> SaveTablesAsExcelAsync(
             this PdfCore.PdfDocument document,
             string workbookPath,
-            PdfExcelTableImportOptions? options = null,
+            PdfTablesToExcelOptions? options = null,
             CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
-            PdfExcelTableImportOptions operation = (options ?? new PdfExcelTableImportOptions()).CloneForConversion();
-            using CancellationTokenSource? linked = LinkCancellationTokens(operation.CancellationToken, cancellationToken, out CancellationToken effectiveCancellationToken);
+            PdfTablesToExcelOptions operation = (options ?? new PdfTablesToExcelOptions()).CloneForConversion();
+            CancellationToken effectiveCancellationToken = cancellationToken;
             operation.CancellationToken = effectiveCancellationToken;
             return await ReadForExcel(document, operation, effectiveCancellationToken)
                 .SaveTablesAsExcelAsync(workbookPath, operation, effectiveCancellationToken)
@@ -58,14 +63,15 @@ namespace OfficeIMO.Excel.Pdf {
         }
 
         /// <summary>Imports logical PDF tables from an opened PDF and asynchronously saves to a caller-owned workbook stream.</summary>
-        public static async Task<PdfExcelTableImportReport> SaveTablesAsExcelAsync(
+        public static async Task<OfficeOutputResult<PdfExcelTableImportReport>> SaveTablesAsExcelAsync(
             this PdfCore.PdfDocument document,
             Stream workbookStream,
-            PdfExcelTableImportOptions? options = null,
+            PdfTablesToExcelOptions? options = null,
             CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
-            PdfExcelTableImportOptions operation = (options ?? new PdfExcelTableImportOptions()).CloneForConversion();
-            using CancellationTokenSource? linked = LinkCancellationTokens(operation.CancellationToken, cancellationToken, out CancellationToken effectiveCancellationToken);
+            PdfTablesToExcelOptions operation = (options ?? new PdfTablesToExcelOptions()).CloneForConversion();
+            CancellationToken effectiveCancellationToken = cancellationToken;
             operation.CancellationToken = effectiveCancellationToken;
             return await ReadForExcel(document, operation, effectiveCancellationToken)
                 .SaveTablesAsExcelAsync(workbookStream, operation, effectiveCancellationToken)
@@ -74,117 +80,117 @@ namespace OfficeIMO.Excel.Pdf {
 
         private static PdfCore.PdfDocumentReadResult ReadForExcel(
             PdfCore.PdfDocument document,
-            PdfExcelTableImportOptions? options,
+            PdfTablesToExcelOptions? options,
             CancellationToken cancellationToken = default) {
-            CancellationToken effectiveCancellationToken = cancellationToken.CanBeCanceled
-                ? cancellationToken
-                : options?.CancellationToken ?? default;
-            return document.Read(options?.ReadOptions, effectiveCancellationToken);
+            return document.Read(options?.ReadOptions, cancellationToken);
         }
 
         /// <summary>Imports logical PDF tables into a new Excel workbook at <paramref name="workbookPath"/>.</summary>
-        public static PdfExcelTableImportReport SaveTablesAsExcel(
+        public static OfficeOutputResult<PdfExcelTableImportReport> SaveTablesAsExcel(
             this PdfCore.PdfDocumentReadResult document,
             string workbookPath,
-            PdfExcelTableImportOptions? options = null) {
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
             if (string.IsNullOrWhiteSpace(workbookPath)) throw new ArgumentException("Workbook path cannot be empty.", nameof(workbookPath));
 
-            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(options);
+            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(options, cancellationToken);
             using (result.Value) {
+                cancellationToken.ThrowIfCancellationRequested();
                 result.Value.Save(workbookPath);
             }
-            return result.Report;
+            return OfficeOutputResult<PdfExcelTableImportReport>.FromSuccess(workbookPath, result.Report);
         }
 
         /// <summary>Imports logical PDF tables into an Excel workbook written to a caller-owned stream.</summary>
-        public static PdfExcelTableImportReport SaveTablesAsExcel(
+        public static OfficeOutputResult<PdfExcelTableImportReport> SaveTablesAsExcel(
             this PdfCore.PdfDocumentReadResult document,
             Stream workbookStream,
-            PdfExcelTableImportOptions? options = null) {
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
             if (workbookStream == null) throw new ArgumentNullException(nameof(workbookStream));
             if (!workbookStream.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(workbookStream));
 
-            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(options);
+            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(options, cancellationToken);
             using (result.Value) {
+                cancellationToken.ThrowIfCancellationRequested();
                 result.Value.Save(workbookStream);
             }
-            return result.Report;
+            return OfficeOutputResult<PdfExcelTableImportReport>.FromSuccess(null, result.Report);
         }
 
         /// <summary>Imports logical PDF tables into a new editable Excel document.</summary>
         public static ExcelDocument ImportTablesToExcelDocument(
             this PdfCore.PdfDocumentReadResult document,
-            PdfExcelTableImportOptions? options = null) => document.ImportTablesToExcelDocumentResult(options).Value;
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) => document.ImportTablesToExcelDocumentResult(options, cancellationToken).Value;
 
         /// <summary>Imports logical PDF tables into an editable Excel document plus an explicit table-scope report.</summary>
         public static PdfExcelTableImportResult ImportTablesToExcelDocumentResult(
             this PdfCore.PdfDocumentReadResult document,
-            PdfExcelTableImportOptions? options = null) {
+            PdfTablesToExcelOptions? options = null, System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
+            PdfTablesToExcelOptions operation = (options ?? new PdfTablesToExcelOptions()).CloneForConversion();
+            operation.CancellationToken = cancellationToken;
             ExcelDocument workbook = ExcelDocument.Create();
-            IReadOnlyList<PdfExcelTableImportEntry> entries = ImportTables(document, workbook, options ?? new PdfExcelTableImportOptions());
-            PdfCore.PdfTableExtractionScopeReport sourceScope = PdfCore.PdfLogicalTableAnalysis.AnalyzeExtractionScope(document);
-            return new PdfExcelTableImportResult(workbook, new PdfExcelTableImportReport(entries, sourceScope));
+            try {
+                IReadOnlyList<PdfExcelTableImportEntry> entries = ImportTables(document, workbook, operation);
+                PdfCore.PdfTableExtractionScopeReport sourceScope = PdfCore.PdfLogicalTableAnalysis.AnalyzeExtractionScope(document);
+                return new PdfExcelTableImportResult(workbook, new PdfExcelTableImportReport(entries, sourceScope));
+            } catch {
+                workbook.Dispose();
+                throw;
+            }
         }
 
         /// <summary>Asynchronously imports logical PDF tables into an Excel workbook written to a file.</summary>
-        public static async Task<PdfExcelTableImportReport> SaveTablesAsExcelAsync(
+        public static async Task<OfficeOutputResult<PdfExcelTableImportReport>> SaveTablesAsExcelAsync(
             this PdfCore.PdfDocumentReadResult document,
             string workbookPath,
-            PdfExcelTableImportOptions? options = null,
+            PdfTablesToExcelOptions? options = null,
             CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
             if (string.IsNullOrWhiteSpace(workbookPath)) throw new ArgumentException("Workbook path cannot be empty.", nameof(workbookPath));
-            PdfExcelTableImportOptions operation = (options ?? new PdfExcelTableImportOptions()).CloneForConversion();
-            using CancellationTokenSource? linked = LinkCancellationTokens(operation.CancellationToken, cancellationToken, out CancellationToken effectiveCancellationToken);
+            PdfTablesToExcelOptions operation = (options ?? new PdfTablesToExcelOptions()).CloneForConversion();
+            CancellationToken effectiveCancellationToken = cancellationToken;
             operation.CancellationToken = effectiveCancellationToken;
             operation.CancellationToken.ThrowIfCancellationRequested();
-            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(operation);
+            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(operation, cancellationToken);
             using (result.Value) {
                 await result.Value.SaveAsync(workbookPath, cancellationToken: operation.CancellationToken).ConfigureAwait(false);
             }
-            return result.Report;
+            return OfficeOutputResult<PdfExcelTableImportReport>.FromSuccess(workbookPath, result.Report);
         }
 
         /// <summary>Asynchronously imports logical PDF tables into an Excel workbook written to a caller-owned stream.</summary>
-        public static async Task<PdfExcelTableImportReport> SaveTablesAsExcelAsync(
+        public static async Task<OfficeOutputResult<PdfExcelTableImportReport>> SaveTablesAsExcelAsync(
             this PdfCore.PdfDocumentReadResult document,
             Stream workbookStream,
-            PdfExcelTableImportOptions? options = null,
+            PdfTablesToExcelOptions? options = null,
             CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
             if (document == null) throw new ArgumentNullException(nameof(document));
             if (workbookStream == null) throw new ArgumentNullException(nameof(workbookStream));
             if (!workbookStream.CanWrite) throw new ArgumentException("Destination stream must be writable.", nameof(workbookStream));
-            PdfExcelTableImportOptions operation = (options ?? new PdfExcelTableImportOptions()).CloneForConversion();
-            using CancellationTokenSource? linked = LinkCancellationTokens(operation.CancellationToken, cancellationToken, out CancellationToken effectiveCancellationToken);
+            PdfTablesToExcelOptions operation = (options ?? new PdfTablesToExcelOptions()).CloneForConversion();
+            CancellationToken effectiveCancellationToken = cancellationToken;
             operation.CancellationToken = effectiveCancellationToken;
             operation.CancellationToken.ThrowIfCancellationRequested();
-            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(operation);
+            PdfExcelTableImportResult result = document.ImportTablesToExcelDocumentResult(operation, cancellationToken);
             using (result.Value) {
                 await result.Value.SaveAsync(workbookStream, operation.CancellationToken).ConfigureAwait(false);
             }
-            return result.Report;
+            return OfficeOutputResult<PdfExcelTableImportReport>.FromSuccess(null, result.Report);
         }
 
-        private static CancellationTokenSource? LinkCancellationTokens(
-            CancellationToken optionsToken,
-            CancellationToken methodToken,
-            out CancellationToken effectiveToken) {
-            if (optionsToken.CanBeCanceled && methodToken.CanBeCanceled && optionsToken != methodToken) {
-                CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(optionsToken, methodToken);
-                effectiveToken = linked.Token;
-                return linked;
-            }
-            effectiveToken = methodToken.CanBeCanceled ? methodToken : optionsToken;
-            return null;
-        }
+
 
         private static IReadOnlyList<PdfExcelTableImportEntry> ImportTables(
             PdfCore.PdfDocumentReadResult document,
             ExcelDocument workbook,
-            PdfExcelTableImportOptions options) {
+            PdfTablesToExcelOptions options) {
             options.CancellationToken.ThrowIfCancellationRequested();
             IReadOnlyList<PdfCore.PdfLogicalTableContinuationGroup> tables = PdfCore.PdfLogicalTableContinuations.Group(
                 document,
@@ -258,7 +264,7 @@ namespace OfficeIMO.Excel.Pdf {
             }
         }
 
-        private static void AddEmptyWorkbookSheet(ExcelDocument workbook, PdfExcelTableImportOptions options) {
+        private static void AddEmptyWorkbookSheet(ExcelDocument workbook, PdfTablesToExcelOptions options) {
             ExcelSheet sheet = workbook.AddWorksheet(options.EmptyWorkbookSheetName, ExcelSheetNameValidationMode.Sanitize);
             sheet.CellValue(1, 1, "No PDF tables detected.");
         }
@@ -267,7 +273,7 @@ namespace OfficeIMO.Excel.Pdf {
             string tableName,
             IReadOnlyList<string> columns,
             IReadOnlyList<IReadOnlyList<string>> rows,
-            PdfExcelTableImportOptions options) {
+            PdfTablesToExcelOptions options) {
             var table = new DataTable(tableName) {
                 Locale = CultureInfo.InvariantCulture
             };
@@ -287,7 +293,7 @@ namespace OfficeIMO.Excel.Pdf {
                     IReadOnlyList<string> sourceRow = rows[rowIndex];
                     for (int columnIndex = 0; columnIndex < table.Columns.Count; columnIndex++) {
                         string value = columnIndex < sourceRow.Count ? sourceRow[columnIndex] : string.Empty;
-                        row[columnIndex] = ConvertValue(value, columnKinds[columnIndex], options.NumericCulture);
+                        row[columnIndex] = ConvertValue(value, columnKinds[columnIndex], options);
                     }
 
                     table.Rows.Add(row);
@@ -302,9 +308,15 @@ namespace OfficeIMO.Excel.Pdf {
         private static PdfExcelTableColumnKind[] DetectColumnKinds(
             IReadOnlyList<string> columns,
             IReadOnlyList<IReadOnlyList<string>> rows,
-            PdfExcelTableImportOptions options) {
+            PdfTablesToExcelOptions options) {
             IReadOnlyList<PdfCore.PdfLogicalTableValueProfile> profiles =
-                PdfCore.PdfLogicalTableValueAnalysis.Analyze(columns, rows, options.NumericCulture);
+                PdfCore.PdfLogicalTableValueAnalysis.Analyze(
+                    columns,
+                    rows,
+                    new PdfCore.PdfLogicalTableValueAnalysisOptions {
+                        NumericCulture = options.NumericCulture,
+                        DateTimeCulture = options.DateTimeCulture
+                    });
             var kinds = new PdfExcelTableColumnKind[profiles.Count];
             for (int columnIndex = 0; columnIndex < profiles.Count; columnIndex++) {
                 kinds[columnIndex] = profiles[columnIndex].Kind switch {
@@ -341,70 +353,20 @@ namespace OfficeIMO.Excel.Pdf {
             }
         }
 
-        private static object ConvertValue(string value, PdfExcelTableColumnKind kind, CultureInfo culture) {
+        private static object ConvertValue(
+            string value,
+            PdfExcelTableColumnKind kind,
+            PdfTablesToExcelOptions options) {
             if (kind == PdfExcelTableColumnKind.Text) return value;
             if (string.IsNullOrWhiteSpace(value)) return DBNull.Value;
             return kind switch {
-                PdfExcelTableColumnKind.Number when PdfCore.PdfLogicalTableAnalysis.TryParseNumericValue(value, culture, out decimal number) => number,
-                PdfExcelTableColumnKind.Percentage when TryParsePercentage(value, culture, out decimal percentage) => percentage,
-                PdfExcelTableColumnKind.Boolean when TryParseBoolean(value, out bool boolean) => boolean,
-                PdfExcelTableColumnKind.Time when TryParseTimeOnly(value, culture, out TimeSpan time) => time,
-                PdfExcelTableColumnKind.DateTime when DateTime.TryParse(value, culture, DateTimeStyles.AllowWhiteSpaces, out DateTime dateTime) => dateTime,
+                PdfExcelTableColumnKind.Number when PdfCore.PdfLogicalTableAnalysis.TryParseNumericValue(value, options.NumericCulture, out decimal number) => number,
+                PdfExcelTableColumnKind.Percentage when PdfCore.PdfLogicalTableValueParser.TryParsePercentage(value, options.NumericCulture, out decimal percentage) => percentage,
+                PdfExcelTableColumnKind.Boolean when PdfCore.PdfLogicalTableValueParser.TryParseBoolean(value, out bool boolean) => boolean,
+                PdfExcelTableColumnKind.Time when PdfCore.PdfLogicalTableValueParser.TryParseTime(value, options.DateTimeCulture, out TimeSpan time) => time,
+                PdfExcelTableColumnKind.DateTime when PdfCore.PdfLogicalTableValueParser.TryParseDateTime(value, options.DateTimeCulture, out DateTime dateTime) => dateTime,
                 _ => DBNull.Value
             };
-        }
-
-        private static bool TryParseBoolean(string value, out bool result) {
-            string normalized = value.Trim();
-            if (string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase)) {
-                result = true;
-                return true;
-            }
-            if (string.Equals(normalized, "false", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(normalized, "no", StringComparison.OrdinalIgnoreCase)) {
-                result = false;
-                return true;
-            }
-            result = false;
-            return false;
-        }
-
-        private static bool TryParsePercentage(string value, CultureInfo culture, out decimal result) {
-            string normalized = value.Trim();
-            if (!normalized.EndsWith("%", StringComparison.Ordinal)) {
-                result = 0m;
-                return false;
-            }
-
-            if (PdfCore.PdfLogicalTableAnalysis.TryParseNumericValue(normalized.Substring(0, normalized.Length - 1), culture, out decimal number)) {
-                result = number / 100m;
-                return true;
-            }
-
-            result = 0m;
-            return false;
-        }
-
-        private static bool TryParseTimeOnly(string value, CultureInfo culture, out TimeSpan result) {
-            string normalized = value.Trim();
-            if (normalized.Length == 0 || normalized.IndexOf(':') < 0) {
-                result = default;
-                return false;
-            }
-            foreach (char current in normalized) {
-                if (char.IsDigit(current) || char.IsWhiteSpace(current) || current is ':' or '.') continue;
-                char upper = char.ToUpperInvariant(current);
-                if (upper is 'A' or 'P' or 'M') continue;
-                result = default;
-                return false;
-            }
-            if (DateTime.TryParse(normalized, culture, DateTimeStyles.AllowWhiteSpaces, out DateTime parsed)) {
-                result = parsed.TimeOfDay;
-                return true;
-            }
-            result = default;
-            return false;
         }
 
         private static string GetUniqueColumnName(string? value, int index, ISet<string> usedColumns) {

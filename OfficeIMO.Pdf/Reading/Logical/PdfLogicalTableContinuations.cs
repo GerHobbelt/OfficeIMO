@@ -199,7 +199,6 @@ public static class PdfLogicalTableContinuations {
         PdfLogicalPage currentPage = document.Pages[current.PageIndex];
         if (previous.TableIndex != previousPage.Tables.Count - 1 || current.TableIndex != 0) return false;
         if (previous.Data.Columns.Count < 2 || previous.Data.Columns.Count != current.Data.Columns.Count) return false;
-        if (!string.Equals(previous.DetectionKind, current.DetectionKind, StringComparison.Ordinal)) return false;
         if (!IsAtBottomEdge(previous.Table, previousPage) || !IsAtTopEdge(current.Table, currentPage)) return false;
         if (!HasCompatibleColumns(previous.Table, previousPage, current.Table, currentPage, tolerance, cancellationToken)) return false;
 
@@ -212,10 +211,13 @@ public static class PdfLogicalTableContinuations {
             PdfLogicalTableContinuationEvidence.BoundaryTables |
             PdfLogicalTableContinuationEvidence.PageEdges |
             PdfLogicalTableContinuationEvidence.MatchingColumnCount |
-            PdfLogicalTableContinuationEvidence.MatchingDetectionKind |
             PdfLogicalTableContinuationEvidence.CompatibleGeometry |
             PdfLogicalTableContinuationEvidence.CompatibleHeaders;
-        double confidence = 0.75D;
+        double confidence = 0.70D;
+        if (string.Equals(previous.DetectionKind, current.DetectionKind, StringComparison.Ordinal)) {
+            evidence |= PdfLogicalTableContinuationEvidence.MatchingDetectionKind;
+            confidence += 0.05D;
+        }
         if (HasCompatibleColumns(previous.Table, previousPage, current.Table, currentPage, tolerance * 0.5D, cancellationToken)) confidence += 0.1D;
         if (currentHasHeader) {
             evidence |= PdfLogicalTableContinuationEvidence.RepeatedHeaders;
@@ -241,6 +243,15 @@ public static class PdfLogicalTableContinuations {
 
     private static bool TryGetVisualBounds(PdfLogicalTable table, PdfLogicalPage page, out PdfVisualBounds bounds) {
         if (table.Columns.Count == 0) { bounds = default; return false; }
+        if (table.CoordinateSpace == PdfTableCoordinateSpace.VisualTopLeft) {
+            PdfLogicalVisualBounds? visual = table.VisualBounds;
+            double visualLeft = visual?.Left ?? table.Columns.Min(static column => Math.Min(column.From, column.To));
+            double visualRight = visual?.Right ?? table.Columns.Max(static column => Math.Max(column.From, column.To));
+            double visualTop = visual?.Top ?? Math.Min(table.YTop, table.YBottom);
+            double visualBottom = visual?.Bottom ?? Math.Max(table.YTop, table.YBottom);
+            bounds = new PdfVisualBounds(visualLeft, visualTop, visualRight, visualBottom);
+            return bounds.Right > bounds.Left && bounds.Bottom > bounds.Top;
+        }
         double left = table.Columns.Min(static column => Math.Min(column.From, column.To));
         double right = table.Columns.Max(static column => Math.Max(column.From, column.To));
         double bottom = Math.Min(table.YBottom, table.YTop);
@@ -268,25 +279,29 @@ public static class PdfLogicalTableContinuations {
         IReadOnlyList<VisualColumn> previous = GetVisualColumns(previousTable, previousPage, cancellationToken);
         IReadOnlyList<VisualColumn> current = GetVisualColumns(currentTable, currentPage, cancellationToken);
         if (previous.Count == 0 || previous.Count != current.Count) return false;
-        bool positionedRecovery = string.Equals(previousTable.DetectionKind, "positioned-cells-bounded", StringComparison.Ordinal) &&
-            string.Equals(currentTable.DetectionKind, "positioned-cells-bounded", StringComparison.Ordinal);
+        bool comparableRightEdges = string.Equals(previousTable.DetectionKind, currentTable.DetectionKind, StringComparison.Ordinal) &&
+            !UsesContentExtentColumns(previousTable.DetectionKind);
         for (int index = 0; index < previous.Count; index++) {
             cancellationToken.ThrowIfCancellationRequested();
             if (Math.Abs(previous[index].From - current[index].From) > tolerance) return false;
-            // The last right edge is based on the widest text run on each page rather than a stable split.
-            // Positioned-cell recovery derives every right edge from page-local text width, so its
-            // stable compatibility evidence is the ordered set of column starts.
-            if (!positionedRecovery && index < previous.Count - 1 && Math.Abs(previous[index].To - current[index].To) > tolerance) return false;
+            // OCR and positioned-cell columns end at page-local text extents, while native
+            // grid columns can end at inferred cell boundaries. Across heterogeneous strategies,
+            // the stable comparable geometry is therefore the ordered set of column starts.
+            if (comparableRightEdges && index < previous.Count - 1 && Math.Abs(previous[index].To - current[index].To) > tolerance) return false;
         }
 
         return true;
     }
 
+    private static bool UsesContentExtentColumns(string detectionKind) =>
+        string.Equals(detectionKind, "ocr-aligned-geometry", StringComparison.Ordinal) ||
+        string.Equals(detectionKind, "positioned-cells-bounded", StringComparison.Ordinal);
+
     private static VisualColumn[] GetVisualColumns(
         PdfLogicalTable table,
         PdfLogicalPage page,
         CancellationToken cancellationToken) {
-        if (table.SourceKind == PdfLogicalContentSourceKind.Ocr) {
+        if (table.CoordinateSpace == PdfTableCoordinateSpace.VisualTopLeft) {
             var visualColumns = new VisualColumn[table.Columns.Count];
             for (int index = 0; index < table.Columns.Count; index++) {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -353,11 +368,17 @@ public static class PdfLogicalTableContinuations {
 
     private static string NormalizeHeaderSignature(string? value) {
         string signature = PdfTextSimilarity.NormalizeSignaturePreservingDigits(value);
-        return System.Text.RegularExpressions.Regex.Replace(
-            signature,
-            @"(?:^|\s+)(?:page|pg|p)\.?\s+\d+(?:(?:\s+of\s+|/)\d+)?$",
-            string.Empty,
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        var normalized = new System.Text.StringBuilder(signature.Length);
+        for (int index = 0; index < signature.Length; index++) {
+            int digit = System.Globalization.CharUnicodeInfo.GetDecimalDigitValue(signature, index);
+            if (digit < 0) {
+                normalized.Append(signature[index]);
+                continue;
+            }
+            normalized.Append((char)('0' + digit));
+            if (char.IsSurrogatePair(signature, index)) index++;
+        }
+        return normalized.ToString();
     }
 
     private static bool HaveMatchingNumbers(string left, string right) {
@@ -608,7 +629,9 @@ public sealed class PdfLogicalTableContinuationGroup {
             bodyStartRowIndex: 0,
             totalBodyRowCount: totalRowCount,
             hasHeaderRow: primary.Structure.HasHeaderRow,
-            isKeyValueTable: primary.Structure.IsKeyValueTable);
+            schemaKind: primary.Structure.SchemaKind,
+            schemaConfidence: primary.Structure.SchemaConfidence,
+            schemaEvidence: primary.Structure.SchemaEvidence);
         return new PdfLogicalTableData(structure, primary.Diagnostics, rows, numericColumns, truncated);
     }
 }

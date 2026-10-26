@@ -1857,11 +1857,9 @@ namespace OfficeIMO.Tests {
                 height,
                 transform);
 
-            OfficePoint start = transform.TransformPoint(new OfficePoint(
-                gradient.StartX * width, gradient.StartY * height));
-            OfficePoint end = transform.TransformPoint(new OfficePoint(
-                gradient.EndX * width, gradient.EndY * height));
-            double actualDegrees = Math.Atan2(end.Y - start.Y, end.X - start.X)
+            OfficeLinearGradient destination = gradient.TransformCoordinates(
+                OfficeTransform.Scale(width, height).Then(transform));
+            double actualDegrees = Math.Atan2(destination.EndY - destination.StartY, destination.EndX - destination.StartX)
                 * 180D / Math.PI;
             if (actualDegrees < 0D) actualDegrees += 360D;
 
@@ -2059,6 +2057,21 @@ namespace OfficeIMO.Tests {
             Assert.Equal(0, continuous.GetPixel(10, 5).A);
             Assert.True(continuous.GetPixel(14, 5).A > 0);
             Assert.True(reset.GetPixel(10, 5).A > 0);
+        }
+
+        [Fact]
+        public void OfficeRasterCanvas_AppliesExactDashOffset() {
+            var points = new[] { new OfficePoint(2D, 4D), new OfficePoint(20D, 4D) };
+            OfficeRasterImage unshifted = new OfficeRasterImage(24, 9, OfficeColor.Transparent);
+            OfficeRasterImage shifted = new OfficeRasterImage(24, 9, OfficeColor.Transparent);
+
+            new OfficeRasterCanvas(unshifted).DrawPatternedPolyline(points, OfficeColor.Black, 1D, new[] { 5D, 5D });
+            new OfficeRasterCanvas(shifted).DrawPatternedPolyline(points, OfficeColor.Black, 1D, new[] { 5D, 5D }, dashOffset: 5D);
+
+            Assert.True(unshifted.GetPixel(3, 4).A > 0);
+            Assert.Equal(0, shifted.GetPixel(3, 4).A);
+            Assert.Equal(0, unshifted.GetPixel(8, 4).A);
+            Assert.True(shifted.GetPixel(8, 4).A > 0);
         }
 
         [Fact]

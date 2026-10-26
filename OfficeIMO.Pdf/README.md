@@ -20,6 +20,8 @@ signatures:
 dotnet add package OfficeIMO.Security
 ```
 
+Install `OfficeIMO.Pdf.Ocr` plus a provider only when the application recognizes scanned pages or creates searchable PDFs. The base PDF package has no OCR runtime dependency.
+
 ## Quick start
 
 ```csharp
@@ -42,6 +44,96 @@ PdfDocument.Create(pdf => pdf.Content(content => content
     .Meta(title: "Hello PDF", author: "OfficeIMO")
     .Save("hello.pdf");
 ```
+
+## Authoring model
+
+`PdfDocumentBuilder` owns document settings and page boundaries.
+`PdfContentBuilder` is the single flow receiver used by document content, page
+content, components, logical groups, and row columns. This keeps reusable content
+independent of where it is placed.
+
+For incremental authoring, use `var document = PdfDocument.Create(options)` and
+add blocks through `document.Content`. The same builder supports both ordinary
+statements and fluent chains; callbacks remain useful for grouping and page setup.
+
+```csharp
+PdfDocument.Create(document => document
+    .Settings(options => {
+        options.PageSize = PageSizes.A4;
+        options.Margins = PageMargins.Uniform(36);
+    })
+    .Content(content => content
+        .H1("Work items")
+        .Row(row => row
+            .FixedColumn(48, cell => cell.Text("ID"))
+            .AutoColumn(cell => cell.Text("Owner"), maximum: 100)
+            .RelativeColumn(cell => cell.Text("Description")))));
+```
+
+`Element(...)` is the uniform layout and semantics envelope. Its `Content(...)`
+callback receives the same `PdfContentBuilder`, so a reusable component or flow
+fragment does not need an element-specific API:
+
+```csharp
+PdfDocument.Create(document => document
+    .Typography(OfficeRenderingProfile.Managed)
+    .Settings(options => options.TaggedStructureMode = PdfTaggedStructureMode.CatalogMarkers)
+    .Content(content => content.Element(element => element
+        .Semantic(PdfSemanticRole.Article)
+        .Background(PdfColor.FromRgb(248, 250, 252))
+        .Border(PdfColor.FromRgb(148, 163, 184))
+        .Padding(vertical: 10, horizontal: 12)
+        .MaxWidth(420)
+        .Align(PdfAlign.Center)
+        .KeepTogether()
+        .Content(article => article
+            .H1("Accessible report")
+            .Text("One composition path from API to tagged output.")
+            .Row(row => row
+                .FixedColumn(64, cell => cell.Text("ID"))
+                .RelativeColumn(cell => cell.Text("Description")))))));
+```
+
+Decorated elements use a scoped flow frame rather than a second layout engine.
+Rows, sections, multi-column flow, layers, deferred content, nested elements, and
+explicit page breaks therefore retain their normal pagination behavior inside an
+element, while its background and borders continue across page fragments.
+`KeepTogether` and `KeepWithNext` are strict promises: content that depends on a
+dynamic page callback, automatic multi-column pagination, a deferred table, a
+generated table of contents, a canvas, or an explicit page boundary cannot be
+preflighted and is rejected when such a promise requires its complete height.
+Move that content outside the constrained element or flow instead of relying on
+best-effort pagination.
+
+Add `using OfficeIMO.Drawing;` when applying an `OfficeRenderingProfile`.
+`Managed` selects the dependency-light shaping provider for its documented
+core-Arabic/TrueType subset. Supply a profile containing your embedded font family,
+fallbacks, language, and shaping provider when the document contract requires
+broader scripts or reproducible font selection.
+
+For a complete generated sample, see
+[`Pdf.AuthoringModel.cs`](../OfficeIMO.Examples/Pdf/Pdf.AuthoringModel.cs). The
+existing report, invoice, label-sheet, ticket, table-style, drawing, dashboard,
+and statement examples build on the same public content model.
+
+Rows make width intent explicit: `FixedColumn` uses points, `AutoColumn` measures
+content within optional bounds, `RelativeColumn` divides remaining space by
+weight, and `PercentColumn` consumes a percentage of the available row width.
+Use `Column(PdfColumnWidth, ...)` when the sizing value is created separately.
+Mixed rows reject a relative column when fixed, automatic, and percentage columns
+leave it no positive width. Automatic sizing measures panel text and padding as
+well as ordinary text and fixed-size primitives.
+Columns can contain the normal flow primitives, including rich text, lists,
+tables, images, drawings, form fields, annotations, and `Panel(...)` groups.
+Decorated elements, semantic groups, static components, and static flow with
+position capture or keep-together rules work inside rows. Page boundaries,
+sections, layers, automatic multi-column layouts, contextual or conditional flow,
+and nested rows remain outer layout boundaries.
+
+Percentages are literal in every row. Use relative weights for proportional fill.
+`Panel` and `Element` preserve child blocks through the same container layout;
+`PanelParagraph` adds one ordinary paragraph inside that container. Keep-together
+content must fit a complete frame, including padding. Otherwise allow splitting.
 
 ## What it does
 
@@ -103,6 +195,63 @@ returning it. Per-script, script-count, and aggregate-byte limits come from
 `PdfLoadOptions.Limits`. Document JavaScript is active content: the default
 sanitizer removes it, and full-rewrite edits are blocked for encrypted or signed
 inputs rather than weakening their security or revision contracts.
+
+### Preview and select active-content removal
+
+```csharp
+PdfDocument incoming = PdfDocument.Load("incoming.pdf");
+var policy = new PdfSanitizationOptions {
+    ActionKindsToRemove = PdfSanitizationActionKind.JavaScript |
+        PdfSanitizationActionKind.Launch |
+        PdfSanitizationActionKind.SubmitForm
+};
+
+PdfSanitizationReport preview = incoming.InspectSanitization(policy);
+Console.WriteLine($"Scripts: {preview.ActionCounts.JavaScript}");
+Console.WriteLine($"Launch actions: {preview.ActionCounts.Launch}");
+
+PdfSanitizationResult result = incoming.Sanitize(policy);
+File.WriteAllBytes("sanitized.pdf", result.ToBytes());
+```
+
+`ActionKindsToRemove` is an exact opt-in selection, so unselected action kinds
+remain. Selecting `Uri` removes every URI action and catalog URI base, including
+ordinary web links. Leave the property null for the established default policy:
+known active-content actions are removed, allowed `http`, `https`, `mailto`, and
+`tel` links remain, and URI schemes outside `AllowedUriSchemes` are removed.
+
+### Inspect and sanitize before sharing
+
+```csharp
+PdfDocument incoming = PdfDocument.Load("incoming.pdf");
+var policy = new PdfSanitizationOptions {
+    ContentKindsToRemove = PdfSanitizationContentKind.All,
+    ActionKindsToRemove = PdfSanitizationActionKind.All
+};
+
+PdfSanitizationReport preview = incoming.InspectSanitization(policy);
+Console.WriteLine($"User metadata: {preview.CategoryCounts.UserMetadata}");
+Console.WriteLine($"Attachments: {preview.CategoryCounts.EmbeddedFiles}");
+Console.WriteLine($"Actions: {preview.CategoryCounts.Actions}");
+Console.WriteLine($"Comments and markup: {preview.CategoryCounts.CommentsAndMarkup}");
+Console.WriteLine($"Bookmarks: {preview.CategoryCounts.Bookmarks}");
+Console.WriteLine($"Layer definitions: {preview.CategoryCounts.OptionalContent}");
+
+PdfSanitizationResult result = incoming.Sanitize(policy);
+File.WriteAllBytes("shared.pdf", result.ToBytes());
+```
+
+`ContentKindsToRemove` is an exact selection of user-authored Info fields and
+XMP, embedded files, actions, comments and markup, bookmarks, and optional-content
+definitions. Unselected categories remain. Link and Widget annotations remain
+when comments are selected; selecting URI actions can still remove a link's URI.
+Producer, creation and modification dates, and trapping status are not classified
+as user metadata and remain in the output.
+
+Selecting optional content removes layer definitions and associations. Drawing
+and text operators that belonged to a layer remain as ordinary page content, so
+they no longer depend on viewer layer state. Use content-safety inspection and
+verified redaction when the page content itself must be removed.
 
 ### Add interactive fields to an existing PDF
 
@@ -182,7 +331,7 @@ The unified API intentionally narrows the public surface around the fluent
   including for randomized encrypted output.
 - Author new documents through `PdfDocument.Create(pdf => ...)` or append authored
   content through `Compose(...)`. Headings, paragraphs, tables, images, and other
-  flow primitives live on `PdfItemCompose`; they are no longer duplicated on the
+  flow primitives live on `PdfContentBuilder`; they are no longer duplicated on the
   root document.
 - Use the fluent `Pages`, `Forms`, `Attachments`, `Bookmarks`, `Annotations`,
   `Stamp`, `Security`, `Redactions`, `Optimization`, `Proof`, and metadata operations instead of the former public
@@ -191,12 +340,12 @@ The unified API intentionally narrows the public surface around the fluent
 - `Save(...)`, `SaveAsync(...)`, and every typed adapter `SaveAsPdf(...)` now
   return `PdfSaveResult`. It carries output path/length, conversion warnings,
   and an immutable `Pipeline` with create/open, mutation, hash, page-count,
-  execution-mode, timing, and final-output evidence. `TrySave(...)` keeps the
+  execution-mode, timing, and final-output evidence. `SaveResult(...)` keeps the
   same result shape while capturing exceptions instead of throwing.
 
 The target-framework support remains `netstandard2.0`, `net8.0`, and
 `net10.0`. See the [OfficeIMO migration guide](https://github.com/EvotecIT/OfficeIMO/blob/master/MIGRATION.md)
-for the OfficeIMO 3.3 breaking changes and old-to-new API map.
+for the OfficeIMO 3.4 authoring changes and old-to-new API map.
 
 ## Examples
 
@@ -231,6 +380,8 @@ PdfDocument.Create(pdf => pdf.Content(content => content
 ```
 
 PNG, JPEG, TIFF, SVG, and WebP use the same `OfficeImageExportResult` contract and Drawing-owned encoders. Pixel-fit limits apply consistently to vector and raster output, and allocation limits are resolved before a raster buffer is created. Unsupported or simplified PDF operators and resources remain visible as typed image diagnostics.
+
+Scanned-page images support managed CCITT Group 3/4 decoding and packed 1-, 2-, and 4-bit DeviceGray samples. Opaque JPEG 2000 Gray/RGB images require a caller-supplied `IOfficeRasterImageCodec`; embedded or external masks, channel remapping, and color normalization remain diagnosed limitations. Missing scan decoders and malformed scan data fail raster rendering instead of producing a blank successful page. See the [OCR integration](../OfficeIMO.Pdf.Ocr/README.md#scan-rendering-and-execution-limits) for the decoder limits and scan-to-searchable-PDF workflow.
 
 Any adapter that returns `PdfDocumentConversionResult` can use the same paged-image bridge without adding another renderer:
 
@@ -372,8 +523,13 @@ var options = new PdfOptions {
 PdfSaveResult save = PdfDocument.Create(pdf => pdf.Content(content => content
         .TableOfContents()
         .Section("Summary", section => section
-            .Container(container => container
-                .Paragraph(p => p.Text("A styled, keep-together summary."))))
+            .Element(element => element
+                .Background(PdfColor.FromRgb(248, 250, 252))
+                .Border(PdfColor.FromRgb(148, 163, 184))
+                .Padding(10)
+                .KeepTogether()
+                .Content(summary => summary
+                    .Paragraph(p => p.Text("A styled, keep-together summary.")))))
         .Section("Details", section => section
             .Columns(columns => {
                 columns.Paragraph(p => p.Text("First column"));
@@ -437,6 +593,36 @@ work-budget context. `PdfUnderstandingPipelineOptions.MaxWorkUnitsPerPage` and
 `MaxDocumentWorkUnits` bound geometry comparisons, recursive partitioning, and
 document-wide evidence; over-complex input fails with
 `PdfReadLimitKind.UnderstandingWork` instead of continuing unbounded work.
+
+Each page result exposes `ImagePlacements` and one `ImageRegion` per placement
+invocation. Regions retain placement geometry and paint order, associate nearby
+caption elements through vertical proximity and horizontal alignment only when
+the image has a non-transparent, clipped intersection with the page, and expose
+confidence plus stable evidence codes. Structured reads also use tagged-PDF
+Figure ownership, including marked content inside Form XObjects, and retain the
+owning Figure's alternate text. An unambiguous tagged structure relationship
+also binds a direct child caption, or a boundary caption under a parent that has
+exactly one Figure, without depending on caption wording or page proximity.
+Multi-figure structures remain unassociated unless their ownership is explicit.
+Artifact-marked images remain extractable but do not inherit structural Figure
+ownership.
+
+```csharp
+foreach (PdfLogicalPage page in result.Pages) {
+    foreach (PdfUnderstandingImageRegion region in page.Analysis.ImageRegions) {
+        Console.WriteLine(
+            $"{region.Placement.X}, {region.Placement.Y}: " +
+            $"figure={region.IsFigure}, caption={region.Caption?.Region.Text}");
+    }
+}
+```
+
+Set `PdfUnderstandingPipelineOptions.ImageRegionDetection` to replace the
+association stage. A custom stage must return exactly one region for each input
+placement and may associate captions only from the semantic-stage result. The
+built-in stage does not inspect language-specific caption words.
+`MaxImageCaptionCandidatesPerPage` bounds viable image-caption edges before
+matching and sorting, so adversarial overlap fails with a typed read limit.
 
 ### Inspect fonts, image paint, and cross-page continuations
 
@@ -513,35 +699,58 @@ IReadOnlyList<string> visualTextByPage = visual.Pages
     .ToArray();
 ```
 
-Image-only and mixed pages can be enriched through a caller-owned OCR provider
-without adding an OCR runtime to `OfficeIMO.Pdf`. Accepted words are normalized
-to cropped, rotated visual page coordinates, de-duplicated against native text,
-and projected into the same logical model used by reverse converters:
+Image-only and mixed pages use the optional `OfficeIMO.Pdf.Ocr` integration with
+any `OfficeIMO.Ocr.IOcrEngine`. This keeps OCR contracts, process execution,
+Tesseract, cloud SDKs, and native runtimes outside the base PDF graph. Accepted
+words are normalized to cropped, rotated visual page coordinates,
+de-duplicated against native text, and projected into the same logical model
+used by reverse converters:
 
 ```csharp
+using OfficeIMO.Ocr;
+using OfficeIMO.Pdf.Ocr;
+
 static async Task<PdfDocumentReadResult> ReadWithOcrAsync(
     string path,
-    IPdfOcrProvider provider) {
-    PdfOcrMergeResult ocr = await PdfDocument
-        .Load(path)
-        .Ocr.ReadAsync(provider, new PdfOcrMergeOptions {
-            MinimumConfidence = 0.75,
-            DetectAlignedTables = true
+    IOcrEngine engine) {
+    PdfOcrMergeResult ocr = await PdfDocument.Load(path)
+        .ReadWithOcrAsync(engine, new PdfOcrMergeOptions {
+            MinimumConfidence = 0.75
         });
 
     Console.WriteLine(ocr.AcceptedWordCount);
-    return ocr.EnrichedDocument;
+    return ocr.Document;
 }
 ```
 
-`NativeDocument` retains the parser-only view for comparison. Every enriched
-text block and inferred table exposes native-or-OCR provenance; OCR text also
-retains provider confidence and direct visual bounds. Table inference requires
-repeated aligned rows plus typed-value evidence (or a wider repeated grid), so
-ordinary two-column prose remains separate reading-order content. The work is
-bounded by the merge options. Word, Excel,
-PowerPoint, HTML, RTF, ODT, ODS, and ODP packages consume
-`EnrichedDocument` directly through their existing logical-PDF overloads.
+`NativeDocument` retains the native-only view for overlap evidence and comparison.
+Every parsed text block and inferred table exposes native-or-OCR provenance; OCR text also
+retains provider confidence and direct visual bounds. OCR table evidence requires
+repeated aligned columns, compact cell content, and stable row rhythm, so ordinary
+two-column prose remains separate reading-order content. The work is bounded by
+the OCR merge budgets and the shared `ReadOptions` pipeline limits. Word, Excel,
+PowerPoint, HTML, RTF, ODT, ODS, and ODP packages consume `Document` directly
+through their existing logical-PDF overloads. See the
+[`OfficeIMO.Pdf.Ocr` README](../OfficeIMO.Pdf.Ocr/README.md) for installation,
+searchable output, providers, and resource limits.
+
+Native and hierarchy-free OCR text use the same direction policy. Automatic
+mode selects the page's first strong Unicode direction; set an explicit policy
+when a page is ambiguous or its dominant direction is known:
+
+```csharp
+PdfDocumentReadResult rtl = PdfDocument.Load("arabic-report.pdf").Read(
+    new PdfReadOptions {
+        LayoutOptions = new PdfTextLayoutOptions {
+            ReadingDirection = PdfReadingDirection.RightToLeft
+        }
+    });
+```
+
+Table schema remains evidence-based. Tagged header roles or distinct header
+typography can establish the first row as a header. Otherwise `SchemaKind` is
+`Unknown`, every source row remains data, and `Columns` contains empty names;
+the parser does not invent translated or English column labels.
 
 ### Split and extract pages
 
@@ -578,6 +787,16 @@ PdfDocument.Load("packet.pdf")
     .Save("packet-clean.pdf");
 ```
 
+Use `PdfPageReorderPlan.Move(pageCount, insertBeforePageNumber, selectedPages)` to
+preview a move without rewriting the document. `SourcePageNumbers` gives the full
+proposed order, `GetOutputPageNumber(sourcePageNumber)` locates a page after the
+move, and `HasChanges` identifies a no-op. `Shift(pageCount, towardStart, selectedPages)`
+moves each selected run one position. Apply the proposed order with
+`document.Pages.Reorder(plan.SourcePageNumbers.ToArray())`; the document's normal
+mutation policy still applies. Plans describe page positions, so regenerate them
+when the source document changes. `PdfPageSelection.Parse("2-4,7").Resolve(pageCount)`
+resolves ranges with bounds checking and preserves caller order and repeated pages.
+
 Encrypted merge inputs keep independent authentication settings. Owner
 authorization is honored automatically. A user password follows the PDF
 permission bits unless the caller explicitly opts into ignoring those
@@ -592,7 +811,7 @@ PdfDocument second = PdfDocument.Load("second.pdf", new PdfLoadOptions {
     PermissionPolicy = PdfPermissionPolicy.IgnoreRestrictions
 });
 
-PdfMergeResult merged = PdfDocument.MergeWithReport(
+PdfMergeResult merged = PdfDocument.MergeResult(
     new PdfMergeOptions(),
     first,
     second);
@@ -606,6 +825,33 @@ Console.WriteLine(merged.Report.Sources[1].PermissionRestrictionsIgnored); // Tr
 recovery. The document must still decrypt with the supplied password; an
 unknown or incorrect password remains an error. Full rewrites of signed PDFs
 remain blocked because they would invalidate existing signatures.
+
+### Viewing protected PDFs
+
+A user password can allow viewing while restricting extraction. Use the viewing
+contract to obtain page geometry and render a page for display:
+
+```csharp
+PdfDocument protectedDocument = PdfDocument.Load("protected.pdf", new PdfLoadOptions {
+    Password = "document-open-password"
+});
+PdfDocumentViewInfo view = protectedDocument.InspectForViewing();
+PdfPageRenderResult page = protectedDocument.Render.DisplayPage(1, new PdfPageDisplayOptions {
+    Scale = 1.5,
+    MaximumPixels = 4_000_000,
+    MaximumOutputBytes = 16 * 1024 * 1024
+});
+// Pass page.Bytes (PNG) to the host's image control.
+```
+
+`LogicalContent` is null when content extraction is restricted. The display path
+returns flattened pixels and rendering diagnostics without exposing editable
+drawing objects, source images, fonts, or a logical text model. It still requires
+a valid password and observes parsing, pixel, output-size, timeout, and
+cancellation limits. `Inspect`, `Read`, drawing/image export, page extraction,
+printing, and mutation retain their respective permission checks. Display pixels
+are not a DRM boundary: hosts must keep their copy, export, and print actions tied
+to the authenticated permissions.
 
 ### Production document workflows
 
@@ -724,6 +970,14 @@ append-only revision only when the signature permission model allows the
 annotation change. Thread construction has explicit relationship and nesting
 limits so hostile reply chains fail closed.
 
+Full annotation rewrites expose `PdfAnnotationEditResult.AnnotationObjectNumberMap` when
+the writer can report original-to-output object numbers. Use that map to retain
+an annotation selection after changing its text or geometry; `/NM` names are
+optional and are not guaranteed to be unique. A null map means no mapping was
+reported. Append-only edits retain existing object numbers. For page reordering,
+`document.Pages.ReorderWithMapping(2, 1)` returns a `PdfPageRewriteResult` with the
+same mapping contract and a `ToDocument()` method for the rewritten PDF.
+
 ### Password protection on browser or restricted hosts
 
 Desktop and server applications use platform AES automatically. A host without synchronous platform AES can pass the
@@ -757,6 +1011,7 @@ PDF signature discovery, byte-range inspection, mutation blocking, and caller-de
 `OfficeIMO.Security`. For the built-in CMS adapter, install the optional package and pass its provider explicitly:
 
 ```csharp
+using OfficeIMO.Drawing;
 using OfficeIMO.Pdf;
 using OfficeIMO.Security;
 
@@ -767,7 +1022,14 @@ PdfExternalSignatureCompletion signed = PdfDocument
     .Load("contract.pdf")
     .Security.SignExternal(
         signer,
-        new PdfExternalSignatureOptions { FieldName = "Approval" });
+        new PdfExternalSignatureOptions {
+            FieldName = "Approval",
+            VisibleAppearance = new PdfVisibleSignatureAppearanceOptions {
+                ImageBytes = File.ReadAllBytes("approval-mark.png"),
+                ImageFit = OfficeImageFit.Contain,
+                ShowText = false
+            }
+        });
 
 var cryptography = new PdfCmsSignatureCryptographyProvider(
     security,
@@ -778,6 +1040,61 @@ PdfSignatureValidationReport report = signed.ToDocument().Security.ValidateSigna
 The PDF package owns byte ranges, incremental updates, signature dictionaries, and preservation policy. The optional
 provider owns CMS, timestamps, and certificate trust. A custom `IPdfExternalSigner` or
 `IPdfSignatureCryptographyProvider` remains valid without `OfficeIMO.Security`.
+The optional appearance image is visual content only; certificate validation remains the source of signer identity.
+
+### Review, apply, and verify redactions
+
+Build a source-bound plan, review its areas and matches, then apply that exact plan and retain the evidence report with the output:
+
+```csharp
+PdfDocument source = PdfDocument.Load("contract.pdf");
+PdfRedactionPlan plan = source.Redactions.Search(
+    new PdfRedactionSearchOptions().AddLiteral("Account: 123-45-6789"));
+
+// Present plan.Areas and plan.Matches for approval before applying it.
+var verification = new PdfRedactionVerificationOptions {
+    RequireCompleteStreamInspection = true,
+    CheckManagedRendering = true
+}.RequireRemovedText("Account: 123-45-6789");
+
+PdfRedactionApplyResult redacted = source.Redactions.ApplyWithEvidence(
+    plan,
+    verificationOptions: verification);
+
+redacted.ThrowIfUnverified();
+File.WriteAllBytes("contract-redacted.pdf", redacted.Pdf);
+Console.WriteLine(redacted.Evidence.Summary);
+```
+
+`Evidence.Items` records a verified-absent, residual, or inconclusive outcome for every reviewed match. The report also exposes source/output hashes, residual matches, verification details, and affected page numbers. A UI can pass those page numbers to the existing page renderer for before/after previews without making rendering part of the redaction contract.
+
+Each `PdfRedactionArea` carries two independent policies. `TextOnly` removes selected text while preserving intersecting images and paths; `TextAndUnderlay` also removes supported intersecting underlay content and fails closed when that cannot be done safely. The appearance can remain exact, merge nearby reviewed marks, round widths to a configured quantum, or cover the effective page line. Verification evaluates residue against the selected content scope rather than treating a deliberately preserved underlay as a failure.
+
+Review surfaces can also author standard PDF `/Redact` annotations and plan them later. Quadrilateral geometry is written as `/QuadPoints` and round-trips as exact destructive geometry:
+
+```csharp
+PdfDocument annotated = source.Redactions.AddAnnotation(new PdfRedactionAnnotationOptions(
+    PdfRedactionRegion.Quadrilateral(1, new[] {
+        new PdfRedactionPoint(72, 680),
+        new PdfRedactionPoint(260, 680),
+        new PdfRedactionPoint(250, 710),
+        new PdfRedactionPoint(72, 706)
+    })) {
+    Contents = "Reviewed for removal"
+});
+
+PdfRedactionPlan annotationPlan = annotated.Redactions.PlanAnnotations();
+```
+
+Rectangle, quadrilateral, polygon, freehand, and grouped review geometry normalize to the same `PdfRedactionArea` collection used by planning, application, verification, and evidence. Intersection tests retain exact polygon and quadrilateral boundaries for text, annotations, images, hidden text, and pixel rewriting; freehand regions use exact round-capped segments. Destructive granularity still follows the supported PDF object: text is rewritten by glyph, annotations by annotation object, and raster images by pixel. A vector path wholly contained by a reviewed shape can be removed, while a partial intersection fails closed because deleting the complete path would remove paint outside the approved geometry. Raster rewriting selects pixel centers inside the exact shape, so its boundary precision is limited by the source image resolution.
+
+Standard `/Redact` annotations honor every valid `/QuadPoints` quadrilateral instead of collapsing separated marks into the annotation `/Rect`; `/Rect` is the fallback when quad geometry is absent or invalid. Annotation authoring writes exact `/QuadPoints` for quadrilaterals. Polygon and freehand annotations use their bounded `/Rect` because PDF `/Redact` has no equivalent standard path geometry, while direct region planning retains their exact geometry. Annotation authoring defaults to 16 and permits at most 64 normalized areas because the current existing-page annotation writer performs one bounded full rewrite per area.
+
+Text redaction rewrites native text-show operations at glyph granularity. Encoded glyphs outside the reviewed areas retain their original font resource and position; removed glyph advances become `TJ` displacements so adjacent text does not reflow. When a glyph mapping cannot be proven safe, the complete PDF text object is removed instead.
+
+When `verificationOptions` is omitted, `ApplyWithEvidence` requires complete stream inspection and managed-rendering checks by default. Supply explicit options, as above, when the workflow also needs removed/retained markers or an external validator.
+
+Permanent redaction invalidates existing signatures. `document.Security.CreateUnsignedDerivative()` performs an explicit full rewrite, removes signature fields, widgets, permissions, and validation-store references, and returns the unsigned bytes plus the number of detected signatures removed. It requires owner authorization for encrypted input and never overwrites the signed source. A host can then apply and verify redaction before starting a new `SignExternal` workflow for the derivative.
 
 ### Stamp and watermark an existing PDF
 
@@ -836,6 +1153,29 @@ shapes, drawings, clipping, and effects are supported. Interactive links and
 annotations, named destinations, forms, and document outlines use their
 dedicated editors so their behavior is not silently flattened or discarded.
 
+Use a scoped canvas blend mode when foreground artwork must composite with the
+existing page. This example adds a Multiply highlight while keeping dark text
+legible:
+
+```csharp
+using OfficeIMO.Drawing;
+
+var highlight = OfficeShape.Rectangle(180, 18);
+highlight.FillColor = OfficeColor.FromRgb(255, 230, 70);
+highlight.StrokeWidth = 0;
+
+PdfDocument.Load("contract.pdf")
+    .Stamp.Content((canvas, page) => canvas
+        .WithBlendMode(OfficeBlendMode.Multiply, blended =>
+            blended.Shape(highlight, 72, 140)))
+    .Save("contract-highlighted.pdf");
+```
+
+`Effect(transform, opacity, blendMode, build)` combines affine transforms,
+group opacity, and any standard PDF blend mode. Set `BehindContent = true` on
+`PdfCanvasStampOptions` for a true underlay; use the foreground default when
+the blend must use existing page artwork as its backdrop.
+
 ### Search and edit existing page text
 
 Text editing coordinates use PDF points from the page bottom-left. Inspect a
@@ -851,7 +1191,9 @@ PdfRegionText current = document.Text.Inspect(region);
 Console.WriteLine($"{current.Text} ({current.SourceFont}, {current.FontSize} pt)");
 
 PdfTextEditResult edited = document.Text.Replace(region, "Approved", new PdfTextEditOptions {
-    Color = PdfColor.FromRgb(25, 110, 55)
+    Color = PdfColor.FromRgb(25, 110, 55),
+    RegionWidthPolicy = PdfTextRegionWidthPolicy.ShrinkToFit,
+    MinimumFontSize = 8
 });
 
 edited.Document.Text.Add(
@@ -867,9 +1209,38 @@ text, while `Text.ReplaceAll(...)` preserves unmatched source-span text and
 keeps wide same-baseline runs such as columns independent. Edits fail closed
 when an atomic PDF text object would require invisible or clipped text to be
 recreated without its original rendering state.
-Replacement uses the closest standard PDF font unless the caller selects one;
+Region-based add and replace operations preserve the resolved font size by
+default. Select `RejectOverflow` to reject an over-wide line before mutation,
+or `ShrinkToFit` to reduce it no lower than `MinimumFontSize`.
+Unmatched glyphs remain encoded in their original font; newly inserted replacement text uses the closest standard PDF font unless the caller selects one.
 `PdfTextEditResult.Warnings` reports source-font substitutions that can change
 metrics or letterforms.
+
+Invisible OCR text stored with PDF text rendering mode 3 is opt-in for both
+discovery and mutation. Use `IncludeTextRenderingMode3` to find it, then
+`AllowTextRenderingMode3` to authorize an edit that preserves the invisible
+rendering mode:
+
+```csharp
+PdfDocument scanned = PdfDocument.Load("scanned-contract.pdf");
+var ocrSearch = new PdfTextSearchOptions {
+    MatchCase = true,
+    IncludeTextRenderingMode3 = true
+};
+
+PdfTextMatch ocrMatch = scanned.Text.Find("Account number", ocrSearch).Single();
+PdfTextEditResult corrected = scanned.Text.Replace(
+    ocrMatch,
+    "Customer number",
+    new PdfTextEditOptions { AllowTextRenderingMode3 = true });
+
+corrected.Document.Save("scanned-contract-corrected.pdf");
+```
+
+The OCR opt-ins do not authorize clipping text modes or Type3 font glyph
+programs, because those glyph programs can paint visible graphics independently
+of the text rendering mode. One edit also cannot combine visible text and
+rendering-mode-3 OCR text.
 
 ### Find and edit existing page images
 
@@ -917,6 +1288,33 @@ PdfDocument.Load("application-form.pdf")
     })
     .Save("application-form-filled.pdf");
 ```
+
+For an interactive editor, `PdfFormFieldValueAssessment.Assess(field, value)` checks
+the proposed value against declared field metadata before applying it. It reports
+read-only fields, scalar/multiple-value conflicts, text length, radio clearing,
+and non-editable choices. Empty required fields produce warnings so an unfinished
+form can still be saved. Text limits count Unicode scalar values. Assessment does
+not run JavaScript or replace document permissions, appearance generation, or
+validation of the saved result; Unicode appearances still need suitable fonts.
+
+To make both readable form fields and supported visual annotations static in one
+artifact, use the combined operation and retain its separate affected counts:
+
+```csharp
+PdfInteractiveContentFlattenResult flattened = PdfDocument
+    .Load("application-reviewed.pdf")
+    .FlattenInteractiveContent();
+
+Console.WriteLine($"Fields: {flattened.FlattenedFormFieldCount}");
+Console.WriteLine($"Annotations: {flattened.FlattenedAnnotationCount}");
+flattened.ToDocument().Save("application-static.pdf");
+```
+
+Annotation creation and updates accept gray, RGB, or CMYK interior colors,
+opacity, border width, solid/dashed/beveled/inset/underline styles, and bounded
+dash patterns. Creation generates supported appearances by default. Updates
+remove a stale appearance when visual properties change and can explicitly
+regenerate it with `RegenerateAppearance`.
 
 ### Generate and assess validator-backed PDF/A
 
@@ -998,7 +1396,7 @@ using OfficeIMO.Word.Pdf;
 
 using var document = WordDocument.Load("proposal.docx");
 
-var options = new WordPdfSaveOptions {
+var options = new WordToPdfOptions {
     TextFallbacks = PdfTextFallbackFeatures.Default,
     ResourcePolicy = PdfResourcePolicy.CreateTrustedHost()
 }.UseProfile(PdfExportProfile.PrintReady);
@@ -1026,7 +1424,7 @@ The PDF owner recognizes the standards-defined embedded file with media type `ap
 
 ## Concealed-content inspection and cleanup
 
-`PdfDocument.InspectContentSafety(...)` reports non-painting text render modes, effective transparency, clipping, tiny/zero/off-canvas geometry, paint-order-resolved low contrast, and Unicode evidence from decoded spans. `PdfDocument.RemoveSelectedContent(...)` physically removes exact selected spans and can rewrite reviewed Unicode ranges in ordinary painted or painted low-contrast spans while verifying neighboring text restoration. Unicode sub-findings whose restamp could change concealment remain report-only, while their whole concealed span remains removable. Encrypted and signed PDFs are rejected; hidden optional-content nesting that cannot be mapped to an exact removable span is diagnosed instead of guessed.
+`PdfDocument.InspectContentSafety(...)` reports non-painting text render modes, effective transparency, clipping, tiny/zero/off-canvas geometry, paint-order-resolved low contrast, hidden annotation and form-widget values, text inside layers hidden by the default optional-content configuration, and Unicode evidence from decoded spans. `PdfDocument.RemoveSelectedContent(...)` physically removes exact selected spans and can rewrite reviewed Unicode ranges in ordinary painted or painted low-contrast spans while verifying neighboring text restoration. Hidden layer, annotation, and widget findings remain report-only because their container semantics cannot be safely converted into an exact text edit. Encrypted and signed PDFs are rejected.
 
 ### Generate a formal e-invoice carrier
 
@@ -1051,6 +1449,38 @@ PdfDocument.Create(pdf => pdf.Content(content => content
 ```
 
 The XML must be a valid EN 16931 CrossIndustryInvoice payload. The formal carrier gate checks the PDF/A-3 attachment, metadata, font, Unicode, and invoice rules before writing; exact-artifact PDF/A and invoice-validator results are still required before claiming conformance.
+
+#### Load and edit existing invoice XML
+
+`PdfCiiInvoiceDocument` is part of `OfficeIMO.Pdf`. It reads existing namespace-100
+CII invoice XML and lets you replace an existing identifier or format-102 issue
+date while retaining unfamiliar XML content.
+
+```csharp
+using OfficeIMO.Pdf;
+
+var invoice = PdfCiiInvoiceDocument.Load("invoice.xml")
+    .WithDocumentId("INV-2026-0042")
+    .WithIssueDate(new DateTime(2026, 9, 6));
+
+invoice.Save("updated-invoice.xml");
+var options = new PdfOptions().UseFacturXDocument(invoice);
+```
+
+`Load` also accepts a byte array or readable stream. `Save` accepts a path or
+stream; caller-owned streams remain open. `ToBytes()` returns a defensive copy.
+An unedited document keeps its original bytes. Edits return a new document with
+UTF-8 XML, preserving XML content but not its original lexical formatting.
+
+The model exposes `DocumentId`, `IssueDate`, `TypeCode`, `GuidelineId`, and
+`CurrencyCode`. It rejects DTDs, excessive input size or depth, and edits to
+signed, missing, ambiguous, or structured fields. Loading is not schema or
+business-rule validation. This API does not create complete invoices, calculate
+tax, edit PDF pages, or update payment references.
+
+`UseFacturXDocument` snapshots the XML through the existing `UseFacturX(byte[])`
+carrier configuration. The application must keep visible invoice content and
+XML consistent and validate the resulting invoice/PDF pair for its declared profile.
 
 ### Page setup, watermarks, and metadata
 
@@ -1133,7 +1563,7 @@ Console.WriteLine($"Non-table page content detected: {tableReport.HasOmittedPage
 PdfHtmlConverterExtensions.SaveAsHtml(
     "proposal.pdf",
     "proposal-review.html",
-    new PdfHtmlSaveOptions {
+    new PdfToHtmlOptions {
         Profile = PdfHtmlProfile.PositionedReview,
         IncludeLinkAnnotations = true,
         IncludeFormWidgets = true

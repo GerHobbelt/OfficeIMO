@@ -4,14 +4,15 @@ using System.Threading;
 
 namespace OfficeIMO.Pdf.Filters;
 
-internal static class StreamDecoder {
+internal static partial class StreamDecoder {
     private enum DecodeFilterKind {
         Unsupported,
         Flate,
         AsciiHex,
         Ascii85,
         RunLength,
-        Lzw
+        Lzw,
+        Fax
     }
 
     public static byte[] Decode(
@@ -73,6 +74,9 @@ internal static class StreamDecoder {
                             throw CreateDecodedLimitException(maxOutputBytes, (long)maxOutputBytes + 1L);
                         }
 
+                        break;
+                    case DecodeFilterKind.Fax:
+                        current = DecodeFax(dict, filterIndex, current, objects, maxOutputBytes, cancellationToken);
                         break;
                     case DecodeFilterKind.Lzw:
                         int lzwOutputLimit = GetFilterOutputLimit(dict, filterIndex, objects, maxOutputBytes);
@@ -216,6 +220,9 @@ internal static class StreamDecoder {
                         }
 
                         break;
+                    case DecodeFilterKind.Fax:
+                        current = DecodeFax(dict, filterIndex, current, objects, maxOutputBytes, cancellationToken);
+                        break;
                     case DecodeFilterKind.Lzw:
                         int lzwOutputLimit = GetFilterOutputLimit(dict, filterIndex, objects, maxOutputBytes);
                         if (!LzwDecoder.TryDecode(current, lzwOutputLimit, out current, GetEarlyChange(dict, filterIndex, objects), cancellationToken)) {
@@ -268,6 +275,24 @@ internal static class StreamDecoder {
         return unsupported;
     }
 
+    internal static bool TryGetDeclaredFilterNames(
+        PdfDictionary dictionary,
+        Dictionary<int, PdfIndirectObject>? objects,
+        out IReadOnlyList<string> filterNames) {
+        if (!dictionary.Items.TryGetValue("Filter", out PdfObject? filterObject)) {
+            filterNames = Array.Empty<string>();
+            return true;
+        }
+
+        if (!TryGetFilterNames(filterObject, objects, out List<string> resolvedFilterNames)) {
+            filterNames = Array.Empty<string>();
+            return false;
+        }
+
+        filterNames = resolvedFilterNames.AsReadOnly();
+        return true;
+    }
+
     internal static bool HasNoEffectiveFilters(
         PdfDictionary dictionary,
         Dictionary<int, PdfIndirectObject>? objects = null) {
@@ -298,6 +323,9 @@ internal static class StreamDecoder {
             case "LZWDecode":
             case "LZW":
                 return DecodeFilterKind.Lzw;
+            case "CCITTFaxDecode":
+            case "CCF":
+                return DecodeFilterKind.Fax;
             default:
                 return DecodeFilterKind.Unsupported;
         }
@@ -498,6 +526,10 @@ internal static class StreamDecoder {
                 }
 
                 DecodeFilterKind filterKind = GetFilterKind(filterNames[filterIndex]);
+                if (filterKind == DecodeFilterKind.Fax) {
+                    ValidateFaxParameters(decodeParms, objects);
+                    continue;
+                }
                 if (filterKind != DecodeFilterKind.Flate && filterKind != DecodeFilterKind.Lzw) {
                     if (HasResolvedNonNullEntry(decodeParms, objects)) {
                         return false;

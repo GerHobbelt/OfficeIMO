@@ -70,6 +70,33 @@ public sealed partial class PdfPageCanvas {
         return this;
     }
 
+    /// <summary>Adds a named destination at an absolute top-left page coordinate.</summary>
+    public PdfPageCanvas NamedDestination(string name, double x, double y) {
+        Guard.NotNullOrWhiteSpace(name, nameof(name));
+        ValidateCanvasCoordinate(x, nameof(x));
+        ValidateCanvasCoordinate(y, nameof(y));
+        _items.Add(new PdfCanvasNamedDestinationItem(name.Trim(), x, y));
+        return this;
+    }
+
+    /// <summary>Adds a document-internal link annotation targeting a named destination.</summary>
+    public PdfPageCanvas LinkToNamedDestination(
+        string destinationName,
+        double x,
+        double y,
+        double width,
+        double height,
+        string? contents = null) {
+        Guard.NotNullOrWhiteSpace(destinationName, nameof(destinationName));
+        ValidateCanvasCoordinate(x, nameof(x));
+        ValidateCanvasCoordinate(y, nameof(y));
+        Guard.Positive(width, nameof(width));
+        Guard.Positive(height, nameof(height));
+        if (contents != null) Guard.NotNullOrWhiteSpace(contents, nameof(contents));
+        _items.Add(new PdfCanvasNamedDestinationLinkItem(destinationName.Trim(), x, y, width, height, contents));
+        return this;
+    }
+
     /// <summary>Groups absolute canvas content as one tagged figure with alternative text.</summary>
     public PdfPageCanvas Figure(string alternativeText, Action<PdfPageCanvas> build) {
         Guard.NotNullOrWhiteSpace(alternativeText, nameof(alternativeText));
@@ -116,7 +143,7 @@ public sealed partial class PdfPageCanvas {
 
     /// <summary>Groups absolute canvas content under a typed tagged-PDF structure container.</summary>
     public PdfPageCanvas Structure(PdfCanvasStructureRole role, Action<PdfPageCanvas> build, PdfCanvasStructureOptions? options = null) {
-        if ((int)role < (int)PdfCanvasStructureRole.Section || (int)role > (int)PdfCanvasStructureRole.Caption) {
+        if ((int)role < (int)PdfCanvasStructureRole.Section || (int)role > (int)PdfCanvasStructureRole.Note) {
             throw new ArgumentOutOfRangeException(nameof(role));
         }
         Guard.NotNull(build, nameof(build));
@@ -263,6 +290,33 @@ public sealed partial class PdfPageCanvas {
 
         DrawingBlock block = PdfDocument.CreateDrawingBlock(drawing, PdfAlign.Left, spacingBefore: 0D, spacingAfter: 0D, style, linkUri, linkContents);
         _items.Add(new PdfCanvasDrawingItem(block, x, y, width, height, rotationAngle));
+        return this;
+    }
+
+    internal PdfPageCanvas DrawingForClippedRendering(
+        OfficeDrawing drawing,
+        double x,
+        double y,
+        double width,
+        double height,
+        PdfDrawingStyle? style = null,
+        string? linkUri = null,
+        string? linkContents = null) {
+        Guard.NotNull(drawing, nameof(drawing));
+        ValidateCanvasCoordinate(x, nameof(x));
+        ValidateCanvasCoordinate(y, nameof(y));
+        Guard.Positive(width, nameof(width));
+        Guard.Positive(height, nameof(height));
+        DrawingBlock block = PdfDocument.CreateDrawingBlock(
+            drawing,
+            PdfAlign.Left,
+            spacingBefore: 0D,
+            spacingAfter: 0D,
+            style,
+            linkUri,
+            linkContents,
+            allowClippedOverflow: true);
+        _items.Add(new PdfCanvasDrawingItem(block, x, y, width, height, rotationAngle: 0D));
         return this;
     }
 
@@ -415,24 +469,37 @@ public sealed partial class PdfPageCanvas {
     }
 
     /// <summary>Adds nested canvas content through one top-left-coordinate affine transform and opacity state.</summary>
-    public PdfPageCanvas Effect(OfficeTransform transform, double opacity, Action<PdfPageCanvas> build) {
+    public PdfPageCanvas Effect(OfficeTransform transform, double opacity, Action<PdfPageCanvas> build) =>
+        Effect(transform, opacity, OfficeBlendMode.Normal, build);
+
+    /// <summary>Adds nested canvas content through one top-left-coordinate affine transform, opacity, and blend mode.</summary>
+    public PdfPageCanvas Effect(OfficeTransform transform, double opacity, OfficeBlendMode blendMode, Action<PdfPageCanvas> build) {
         if (double.IsNaN(opacity) || double.IsInfinity(opacity) || opacity < 0D || opacity > 1D) {
             throw new ArgumentOutOfRangeException(nameof(opacity), "Canvas effect opacity must be between zero and one.");
+        }
+        if (blendMode < OfficeBlendMode.Normal || blendMode > OfficeBlendMode.Luminosity) {
+            throw new ArgumentOutOfRangeException(nameof(blendMode), blendMode, "Unsupported canvas blend mode.");
         }
         Guard.NotNull(build, nameof(build));
         var nestedCanvas = new PdfPageCanvas(allowOutOfPageCoordinates: true);
         build(nestedCanvas);
-        bool trivialEffect = transform == OfficeTransform.Identity && Math.Abs(opacity - 1D) <= 0.000001D;
+        bool trivialEffect = transform == OfficeTransform.Identity &&
+            Math.Abs(opacity - 1D) <= 0.000001D &&
+            blendMode == OfficeBlendMode.Normal;
         if (ContainsInteractiveFormContent(nestedCanvas.Items)) {
             if (!trivialEffect) {
-                throw new ArgumentException("Interactive form fields cannot be nested inside a transformed or translucent canvas effect.", nameof(build));
+                throw new ArgumentException("Interactive form fields cannot be nested inside a transformed, translucent, or blended canvas effect.", nameof(build));
             }
             _items.AddRange(nestedCanvas.Items);
             return this;
         }
-        _items.Add(new PdfCanvasEffectItem(nestedCanvas.Items, transform, opacity));
+        _items.Add(new PdfCanvasEffectItem(nestedCanvas.Items, transform, opacity, blendMode));
         return this;
     }
+
+    /// <summary>Adds nested canvas content composited with the requested blend mode.</summary>
+    public PdfPageCanvas WithBlendMode(OfficeBlendMode blendMode, Action<PdfPageCanvas> build) =>
+        Effect(OfficeTransform.Identity, 1D, blendMode, build);
 
     private static bool ContainsInteractiveFormContent(IReadOnlyList<PdfCanvasItem> items) {
         foreach (PdfCanvasItem item in items) {
@@ -494,7 +561,9 @@ public sealed partial class PdfPageCanvas {
                 run.BackgroundColor,
                 run.FontFamily,
                 run.UnderlineStyle,
-                run.StrikeStyle));
+                run.StrikeStyle,
+                run.DecorationColor)
+                .WithFeatureSettings(run.FeatureSettings));
         }
 
         return styled.AsReadOnly();
@@ -576,6 +645,30 @@ internal sealed class PdfCanvasOutlineItem : PdfCanvasItem {
     public int Level { get; }
     public PdfOutlineState State { get; }
     public int? DocumentOrder { get; }
+}
+
+internal sealed class PdfCanvasNamedDestinationItem : PdfCanvasItem {
+    public PdfCanvasNamedDestinationItem(string name, double x, double y)
+        : base(x, y) {
+        Name = name;
+    }
+
+    public string Name { get; }
+}
+
+internal sealed class PdfCanvasNamedDestinationLinkItem : PdfCanvasItem {
+    public PdfCanvasNamedDestinationLinkItem(string destinationName, double x, double y, double width, double height, string? contents)
+        : base(x, y) {
+        DestinationName = destinationName;
+        Width = width;
+        Height = height;
+        Contents = contents;
+    }
+
+    public string DestinationName { get; }
+    public double Width { get; }
+    public double Height { get; }
+    public string? Contents { get; }
 }
 
 internal sealed class PdfCanvasArtifactItem : PdfCanvasItem {
@@ -801,14 +894,16 @@ internal sealed class PdfCanvasClipItem : PdfCanvasItem {
 }
 
 internal sealed class PdfCanvasEffectItem : PdfCanvasItem {
-    public PdfCanvasEffectItem(IReadOnlyList<PdfCanvasItem> items, OfficeTransform transform, double opacity)
+    public PdfCanvasEffectItem(IReadOnlyList<PdfCanvasItem> items, OfficeTransform transform, double opacity, OfficeBlendMode blendMode)
         : base(0D, 0D) {
         Items = items;
         Transform = transform;
         Opacity = opacity;
+        BlendMode = blendMode;
     }
 
     public IReadOnlyList<PdfCanvasItem> Items { get; }
     public OfficeTransform Transform { get; }
     public double Opacity { get; }
+    public OfficeBlendMode BlendMode { get; }
 }

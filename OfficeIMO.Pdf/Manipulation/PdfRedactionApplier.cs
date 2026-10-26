@@ -6,34 +6,72 @@ using System.Text.RegularExpressions;
 namespace OfficeIMO.Pdf;
 
 /// <summary>
-/// Applies rectangle-based redactions by removing matched text objects and annotations, then painting redaction marks.
+/// Applies reviewed redaction areas by removing intersecting content and annotations, then painting matching redaction marks.
+/// Unsupported text mappings fall back to removal of the complete PDF text object.
 /// </summary>
 internal static partial class PdfRedactionApplier {
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
     private static readonly Regex FontSelectionRegex = new Regex(@"/([^\s/]+)\s+[-+]?(?:\d+(?:\.\d+)?|\.\d+)\s+Tf\b", RegexOptions.Compiled, RegexTimeout);
 
     /// <summary>Applies a previously reviewed plan, including exact form-field removal for field-derived search areas.</summary>
-    public static byte[] Apply(byte[] pdf, PdfRedactionPlan plan, PdfRedactionApplyOptions? applyOptions = null, PdfTextLayoutOptions? layoutOptions = null, PdfLoadOptions? readOptions = null) {
+    public static byte[] Apply(byte[] pdf, PdfRedactionPlan plan, PdfRedactionApplyOptions? applyOptions = null, PdfTextLayoutOptions? layoutOptions = null, PdfLoadOptions? readOptions = null) =>
+        Apply(pdf, plan, applyOptions, layoutOptions, readOptions, out _);
+
+    internal static byte[] Apply(
+        byte[] pdf,
+        PdfRedactionPlan plan,
+        PdfRedactionApplyOptions? applyOptions,
+        PdfTextLayoutOptions? layoutOptions,
+        PdfLoadOptions? readOptions,
+        out PdfGeneratedOutputGrowth generatedGrowth) =>
+        Apply(pdf, plan, applyOptions, layoutOptions, readOptions, out generatedGrowth, out _);
+
+    internal static byte[] Apply(
+        byte[] pdf,
+        PdfRedactionPlan plan,
+        PdfRedactionApplyOptions? applyOptions,
+        PdfTextLayoutOptions? layoutOptions,
+        PdfLoadOptions? readOptions,
+        out PdfGeneratedOutputGrowth generatedGrowth,
+        out IReadOnlyList<PdfRedactionMatch> appliedImageMatches) {
         Guard.NotNull(pdf, nameof(pdf)); Guard.NotNull(plan, nameof(plan));
+        PdfRedactionApplyOptions effectiveOptions = applyOptions ?? new PdfRedactionApplyOptions();
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         if (!plan.IsReviewable) {
             throw new InvalidOperationException("The reviewed redaction plan is blocked and cannot be applied.");
         }
         if (!plan.MatchesSource(pdf)) {
             throw new InvalidOperationException("The reviewed redaction plan belongs to different source PDF bytes.");
         }
-        if (plan.Areas.Count == 0) return (byte[])pdf.Clone();
+        if (plan.Areas.Count == 0) {
+            generatedGrowth = default;
+            appliedImageMatches = Array.Empty<PdfRedactionMatch>();
+            return (byte[])pdf.Clone();
+        }
         string[] fieldNames = plan.Areas.Select(static area => area.Label).Where(static label => label?.StartsWith("field:", StringComparison.Ordinal) == true).Select(static label => label!.Substring("field:".Length)).Distinct(StringComparer.Ordinal).ToArray();
         byte[] working = pdf;
         if (fieldNames.Length > 0) {
-            var existing = new HashSet<string>(PdfReadDocument.Open(pdf, readOptions).FormFields.Where(static field => field.Name is not null).Select(static field => field.Name!), StringComparer.Ordinal);
+            var existing = new HashSet<string>(PdfReadDocument.Open(pdf, readOptions, effectiveOptions.CancellationToken).FormFields.Where(static field => field.Name is not null).Select(static field => field.Name!), StringComparer.Ordinal);
             string[] removable = fieldNames.Where(existing.Contains).ToArray();
             if (removable.Length > 0) working = PdfAcroFormEditor.Edit(pdf, edit => { for (int i = 0; i < removable.Length; i++) edit.Remove(removable[i]); }, readOptions).ToBytes();
+            effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         }
-        return Apply(working, plan.Areas, applyOptions, layoutOptions, readOptions);
+        return ApplyCore(
+            working,
+            plan.Areas,
+            effectiveOptions,
+            layoutOptions,
+            readOptions,
+            RedactionMutationScope.All,
+            paintMarks: true,
+            PdfMutationOperation.Redact,
+            imageTargets: null,
+            generatedGrowth: out generatedGrowth,
+            appliedImageMatches: out appliedImageMatches);
     }
 
     /// <summary>
-    /// Applies rectangle-based redactions to a PDF byte array and returns rewritten PDF bytes.
+    /// Applies redaction areas to a PDF byte array and returns rewritten PDF bytes.
     /// </summary>
     public static byte[] Apply(
         byte[] pdf,
@@ -54,9 +92,10 @@ internal static partial class PdfRedactionApplier {
     }
 
     /// <summary>
-    /// Removes only text objects intersecting the supplied areas. This is the canonical destructive
-    /// text-rewrite primitive used by existing-document editing; it deliberately leaves images,
-    /// paths, annotations, and document-level residue untouched and does not paint redaction marks.
+    /// Removes text glyphs intersecting the supplied areas while preserving supported encoded glyphs
+    /// outside those areas in their original text-show operations. Unsupported mappings fall back to
+    /// complete text-object removal. This canonical destructive text-rewrite primitive deliberately
+    /// leaves images, paths, annotations, and document-level residue untouched and does not paint marks.
     /// </summary>
     internal static byte[] RemoveTextInAreas(
         byte[] pdf,
@@ -121,6 +160,55 @@ internal static partial class PdfRedactionApplier {
         bool paintMarks,
         PdfMutationOperation mutationOperation,
         IReadOnlyList<PdfImagePlacement>? imageTargets) {
+        return ApplyCore(
+            pdf,
+            areas,
+            applyOptions,
+            layoutOptions,
+            readOptions,
+            mutationScope,
+            paintMarks,
+            mutationOperation,
+            imageTargets,
+            out _);
+    }
+
+    private static byte[] ApplyCore(
+        byte[] pdf,
+        IEnumerable<PdfRedactionArea> areas,
+        PdfRedactionApplyOptions? applyOptions,
+        PdfTextLayoutOptions? layoutOptions,
+        PdfLoadOptions? readOptions,
+        RedactionMutationScope mutationScope,
+        bool paintMarks,
+        PdfMutationOperation mutationOperation,
+        IReadOnlyList<PdfImagePlacement>? imageTargets,
+        out PdfGeneratedOutputGrowth generatedGrowth) =>
+        ApplyCore(
+            pdf,
+            areas,
+            applyOptions,
+            layoutOptions,
+            readOptions,
+            mutationScope,
+            paintMarks,
+            mutationOperation,
+            imageTargets,
+            out generatedGrowth,
+            out _);
+
+    private static byte[] ApplyCore(
+        byte[] pdf,
+        IEnumerable<PdfRedactionArea> areas,
+        PdfRedactionApplyOptions? applyOptions,
+        PdfTextLayoutOptions? layoutOptions,
+        PdfLoadOptions? readOptions,
+        RedactionMutationScope mutationScope,
+        bool paintMarks,
+        PdfMutationOperation mutationOperation,
+        IReadOnlyList<PdfImagePlacement>? imageTargets,
+        out PdfGeneratedOutputGrowth generatedGrowth,
+        out IReadOnlyList<PdfRedactionMatch> appliedImageMatches) {
         Guard.NotNull(pdf, nameof(pdf));
         Guard.NotNull(areas, nameof(areas));
         if (mutationOperation == PdfMutationOperation.ModifyPageContent &&
@@ -137,34 +225,49 @@ internal static partial class PdfRedactionApplier {
         }
 
         PdfRedactionApplyOptions effectiveOptions = applyOptions ?? new PdfRedactionApplyOptions();
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         if (effectiveOptions.MaximumDecodedImageBytes <= 0) throw new ArgumentOutOfRangeException(nameof(applyOptions), "Maximum decoded image bytes must be positive.");
-        PdfRedactionPlan plan = PdfRedactionPlanner.Plan(pdf, areaArray, layoutOptions, readOptions);
+        if (!IsFiniteNonNegative(effectiveOptions.AppearanceMergeDistance)) throw new ArgumentOutOfRangeException(nameof(applyOptions), "Appearance merge distance must be finite and non-negative.");
+        if (!IsFinitePositive(effectiveOptions.AppearanceWidthQuantum)) throw new ArgumentOutOfRangeException(nameof(applyOptions), "Appearance width quantum must be finite and positive.");
+        PdfRedactionPlan plan = PdfRedactionPlanner.Plan(pdf, areaArray, layoutOptions, readOptions, effectiveOptions.CancellationToken);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         if (!plan.Preflight.CanReadLogicalObjects) {
             throw new InvalidOperationException("PDF redaction cannot be applied because logical content cannot be read. " + string.Join(" ", plan.Preflight.GetCapabilityDiagnostics(PdfPreflightCapability.ReadLogicalObjects)));
         }
 
-        var (objects, trailerRaw) = PdfSyntax.ParseObjects(pdf, readOptions);
+        var (objects, trailerRaw) = PdfSyntax.ParseObjects(pdf, readOptions, out _, out _, effectiveOptions.CancellationToken);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        HashSet<PdfStream> sourceStreamIdentities = CollectStreamIdentities(objects);
         int catalogObjectNumber = FindCatalogObjectNumber(objects, trailerRaw);
         if (catalogObjectNumber == 0) {
             throw new ArgumentException("PDF does not contain a readable catalog.", nameof(pdf));
         }
 
-        PdfReadDocument document = PdfReadDocument.Open(pdf, readOptions);
+        PdfReadDocument document = PdfReadDocument.Open(pdf, readOptions, effectiveOptions.CancellationToken);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
+        Dictionary<int, PdfStream> sourceStreams = document.Objects
+            .Where(static item => item.Value.Value is PdfStream)
+            .ToDictionary(static item => item.Key, static item => (PdfStream)item.Value.Value);
         ValidateRedactionAreas(areaArray, document.Pages.Count);
         PdfReadLimits limits = readOptions?.Limits ?? new PdfReadLimits();
-        RedactionMutation mutation = ApplyToObjects(objects, document, plan, areaArray, effectiveOptions, limits, mutationScope, paintMarks, imageTargets);
+        RedactionMutation mutation = ApplyToObjects(objects, document, plan, areaArray, effectiveOptions, limits, sourceStreamIdentities, mutationScope, paintMarks, imageTargets);
+        effectiveOptions.CancellationToken.ThrowIfCancellationRequested();
         bool cleanupChanged = ApplyCleanupPolicy(objects, catalogObjectNumber, effectiveOptions.CleanupScope);
         if (!mutation.HasChanges && !cleanupChanged) {
+            generatedGrowth = default;
+            appliedImageMatches = mutation.AppliedImageMatches;
             return pdf.ToArray();
         }
 
-        PdfObjectGraphPruner.PruneUnreachableObjects(objects, catalogObjectNumber);
+        PdfObjectGraphPruner.PruneUnreachableObjects(objects, catalogObjectNumber, effectiveOptions.CancellationToken);
+        generatedGrowth = BuildGeneratedOutputGrowth(objects, sourceStreams, document.Objects, sourceStreamIdentities, mutation.GeneratedPageContentBytes);
+        appliedImageMatches = mutation.AppliedImageMatches;
         PdfMetadata metadata = (effectiveOptions.CleanupScope & PdfRedactionCleanupScope.Metadata) != 0 ? new PdfMetadata() : document.UncheckedMetadata;
-        return RewriteAllObjects(objects, catalogObjectNumber, metadata, pdf);
+        return RewriteAllObjects(objects, catalogObjectNumber, metadata, pdf, effectiveOptions.CancellationToken);
     }
 
     /// <summary>
-    /// Applies rectangle-based redactions from the current position of a readable stream.
+    /// Applies redaction areas from the current position of a readable stream.
     /// </summary>
     public static byte[] Apply(
         Stream stream,
@@ -176,7 +279,7 @@ internal static partial class PdfRedactionApplier {
     }
 
     /// <summary>
-    /// Applies rectangle-based redactions to a PDF and writes the rewritten bytes to a stream.
+    /// Applies redaction areas to a PDF and writes the rewritten bytes to a stream.
     /// </summary>
     public static void Apply(
         byte[] pdf,
@@ -189,7 +292,7 @@ internal static partial class PdfRedactionApplier {
     }
 
     /// <summary>
-    /// Applies rectangle-based redactions to a PDF file and writes a new PDF file.
+    /// Applies redaction areas to a PDF file and writes a new PDF file.
     /// </summary>
     public static void Apply(
         string inputPath,
@@ -205,7 +308,7 @@ internal static partial class PdfRedactionApplier {
     }
 
     /// <summary>
-    /// Applies rectangle-based redactions to a PDF file and returns rewritten PDF bytes.
+    /// Applies redaction areas to a PDF file and returns rewritten PDF bytes.
     /// </summary>
     public static byte[] ApplyToBytes(
         string inputPath,
@@ -224,6 +327,7 @@ internal static partial class PdfRedactionApplier {
         PdfRedactionArea[] areas,
         PdfRedactionApplyOptions options,
         PdfReadLimits limits,
+        HashSet<PdfStream> sourceStreamIdentities,
         RedactionMutationScope mutationScope,
         bool paintMarks,
         IReadOnlyList<PdfImagePlacement>? imageTargets) {
@@ -234,9 +338,15 @@ internal static partial class PdfRedactionApplier {
             .GroupBy(area => area.PageNumber)
             .ToDictionary(group => group.Key, group => group.ToArray());
         bool changed = false;
+        int generatedPageContentBytes = 0;
+        var appliedImageMatches = new List<PdfRedactionMatch>();
         var removedImageObjectNumbers = new HashSet<int>();
+        var formFieldObjectNumbers = new HashSet<int>(document.FormFields
+            .Where(static field => field.ObjectNumber.HasValue)
+            .Select(static field => field.ObjectNumber!.Value));
         int nextObjectNumber = objects.Keys.Count == 0 ? 1 : objects.Keys.Max() + 1;
         for (int pageIndex = 0; pageIndex < document.Pages.Count; pageIndex++) {
+            options.CancellationToken.ThrowIfCancellationRequested();
             int pageNumber = pageIndex + 1;
             PdfReadPage readPage = document.Pages[pageIndex];
             if (!objects.TryGetValue(readPage.ObjectNumber, out PdfIndirectObject? pageObject) ||
@@ -252,9 +362,13 @@ internal static partial class PdfRedactionApplier {
             }
 
             PdfRedactionMatch[] currentMatches = pageMatches ?? Array.Empty<PdfRedactionMatch>();
+            PdfRedactionArea[] currentAreas = pageAreas ?? Array.Empty<PdfRedactionArea>();
+            PdfRedactionArea[] underlayAreas = currentAreas
+                .Where(static area => area.ContentScope == PdfRedactionContentScope.TextAndUnderlay)
+                .ToArray();
             PdfRedactionMatch[] selectedImageMatches = imageTargets is null
-                ? currentMatches
-                : currentMatches.Where(match => imageTargets.Any(target => MatchesExactImagePlacement(match, target))).ToArray();
+                ? currentMatches.Where(static match => match.Area.ContentScope == PdfRedactionContentScope.TextAndUnderlay).ToArray()
+                : currentMatches.Where(match => match.Area.ContentScope == PdfRedactionContentScope.TextAndUnderlay && imageTargets.Any(target => MatchesExactImagePlacement(match, target))).ToArray();
             ImageRedactionMutation imageMutation = (mutationScope & RedactionMutationScope.Images) != 0
                 ? RemoveMatchedImageObjects(
                     objects,
@@ -266,27 +380,32 @@ internal static partial class PdfRedactionApplier {
                     ref nextObjectNumber)
                 : ImageRedactionMutation.None;
             foreach (PdfRedactionMatch removedImage in imageMutation.RemovedMatches) if (removedImage.ObjectNumber.HasValue) removedImageObjectNumbers.Add(removedImage.ObjectNumber.Value);
+            appliedImageMatches.AddRange(imageMutation.RemovedMatches);
             if ((mutationScope & RedactionMutationScope.Images) != 0) ValidateImagePlacementMatches(selectedImageMatches, imageMutation.RemovedMatches, options);
             bool pageChanged = imageMutation.HasChanges;
             if ((mutationScope & RedactionMutationScope.Text) != 0) {
                 pageChanged = RemoveMatchedTextObjects(
                     objects,
                     pageDictionary,
-                    currentMatches,
-                    pageAreas ?? Array.Empty<PdfRedactionArea>(),
+                    currentAreas,
                     limits,
+                    sourceStreamIdentities,
                     ref nextObjectNumber) || pageChanged;
             }
-            if ((mutationScope & RedactionMutationScope.Paths) != 0 && options.RemoveIntersectingPaths) pageChanged = RemoveIntersectingPathObjects(objects, pageDictionary, pageAreas ?? Array.Empty<PdfRedactionArea>(), limits.MaxDecodedStreamBytes, ref nextObjectNumber) || pageChanged;
-            if ((mutationScope & RedactionMutationScope.Annotations) != 0) pageChanged = RemoveMatchedAnnotations(objects, pageDictionary, currentMatches) || pageChanged;
+            if ((mutationScope & RedactionMutationScope.Paths) != 0 && options.RemoveIntersectingPaths && underlayAreas.Length > 0) pageChanged = RemoveIntersectingPathObjects(objects, pageDictionary, underlayAreas, limits, sourceStreamIdentities, ref nextObjectNumber) || pageChanged;
+            if ((mutationScope & RedactionMutationScope.Annotations) != 0) pageChanged = RemoveMatchedAnnotations(objects, pageDictionary, currentMatches, formFieldObjectNumbers) || pageChanged;
 
             PdfRedactionArea[] paintAreas = paintMarks
-                ? SelectPaintAreas(pageAreas ?? Array.Empty<PdfRedactionArea>(), currentMatches, options)
+                ? BuildPrivacyAppearanceAreas(SelectPaintAreas(currentAreas, currentMatches, options), readPage.GetGeometry(), options)
                 : Array.Empty<PdfRedactionArea>();
             if (paintAreas.Length > 0) {
-                IsolateExistingPageContents(objects, pageDictionary, ref nextObjectNumber);
+                generatedPageContentBytes = SaturatingAdd(
+                    generatedPageContentBytes,
+                    IsolateExistingPageContents(objects, pageDictionary, ref nextObjectNumber));
                 int contentObjectNumber = nextObjectNumber++;
-                objects[contentObjectNumber] = new PdfIndirectObject(contentObjectNumber, 0, BuildRedactionContentStream(paintAreas, options.FillColor));
+                PdfStream redactionContent = BuildRedactionContentStream(paintAreas, options.FillColor);
+                generatedPageContentBytes = SaturatingAdd(generatedPageContentBytes, redactionContent.Data.Length);
+                objects[contentObjectNumber] = new PdfIndirectObject(contentObjectNumber, 0, redactionContent);
                 AppendPageContent(objects, pageDictionary, contentObjectNumber);
                 pageChanged = true;
             }
@@ -294,9 +413,89 @@ internal static partial class PdfRedactionApplier {
             changed = pageChanged || changed;
         }
 
-        if (removedImageObjectNumbers.Count > 0) changed = RemoveUnusedImageObjectReferences(objects, removedImageObjectNumbers, limits) || changed;
+        if (removedImageObjectNumbers.Count > 0) changed = RemoveUnusedImageObjectReferences(objects, removedImageObjectNumbers, limits, sourceStreamIdentities) || changed;
 
-        return new RedactionMutation(changed);
+        return new RedactionMutation(changed, generatedPageContentBytes, appliedImageMatches.AsReadOnly());
+    }
+
+    private static PdfGeneratedOutputGrowth BuildGeneratedOutputGrowth(
+        Dictionary<int, PdfIndirectObject> objects,
+        Dictionary<int, PdfStream> sourceStreams,
+        Dictionary<int, PdfIndirectObject> sourceObjects,
+        HashSet<PdfStream> sourceStreamIdentities,
+        int generatedPageContentBytes) {
+        int maximumSerializedStreamBytes = objects.Values
+            .Select(static item => item.Value)
+            .OfType<PdfStream>()
+            .Select(static stream => stream.Data.Length)
+            .DefaultIfEmpty()
+            .Max();
+        int maximumGeneratedDecodedStreamBytes = 0;
+        long additionalDecodedStreamBytes = 0L;
+        foreach (KeyValuePair<int, PdfIndirectObject> item in objects) {
+            if (item.Value.Value is not PdfStream stream) continue;
+            if (sourceStreamIdentities.Contains(stream)) continue;
+            bool hasSourceStream = sourceStreams.TryGetValue(item.Key, out PdfStream? sourceStream);
+            // Every selected stream is new or was replaced by this mutation. Supported filtered
+            // streams were produced from already-bounded in-memory content, while unsupported image
+            // codecs are accounted by their encoded bytes like the reader's decoded-stream cache.
+            byte[] decoded = StreamDecoder.Decode(stream.Dictionary, stream.Data, objects, int.MaxValue);
+            maximumGeneratedDecodedStreamBytes = Math.Max(maximumGeneratedDecodedStreamBytes, decoded.Length);
+            long sourceDecodedStreamBytes = hasSourceStream
+                ? StreamDecoder.Decode(sourceStream!.Dictionary, sourceStream.Data, sourceObjects, int.MaxValue).LongLength
+                : 0L;
+            additionalDecodedStreamBytes = SaturatingAdd(
+                additionalDecodedStreamBytes,
+                Math.Max(0L, decoded.LongLength - sourceDecodedStreamBytes));
+        }
+
+        int additionalContentBytes = additionalDecodedStreamBytes >= int.MaxValue
+            ? int.MaxValue
+            : (int)additionalDecodedStreamBytes;
+        additionalContentBytes = Math.Max(additionalContentBytes, generatedPageContentBytes);
+        return new PdfGeneratedOutputGrowth(
+            minimumRawStreamBytes: maximumSerializedStreamBytes,
+            minimumDecodedStreamBytes: Math.Max(maximumSerializedStreamBytes, Math.Max(maximumGeneratedDecodedStreamBytes, generatedPageContentBytes)),
+            additionalTotalDecodedStreamBytes: additionalDecodedStreamBytes,
+            additionalPageContentBytes: additionalContentBytes,
+            additionalRetainedContentBytes: additionalDecodedStreamBytes,
+            additionalContentOperations: additionalContentBytes,
+            additionalContentOperands: additionalContentBytes);
+    }
+
+    private static int SaturatingAdd(int value, int added) =>
+        value > int.MaxValue - added ? int.MaxValue : value + added;
+
+    private static long SaturatingAdd(long value, long added) =>
+        value > long.MaxValue - added ? long.MaxValue : value + added;
+
+    private static bool IsFinitePositive(double value) => !double.IsNaN(value) && !double.IsInfinity(value) && value > 0D;
+    private static bool IsFiniteNonNegative(double value) => !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0D;
+
+    private static int GetMutationDecodeLimit(PdfStream stream, PdfReadLimits limits, HashSet<PdfStream> sourceStreamIdentities) =>
+        sourceStreamIdentities.Contains(stream) ? limits.MaxDecodedStreamBytes : int.MaxValue;
+
+    private static HashSet<PdfStream> CollectStreamIdentities(Dictionary<int, PdfIndirectObject> objects) {
+        var streams = new HashSet<PdfStream>();
+        var visited = new HashSet<PdfObject>();
+        foreach (PdfIndirectObject indirect in objects.Values) CollectStreamIdentities(indirect.Value, streams, visited);
+        return streams;
+    }
+
+    private static void CollectStreamIdentities(PdfObject value, HashSet<PdfStream> streams, HashSet<PdfObject> visited) {
+        if (!visited.Add(value)) return;
+        switch (value) {
+            case PdfStream stream:
+                streams.Add(stream);
+                CollectStreamIdentities(stream.Dictionary, streams, visited);
+                break;
+            case PdfDictionary dictionary:
+                foreach (PdfObject item in dictionary.Items.Values) CollectStreamIdentities(item, streams, visited);
+                break;
+            case PdfArray array:
+                foreach (PdfObject item in array.Items) CollectStreamIdentities(item, streams, visited);
+                break;
+        }
     }
 
     private static bool MatchesExactImagePlacement(PdfRedactionMatch match, PdfImagePlacement target) {
@@ -396,7 +595,8 @@ internal static partial class PdfRedactionApplier {
     private static bool RemoveMatchedAnnotations(
         Dictionary<int, PdfIndirectObject> objects,
         PdfDictionary pageDictionary,
-        IReadOnlyList<PdfRedactionMatch> matches) {
+        IReadOnlyList<PdfRedactionMatch> matches,
+        HashSet<int> formFieldObjectNumbers) {
         PdfRedactionMatch[] annotationMatches = matches
             .Where(match => match.Kind == PdfRedactionMatchKind.Annotation)
             .ToArray();
@@ -429,7 +629,14 @@ internal static partial class PdfRedactionApplier {
             AddPopupObjectNumber(annotation, popupObjectNumbers);
             if (reference is not null) {
                 annotationObjectNumbers.Add(reference.ObjectNumber);
-                objects.Remove(reference.ObjectNumber);
+                bool remainsOwnedByFormField =
+                    string.Equals(TryReadName(objects, annotation, "Subtype"), "Widget", StringComparison.OrdinalIgnoreCase) &&
+                    (formFieldObjectNumbers.Contains(reference.ObjectNumber) ||
+                     annotation.Items.TryGetValue("Parent", out PdfObject? parentObject) &&
+                     PdfObjectLookup.Resolve(objects, parentObject) is PdfDictionary);
+                if (!remainsOwnedByFormField) {
+                    objects.Remove(reference.ObjectNumber);
+                }
             }
 
             annotations.Items.RemoveAt(i);
@@ -611,10 +818,26 @@ internal static partial class PdfRedactionApplier {
         var builder = new StringBuilder();
         var content = new ContentStreamBuilder(builder)
             .SaveState()
-            .FillColor(fillColor);
+            .FillColor(fillColor)
+            .StrokeColor(fillColor);
         for (int i = 0; i < areas.Length; i++) {
-            content.Rectangle(areas[i].X, areas[i].Y, areas[i].Width, areas[i].Height)
-                .FillPath();
+            PdfRedactionArea area = areas[i];
+            PdfRedactionGeometry? geometry = area.ExactGeometry;
+            if (geometry is null) {
+                content.Rectangle(area.X, area.Y, area.Width, area.Height).FillPath();
+            } else if (geometry.Kind == PdfRedactionRegionKind.Freehand) {
+                content.LineWidth(geometry.StrokeWidth)
+                    .LineCap(1)
+                    .MoveTo(geometry.Points[0].X, geometry.Points[0].Y)
+                    .LineTo(geometry.Points[1].X, geometry.Points[1].Y)
+                    .StrokePath();
+            } else {
+                content.MoveTo(geometry.Points[0].X, geometry.Points[0].Y);
+                for (int point = 1; point < geometry.Points.Count; point++) {
+                    content.LineTo(geometry.Points[point].X, geometry.Points[point].Y);
+                }
+                content.ClosePath().FillPath();
+            }
         }
 
         content.RestoreState();
@@ -747,20 +970,22 @@ internal static partial class PdfRedactionApplier {
         }
     }
 
-    private static void IsolateExistingPageContents(Dictionary<int, PdfIndirectObject> objects, PdfDictionary pageDictionary, ref int nextObjectNumber) {
+    private static int IsolateExistingPageContents(Dictionary<int, PdfIndirectObject> objects, PdfDictionary pageDictionary, ref int nextObjectNumber) {
         if (!pageDictionary.Items.TryGetValue("Contents", out PdfObject? contentsObject)) {
-            return;
+            return 0;
         }
 
         PdfObject[] originalContents = EnumerateContentObjects(objects, contentsObject).ToArray();
         if (originalContents.Length == 0) {
-            return;
+            return 0;
         }
 
         int saveStateObjectNumber = nextObjectNumber++;
         int restoreStateObjectNumber = nextObjectNumber++;
-        objects[saveStateObjectNumber] = new PdfIndirectObject(saveStateObjectNumber, 0, new PdfStream(new PdfDictionary(), PdfEncoding.Latin1GetBytes("q\n")));
-        objects[restoreStateObjectNumber] = new PdfIndirectObject(restoreStateObjectNumber, 0, new PdfStream(new PdfDictionary(), PdfEncoding.Latin1GetBytes("\nQ\n")));
+        byte[] saveStateContent = PdfEncoding.Latin1GetBytes("q\n");
+        byte[] restoreStateContent = PdfEncoding.Latin1GetBytes("\nQ\n");
+        objects[saveStateObjectNumber] = new PdfIndirectObject(saveStateObjectNumber, 0, new PdfStream(new PdfDictionary(), saveStateContent));
+        objects[restoreStateObjectNumber] = new PdfIndirectObject(restoreStateObjectNumber, 0, new PdfStream(new PdfDictionary(), restoreStateContent));
 
         var isolatedContents = new PdfArray();
         isolatedContents.Items.Add(new PdfReference(saveStateObjectNumber, 0));
@@ -770,6 +995,7 @@ internal static partial class PdfRedactionApplier {
 
         isolatedContents.Items.Add(new PdfReference(restoreStateObjectNumber, 0));
         pageDictionary.Items["Contents"] = isolatedContents;
+        return SaturatingAdd(saveStateContent.Length, restoreStateContent.Length);
     }
 
     private static PdfDictionary CleanStreamDictionary(PdfDictionary source) {
@@ -874,24 +1100,33 @@ internal static partial class PdfRedactionApplier {
     private static bool SameReference(PdfReference left, PdfReference right) =>
         left.ObjectNumber == right.ObjectNumber && left.Generation == right.Generation;
 
-    private static byte[] RewriteAllObjects(Dictionary<int, PdfIndirectObject> objects, int catalogObjectNumber, PdfMetadata metadata, byte[] sourcePdf) {
+    private static byte[] RewriteAllObjects(
+        Dictionary<int, PdfIndirectObject> objects,
+        int catalogObjectNumber,
+        PdfMetadata metadata,
+        byte[] sourcePdf,
+        System.Threading.CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
         int[] sourceIds = objects.Keys.OrderBy(id => id).ToArray();
         var numberMap = new Dictionary<int, int>(sourceIds.Length);
         for (int i = 0; i < sourceIds.Length; i++) {
+            if ((i & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
             numberMap[sourceIds[i]] = i + 1;
         }
 
         var context = new PdfPageExtractor.SerializationContext(numberMap, pagesObjectId: 0, new Dictionary<int, Dictionary<string, PdfObject>>(), objects);
         var rewritten = new List<byte[]>(sourceIds.Length + 1);
         foreach (int sourceId in sourceIds) {
+            cancellationToken.ThrowIfCancellationRequested();
             rewritten.Add(PdfPageExtractor.WrapObject(numberMap[sourceId], PdfPageExtractor.SerializeObject(objects[sourceId].Value, context)));
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         int infoId = rewritten.Count + 1;
         rewritten.Add(PdfPageExtractor.WrapObject(infoId, PdfEncoding.Latin1GetBytes(PdfPageExtractor.BuildInfoDictionary(metadata))));
 
         PdfFileVersion fileVersion = PdfFileAssembler.ParseHeaderVersionOrDefault(PdfSyntax.GetHeaderVersion(sourcePdf));
-        return PdfPageExtractor.Assemble(rewritten, numberMap[catalogObjectNumber], infoId, fileVersion);
+        return PdfPageExtractor.Assemble(rewritten, numberMap[catalogObjectNumber], infoId, fileVersion, cancellationToken);
     }
 
     private static int FindCatalogObjectNumber(Dictionary<int, PdfIndirectObject> objects, string? trailerRaw) {
@@ -992,11 +1227,15 @@ internal static partial class PdfRedactionApplier {
     }
 
     private readonly struct RedactionMutation {
-        public RedactionMutation(bool hasChanges) {
+        public RedactionMutation(bool hasChanges, int generatedPageContentBytes, IReadOnlyList<PdfRedactionMatch> appliedImageMatches) {
             HasChanges = hasChanges;
+            GeneratedPageContentBytes = generatedPageContentBytes;
+            AppliedImageMatches = appliedImageMatches;
         }
 
         public bool HasChanges { get; }
+        public int GeneratedPageContentBytes { get; }
+        public IReadOnlyList<PdfRedactionMatch> AppliedImageMatches { get; }
     }
 
 }

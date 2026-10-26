@@ -3,7 +3,6 @@ title: "OfficeIMO.Rtf"
 description: "Read, create, edit, preserve, and convert Rich Text Format documents with bounded parsing and explicit fidelity reports."
 layout: product
 meta.seo_title: "RTF editing and conversion for .NET"
-meta.head_html: '<link rel="alternate" hreflang="en" href="https://officeimo.com/products/rtf/" /><link rel="alternate" hreflang="x-default" href="https://officeimo.com/products/rtf/" />'
 product_color: "#0f766e"
 product_label: "Rich Text Format engine"
 install: "dotnet add package OfficeIMO.Rtf"
@@ -24,7 +23,7 @@ meta.software.price_currency: "USD"
 ```csharp
 using OfficeIMO.Rtf;
 
-RtfReadResult read = RtfDocument.Load("input.rtf");
+RtfReadResult read = RtfDocument.LoadResult("input.rtf");
 RtfDocument document = read.Document;
 document.ReplaceText("Draft", "Approved");
 File.WriteAllText("approved.rtf", document.ToRtf());

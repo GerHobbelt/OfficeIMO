@@ -13,6 +13,25 @@ The assembly was previously named `OfficeIMO.Drawing`. Drawing became the origin
 dotnet add package OfficeIMO.Core
 ```
 
+## Prepare document scans
+
+`OfficeScanProcessor` in `OfficeIMO.Drawing` prepares a separately owned raster for OCR. It supports explicit quarter-turns, confidence-filtered deskew, local paper-brightness normalization, grayscale or bilevel output, and proportional downsampling:
+
+```csharp
+using OfficeIMO.Drawing;
+
+OfficeScanProcessingResult processed = OfficeScanProcessor.Process(sourceImage,
+    new OfficeScanProcessingOptions {
+        Deskew = true,
+        NormalizeBackground = true,
+        ColorMode = OfficeScanColorMode.Grayscale,
+        MaximumDimension = 3000
+    }, cancellationToken);
+OfficePoint sourcePoint = processed.Report.ProcessedToSource.TransformPoint(ocrPixelPoint);
+```
+
+The source image stays unchanged. The report records transformations, skipped decisions, estimated managed buffers, and a blank-page suggestion; pages are never removed. Pixel, buffer, and analysis-work limits throw `OfficeScanProcessingLimitException`, allowing the caller to retain the original. The operation does not detect quarter-turn orientation itself; an OCR provider or the caller supplies that evidence. Perspective correction, dewarping, and cropping are outside this contract.
+
 ## Quick start
 
 ### Document lifecycle policy
@@ -27,6 +46,31 @@ var loadOptions = new DocumentLoadOptions {
 ```
 
 Word, Excel, and PowerPoint expose format-specific options derived from these shared contracts.
+
+### Shared operation and conversion results
+
+OfficeIMO format packages keep their typed diagnostics while sharing a small result contract from
+`OfficeIMO.Core`:
+
+```csharp
+using OfficeIMO;
+
+IOfficeResult operation = result;
+if (!operation.Succeeded) {
+    // Inspect the concrete result for its typed failure details.
+}
+
+IOfficeResult<MyDocument> documentResult = result;
+MyDocument document = documentResult.RequireValue();
+
+IOfficeConversionResult<MyDocument, MyConversionReport> conversion = result;
+MyDocument losslessDocument = conversion.RequireNoLoss();
+```
+
+`IOfficeResult<T>` standardizes `Succeeded`, `Value`, and `RequireValue()`.
+`IOfficeConversionResult<TValue, TReport>` also exposes `Report`, `HasLoss`, and
+`RequireNoLoss()`. Concrete results continue to expose format-specific diagnostics, warnings,
+or exceptions; the shared interface does not reduce them to an untyped error string.
 
 ### Portable AES for restricted hosts
 
@@ -89,6 +133,17 @@ leave `HasOutputTransform` false so the caller can choose an explicit color-mana
 fallback instead of receiving a silent approximation.
 
 ### Image metadata and complete-content validation
+
+`OfficeRasterImageDecoder` preserves encoded color channels and applies supported image orientation.
+It does not automatically normalize embedded ICC profiles, PNG gamma, or chromaticities. Applications
+that require color-managed pixels must perform that conversion explicitly before using the decoded
+image. The profile APIs above provide bounded color conversion; metadata validation alone does not
+mean a raster image has been converted to sRGB.
+
+The SVG drawing reader supports a single rectangle, rounded rectangle, circle, ellipse, polygon, or
+path inside a `userSpaceOnUse` clip path, including transforms and even-odd filling. Compound clip
+unions, `objectBoundingBox` clips, and referenced or text clip geometry report unsupported features.
+Shape geometry crossing a nested SVG or symbol viewBox is retained until the viewport clip is applied.
 
 ```csharp
 using OfficeIMO.Drawing;
@@ -182,6 +237,8 @@ foreach (OfficeProvenanceSignalResult signal in assessment.ProviderSignals) {
 ```
 
 `IOfficeProvenanceSignalDetector` is deliberately provider-specific. A detector reports its own durable-media watermark, statistical-text watermark, visible disclosure, or deterministic artifact and keeps `NotDetected`, `Inconclusive`, `ProviderUnavailable`, and `Error` distinct. OfficeIMO does not turn the absence of one vendor's signal into “human-authored.”
+
+Existing detector and verifier implementations remain valid. Providers that perform long-running work can additionally implement `ICancellableOfficeProvenanceSignalDetector` or `ICancellableOfficeProvenanceVerifier`; cancellation-aware assessment and workflow calls pass their token to those providers and fall back to the original contracts for compatibility.
 
 Use `OfficeTextIntegrityInspector` to report exact invisible and context-sensitive Unicode code points. It reports offsets, code points, and risk; it does not call those characters an AI watermark. Format content-safety reports also mirror these as selectable `NonPrintingUnicode` findings when the owning adapter can verify and rewrite the exact native text node. Cleanup has no blanket mode: callers pass only reviewed finding IDs, so legitimate joiners, variation selectors, and typographic spaces are not silently normalized.
 
@@ -495,6 +552,8 @@ embedded.Add("Report Variable", File.ReadAllBytes("ReportVariable.ttf"));
 - `OfficeTiffCodec`, `OfficeWebpCodec`, and `OfficeRasterImageEncoder` for shared bounded TIFF, lossless WebP, and format-neutral raster output.
 - Shared SVG formatting, primitive writing, image projection, text-block rendering, hatch-pattern, data-bar, and sparkline helpers.
 - Drawing quality diagnostics for canvas bounds and text overlap checks.
+
+Set `OfficeDrawingRasterRenderOptions.ThrowOnImageDecodeFailure` to `true` when every image must render. An unsupported image, failed optional codec, or decoded raster above `MaximumRasterPixels` then stops rendering with `NotSupportedException`. Successful image decoding happens in the drawing pass, including nested groups and patterns.
 
 ## Boundaries
 

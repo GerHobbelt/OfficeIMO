@@ -35,7 +35,10 @@ public sealed class PdfImagePlacement {
         PdfContentOrderKey? contentOrderKey = null,
         PdfPagePatternSelection? fillPattern = null,
         PdfDictionary? effectiveResources = null,
-        bool requireExactProjection = false) {
+        bool requireExactProjection = false,
+        bool isHiddenOptionalContent = false,
+        int? markedContentId = null,
+        int? contentStreamObjectNumber = null) {
         PageNumber = pageNumber;
         ResourceName = resourceName;
         ObjectNumber = objectNumber;
@@ -66,6 +69,9 @@ public sealed class PdfImagePlacement {
         FillPattern = fillPattern;
         EffectiveResources = effectiveResources;
         RequireExactProjection = requireExactProjection;
+        IsHiddenOptionalContent = isHiddenOptionalContent;
+        MarkedContentId = markedContentId;
+        ContentStreamObjectNumber = contentStreamObjectNumber;
     }
 
     /// <summary>One-based source page number containing the image invocation.</summary>
@@ -134,6 +140,12 @@ public sealed class PdfImagePlacement {
     /// <summary>Stable page-content paint order used to interleave images with other recovered primitives.</summary>
     public double PaintOrder { get; }
 
+    /// <summary>Active content-stream-scoped marked-content identifier from a tagged PDF, when present.</summary>
+    public int? MarkedContentId { get; }
+
+    /// <summary>Form XObject or other content-stream object owning the MCID, or null for page content.</summary>
+    public int? ContentStreamObjectNumber { get; }
+
     /// <summary>Effective ICC rendering intent for the image placement.</summary>
     public OfficeIccRenderingIntent RenderingIntent { get; }
 
@@ -165,6 +177,8 @@ public sealed class PdfImagePlacement {
 
     internal bool RequireExactProjection { get; }
 
+    internal bool IsHiddenOptionalContent { get; }
+
     internal PdfImagePlacement WithPaintOrder(double paintOrder) =>
         Copy(ImageMaskColor, paintOrder);
 
@@ -185,7 +199,10 @@ public sealed class PdfImagePlacement {
             contentOrderKey: contentOrderKey,
             fillPattern: FillPattern,
             effectiveResources: EffectiveResources,
-            requireExactProjection: RequireExactProjection) {
+            requireExactProjection: RequireExactProjection,
+            isHiddenOptionalContent: IsHiddenOptionalContent,
+            markedContentId: MarkedContentId,
+            contentStreamObjectNumber: ContentStreamObjectNumber) {
             SourceDocumentIdentity = this.SourceDocumentIdentity
         };
 
@@ -203,7 +220,31 @@ public sealed class PdfImagePlacement {
             contentOrderKey: ContentOrderKey,
             fillPattern: FillPattern,
             effectiveResources: EffectiveResources,
-            requireExactProjection: true) {
+            requireExactProjection: true,
+            isHiddenOptionalContent: IsHiddenOptionalContent,
+            markedContentId: MarkedContentId,
+            contentStreamObjectNumber: ContentStreamObjectNumber) {
+            SourceDocumentIdentity = this.SourceDocumentIdentity
+        };
+
+    internal PdfImagePlacement WithHiddenOptionalContent(bool isHiddenOptionalContent) =>
+        new PdfImagePlacement(
+            PageNumber, ResourceName, ObjectNumber, DirectStreamIdentity,
+            A, B, C, D, E, F, X, Y, Width, Height, ClipPath,
+            ImageMaskColor, ImageOpacity, InlineImageStream, InlineImageResources,
+            PaintOrder,
+            renderingIntent: RenderingIntent,
+            blendMode: BlendMode,
+            hasUnsupportedBlendMode: HasUnsupportedBlendMode,
+            hasSoftMask: HasSoftMask,
+            hasAuthoredRenderingIntent: HasAuthoredRenderingIntent,
+            contentOrderKey: ContentOrderKey,
+            fillPattern: FillPattern,
+            effectiveResources: EffectiveResources,
+            requireExactProjection: RequireExactProjection,
+            isHiddenOptionalContent: isHiddenOptionalContent,
+            markedContentId: MarkedContentId,
+            contentStreamObjectNumber: ContentStreamObjectNumber) {
             SourceDocumentIdentity = this.SourceDocumentIdentity
         };
 
@@ -237,7 +278,10 @@ public sealed class PdfImagePlacement {
             contentOrderKey: ContentOrderKey,
             fillPattern: FillPattern,
             effectiveResources: EffectiveResources,
-            requireExactProjection: RequireExactProjection) {
+            requireExactProjection: RequireExactProjection,
+            isHiddenOptionalContent: IsHiddenOptionalContent,
+            markedContentId: MarkedContentId,
+            contentStreamObjectNumber: ContentStreamObjectNumber) {
             SourceDocumentIdentity = this.SourceDocumentIdentity
         };
 

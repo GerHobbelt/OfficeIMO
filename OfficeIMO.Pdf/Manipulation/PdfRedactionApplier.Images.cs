@@ -96,18 +96,20 @@ internal static partial class PdfRedactionApplier {
 
     private static bool RedactionAreaCoversMatch(PdfRedactionArea area, PdfRedactionMatch match) {
         return area.PageNumber == match.PageNumber &&
-            area.X <= match.X + ImageRedactionTolerance &&
-            area.Y <= match.Y + ImageRedactionTolerance &&
-            area.X + area.Width >= match.X + match.Width - ImageRedactionTolerance &&
-            area.Y + area.Height >= match.Y + match.Height - ImageRedactionTolerance;
+            area.ContainsRectangle(
+                match.X + ImageRedactionTolerance,
+                match.Y + ImageRedactionTolerance,
+                Math.Max(0D, match.Width - ImageRedactionTolerance * 2D),
+                Math.Max(0D, match.Height - ImageRedactionTolerance * 2D));
     }
 
     private static bool RedactionAreaIntersectsMatch(PdfRedactionArea area, PdfRedactionMatch match) {
         return area.PageNumber == match.PageNumber &&
-            area.X < match.X + match.Width - ImageRedactionTolerance &&
-            area.X + area.Width > match.X + ImageRedactionTolerance &&
-            area.Y < match.Y + match.Height - ImageRedactionTolerance &&
-            area.Y + area.Height > match.Y + ImageRedactionTolerance;
+            area.IntersectsRectangle(
+                match.X + ImageRedactionTolerance,
+                match.Y + ImageRedactionTolerance,
+                Math.Max(0D, match.Width - ImageRedactionTolerance * 2D),
+                Math.Max(0D, match.Height - ImageRedactionTolerance * 2D));
     }
 
     private static bool ScrubMatchedImageFormXObjects(
@@ -593,7 +595,11 @@ internal static partial class PdfRedactionApplier {
             maxNestingDepth: limits.MaxContentNestingDepth,
             maxOperands: limits.MaxContentOperands);
 
-    private static bool RemoveUnusedImageObjectReferences(Dictionary<int, PdfIndirectObject> objects, HashSet<int> targetObjectNumbers, PdfReadLimits limits) {
+    private static bool RemoveUnusedImageObjectReferences(
+        Dictionary<int, PdfIndirectObject> objects,
+        HashSet<int> targetObjectNumbers,
+        PdfReadLimits limits,
+        HashSet<PdfStream> sourceStreamIdentities) {
         var invokedNames = new HashSet<string>(StringComparer.Ordinal);
         var pageContentStreamNumbers = new HashSet<int>();
         var type3CharProcStreams = new HashSet<PdfStream>();
@@ -642,7 +648,8 @@ internal static partial class PdfRedactionApplier {
             }
             byte[] decoded;
             try {
-                decoded = StreamDecoder.DecodeRequired(stream.Dictionary, stream.Data, objects, limits.MaxDecodedStreamBytes);
+                int maximumDecodedBytes = GetMutationDecodeLimit(stream, limits, sourceStreamIdentities);
+                decoded = StreamDecoder.DecodeRequired(stream.Dictionary, stream.Data, objects, maximumDecodedBytes);
             } catch (InvalidDataException) {
                 hasUnscannableContentOwner = true;
                 return;
@@ -960,6 +967,8 @@ internal static partial class PdfRedactionApplier {
         public static ImageContentOperand ForName(string name, int start, int end) => new ImageContentOperand(name, 0D, start, end);
 
         public static ImageContentOperand ForNumber(double number, int start, int end) => new ImageContentOperand(null, number, start, end);
+
+        public static ImageContentOperand ForOther(int start, int end) => new ImageContentOperand(null, 0D, start, end);
     }
 
     private readonly struct RemovalRange {

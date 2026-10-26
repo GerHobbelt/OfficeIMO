@@ -299,6 +299,23 @@ public class PdfDocumentCanvasTests {
     }
 
     [Fact]
+    public void CanvasActualText_PreservesLogicalExtractionWithEmbeddedDefaultFont() {
+        string? fontPath = PdfComplianceTestFonts.FindBundledTrueTypeFont();
+        if (fontPath == null) return;
+        var options = new PdfOptions { CompressContentStreams = false }
+            .UseFontFamily(new PdfEmbeddedFontFamily("ActualText Embedded", File.ReadAllBytes(fontPath)));
+
+        byte[] bytes = PdfDocument.Create(options)
+            .TaggedPdfCatalogMarkers()
+            .Canvas(canvas => canvas.ActualText("VerticalWeb", 20D, 30D, logical => logical
+                .Effect(OfficeIMO.Drawing.OfficeTransform.RotateDegrees(90D), 1D, effect => effect
+                    .Text("VerticalWeb", 20D, 10D, 80D, 20D))))
+            .ToBytes();
+
+        Assert.Contains("VerticalWeb", PdfReadDocument.Open(bytes).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CanvasActualText_PositionedOverloadPreservesReadingOrderAndCoordinates() {
         byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
             .TaggedPdfCatalogMarkers()
@@ -329,6 +346,26 @@ public class PdfDocumentCanvasTests {
         Assert.Throws<ArgumentNullException>(() => canvas.ActualText("Text", null!));
         Assert.Throws<ArgumentException>(() => canvas.ActualText("Text", _ => { }));
         Assert.Throws<ArgumentOutOfRangeException>(() => canvas.ActualText("Text", -1D, 0D, nested => nested.Text("x", 0D, 0D, 10D, 10D)));
+    }
+
+    [Fact]
+    public void CanvasNamedDestinations_CreateReusableInternalNavigation() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions { PageWidth = 200D, PageHeight = 200D })
+            .Canvas(canvas => canvas
+                .NamedDestination("details", 10D, 120D)
+                .Text("Details", 10D, 120D, 80D, 20D)
+                .LinkToNamedDestination("details", 10D, 10D, 60D, 20D, "Jump to details"))
+            .ToBytes();
+
+        PdfDocumentInfo info = PdfInspector.Inspect(bytes);
+        Assert.Contains("details", info.NamedDestinationNames);
+        Assert.Contains("details", info.LinkDestinationNames);
+
+        var canvas = new PdfPageCanvas();
+        Assert.Throws<ArgumentException>(() => canvas.NamedDestination(" ", 0D, 0D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => canvas.NamedDestination("target", -1D, 0D));
+        Assert.Throws<ArgumentException>(() => canvas.LinkToNamedDestination(" ", 0D, 0D, 10D, 10D));
+        Assert.Throws<ArgumentOutOfRangeException>(() => canvas.LinkToNamedDestination("target", 0D, 0D, 0D, 10D));
     }
 
     [Fact]
@@ -683,6 +720,36 @@ public class PdfDocumentCanvasTests {
         Assert.Contains("30 100 60 20 re", content, StringComparison.Ordinal);
         Assert.Contains("1.25 w", content, StringComparison.Ordinal);
         Assert.Contains(" B", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CanvasShape_PreservesExactStrokeDashPhaseAndMiterInPdfAndDrawingRoundTrip() {
+        OfficeShape shape = OfficeShape.Line(0D, 0D, 100D, 0D);
+        shape.StrokeColor = OfficeColor.Black;
+        shape.StrokeWidth = 2D;
+        shape.StrokeLineJoin = OfficeStrokeLineJoin.Miter;
+        shape.StrokeMiterLimit = 7.5D;
+        shape.SetStrokeDashArray(new[] { 9D, 3D, 1D }, 2.5D);
+
+        byte[] bytes = PdfDocument.Create(new PdfOptions {
+                PageWidth = 160D,
+                PageHeight = 80D,
+                MarginLeft = 0D,
+                MarginRight = 0D,
+                MarginTop = 0D,
+                MarginBottom = 0D,
+                CompressContentStreams = false
+            })
+            .Canvas(canvas => canvas.Shape(shape, 20D, 30D))
+            .ToBytes();
+
+        string content = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("7.5 M", content, StringComparison.Ordinal);
+        Assert.Contains("[9 3 1] 2.5 d", content, StringComparison.Ordinal);
+
+        OfficeShape roundTripped = Assert.Single(PdfReadDocument.Open(bytes).Pages[0].ToDrawing().Shapes).Shape;
+        Assert.Equal(new[] { 9D, 3D, 1D }, roundTripped.StrokeDashArray);
+        Assert.Equal(2.5D, roundTripped.StrokeDashOffset);
     }
 
     [Fact]
@@ -1867,11 +1934,57 @@ public class PdfDocumentCanvasTests {
     }
 
     [Fact]
+    public void CanvasWithBlendMode_WritesScopedMultiplyGraphicsState() {
+        var highlight = OfficeShape.Rectangle(100D, 18D);
+        highlight.FillColor = OfficeColor.FromRgb(255, 230, 70);
+        highlight.StrokeWidth = 0D;
+
+        byte[] bytes = PdfDocument.Create(new PdfOptions {
+                PageWidth = 180D,
+                PageHeight = 100D,
+                MarginLeft = 0D,
+                MarginRight = 0D,
+                MarginTop = 0D,
+                MarginBottom = 0D,
+                CompressContentStreams = false
+            })
+            .Canvas(canvas => canvas
+                .Text("Readable text", 20D, 24D, 120D, 20D)
+                .WithBlendMode(OfficeBlendMode.Multiply, blended =>
+                    blended.Shape(highlight, 18D, 24D)))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        PdfReadPage page = PdfReadDocument.Open(bytes).Pages[0];
+
+        Assert.Contains("/BM /Multiply", raw, StringComparison.Ordinal);
+        Assert.Contains("/Group << /S /Transparency /I true /K false >>", raw, StringComparison.Ordinal);
+        Assert.Contains(page.GetIdentityGraphicsEffectTransitions(), transition =>
+            transition.Effect.BlendMode == OfficeBlendMode.Multiply);
+    }
+
+    [Fact]
+    public void CanvasEffect_CombinesOpacityAndBlendModeInOneGraphicsState() {
+        byte[] bytes = PdfDocument.Create(new PdfOptions { CompressContentStreams = false })
+            .Canvas(canvas => canvas.Effect(
+                OfficeTransform.Identity,
+                0.4D,
+                OfficeBlendMode.Screen,
+                blended => blended.Text("SCREENED", 20D, 20D, 100D, 20D)))
+            .ToBytes();
+
+        string raw = Encoding.ASCII.GetString(bytes);
+        Assert.Contains("/ca 0.4 /CA 0.4 /BM /Screen", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CanvasEffect_RejectsInvalidOpacity() {
         Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().Canvas(canvas =>
             canvas.Effect(OfficeTransform.Identity, double.NaN, _ => { })));
         Assert.Throws<ArgumentNullException>(() => PdfDocument.Create().Canvas(canvas =>
             canvas.Effect(OfficeTransform.Identity, 1D, null!)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfDocument.Create().Canvas(canvas =>
+            canvas.WithBlendMode((OfficeBlendMode)99, _ => { })));
     }
 
     [Fact]
@@ -1928,6 +2041,9 @@ public class PdfDocumentCanvasTests {
     public void CanvasEffect_RejectsInteractiveFieldsInNontrivialEffects() {
         Assert.Throws<ArgumentException>(() => PdfDocument.Create().Canvas(canvas =>
             canvas.Effect(OfficeTransform.RotateDegrees(45D), 0.5D, nested =>
+                nested.TextField("Name", "Ada", 10D, 10D, 80D, 20D))));
+        Assert.Throws<ArgumentException>(() => PdfDocument.Create().Canvas(canvas =>
+            canvas.WithBlendMode(OfficeBlendMode.Multiply, nested =>
                 nested.TextField("Name", "Ada", 10D, 10D, 80D, 20D))));
 
         byte[] identityBytes = PdfDocument.Create().Canvas(canvas =>

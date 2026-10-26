@@ -157,6 +157,7 @@ jobs:
           $feed = Join-Path $env:RUNNER_TEMP 'officeimo-email-feed'
           $configDirectory = Join-Path $env:RUNNER_TEMP 'officeimo-email-nuget'
           $configPath = Join-Path $configDirectory 'nuget.config'
+          $ciPackageVersion = "0.0.0-ci.$env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT"
           New-Item -ItemType Directory -Force -Path $feed | Out-Null
           $projects = @(
             'OfficeIMO.Core/OfficeIMO.Core.csproj',
@@ -175,7 +176,7 @@ jobs:
           )
           foreach ($project in $projects) {
             dotnet restore $project --no-http-cache
-            dotnet pack $project --configuration $env:BUILD_CONFIGURATION --no-restore --output $feed
+            dotnet pack $project --configuration $env:BUILD_CONFIGURATION --no-restore --output $feed --property:PackageVersion=$ciPackageVersion
           }
           function Get-PackedPackageVersion([string] $id) {
             $escapedId = [regex]::Escape($id)
@@ -267,7 +268,12 @@ jobs:
           )) {
             $metadataPath = Join-Path $env:NUGET_PACKAGES "$($package.Id)/$($package.Version)/.nupkg.metadata"
             $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
-            $resolvedSource = (Resolve-Path $metadata.source).Path.TrimEnd('\', '/')
+            $packageSource = [string] $metadata.source
+            $resolvedSource = if ($packageSource -match '^https?://') {
+              $packageSource.TrimEnd('/')
+            } else {
+              (Resolve-Path -LiteralPath $packageSource).Path.TrimEnd('\', '/')
+            }
             if (-not $resolvedSource.Equals($expectedFeed, [StringComparison]::OrdinalIgnoreCase)) {
               throw "$($package.Id) restored from '$resolvedSource' instead of the local package feed '$expectedFeed'."
             }
@@ -316,6 +322,7 @@ jobs:
           $feed = Join-Path $env:RUNNER_TEMP 'officeimo-onenote-feed'
           $configDirectory = Join-Path $env:RUNNER_TEMP 'officeimo-onenote-nuget'
           $configPath = Join-Path $configDirectory 'nuget.config'
+          $ciPackageVersion = "0.0.0-ci.$env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT"
           New-Item -ItemType Directory -Force -Path $feed | Out-Null
           $projects = @(
             'OfficeIMO.Core/OfficeIMO.Core.csproj',
@@ -332,7 +339,7 @@ jobs:
           )
           foreach ($project in $projects) {
             dotnet restore $project --no-http-cache
-            dotnet pack $project --configuration $env:BUILD_CONFIGURATION --no-restore --output $feed
+            dotnet pack $project --configuration $env:BUILD_CONFIGURATION --no-restore --output $feed --property:PackageVersion=$ciPackageVersion
           }
           function Get-PackedPackageVersion([string] $id) {
             $escapedId = [Regex]::Escape($id)
@@ -366,9 +373,11 @@ jobs:
               throw "$packageId packed as $($packageVersions[$packageId]); expected $oneNoteVersion."
             }
           }
+          $consumerPackages = Join-Path $env:RUNNER_TEMP ('officeimo-onenote-consumer-cache-' + [Guid]::NewGuid().ToString('N'))
           $smokeProperties = @(
             '--property:EnableOfficeIMOOneNotePackageSmoke=true',
-            "--property:OfficeIMOOneNotePackageVersion=$oneNoteVersion"
+            "--property:OfficeIMOOneNotePackageVersion=$oneNoteVersion",
+            "--property:RestorePackagesPath=$consumerPackages"
           )
           dotnet new nugetconfig --output $configDirectory --force
           dotnet nuget add source "$feed" --name OfficeIMOLocal --configfile "$configPath"
@@ -396,15 +405,20 @@ jobs:
           [void] $nugetConfig.configuration.AppendChild($sourceMapping)
           $nugetConfig.Save($configPath)
           dotnet restore Build/PackageSmoke/OfficeIMO.OneNote/OfficeIMO.OneNote.PackageSmoke.csproj @smokeProperties --configfile "$configPath" --no-http-cache
-          if (Test-Path (Join-Path $env:NUGET_PACKAGES 'officeimo.security')) {
+          if (Test-Path (Join-Path $consumerPackages 'officeimo.security')) {
             throw 'The ordinary OfficeIMO.OneNote package consumer restored optional OfficeIMO.Security.'
           }
           $expectedFeed = (Resolve-Path $feed).Path.TrimEnd('\', '/')
           foreach ($packageId in $packageIds) {
             $packageVersion = $packageVersions[$packageId]
-            $metadataPath = Join-Path $env:NUGET_PACKAGES "$($packageId.ToLowerInvariant())/$packageVersion/.nupkg.metadata"
+            $metadataPath = Join-Path $consumerPackages "$($packageId.ToLowerInvariant())/$packageVersion/.nupkg.metadata"
             $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
-            $resolvedSource = (Resolve-Path $metadata.source).Path.TrimEnd('\', '/')
+            $packageSource = [string] $metadata.source
+            $resolvedSource = if ($packageSource -match '^https?://') {
+              $packageSource.TrimEnd('/')
+            } else {
+              (Resolve-Path -LiteralPath $packageSource).Path.TrimEnd('\', '/')
+            }
             if (-not $resolvedSource.Equals($expectedFeed, [StringComparison]::OrdinalIgnoreCase)) {
               throw "$packageId restored from '$resolvedSource' instead of the local package feed '$expectedFeed'."
             }
@@ -1644,10 +1658,32 @@ jobs:
         run: dotnet restore OfficeIMO.sln
 
       - name: Run AOT/Trim analyzers (net8.0)
-        run: dotnet build OfficeIMO.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true -p:TargetFramework=net8.0
+        shell: pwsh
+        run: |
+          # The solution includes net10-only products such as Studio. Preserve
+          # the existing net8 analyzer lane for every compatible solution project.
+          $projects = dotnet sln OfficeIMO.sln list | Where-Object {
+            $_ -match '\.csproj$' -and $_ -notmatch '(^|[\\/])OfficeIMO\.Studio(\.Tests)?[\\/]'
+          } | ForEach-Object {
+            (Resolve-Path -LiteralPath $_).Path
+          }
+
+          $analyzerSolution = Join-Path $env:RUNNER_TEMP 'OfficeIMO.Aot.sln'
+          dotnet new sln --name OfficeIMO.Aot --output $env:RUNNER_TEMP --format sln
+          dotnet sln $analyzerSolution add @($projects)
+          dotnet restore $analyzerSolution -p:TargetFramework=net8.0
+          dotnet build $analyzerSolution --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true
 
       - name: Run AOT/Trim analyzers (net10.0)
-        run: dotnet build OfficeIMO.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true -p:TargetFramework=net10.0
+        shell: pwsh
+        run: |
+          # The preceding net8 restore replaces shared project.assets.json files.
+          # Restore the complete graph, then use the filtered solution to avoid
+          # concurrent Avalonia generation through Studio and Studio.Tests.
+          dotnet restore OfficeIMO.sln
+          $analyzerSolution = Join-Path $env:RUNNER_TEMP 'OfficeIMO.Aot.sln'
+          dotnet build $analyzerSolution --configuration ${{ env.BUILD_CONFIGURATION }} --framework net10.0 --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true
+          dotnet build OfficeIMO.Studio/OfficeIMO.Studio.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net10.0 --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true
 
       - name: Publish and run supported NativeAOT scenarios
         shell: pwsh
