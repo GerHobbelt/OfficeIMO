@@ -103,16 +103,20 @@ Unknown XML, vendor extensions, scripts, embedded content, and unsupported drawi
 - Animation editing covers basic shape-attribute effects and fade-in timing. Advanced timing trees are preserved when untouched.
 - Encrypted packages are detected and rejected before editing.
 - Changed signed packages fail by default because saving would invalidate signatures. An explicit save option can remove invalidated signature entries.
-- Signature creation and cryptographic validation, pivot-table editing, and complete chart editing are outside the current surface.
+- The bounded OfficeIMO XML package-manifest signature profile can be created and validated through an explicit `IOfficeSecurityProvider`. Arbitrary producer-specific signature profiles remain inspection or preservation oriented.
+- Pivot-table editing and complete chart editing are outside the current surface.
 - Flat XML variants (`.fodt`, `.fods`, `.fodp`) can be opened and written, including embedded raster images. Exotic embedded objects and package-only features may not project losslessly.
 - `OdsSheet.Merge` rejects merges above its default 100,000-cell materialization limit. Use the overload with an explicit lower limit when processing untrusted dimensions.
 - Unknown package entries and extension XML are always preserved by package editing. Explicit format conversion and flat XML projection report content they cannot carry through `OdfConversionReport` and `OdfSaveReport.LossyEntries`.
 
 The package targets `netstandard2.0`, `net8.0`, and `net10.0`, plus `net472` on Windows. CI checks generated ODF 1.3 and 1.4 XML against pinned OASIS Relax NG schemas, then opens and resaves the generated packages with the runner's reported LibreOffice version.
 
+Producer evidence is recorded in `OfficeIMO.OpenDocument.Tests/Fixtures/producer-manifest.json`: exact hashes cover LibreOffice and Microsoft Office for ODT, ODS, and ODP, while a genuine Google Docs ODT export is verified externally by stable semantic content because its ZIP bytes contain nondeterministic identifiers. The manifest also names the executable style, formula, drawing, embedded-content, and unknown-package-preservation tests. `Build/Test-OpenDocumentExternalProducerEvidence.ps1` downloads the Google artifact, verifies provenance, loads and validates it with bounded package options, saves with preservation and strict loss reporting, reopens the result, and validates it again without checking third-party bytes into the repository.
+
 ## Dependency footprint
 
 - **External:** None; no OpenDocument SDK and no LibreOffice process.
 - **OfficeIMO:** `OfficeIMO.Drawing`. ODT/ODS/ODP parsing, models, preservation, inspection, and writing are first-party.
+- **Security:** ODF signature carriers are detected and changed signed packages fail safely without a cryptographic dependency. `OdfDocument.SignPackage(...)` and `ValidatePackageSignatures(...)` use an explicit provider for the bounded OfficeIMO XML package-manifest profile; `OfficeIMO.Security` is not pulled transitively. ODF encryption/decryption remains deliberately unsupported until a producer-identified interoperability corpus and explicit password/key policy exist.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

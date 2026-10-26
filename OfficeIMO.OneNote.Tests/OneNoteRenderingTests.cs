@@ -4,6 +4,46 @@ using System.Text;
 namespace OfficeIMO.OneNote.Tests;
 
 public sealed class OneNoteRenderingTests {
+    [Theory]
+    [InlineData("testOneNote2016.one")]
+    [InlineData("testOneNoteFromOffice365.one")]
+    [InlineData("handwriting_recognition.one")]
+    public void LoadedProducerFixturesExportDeterministicallyToBoundedRasterAndVectorSurfaces(string fixtureName) {
+        OneNoteSection section = OneNoteSectionReader.Read(Path.Combine(AppContext.BaseDirectory, "Fixtures", fixtureName));
+        OneNotePage page = Assert.IsType<OneNotePage>(section.Pages.FirstOrDefault());
+        var options = new OneNotePageRenderingOptions {
+            Scale = 0.25D,
+            MaximumRasterPixels = 2_000_000L
+        };
+
+        OfficeImageExportResult firstPng = page.ExportImage(OfficeImageExportFormat.Png, options);
+        OfficeImageExportResult secondPng = page.ExportImage(OfficeImageExportFormat.Png, options);
+        OfficeImageExportResult svg = page.ExportImage(OfficeImageExportFormat.Svg, options);
+
+        Assert.Equal(firstPng.Bytes, secondPng.Bytes);
+        Assert.True((long)firstPng.Width * firstPng.Height <= options.MaximumRasterPixels);
+        Assert.Equal(new byte[] { 137, 80, 78, 71 }, firstPng.Bytes.Take(4));
+        Assert.Contains("<svg", Encoding.UTF8.GetString(svg.Bytes), StringComparison.Ordinal);
+        Assert.DoesNotContain(firstPng.Diagnostics, diagnostic => diagnostic.Severity == OfficeImageExportDiagnosticSeverity.Error);
+        Assert.DoesNotContain(svg.Diagnostics, diagnostic => diagnostic.Severity == OfficeImageExportDiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void DirectImageExportEnforcesRenderTimeout() {
+        var page = new OneNotePage {
+            PageSize = OneNotePageSize.Custom,
+            Width = 2D,
+            Height = 2D
+        };
+        var options = new OneNotePageRenderingOptions {
+            IncludeTitle = false,
+            RenderTimeout = TimeSpan.FromTicks(1)
+        };
+
+        Assert.Throws<OfficeImageExportTimeoutException>(() =>
+            page.ExportImage(OfficeImageExportFormat.Svg, options));
+    }
+
     [Fact]
     public void PageRendererProjectsRichTextImageInkMathTableAndAttachments() {
         OneNotePage page = CreateVisualPage();

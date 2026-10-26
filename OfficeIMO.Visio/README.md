@@ -41,9 +41,14 @@ document.Save();
 - Provides fluent diagram builders for common flowchart, block, dependency, architecture, network, topology, swimlane, org chart, sequence, timeline, and generic graph scenarios.
 - Supports loaded-diagram editing, shape selection, topology queries, stencil replacement/migration planning, and container maintenance.
 - Exports headless PNG, JPEG, TIFF, SVG, and lossless WebP previews for proof and review workflows.
-- Includes validation and quality analysis for generated and loaded diagrams.
+- Includes validation and quality analysis for generated and loaded diagrams, including connector-label collisions with unrelated connector paths.
+- Carries caller-supplied stencil license, attribution, and unsupported-master state through shapes, catalogs, and manifests without inferring redistribution rights.
 
 ## Editing existing diagrams
+
+`Load` materializes an editable diagram. File and stream entry points accept the
+same `VisioLoadOptions`. New asynchronous calls should use the options-first
+shape; token-first overloads remain available for source and binary compatibility.
 
 ```csharp
 using OfficeIMO.Drawing;
@@ -68,6 +73,14 @@ VisioDocument.Load("operations.vsdx")
 Loaded `.vsdx` editing covers common pages, shapes, connectors, text, styles, Shape Data, hyperlinks, layers, containers, comments, selection, topology queries, and targeted layout operations. Unmodeled package XML is preserved where possible, but this is strong round-trip preservation rather than a complete typed object model for every Visio feature.
 
 Current editing limits include advanced nested and container behavior, deeper swimlane metadata and automatic assignment, richer threaded comment and author workflows, advanced resize-to-content, and broader whole-diagram relayout and polish. Data graphics, legends, general ShapeSheet formulas, and many less-common ShapeSheet sections are preserved where possible but are not fully exposed as typed APIs. Track open work in the repository [roadmap](../Docs/ROADMAP.md).
+
+### Signed diagrams
+
+`InspectSignatures()` detects Open XML signature-origin relationships and XML signature parts. Saving a
+loaded signed diagram is blocked by default because rebuilding the package would invalidate that evidence. Set
+`SignatureMutationPolicy = VisioSignatureMutationPolicy.RemoveInvalidatedSignatures` only when removing the stale
+signature carrier is the intended result. `SignPackageSignature(...)` and `ValidatePackageSignatures(...)` create
+and cryptographically validate OPC signatures through an explicitly supplied `IOfficeSecurityProvider`.
 
 ## Examples
 
@@ -185,6 +198,18 @@ page.SelectWithShapeData("Owner", "Platform")
 document.Save();
 ```
 
+When a catalog comes from an external package, make its provenance explicit:
+
+```csharp
+var options = new VisioStencilPackageLoadOptions {
+    SourceLicense = "License identifier or notice supplied by the caller",
+    SourceAttribution = "Required source attribution",
+    IncludeUnsupportedMasters = true
+};
+```
+
+Unsupported masters remain marked as unsupported even when included for inventory or migration planning. Including them does not turn them into a fully supported authoring contract or grant redistribution rights.
+
 ### Headless image export
 
 ```csharp
@@ -223,7 +248,7 @@ IReadOnlyList<OfficeImageExportResult> pages = document
 ## Related packages and limits
 
 - `OfficeIMO.Visio` generates and edits `.vsdx` packages without requiring desktop Visio at runtime.
-- External stencil packages retain their package and licensing requirements.
+- External stencil packages retain their package and licensing requirements; OfficeIMO records caller-supplied provenance but never infers licensing terms.
 - Use [PSWriteOffice](https://github.com/EvotecIT/PSWriteOffice) for PowerShell workflows.
 - Open Visio product work is listed in the repository [roadmap](../Docs/ROADMAP.md).
 
@@ -243,5 +268,6 @@ IReadOnlyList<OfficeImageExportResult> pages = document
 
 - **External:** `System.IO.Packaging`; Microsoft BCL compatibility packages are used on older targets.
 - **OfficeIMO:** `OfficeIMO.Drawing`. The VSDX model, builders, editing, topology, validation, and PNG/JPEG/TIFF/SVG/WebP renderers are first-party.
+- **Security:** Open XML signature carriers are inspected and signed-diagram mutations fail safely without a cryptographic dependency. Signature creation and validation accept an explicit `IOfficeSecurityProvider`; `OfficeIMO.Security` is not pulled transitively.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

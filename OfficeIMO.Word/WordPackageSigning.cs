@@ -1,6 +1,6 @@
 using System.Security.Cryptography.X509Certificates;
-using System.Runtime.InteropServices;
 using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Security;
 
 namespace OfficeIMO.Word {
     /// <summary>Identifies a distinct Word signing surface.</summary>
@@ -38,10 +38,8 @@ namespace OfficeIMO.Word {
         /// <summary>VBA project signing capability, which is independent of OPC package signing.</summary>
         public static WordSigningCapability MacroProject { get; } = new WordSigningCapability(
             WordSigningCapabilityKind.VbaMacroProject,
-            RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
-            RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? "VBA macro-project signing is available through Microsoft OfficeSips and SignTool as a separate Windows-native capability; operational availability is reported per request."
-                : "VBA signature parts can be inspected cross-platform as a separate capability, but content-binding validation requires Microsoft's registered Office SIP on Windows and creation additionally requires OfficeSips tooling plus SignTool.");
+            true,
+            "Managed cross-platform VBA macro-project signing and validation are supported as a separate capability from OPC package signing; an Office security provider is supplied explicitly.");
     }
 
     /// <summary>
@@ -139,6 +137,8 @@ namespace OfficeIMO.Word {
         /// <summary>Gets or sets the maximum aggregate encoded certificate bytes embedded in the created signature. Defaults to 64 MiB.</summary>
         public long MaxTotalCertificateBytes { get; set; } = 64L * 1024 * 1024;
 
+        internal Action<string>? BeforeValidation { get; set; }
+
         internal OfficePackageSigningOptions ToPackageOptions() {
             return new OfficePackageSigningOptions {
                 PartUris = PartUris,
@@ -156,7 +156,8 @@ namespace OfficeIMO.Word {
                 MaxSignatureBytes = MaxSignatureBytes,
                 MaxCertificates = MaxCertificates,
                 MaxCertificateBytes = MaxCertificateBytes,
-                MaxTotalCertificateBytes = MaxTotalCertificateBytes
+                MaxTotalCertificateBytes = MaxTotalCertificateBytes,
+                BeforeValidation = BeforeValidation
             };
         }
     }
@@ -167,7 +168,8 @@ namespace OfficeIMO.Word {
     public sealed class WordPackageSigningResult {
         internal WordPackageSigningResult(
             OfficePackageSigningResult packageResult,
-            WordSignatureValidationReport? validationReport) {
+            WordSignatureValidationReport? validationReport,
+            string? createdSignaturePartUri = null) {
             var details = new List<string>(packageResult.Details);
             if (validationReport != null && !validationReport.IsValidUnderPolicy) {
                 details.AddRange(validationReport.Findings);
@@ -175,13 +177,16 @@ namespace OfficeIMO.Word {
 
             FilePath = packageResult.FilePath;
             IsSupported = packageResult.IsSupported;
-            Succeeded = packageResult.Succeeded;
             SignedPartCount = packageResult.SignedPartCount;
             SignedRelationshipSelectorCount = packageResult.SignedRelationshipSelectorCount;
             SignatureCount = packageResult.SignatureCount;
             SignaturePartUri = packageResult.SignaturePartUri;
             CreatedSignatureValidation = validationReport?.Signatures.FirstOrDefault(signature =>
-                string.Equals(signature.SignaturePart.Uri, packageResult.SignaturePartUri, StringComparison.OrdinalIgnoreCase));
+                string.Equals(
+                    signature.SignaturePart.Uri,
+                    createdSignaturePartUri ?? packageResult.SignaturePartUri,
+                    StringComparison.OrdinalIgnoreCase));
+            Succeeded = packageResult.Succeeded && IsCreatedSignatureValidationSuccessful(CreatedSignatureValidation);
             Details = details;
             ValidationReport = validationReport;
         }
@@ -218,24 +223,26 @@ namespace OfficeIMO.Word {
 
         internal bool CreatedSignatureReadbackSucceeded {
             get {
-                WordSignaturePartValidationResult? validation = CreatedSignatureValidation;
-                WordSignaturePartInfo? signaturePart = validation?.SignaturePart;
-                if (!Succeeded ||
-                    validation?.CryptographicStatus != WordSignatureValidationState.Passed ||
+                return Succeeded && IsCreatedSignatureValidationSuccessful(CreatedSignatureValidation);
+            }
+        }
+
+        internal static bool IsCreatedSignatureValidationSuccessful(WordSignaturePartValidationResult? validation) {
+            WordSignaturePartInfo? signaturePart = validation?.SignaturePart;
+            if (validation?.CryptographicStatus != WordSignatureValidationState.Passed ||
                     signaturePart == null ||
                     signaturePart.HasParseError ||
                     string.IsNullOrWhiteSpace(signaturePart.SignatureMethodAlgorithm) ||
                     signaturePart.SignedReferences.Count == 0) {
-                    return false;
-                }
-
-                return signaturePart.SignedReferences.All(reference =>
-                    reference.IsPackagePartReference &&
-                    reference.TargetPartExists == true &&
-                    !string.IsNullOrWhiteSpace(reference.DigestMethodAlgorithm) &&
-                    reference.HasDigestValue &&
-                    reference.DigestVerificationStatus == WordSignatureValidationState.Passed);
+                return false;
             }
+
+            return signaturePart.SignedReferences.All(reference =>
+                reference.IsPackagePartReference &&
+                reference.TargetPartExists == true &&
+                !string.IsNullOrWhiteSpace(reference.DigestMethodAlgorithm) &&
+                reference.HasDigestValue &&
+                reference.DigestVerificationStatus == WordSignatureValidationState.Passed);
         }
 
         internal static WordPackageSigningResult Failed(string filePath, bool isSupported, IReadOnlyList<string> details) {

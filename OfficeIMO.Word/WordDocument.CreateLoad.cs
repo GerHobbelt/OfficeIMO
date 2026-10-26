@@ -376,6 +376,9 @@ namespace OfficeIMO.Word {
 
                 word.FilePath = filePath;
                 word._ownedPackageStream = memoryStream;
+                word._legacyValidationEncodedPackageBytes = CaptureLegacyValidationEncodedPackage(
+                    sourceBytes,
+                    readOnly);
                 word._wordprocessingDocument = wordDocument;
                 word._document = wordDocument.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document is missing.");
                 word._openXmlOriginalPackageBytes = OfficeCompatibilitySourceCarrier.ContainsPackageCarrier(sourceBytes)
@@ -388,7 +391,6 @@ namespace OfficeIMO.Word {
                     EnsureCustomStyleNames(wordDocument);
                 }
                 WordChart.InitializeAxisIdSeed(wordDocument);
-                WordChart.InitializeDocPrIdSeed(wordDocument);
 
                 // initialize abstract number id for lists to make sure those are unique
                 WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
@@ -489,6 +491,9 @@ namespace OfficeIMO.Word {
             var word = new WordDocument {
                 FilePath = filePath,
                 _ownedPackageStream = memoryStream,
+                _legacyValidationEncodedPackageBytes = CaptureLegacyValidationEncodedPackage(
+                    sourceBytes,
+                    readOnly),
                 _wordprocessingDocument = wordDocument,
                 _document = wordDocument.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document is missing."),
                 _openXmlOriginalPackageBytes = OfficeCompatibilitySourceCarrier.ContainsPackageCarrier(sourceBytes)
@@ -505,7 +510,6 @@ namespace OfficeIMO.Word {
                 EnsureCustomStyleNames(wordDocument);
             }
             WordChart.InitializeAxisIdSeed(wordDocument);
-            WordChart.InitializeDocPrIdSeed(wordDocument);
             WordListStyles.InitializeAbstractNumberId(word._wordprocessingDocument);
             return word;
         }
@@ -575,6 +579,9 @@ namespace OfficeIMO.Word {
                 var document = new WordDocument() {
                     OriginalStream = OfficeDocumentLifecycle.ResolveAssociatedDestination(stream, resolved.AccessMode)!,
                     _ownedPackageStream = packageStream,
+                    _legacyValidationEncodedPackageBytes = CaptureLegacyValidationEncodedPackage(
+                        sourceBytes,
+                        readOnly),
                     _openXmlOriginalPackageBytes = OfficeCompatibilitySourceCarrier.ContainsPackageCarrier(sourceBytes)
                         ? (byte[])sourceBytes.Clone()
                         : null,
@@ -594,7 +601,6 @@ namespace OfficeIMO.Word {
                 }
 
                 WordChart.InitializeAxisIdSeed(wordDocument);
-                WordChart.InitializeDocPrIdSeed(wordDocument);
                 WordListStyles.InitializeAbstractNumberId(document._wordprocessingDocument);
                 return document;
             } catch {

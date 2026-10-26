@@ -44,6 +44,36 @@ public sealed class CmsSecurityTests {
     }
 
     [Fact]
+    public void EncapsulatedSignature_PreservesACallerSelectedContentType() {
+        const string contentTypeOid = "1.3.6.1.4.1.311.2.1.4";
+        byte[] content = { 48, 0 };
+        using X509Certificate2 certificate = CreateRsaCertificate("OfficeIMO CMS Custom Content Type");
+        byte[] encoded = CmsSignedDataSigner.SignEncapsulated(
+            content,
+            certificate,
+            new CmsSigningOptions { ContentTypeOid = contentTypeOid });
+
+        CmsVerificationResult result = CmsSignedDataVerifier.Verify(encoded, TrustSelfSigned());
+
+        Assert.True(result.IsCryptographicallyValid);
+        Assert.Equal(contentTypeOid, result.ContentTypeOid);
+        Assert.Equal(content, result.EncapsulatedContent);
+    }
+
+    [Fact]
+    public void EncapsulatedSignature_RejectsAnInvalidContentTypeOid() {
+        using X509Certificate2 certificate = CreateRsaCertificate("OfficeIMO CMS Invalid Content Type");
+
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            CmsSignedDataSigner.SignEncapsulated(
+                new byte[] { 1 },
+                certificate,
+                new CmsSigningOptions { ContentTypeOid = "not-an-oid" }));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    [Fact]
     public void Verification_RejectsTlsOnlySignerCertificates() {
         byte[] content = Encoding.UTF8.GetBytes("TLS certificates are not document signers");
         using X509Certificate2 certificate = CreateRsaCertificate(
@@ -78,6 +108,66 @@ public sealed class CmsSecurityTests {
     }
 
     [Fact]
+    public void EmailSigningValidationAcceptsEmailProtectionCertificates() {
+        using X509Certificate2 certificate = CreateRsaCertificate(
+            "OfficeIMO Email Protection",
+            new Oid("1.3.6.1.5.5.7.3.4"));
+        var options = new CertificateValidationOptions {
+            ChainEvaluator = static (_, _) => true,
+            RevocationMode = X509RevocationMode.NoCheck
+        };
+
+        CertificateTrustValidationResult result = CertificateValidator.Validate(
+            certificate,
+            options: options,
+            purpose: CertificateValidationPurpose.EmailSigning);
+
+        Assert.Equal(SecurityValidationStatus.Valid, result.Validation.ChainStatus);
+        Assert.DoesNotContain(result.Findings, finding => finding.Code == "CertificateEnhancedKeyUsageInvalid");
+    }
+
+    [Theory]
+    [InlineData("1.3.6.1.5.5.7.3.3")]
+    [InlineData("1.3.6.1.5.5.7.3.36")]
+    [InlineData("1.3.6.1.4.1.311.10.3.12")]
+    public void EmailSigningValidationRejectsNonEmailSigningCertificates(string enhancedKeyUsageOid) {
+        using X509Certificate2 certificate = CreateRsaCertificate(
+            "OfficeIMO Non-Email Signer",
+            new Oid(enhancedKeyUsageOid));
+        var options = new CertificateValidationOptions {
+            ChainEvaluator = static (_, _) => true,
+            RevocationMode = X509RevocationMode.NoCheck
+        };
+
+        CertificateTrustValidationResult result = CertificateValidator.Validate(
+            certificate,
+            options: options,
+            purpose: CertificateValidationPurpose.EmailSigning);
+
+        Assert.Equal(SecurityValidationStatus.Invalid, result.Validation.ChainStatus);
+        Assert.Contains(result.Findings, finding => finding.Code == "CertificateEnhancedKeyUsageInvalid");
+    }
+
+    [Fact]
+    public void EmailSigningValidationAcceptsAnyExtendedKeyUsageCertificates() {
+        using X509Certificate2 certificate = CreateRsaCertificate(
+            "OfficeIMO Any Extended Key Usage",
+            new Oid("2.5.29.37.0"));
+        var options = new CertificateValidationOptions {
+            ChainEvaluator = static (_, _) => true,
+            RevocationMode = X509RevocationMode.NoCheck
+        };
+
+        CertificateTrustValidationResult result = CertificateValidator.Validate(
+            certificate,
+            options: options,
+            purpose: CertificateValidationPurpose.EmailSigning);
+
+        Assert.Equal(SecurityValidationStatus.Valid, result.Validation.ChainStatus);
+        Assert.DoesNotContain(result.Findings, finding => finding.Code == "CertificateEnhancedKeyUsageInvalid");
+    }
+
+    [Fact]
     public void CertificateUsageValidationRemainsActiveWhenPlatformChainBuildingIsDisabled() {
         using X509Certificate2 certificate = CreateRsaCertificate("OfficeIMO Non-Timestamp Authority");
         using X509Certificate2 timestampAuthority = CreateTimestampCertificate();
@@ -97,6 +187,91 @@ public sealed class CmsSecurityTests {
         Assert.Equal(SecurityValidationStatus.NotPerformed, valid.Validation.ChainStatus);
         Assert.DoesNotContain(valid.Findings, finding => finding.Code is
             "CertificateKeyUsageInvalid" or "CertificateEnhancedKeyUsageInvalid");
+    }
+
+    [Fact]
+    public void CertificateValidationRecognizesACompleteOfflineIssuerPath() {
+        using RSA rootKey = RSA.Create(2048);
+        var rootRequest = new CertificateRequest(
+            "CN=OfficeIMO Offline Root",
+            rootKey,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign,
+            true));
+        rootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(rootRequest.PublicKey, false));
+        using X509Certificate2 root = rootRequest.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddDays(1));
+
+        using RSA leafKey = RSA.Create(2048);
+        var leafRequest = new CertificateRequest(
+            "CN=OfficeIMO Offline Leaf",
+            leafKey,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        leafRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+        leafRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
+        leafRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(leafRequest.PublicKey, false));
+        using X509Certificate2 leaf = leafRequest.Create(
+            root,
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddHours(12),
+            new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
+
+        Assert.False(CertificateChainValidator.HasCompleteOfflinePath(
+            leaf,
+            Array.Empty<X509Certificate2>()));
+        Assert.True(CertificateChainValidator.HasCompleteOfflinePath(
+            leaf,
+            new[] { root }));
+    }
+
+    [Fact]
+    public void CertificateOfflineIssuerPathSearchStopsAtTheCryptographicWorkLimit() {
+        using RSA key = RSA.Create(2048);
+        X509SignatureGenerator generator = X509SignatureGenerator.CreateForRSA(key, RSASignaturePadding.Pkcs1);
+        DateTimeOffset notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
+        DateTimeOffset notAfter = DateTimeOffset.UtcNow.AddDays(1);
+
+        using X509Certificate2 issuerOne = CreateOfflinePathCertificate(
+            "CN=OfficeIMO Alternate Issuer",
+            "CN=OfficeIMO Missing Root",
+            key,
+            generator,
+            notBefore,
+            notAfter,
+            1);
+        using X509Certificate2 issuerTwo = CreateOfflinePathCertificate(
+            "CN=OfficeIMO Alternate Issuer",
+            "CN=OfficeIMO Missing Root",
+            key,
+            generator,
+            notBefore,
+            notAfter,
+            2);
+        using X509Certificate2 leaf = CreateOfflinePathCertificate(
+            "CN=OfficeIMO Offline Search Leaf",
+            "CN=OfficeIMO Alternate Issuer",
+            key,
+            generator,
+            notBefore,
+            notAfter,
+            3);
+
+        OfflineCertificatePathSearchOutcome bounded = CertificateChainValidator.FindCompleteOfflinePath(
+            leaf,
+            new[] { issuerOne, issuerTwo },
+            maxIssuerSignatureChecks: 1);
+        OfflineCertificatePathSearchOutcome completed = CertificateChainValidator.FindCompleteOfflinePath(
+            leaf,
+            new[] { issuerOne, issuerTwo },
+            maxIssuerSignatureChecks: 2);
+
+        Assert.Equal(OfflineCertificatePathSearchOutcome.WorkLimitExceeded, bounded);
+        Assert.Equal(OfflineCertificatePathSearchOutcome.Incomplete, completed);
     }
 
     [Fact]
@@ -286,33 +461,7 @@ public sealed class CmsSecurityTests {
     public void TimestampVerifier_ValidatesSignatureProfileAndMessageImprint() {
         byte[] timestampedData = Encoding.UTF8.GetBytes("PDF signature bytes");
         using X509Certificate2 certificate = CreateTimestampCertificate();
-        using RSA rsa = certificate.GetRSAPrivateKey() ?? throw new InvalidOperationException();
-        Org.BouncyCastle.X509.X509Certificate bcCertificate =
-            Org.BouncyCastle.Security.DotNetUtilities.FromX509Certificate(certificate);
-        Org.BouncyCastle.Crypto.AsymmetricKeyParameter privateKey =
-            Org.BouncyCastle.Security.DotNetUtilities.GetRsaKeyPair(rsa).Private;
-        var signerFactory = new Org.BouncyCastle.Crypto.Operators.Asn1SignatureFactory(
-            "SHA256WITHRSA",
-            privateKey);
-        Org.BouncyCastle.Cms.SignerInfoGenerator signer =
-            new Org.BouncyCastle.Cms.SignerInfoGeneratorBuilder().Build(signerFactory, bcCertificate);
-        var generator = new Org.BouncyCastle.Tsp.TimeStampTokenGenerator(
-            signer,
-            Org.BouncyCastle.Crypto.Operators.Asn1DigestFactory.Get("SHA256"),
-            new Org.BouncyCastle.Asn1.DerObjectIdentifier("1.3.6.1.4.1.59069.1.1"),
-            isIssuerSerialIncluded: true);
-        generator.SetCertificates(new SingleCertificateStore(bcCertificate));
-        var requestGenerator = new Org.BouncyCastle.Tsp.TimeStampRequestGenerator();
-        requestGenerator.SetCertReq(true);
-        byte[] imprint = Org.BouncyCastle.Security.DigestUtilities.CalculateDigest("SHA256", timestampedData);
-        Org.BouncyCastle.Tsp.TimeStampRequest request = requestGenerator.Generate(
-            Org.BouncyCastle.Tsp.TspAlgorithms.Sha256,
-            imprint);
-        DateTime generationTime = DateTime.UtcNow.AddMinutes(-1);
-        byte[] encoded = generator.Generate(
-            request,
-            Org.BouncyCastle.Math.BigInteger.One,
-            generationTime).GetEncoded();
+        (byte[] encoded, DateTime generationTime) = CreateTimestampToken(timestampedData, certificate);
         DateTime? observedDefaultVerificationTime = null;
         var trust = new CertificateValidationOptions {
             ChainEvaluator = (_, chain) => {
@@ -352,6 +501,30 @@ public sealed class CmsSecurityTests {
         Assert.Contains(tampered.Findings, finding => finding.Code == "TimestampImprintMismatch");
         Assert.Equal(SecurityValidationStatus.Invalid, untrusted.Status);
         Assert.Equal(SecurityValidationStatus.Invalid, untrusted.CertificateValidation.ChainStatus);
+    }
+
+    [Fact]
+    public void TimestampVerifier_ResolvesOmittedTsaCertificateFromCallerExtras() {
+        byte[] timestampedData = Encoding.UTF8.GetBytes("timestamp with external TSA certificate");
+        using X509Certificate2 certificate = CreateTimestampCertificate();
+        (byte[] encoded, _) = CreateTimestampToken(
+            timestampedData,
+            certificate,
+            includeCertificate: false);
+        var trust = new CertificateValidationOptions {
+            ChainEvaluator = static (_, _) => true
+        };
+        trust.ExtraCertificates.Add(certificate);
+
+        Rfc3161TimestampVerificationResult result = Rfc3161TimestampVerifier.Verify(
+            encoded,
+            timestampedData,
+            trust);
+
+        Assert.Equal(SecurityValidationStatus.Valid, result.Status);
+        Assert.Equal(SecurityValidationStatus.Valid, result.CertificateValidation.ChainStatus);
+        Assert.DoesNotContain(result.Findings, finding => finding.Code == "TimestampCertificateMissing");
+        Assert.Equal(certificate.RawData, result.TsaCertificate);
     }
 
     [Theory]
@@ -456,6 +629,67 @@ public sealed class CmsSecurityTests {
             critical: true));
         request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, critical: false));
         return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+    }
+
+    private static X509Certificate2 CreateOfflinePathCertificate(
+        string subject,
+        string issuer,
+        RSA key,
+        X509SignatureGenerator generator,
+        DateTimeOffset notBefore,
+        DateTimeOffset notAfter,
+        byte serial) {
+        var request = new CertificateRequest(
+            subject,
+            key,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyCertSign,
+            true));
+        return request.Create(
+            new X500DistinguishedName(issuer),
+            generator,
+            notBefore,
+            notAfter,
+            new[] { serial });
+    }
+
+    private static (byte[] Encoded, DateTime GenerationTime) CreateTimestampToken(
+        byte[] timestampedData,
+        X509Certificate2 certificate,
+        bool includeCertificate = true) {
+        using RSA rsa = certificate.GetRSAPrivateKey() ?? throw new InvalidOperationException();
+        Org.BouncyCastle.X509.X509Certificate bcCertificate =
+            Org.BouncyCastle.Security.DotNetUtilities.FromX509Certificate(certificate);
+        Org.BouncyCastle.Crypto.AsymmetricKeyParameter privateKey =
+            Org.BouncyCastle.Security.DotNetUtilities.GetRsaKeyPair(rsa).Private;
+        var signerFactory = new Org.BouncyCastle.Crypto.Operators.Asn1SignatureFactory(
+            "SHA256WITHRSA",
+            privateKey);
+        Org.BouncyCastle.Cms.SignerInfoGenerator signer =
+            new Org.BouncyCastle.Cms.SignerInfoGeneratorBuilder().Build(signerFactory, bcCertificate);
+        var generator = new Org.BouncyCastle.Tsp.TimeStampTokenGenerator(
+            signer,
+            Org.BouncyCastle.Crypto.Operators.Asn1DigestFactory.Get("SHA256"),
+            new Org.BouncyCastle.Asn1.DerObjectIdentifier("1.3.6.1.4.1.59069.1.1"),
+            isIssuerSerialIncluded: true);
+        if (includeCertificate) {
+            generator.SetCertificates(new SingleCertificateStore(bcCertificate));
+        }
+        var requestGenerator = new Org.BouncyCastle.Tsp.TimeStampRequestGenerator();
+        requestGenerator.SetCertReq(includeCertificate);
+        byte[] imprint = Org.BouncyCastle.Security.DigestUtilities.CalculateDigest("SHA256", timestampedData);
+        Org.BouncyCastle.Tsp.TimeStampRequest request = requestGenerator.Generate(
+            Org.BouncyCastle.Tsp.TspAlgorithms.Sha256,
+            imprint);
+        DateTime generationTime = DateTime.UtcNow.AddMinutes(-1);
+        byte[] encoded = generator.Generate(
+            request,
+            Org.BouncyCastle.Math.BigInteger.One,
+            generationTime).GetEncoded();
+        return (encoded, generationTime);
     }
 
     private sealed class SingleCertificateStore :

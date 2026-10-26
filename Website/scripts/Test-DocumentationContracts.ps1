@@ -273,17 +273,27 @@ if ($openTextFormats -notmatch '(?m)^\s*-\s+/docs/pswriteoffice/markdown/\s*$') 
     Add-Failure 'The retired PSWriteOffice Markdown URL is not preserved as an alias of the open and text formats guide.'
 }
 
+$conversionRoutesTemplatePath = Join-Path $SiteRoot 'themes\officeimo\partials\shortcodes\conversion-routes.html'
+$conversionRoutesTemplate = Get-Content -LiteralPath $conversionRoutesTemplatePath -Raw
+if ($conversionRoutesTemplate -notmatch 'data\.office_conversion_routes' -or
+    $conversionRoutesTemplate -notmatch 'for\s+route\s+in\s+catalog\.routes') {
+    Add-Failure 'The conversion route shortcode must use the shared catalog through Scriban syntax.'
+}
+if ($conversionRoutesTemplate -match 'site\.Data|\$catalog\s*:=|(?m)^\s{4,}<tr\s+data-conversion-route') {
+    Add-Failure 'The conversion route shortcode contains renderer-incompatible or Markdown-code-block syntax.'
+}
+
 $catalogPath = Join-Path $SiteRoot 'data\documentation_catalog.json'
 $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json
 if ($catalog.repository.productionComponentCount -ne @($catalog.components).Count) {
     Add-Failure 'The OfficeIMO component summary does not match the generated component list.'
 }
 $expectedRepositoryCounts = [ordered]@{
-    projectCount = 151
-    productionComponentCount = 91
+    projectCount = 159
+    productionComponentCount = 92
     testProjectCount = 31
-    benchmarkProjectCount = 13
-    validationProjectCount = 17
+    benchmarkProjectCount = 15
+    validationProjectCount = 22
     apiReferenceCount = 17
     conceptualPageCount = 95
 }
@@ -312,10 +322,10 @@ $aotMatrix = Get-Content -LiteralPath $aotMatrixPath -Raw | ConvertFrom-Json
 if ($aotMatrix.summary.productionProjectCount -ne $catalog.repository.productionComponentCount) {
     Add-Failure 'The NativeAOT matrix does not account for every production project.'
 }
-if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 90) {
-    Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 90."
+if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 91) {
+    Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 91."
 }
-if ($aotMatrix.summary.fullyRootedLibraryCount -ne 88 -or
+if ($aotMatrix.summary.fullyRootedLibraryCount -ne 89 -or
     $aotMatrix.summary.boundedWorkflowLibraryCount -ne 1 -or
     $aotMatrix.summary.nativeExecutableCount -ne 1 -or
     $aotMatrix.summary.managedWindowsProjectCount -ne 1) {

@@ -129,7 +129,7 @@ public sealed class PdfPublicApiContractTests {
                 BindingFlags.DeclaredOnly).Length);
 
         Assert.InRange(exportedTypes.Length, 1, 503);
-        Assert.InRange(publicMemberCount, 1, 9959);
+        Assert.InRange(publicMemberCount, 1, 9965);
 
         string[] officeReferences = assembly.GetReferencedAssemblies()
             .Select(reference => reference.Name)
@@ -137,6 +137,6 @@ public sealed class PdfPublicApiContractTests {
             .Cast<string>()
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
-        Assert.Equal(new[] { "OfficeIMO.Drawing", "OfficeIMO.Security" }, officeReferences);
+        Assert.Equal(new[] { "OfficeIMO.Drawing" }, officeReferences);
     }
 }

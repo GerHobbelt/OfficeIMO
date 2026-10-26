@@ -3,6 +3,7 @@ using DocumentFormat.OpenXml.Packaging;
 using OfficeIMO.Html;
 using System.IO;
 using System.Text;
+using W = DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Word.Html {
     internal partial class WordToHtmlConverter {
@@ -24,6 +25,10 @@ namespace OfficeIMO.Word.Html {
                     mainPart,
                     options.IncludeCustomProperties ? document._wordprocessingDocument.CustomFilePropertiesPart : null)) {
                     bool countOutputContent = IsOutputContentRoot(root.Root, options);
+                    bool inspectExportedStory = countOutputContent ||
+                        (options.ExportHeadersAndFooters &&
+                         (root.Root is DocumentFormat.OpenXml.Wordprocessing.Header or
+                             DocumentFormat.OpenXml.Wordprocessing.Footer));
                     foreach ((OpenXmlElement Element, bool OmitOutputContent) inspected in EnumerateRootAndDescendants(root.Root)) {
                         OpenXmlElement element = inspected.Element;
                         elements++;
@@ -31,15 +36,7 @@ namespace OfficeIMO.Word.Html {
                             ThrowExportLimitExceeded(options, "WordElementLimitExceeded", "The Word document exceeds the configured HTML export element limit.", root.PartUri, elements, options.MaxDocumentElements);
                         }
                         if (countOutputContent && !inspected.OmitOutputContent) {
-                            long elementCharacters = element is OpenXmlLeafTextElement textElement && ShouldCountOutputLeafText(element)
-                                ? GetHtmlEncodedLength(textElement.Text, attributeValue: false)
-                                : 0;
-                            foreach (OpenXmlAttribute attribute in element.GetAttributes()) {
-                                if (!ShouldCountOutputAttribute(element, attribute, options)) continue;
-                                elementCharacters = SaturatingAdd(
-                                    elementCharacters,
-                                    GetHtmlEncodedLength(attribute.Value, attributeValue: true));
-                            }
+                            long elementCharacters = GetOutputContentCharacters(element);
                             outputConstructionCharacters = SaturatingAdd(outputConstructionCharacters, elementCharacters);
                             if (outputConstructionCharacters > options.MaxOutputCharacters) {
                                 ThrowExportLimitExceeded(
@@ -51,13 +48,16 @@ namespace OfficeIMO.Word.Html {
                                     options.MaxOutputCharacters);
                             }
                         }
-                        if (!hasFields && element is DocumentFormat.OpenXml.Wordprocessing.SimpleField or DocumentFormat.OpenXml.Wordprocessing.FieldChar or DocumentFormat.OpenXml.Wordprocessing.FieldCode) {
+                        if (!hasFields && inspectExportedStory && !inspected.OmitOutputContent &&
+                            (element is DocumentFormat.OpenXml.Wordprocessing.SimpleField or
+                                DocumentFormat.OpenXml.Wordprocessing.FieldChar or
+                                DocumentFormat.OpenXml.Wordprocessing.FieldCode)) {
                             hasFields = true;
                         }
-                        if (!hasRevisions && IsRevisionElement(element.LocalName)) {
+                        if (!hasRevisions && inspectExportedStory && IsRevisionElement(element.LocalName)) {
                             hasRevisions = true;
                         }
-                        if (!hasRevisionText && inspected.OmitOutputContent) {
+                        if (!hasRevisionText && inspectExportedStory && inspected.OmitOutputContent) {
                             hasRevisionText = true;
                         }
                         if (!hasComments && element is DocumentFormat.OpenXml.Wordprocessing.Comment) {
@@ -93,43 +93,44 @@ namespace OfficeIMO.Word.Html {
             return length;
         }
 
-        private static bool ShouldCountOutputLeafText(OpenXmlElement element) =>
-            element is not DocumentFormat.OpenXml.Wordprocessing.FieldCode;
-
-        private static bool ShouldCountOutputAttribute(
-            OpenXmlElement element,
-            OpenXmlAttribute attribute,
-            WordToHtmlOptions options) {
-            if (element is DocumentFormat.OpenXml.Wordprocessing.FieldCode) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.SimpleField &&
-                attribute.LocalName.Equals("instr", StringComparison.Ordinal)) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.RunFonts && !options.IncludeFontStyles) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.RunStyle && !options.IncludeRunClasses) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.Color && !options.IncludeRunColorStyles) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.Highlight && !options.IncludeRunHighlightStyles) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.Shading &&
-                element.Parent is DocumentFormat.OpenXml.Wordprocessing.RunProperties &&
-                !options.IncludeRunHighlightStyles) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.ParagraphStyleId && !options.IncludeParagraphClasses) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.Indentation &&
-                !options.IncludeParagraphIndentationStyles) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.SpacingBetweenLines &&
-                !options.IncludeParagraphSpacingStyles) return false;
-            if ((element is DocumentFormat.OpenXml.Wordprocessing.PageSize ||
-                 element is DocumentFormat.OpenXml.Wordprocessing.PageMargin) &&
-                !options.IncludeSectionMetadata) return false;
-            if (element is DocumentFormat.OpenXml.Wordprocessing.GridColumn &&
-                !options.IncludeTableColumnGroups) return false;
-            return true;
+        private static long MeasureOutputContentCharacters(OpenXmlElement root) {
+            long characters = 0;
+            foreach ((OpenXmlElement Element, bool OmitOutputContent) inspected in EnumerateRootAndDescendants(root)) {
+                if (inspected.OmitOutputContent) continue;
+                characters = SaturatingAdd(characters, GetOutputContentCharacters(inspected.Element));
+            }
+            return characters;
         }
 
+        private static long GetOutputContentCharacters(OpenXmlElement element) {
+            long characters = element is OpenXmlLeafTextElement textElement && ShouldCountOutputLeafText(element)
+                ? GetHtmlEncodedLength(textElement.Text, attributeValue: false)
+                : 0;
+            if (IsVisibleRunArtifact(element)) {
+                characters = SaturatingAdd(characters, 1);
+            }
+            return characters;
+        }
+
+        private static bool IsVisibleRunArtifact(OpenXmlElement element) =>
+            element is W.TabChar or W.CarriageReturn or W.Break or W.NoBreakHyphen or W.SoftHyphen;
+
+        private static bool ShouldCountOutputLeafText(OpenXmlElement element) =>
+            element is not DocumentFormat.OpenXml.Wordprocessing.FieldCode &&
+            element is not DocumentFormat.OpenXml.Math.Text;
+
+        // Header and footer parts are intentionally excluded here. A shared part can be emitted
+        // once per section, so AppendHeaderFooterRegion measures and reserves its source content
+        // immediately before every emitted region rather than charging the package part once.
         private static bool IsOutputContentRoot(OpenXmlElement root, WordToHtmlOptions options) =>
-            (root is not DocumentFormat.OpenXml.Wordprocessing.Header && root is not DocumentFormat.OpenXml.Wordprocessing.Footer || options.ExportHeadersAndFooters) &&
-            (root is not DocumentFormat.OpenXml.Wordprocessing.Footnotes || options.ExportFootnotes) &&
-            (root is not DocumentFormat.OpenXml.Wordprocessing.Endnotes || options.ExportEndnotes) &&
-            (root is not DocumentFormat.OpenXml.Wordprocessing.Comments || options.ExportComments) &&
+            root is not DocumentFormat.OpenXml.Wordprocessing.Header &&
+            root is not DocumentFormat.OpenXml.Wordprocessing.Footer &&
+            root is not DocumentFormat.OpenXml.Wordprocessing.Footnotes &&
+            root is not DocumentFormat.OpenXml.Wordprocessing.Endnotes &&
+            root is not DocumentFormat.OpenXml.Wordprocessing.Comments &&
             root is not DocumentFormat.OpenXml.Wordprocessing.Styles &&
             root is not DocumentFormat.OpenXml.Wordprocessing.Numbering &&
+            root is not DocumentFormat.OpenXml.CustomProperties.Properties &&
             root is not DocumentFormat.OpenXml.Drawing.Theme &&
             root is not DocumentFormat.OpenXml.Wordprocessing.Fonts &&
             root is not DocumentFormat.OpenXml.Wordprocessing.Settings &&

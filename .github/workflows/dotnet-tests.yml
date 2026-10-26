@@ -94,7 +94,6 @@ jobs:
           $projects = @(
             'OfficeIMO.Drawing/OfficeIMO.Drawing.csproj',
             'OfficeIMO.Rtf/OfficeIMO.Rtf.csproj',
-            'OfficeIMO.Security/OfficeIMO.Security.csproj',
             'OfficeIMO.Email/OfficeIMO.Email.csproj',
             'OfficeIMO.Reader.Core/OfficeIMO.Reader.Core.csproj',
             'OfficeIMO.Reader.Email/OfficeIMO.Reader.Email.csproj',
@@ -119,7 +118,6 @@ jobs:
           $readerImageVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Image'
           $drawingVersion = Get-PackedPackageVersion 'OfficeIMO.Drawing'
           $rtfVersion = Get-PackedPackageVersion 'OfficeIMO.Rtf'
-          $securityVersion = Get-PackedPackageVersion 'OfficeIMO.Security'
           $smokeProperties = @(
             '--property:EnableOfficeIMOEmailPackageSmoke=true',
             "--property:OfficeIMOEmailPackageVersion=$emailVersion",
@@ -147,7 +145,6 @@ jobs:
           foreach ($packageId in @(
             'OfficeIMO.Drawing',
             'OfficeIMO.Rtf',
-            'OfficeIMO.Security',
             'OfficeIMO.Email',
             'OfficeIMO.Reader.Core',
             'OfficeIMO.Reader.Email',
@@ -161,6 +158,9 @@ jobs:
           [void] $nugetConfig.configuration.AppendChild($sourceMapping)
           $nugetConfig.Save($configPath)
           dotnet restore Build/PackageSmoke/OfficeIMO.Email/OfficeIMO.Email.PackageSmoke.csproj @smokeProperties --configfile "$configPath" --no-http-cache
+          if (Test-Path (Join-Path $env:NUGET_PACKAGES 'officeimo.security')) {
+            throw 'The ordinary OfficeIMO.Email package consumer restored optional OfficeIMO.Security.'
+          }
           $expectedFeed = (Resolve-Path $feed).Path.TrimEnd('\', '/')
           foreach ($package in @(
             @{ Id = 'officeimo.email'; Version = $emailVersion },
@@ -168,8 +168,7 @@ jobs:
             @{ Id = 'officeimo.reader.email'; Version = $readerEmailVersion },
             @{ Id = 'officeimo.reader.image'; Version = $readerImageVersion },
             @{ Id = 'officeimo.drawing'; Version = $drawingVersion },
-            @{ Id = 'officeimo.rtf'; Version = $rtfVersion },
-            @{ Id = 'officeimo.security'; Version = $securityVersion }
+            @{ Id = 'officeimo.rtf'; Version = $rtfVersion }
           )) {
             $metadataPath = Join-Path $env:NUGET_PACKAGES "$($package.Id)/$($package.Version)/.nupkg.metadata"
             $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
@@ -181,6 +180,23 @@ jobs:
           dotnet run --project Build/PackageSmoke/OfficeIMO.Email/OfficeIMO.Email.PackageSmoke.csproj --configuration $env:BUILD_CONFIGURATION --framework net472 --no-restore @smokeProperties
           dotnet run --project Build/PackageSmoke/OfficeIMO.Email/OfficeIMO.Email.PackageSmoke.csproj --configuration $env:BUILD_CONFIGURATION --framework net8.0 --no-restore @smokeProperties
           dotnet run --project Build/PackageSmoke/OfficeIMO.Email/OfficeIMO.Email.PackageSmoke.csproj --configuration $env:BUILD_CONFIGURATION --framework net10.0 --no-restore @smokeProperties
+
+  google-workspace-package-consumers:
+    name: 'OfficeIMO Google Workspace packed consumers'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Pack and test clean package consumers
+        shell: pwsh
+        run: ./Build/Test-GoogleWorkspacePackages.ps1
 
   onenote-package-consumers:
     name: 'OfficeIMO.OneNote packed consumers'
@@ -208,7 +224,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $feed | Out-Null
           $projects = @(
             'OfficeIMO.Drawing/OfficeIMO.Drawing.csproj',
-            'OfficeIMO.Security/OfficeIMO.Security.csproj',
             'OfficeIMO.Markdown/OfficeIMO.Markdown.csproj',
             'OfficeIMO.Rtf/OfficeIMO.Rtf.csproj',
             'OfficeIMO.Email/OfficeIMO.Email.csproj',
@@ -237,7 +252,6 @@ jobs:
           }
           $packageIds = @(
             'OfficeIMO.Drawing',
-            'OfficeIMO.Security',
             'OfficeIMO.Markdown',
             'OfficeIMO.Rtf',
             'OfficeIMO.Email',
@@ -291,6 +305,9 @@ jobs:
           [void] $nugetConfig.configuration.AppendChild($sourceMapping)
           $nugetConfig.Save($configPath)
           dotnet restore Build/PackageSmoke/OfficeIMO.OneNote/OfficeIMO.OneNote.PackageSmoke.csproj @smokeProperties --configfile "$configPath" --no-http-cache
+          if (Test-Path (Join-Path $env:NUGET_PACKAGES 'officeimo.security')) {
+            throw 'The ordinary OfficeIMO.OneNote package consumer restored optional OfficeIMO.Security.'
+          }
           $expectedFeed = (Resolve-Path $feed).Path.TrimEnd('\', '/')
           foreach ($packageId in $packageIds) {
             $packageVersion = $packageVersions[$packageId]
@@ -549,7 +566,7 @@ jobs:
             TestResults/visual-baselines/**
 
   word-vba-office-sip:
-    name: 'Word VBA / Microsoft OfficeSips'
+    name: 'Managed VBA / Microsoft Office SIP differential'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -561,10 +578,10 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore Word tests
-        run: dotnet restore OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj
+      - name: Restore security tests
+        run: dotnet restore OfficeIMO.Security.Tests/OfficeIMO.Security.Tests.csproj
 
-      - name: Install OfficeSips and run isolated interoperability proof
+      - name: Register Microsoft Office SIP and run managed interoperability proof
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -572,49 +589,96 @@ jobs:
           $downloadUrl = 'https://download.microsoft.com/download/c53e473c-3060-4ee9-ac5c-0ddbbeced4e5/OfficeSips_x64_16-0-19416-43425.exe'
           $expectedSha256 = '96335D8AFBED13919E6BD31CF38974FB4EE2A534734A5E5736E1A40D032D2456'
           $downloadPath = Join-Path $env:RUNNER_TEMP 'OfficeSips_x64.exe'
+          $runtimeUrl = 'https://download.microsoft.com/download/1/6/5/165255e7-1014-4d0a-b094-b6a430a6bffc/vcredist_x64.exe'
+          $runtimeSha256 = 'F3B7A76D84D23F91957AA18456A14B4E90609E4CE8194C5653384ED38DADA6F3'
+          $runtimePath = Join-Path $env:RUNNER_TEMP 'vcredist_2010_sp1_x64.exe'
+          $corpusRoot = Join-Path $env:RUNNER_TEMP 'OfficeIMO-VbaProducerCorpus'
+          $corpus = @(
+            @{ Name = 'Word.docm'; Path = 'document/SimpleMacro.docm'; Sha256 = 'FD591958FCF5322F72C0A740E9606309C949254BDA4C3D9BD966481DDF220563' },
+            @{ Name = 'Excel.xlsm'; Path = 'spreadsheet/SimpleMacro.xlsm'; Sha256 = 'F76C986F4EBC25C2CC57C088B2511A1269F4BD61D6223A2AB58DB351DA348BA6' },
+            @{ Name = 'ExcelBinary.xlsb'; Path = 'spreadsheet/testVarious.xlsb'; Sha256 = '8C600E97D719B0266DCFB49C1872FEB8D10C6ED12BC768FF16ACE7DAE555EBFC' },
+            @{ Name = 'PowerPoint.pptm'; Path = 'slideshow/SimpleMacro.pptm'; Sha256 = '8A3573C82FD07A301D7F175B8BEE646C0B58EB8A945BD0FF408225B6E2B89B15' }
+          )
           $extractRoot = Join-Path $env:RUNNER_TEMP 'OfficeSips'
           $outerDirectory = Join-Path $extractRoot 'outer'
           $toolsDirectory = Join-Path $extractRoot 'tools'
-          New-Item -ItemType Directory -Force -Path $outerDirectory, $toolsDirectory | Out-Null
+          New-Item -ItemType Directory -Force -Path $outerDirectory, $toolsDirectory, $corpusRoot | Out-Null
           Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath
           $actualSha256 = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash
           if ($actualSha256 -ne $expectedSha256) {
             throw "OfficeSips download checksum mismatch: $actualSha256"
           }
+          $runtimeDll = Join-Path $env:WINDIR 'System32\msvcr100.dll'
+          if (-not (Test-Path -LiteralPath $runtimeDll)) {
+            Invoke-WebRequest -Uri $runtimeUrl -OutFile $runtimePath
+            $actualRuntimeSha256 = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash
+            if ($actualRuntimeSha256 -ne $runtimeSha256) {
+              throw "Visual C++ 2010 SP1 runtime checksum mismatch: $actualRuntimeSha256"
+            }
+            $runtimeInstall = Start-Process -FilePath $runtimePath -ArgumentList '/q', '/norestart' -Wait -PassThru
+            if ($runtimeInstall.ExitCode -notin 0, 1638, 3010) {
+              throw "Visual C++ 2010 SP1 runtime installation failed with exit code $($runtimeInstall.ExitCode)."
+            }
+          }
+          if (-not (Test-Path -LiteralPath $runtimeDll)) {
+            throw 'The OfficeSips VBE7 dependency msvcr100.dll is unavailable after runtime setup.'
+          }
+          foreach ($item in $corpus) {
+            $corpusPath = Join-Path $corpusRoot $item.Name
+            $corpusUrl = 'https://raw.githubusercontent.com/apache/poi/f613a72d8c591751caca83b45637a1b653cea833/test-data/' + $item.Path
+            Invoke-WebRequest -Uri $corpusUrl -OutFile $corpusPath
+            $actualCorpusSha256 = (Get-FileHash -LiteralPath $corpusPath -Algorithm SHA256).Hash
+            if ($actualCorpusSha256 -ne $item.Sha256) {
+              throw "VBA interoperability corpus checksum mismatch for $($item.Name): $actualCorpusSha256"
+            }
+          }
           & 7z.exe x $downloadPath "-o$outerDirectory" -y | Out-Null
           $sipPath = Get-ChildItem -LiteralPath $outerDirectory -Filter msosipx.dll -Recurse |
             Select-Object -First 1 -ExpandProperty FullName
-          $clearPath = Get-ChildItem -LiteralPath $outerDirectory -Filter offclearsig.exe -Recurse |
+          $vbePath = Get-ChildItem -LiteralPath $outerDirectory -Filter vbe7.dll -Recurse |
             Select-Object -First 1 -ExpandProperty FullName
-          if (-not $sipPath -or -not $clearPath) {
+          if (-not $sipPath -or -not $vbePath) {
             $cabPath = Get-ChildItem -LiteralPath $outerDirectory -Filter *.cab -Recurse |
               Select-Object -First 1 -ExpandProperty FullName
             if ($cabPath) {
               & expand.exe '-F:*' $cabPath $toolsDirectory | Out-Null
               $sipPath = Join-Path $toolsDirectory 'msosipx.dll'
-              $clearPath = Join-Path $toolsDirectory 'offclearsig.exe'
+              $vbePath = Join-Path $toolsDirectory 'vbe7.dll'
             }
           }
-          if (-not (Test-Path -LiteralPath $sipPath) -or -not (Test-Path -LiteralPath $clearPath)) {
-            throw 'The verified OfficeSips archive does not contain msosipx.dll and offclearsig.exe.'
+          if (-not (Test-Path -LiteralPath $sipPath) -or
+              -not (Test-Path -LiteralPath $vbePath)) {
+            throw 'The verified OfficeSips archive does not contain msosipx.dll and vbe7.dll.'
           }
-          $signToolPath = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
-          if (-not $signToolPath) { throw 'The Windows SDK SignTool.exe was not found.' }
+          $vbaRegistryPath = 'HKLM:\SOFTWARE\Microsoft\VBA'
+          $vbaRegistryKey = Get-Item -LiteralPath $vbaRegistryPath -ErrorAction SilentlyContinue
+          $hadVbePath = $null -ne $vbaRegistryKey -and
+            ($vbaRegistryKey.GetValueNames() -contains 'Vbe71DllPath')
+          $previousVbePath = if ($hadVbePath) { $vbaRegistryKey.GetValue('Vbe71DllPath') } else { $null }
+          New-Item -Path $vbaRegistryPath -Force | Out-Null
+          Set-ItemProperty -LiteralPath $vbaRegistryPath -Name Vbe71DllPath -Value $vbePath
+          $sipRegistered = $false
           try {
             & regsvr32.exe /s $sipPath
+            $sipRegistered = $true
             $env:OFFICEIMO_RUN_VBA_SIP_INTEROP = '1'
-            $env:OFFICEIMO_VBA_SIP_DIRECTORY = Split-Path -Parent $clearPath
-            $env:OFFICEIMO_SIGNTOOL_PATH = $signToolPath
-            dotnet test OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj `
+            $env:OFFICEIMO_VBA_INTEROP_CORPUS = $corpusRoot
+            dotnet test OfficeIMO.Security.Tests/OfficeIMO.Security.Tests.csproj `
               --configuration $env:BUILD_CONFIGURATION `
               --framework net8.0 `
               --no-restore `
-              --filter 'FullyQualifiedName~MacroSigningInteroperatesWithMicrosoftOfficeSipAndDetectsTampering' `
+              --filter 'FullyQualifiedName~ManagedProfilesMatchFrozenCorpusAndMicrosoftOfficeSipAcrossHosts' `
+              --blame-hang `
+              --blame-hang-timeout 4m `
+              --blame-hang-dump-type none `
               --logger "console;verbosity=$env:TEST_VERBOSITY"
           } finally {
-            & regsvr32.exe /u /s $sipPath
+            if ($sipRegistered) { & regsvr32.exe /u /s $sipPath }
+            if ($hadVbePath) {
+              Set-ItemProperty -LiteralPath $vbaRegistryPath -Name Vbe71DllPath -Value $previousVbePath
+            } else {
+              Remove-ItemProperty -LiteralPath $vbaRegistryPath -Name Vbe71DllPath -ErrorAction SilentlyContinue
+            }
           }
 
   test-ubuntu-matrix:
@@ -1325,6 +1389,7 @@ jobs:
         run: |
           dotnet test OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName=OfficeIMO.Tests.Word.Test_WordDocument_SaveAsPdf" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
           dotnet test OfficeIMO.Html.Tests/OfficeIMO.Html.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.Tests.HtmlCoreTests" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+          dotnet test OfficeIMO.Html.Tests/OfficeIMO.Html.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName=OfficeIMO.Tests.HtmlRenderingTests.HtmlRenderingProfiles_StayDeterministicAcrossApprovedSizeDpiAndFontMatrix" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
           dotnet test OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.Tests.Pdf.PdfReadStreamTests" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
           dotnet test OfficeIMO.Markdown.Tests/OfficeIMO.Markdown.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.Tests.Markdown.Test_SaveAsMarkdown_FileAndRead" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
           dotnet test OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --filter "FullyQualifiedName~OfficeIMO.CSV.Tests" --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx

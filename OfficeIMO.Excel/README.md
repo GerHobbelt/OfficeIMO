@@ -135,9 +135,11 @@ and DOC/XLS/XLSB loss policies, see the
 using OfficeIMO.Excel;
 
 using var reader = ExcelDocument.OpenDataReader("input.xlsx", new ExcelReadOptions {
-    SheetName = "Data",
+    SheetIndex = 0,
+    A1Range = "A1:B1000",
     NumericAsDecimal = true
 });
+Console.WriteLine(reader.CurrentSheetName);
 while (reader.Read()) {
     string name = reader.GetString(reader.GetOrdinal("Full Name"));
     decimal value = reader.GetDecimal(reader.GetOrdinal("Value"));
@@ -145,9 +147,12 @@ while (reader.Read()) {
 }
 ```
 
-`ExcelDocument.OpenDataReader` is the package-owned read-only entry point for
+`ExcelDocument.OpenDataReader` returns an `ExcelWorkbookDataReader`, the package-owned read-only entry point for
 XLSX, XLSM, XLSB, and BIFF8 XLS. It discovers used ranges and exposes
-additional worksheets through `NextResult()`. Legacy XLS is projected through
+additional worksheets through `NextResult()`. Select one worksheet with
+`SheetName` or the zero-based `SheetIndex`, and select an explicit range with
+`A1Range`. `CurrentSheetName` and `CurrentSheetIndex` identify the active workbook sheet;
+`CurrentResultIndex` identifies its position in the selected results. Legacy XLS is projected through
 the package's existing first-party reader; use `ExcelDocument.Load` when the
 workbook must be inspected, edited, or saved again. CSV uses the parallel
 `CsvDocument.OpenDataReader` API from the separate `OfficeIMO.CSV` package.
@@ -165,24 +170,30 @@ document["Sales"].AppendDataTableToTable(rows, "SalesTable");
 document.Save();
 ```
 
-### Insert and delete worksheet rows
+### Plan and apply structural edits
 
 ```csharp
 using var document = ExcelDocument.Load("report.xlsx");
 var sheet = document["Data"];
 
-// Insert two blank rows immediately before row 5.
-sheet.InsertRows(firstRow: 5, count: 2);
+var plan = sheet.PlanInsertColumns(firstColumn: 2, count: 2);
+Console.WriteLine($"{plan.AffectedCells} cells; {plan.Impacts.Count} impact groups");
+ExcelMutationResult result = plan.Apply();
 
-// Delete row 12 and shift following rows up.
-sheet.DeleteRows(firstRow: 12);
+sheet.InsertRowsTransactional(firstRow: 5, count: 2);
+sheet.Range("A2:C20").CopyTo("E2");
+sheet.Range("E2:G20").MoveTo("I2");
+sheet.Range("A2:C20").TransposeTo("M2");
 
 document.Save();
 ```
 
-Structural row edits update workbook-owned formulas and names, tables and
-filters, validations, conditional formatting, merges, links, comments,
-drawings, charts, sparklines, pivot sources, and print-related row metadata.
+Transactional row, column, and cell-shift edits update workbook-owned formulas
+and names, tables and filters, validations, conditional formatting, merges,
+links, comments, drawings, charts, sparklines, pivot sources, print definitions,
+allowed-edit ranges, and ignored-error regions. Copy, move, and transpose use the
+same bounded dry-run and diagnostic contract. Existing direct row and column
+methods remain available for callers that have already performed their own gate.
 Formula results are marked dirty and the workbook requests recalculation on
 open. Shared formulas are materialized into equivalent normal formulas before
 the edit so that each member can be rewritten independently.
@@ -190,7 +201,42 @@ the edit so that each member can be rewritten independently.
 The operation rejects edits that would cross an array-formula boundary or
 PivotTable output, remove a table header or totals row, or move a dependent
 reference beyond Excel's row limit. Remove, move, or resize that owned structure
-first. Column and cell-shift mutations remain separate roadmap work.
+first. Configure scan, affected-cell, rollback-snapshot, and diagnostic budgets
+through `ExcelMutationPlanOptions`.
+
+### Reference-aware formulas and native cell images
+
+`ExcelReference` parses and converts A1 and R1C1 cells, ranges, whole rows, and
+whole columns and provides intersection, union, subtraction, containment, and
+offset operations. `ExcelFormulaSyntaxTree` is the shared lossless rewriter used
+for formulas, defined names, structured table references, chart formulas, pivot
+sources, print definitions, and structural edits. `SearchFormulas` searches by
+text, function, or intersecting parsed reference; formula inspection reports
+authored, cached, evaluated, dirty, deferred, unsupported, and dynamic-array
+state explicitly.
+
+Use `SetInCellImage`, `GetInCellImages`, and `RemoveInCellImage` for native rich-
+value images. Their metadata follows cell sorting, filtering, sizing, copying,
+moving, and structural edits; they are distinct from floating drawing images.
+
+### File-backed editing for large workbooks
+
+```csharp
+const long packageBudget = 2L * 1024 * 1024 * 1024;
+using var document = ExcelDocument.OpenFileBacked(
+    "large-report.xlsx",
+    new ExcelLoadOptions { MaxInputBytes = packageBudget },
+    cancellationToken);
+
+document["Data"].CellValue(2, 2, "Updated");
+document.Save(new ExcelSaveOptions { MaxTemporaryPackageBytes = packageBudget });
+```
+
+`OpenFileBacked` stages the editable Open XML package in an owner-only temporary
+file, copies with fixed memory and deterministic cancellation, and honors load
+and Open XML part limits. The normal `Load`, direct writer, streaming reader,
+and unchanged-package fast paths are unchanged. XLS and XLSB projection continue
+to use `Load`.
 
 ### Validation lists and typed reads
 
@@ -201,11 +247,10 @@ var sheet = document["Data"];
 sheet.ValidationList("C2:C100", new[] { "New", "Processed", "Hold" });
 sheet.Range("D2:D100").Validate.WholeNumberBetween(1, 10, errorMessage: "Use 1 through 10");
 
-List<RowModel> rows = document.Read()
-    .Sheet("Data")
-    .Range("A1:C100")
-    .AsObjects<RowModel>()
-    .ToList();
+List<RowModel> rows = sheet.RowsAs<RowModel>("A1:C100").ToList();
+
+// Omitting the range maps the populated worksheet range.
+List<RowModel> populatedRows = sheet.RowsAs<RowModel>().ToList();
 
 public sealed class RowModel {
     public string Name { get; set; } = "";
@@ -248,7 +293,25 @@ sheet.AddParetoChart(
 document.Save();
 ```
 
-Histogram, Pareto, funnel, and waterfall helpers build compatible XLSX charts from raw values. They do not claim to be native ChartEx parts. Use `ExcelFormatCapabilityReport.Current.ToMarkdown()` when a workflow must choose between XLSX, XLS, and XLSB targets.
+Histogram, Pareto, funnel, and waterfall helpers build compatible XLSX charts from raw values. Native ChartEx authoring is available separately for funnel, waterfall, box-and-whisker, treemap, and sunburst layouts:
+
+```csharp
+var modernData = new ExcelChartData(
+    new[] { "Qualified", "Proposal", "Won" },
+    new[] { new ExcelChartSeries("Deals", new[] { 42d, 18d, 7d }) });
+
+var modernChart = sheet.AddModernChart(
+    modernData,
+    row: 18,
+    column: 10,
+    chartType: ExcelModernChartType.Funnel,
+    title: "Pipeline");
+
+modernChart.SetTitle("Current pipeline")
+    .SetPlacement(row: 18, column: 10, widthPixels: 640, heightPixels: 360);
+```
+
+`ExcelModernChart` can inspect imported ChartEx objects and change their name, title, supported layout, and one-cell placement without replacing unrelated markup. `UpdateData` is available only when the ChartEx formulas resolve to OfficeIMO's owned hidden chart-data sheet; visible imported business data is never claimed as writable chart storage. Other imported charts remain formatting-preserving but data replacement is rejected. Use `ExcelFormatCapabilityReport.Current.ToMarkdown()` when a workflow must choose between XLSX, XLS, and XLSB targets.
 
 ### Pivot tables and pivot-backed charts
 
@@ -292,7 +355,11 @@ sheet.CellValue(5, 2, "Beta");
 sheet.CellValue(5, 3, "Q2");
 sheet.CellValue(5, 4, 87000);
 sheet.UpdatePivotTableSource("SalesPivot", sheet, "A1:D5");
-document.AddPivotSlicerCache("SalesPivot", "Region");
+document.AddPivotSlicer(
+    "SalesPivot",
+    "Region",
+    sheet.Name,
+    new ExcelSlicerViewOptions { Name = "RegionFilter", Row = 12, Column = 8 });
 
 var pivot = sheet.GetPivotTables().Single(p => p.Name == "SalesPivot");
 Console.WriteLine($"{pivot.Name}: {string.Join(", ", pivot.RowFields)}");
@@ -305,7 +372,35 @@ chart.SetPivotSource("SalesPivot");
 document.Save();
 ```
 
-Pivot support is useful but still marked partial in the compatibility matrix. It covers source-range pivots, row/column/page/data fields, styles, layouts, filters, calculated fields, grouping metadata, guarded source updates, and readback. Slicer and timeline pivot/field bindings can be validated and persisted as OfficeIMO-owned metadata without pretending to be native Excel cache parts; native cache structures and UI shapes remain open work.
+Pivot support covers source-range pivots, row/column/page/data fields, styles, layouts, filters, calculated fields, grouping metadata, shared-cache-aware source updates, refresh-on-open, and readback. `AddPivotSlicer` authors native slicer caches, worksheet views, and drawing anchors for supported fields. `AddPivotTimeline` does the same for date-only fields. Compatible views reuse shared caches; removing the last view can prune its cache. Unsupported imported siblings remain preserved.
+
+### Guarded query-backed tables
+
+```csharp
+using var document = ExcelDocument.Create("query-report.xlsx");
+var sheet = document.AddWorksheet("Results");
+
+var query = document.AddQueryBackedTable(new ExcelQueryBackedTableOptions {
+    ConnectionName = "SalesQuery",
+    CommandText = "sales/current",
+    WorksheetName = sheet.Name,
+    StartCell = "B3",
+    TableName = "SalesResults",
+    ColumnNames = new[] { "Region", "Amount" }
+});
+
+ExcelQueryRefreshResult refresh = await document.RefreshQueryAsync(
+    query.ConnectionName,
+    applicationQueryHost,
+    new ExcelQueryExecutionPolicy {
+        AllowExecution = true,
+        MaximumRows = 100_000,
+        MaximumCells = 500_000
+    },
+    cancellationToken);
+```
+
+OfficeIMO stores the native connection, table, and query-table relationship chain but does not ship a database or network provider. The application-owned `IExcelQueryExecutionHost` interprets the opaque command and returns rows. OfficeIMO applies row, column, cell, and character budgets before a transactional table replacement. Commands loaded from imported workbooks require the separate `AllowImportedCommands` opt-in.
 
 ### Formula inspection and calculation policy
 
@@ -335,7 +430,9 @@ document.Save("report.xlsx", new ExcelSaveOptions {
 ### Preflight a workbook before choosing a workflow
 
 ```csharp
-using var document = ExcelDocument.Load("incoming.xlsx", readOnly: true);
+using var document = ExcelDocument.Load(
+    "incoming.xlsx",
+    new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
 
 ExcelFeatureReport report = document.InspectFeatures();
 
@@ -350,7 +447,22 @@ if (!report.Can(ExcelPreflightCapability.ExportPdfReport)) {
 }
 ```
 
-Use workflow preflight when an application needs to decide whether a workbook is safe for readback, cell-value edits, structure-changing edits, cached-formula reads, OfficeIMO formula calculation, template binding, or first-party PDF report export. Preserve-only features such as macros, slicers, timelines, threaded comments, external links, custom XML, OLE objects, and form controls are reported with package details instead of being silently ignored.
+Use workflow preflight when an application needs to decide whether a workbook is safe for readback, cell-value edits, structure-changing edits, cached-formula reads, OfficeIMO formula calculation, template binding, or first-party PDF report export. Preserve-only features such as macros, unsupported imported interaction markup, threaded comments, external links, custom XML, OLE objects, and form controls are reported with package details instead of being silently ignored.
+
+### Package and VBA signatures
+
+`InspectSignatures()` and `InspectPackageSignatures(...)` remain provider-free. Pass an optional security provider only when creating a package signature or validating its cryptography, package digests, certificate chain, and revocation. OPC timestamp elements are reported as structural evidence; this shared result surface does not claim timestamp-token validation:
+
+```csharp
+using OfficeIMO.Security;
+
+IOfficeSecurityProvider security = OfficeSecurityProvider.Default;
+ExcelDocument.SignPackageSignature("report.xlsx", security, signingCertificate);
+OfficePackageSignatureValidationReport validation =
+    ExcelDocument.ValidatePackageSignatures("report.xlsx", security);
+```
+
+`InspectVbaSignatures(...)`, `ValidateVbaSignatures(...)`, and `SignVbaProject(...)` use the managed bounded VBA core shared with Word and PowerPoint. It creates and validates legacy, agile, and V3 carriers in `.xlsm`, `.xltm`, `.xlam`, and `.xlsb` on every supported platform through an explicit `IOfficeSecurityProvider`. A registered Microsoft Office SIP is an optional Windows differential check, not a signing dependency. Sign the VBA project before applying an OPC package signature.
 
 ### DataTable and JSON exchange
 
@@ -399,8 +511,45 @@ sheet.UpdateComments(new ExcelCommentFilter { TextContains = "total" }, "Total r
 sheet.AddConditionalColorScale("C2:C100", "#FFF0F0", "#70AD47");
 sheet.Range("D2:D100").ConditionalFormat.DataBar("#5B9BD5");
 
+// The same lifecycle covers imported classic and Office extension rules.
+var rules = sheet.GetConditionalFormattingRules("C2:D100");
+var copied = sheet.CloneConditionalFormattingRule(rules[0], "E2:E100");
+copied.Priority = 1;
+sheet.UpdateConditionalFormattingRule(copied);
+
 document.Save();
 ```
+
+For extension-only visuals, use the same format-neutral model rather than a
+second Open XML-specific API:
+
+```csharp
+sheet.AddConditionalFormattingRule(new ExcelConditionalFormattingInfo {
+    Source = ExcelConditionalFormattingSource.Office2010Extension,
+    Range = "F2:F100",
+    Type = "DataBar",
+    DataBarColor = "FF4472C4",
+    DataBarBorderColor = "FF203864",
+    DataBarNegativeColor = "FFC00000",
+    DataBarAxisColor = "FF000000",
+    DataBarBorder = true,
+    DataBarGradient = false,
+    DataBarThresholds = new[] {
+        new ExcelConditionalFormatThreshold { Type = "AutoMin" },
+        new ExcelConditionalFormatThreshold { Type = "AutoMax" }
+    }
+});
+```
+
+`GetConditionalFormattingRules`, `AddConditionalFormattingRule`,
+`UpdateConditionalFormattingRule`, `CloneConditionalFormattingRule`,
+`ReorderConditionalFormattingRules`, `RemoveConditionalFormattingRule`, and
+`ClearConditionalFormatting` manage standard and Office extension rules through
+one API. Common edits do not reserialize unchanged formulas or visuals, so
+unrecognized imported attributes and extension children are retained. Excel
+image/PDF projection emits stable diagnostics when extension semantics are
+approximated or omitted; native XLS export rejects extension-only rules rather
+than silently discarding them.
 
 ### Tune larger exports
 
@@ -513,5 +662,6 @@ Excel layout, print-title, page-setup, and header/footer composition stays in `O
 
 - **External:** Open XML SDK for `.xlsx` package mechanics. Microsoft BCL/JSON compatibility packages are used on older targets.
 - **OfficeIMO:** `OfficeIMO.Drawing`. The workbook API, BIFF8 `.xls` reader/writer, large-data paths, validation, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
+- **Security:** Open XML and VBA signature carriers are inspected and signed-package mutations fail safely without a cryptographic dependency. Package and VBA signature creation and cryptographic validation accept an explicit `IOfficeSecurityProvider`; `OfficeIMO.Security` is not pulled transitively.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

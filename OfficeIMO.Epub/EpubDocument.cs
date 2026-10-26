@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 /// <summary>
 /// Represents extracted EPUB content.
 /// </summary>
-public sealed class EpubDocument {
+public sealed partial class EpubDocument {
     /// <summary>Loads an EPUB document from a file.</summary>
     public static EpubDocument Load(string path, EpubReadOptions? options = null) => EpubReader.Read(path, options);
 
@@ -107,6 +107,12 @@ public sealed class EpubDocument {
 
     /// <summary>Whether one or more resources require unsupported decryption.</summary>
     public bool RequiresDecryption => Encryption.Any(static item => item.RequiresDecryption);
+
+    /// <summary>Structural information about META-INF/signatures.xml, when present.</summary>
+    public EpubSignatureInfo Signatures { get; internal set; } = EpubSignatureInfo.NotPresent;
+
+    /// <summary>Whether the EPUB container carries a signatures.xml document.</summary>
+    public bool HasSignatures => Signatures.IsPresent;
 
     /// <summary>Structured non-fatal diagnostics encountered during extraction.</summary>
     public IReadOnlyList<EpubDiagnostic> Diagnostics { get; internal set; } = Array.Empty<EpubDiagnostic>();

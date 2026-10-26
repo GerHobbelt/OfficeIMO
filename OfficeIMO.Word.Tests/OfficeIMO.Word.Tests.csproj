@@ -37,6 +37,7 @@
     <ProjectReference Include="..\OfficeIMO.GoogleWorkspace\OfficeIMO.GoogleWorkspace.csproj" />
     <ProjectReference Include="..\OfficeIMO.Markdown\OfficeIMO.Markdown.csproj" />
     <ProjectReference Include="..\OfficeIMO.Pdf\OfficeIMO.Pdf.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Security\OfficeIMO.Security.csproj" />
     <ProjectReference Include="..\OfficeIMO.Word\OfficeIMO.Word.csproj" />
     <ProjectReference Include="..\OfficeIMO.Word.GoogleDocs\OfficeIMO.Word.GoogleDocs.csproj" />
     <ProjectReference Include="..\OfficeIMO.Word.Markdown\OfficeIMO.Word.Markdown.csproj" />
@@ -47,6 +48,7 @@
     <Compile Include="..\OfficeIMO.TestAssets\TestStreams\**\*.cs" Link="TestStreams\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\OfficeIMO.Pdf.Tests\Pdf\PdfPngTestImages.cs" Link="Pdf\PdfPngTestImages.cs" />
     <Compile Include="..\OfficeIMO.TestAssets\OfficeInteroperabilityCorpusManifest.cs" Link="OfficeInteroperabilityCorpusManifest.cs" />
+    <Compile Include="..\OfficeIMO.TestAssets\WordEvidenceCorpusManifest.cs" Link="WordEvidenceCorpusManifest.cs" />
     <Compile Include="..\OfficeIMO.TestAssets\ManagedTextShapingTestAssets.cs" Link="ManagedTextShapingTestAssets.cs" />
   </ItemGroup>
 
@@ -64,6 +66,11 @@
     <Using Include="System.Linq" />
     <Using Include="System.IO" />
     <Using Include="System.Threading.Tasks" />
+    <Using Include="OfficeIMO.Security.OfficePackageSignatureArchive" Alias="OfficePackageSignatureArchive" />
+    <Using Include="OfficeIMO.Security.OfficePackageDigestResult" Alias="OfficePackageDigestResult" />
+    <Using Include="OfficeIMO.Security.OfficePackageSigningOptions" Alias="OfficePackageSigningOptions" />
+    <Using Include="OfficeIMO.Security.OfficePackageSigningResult" Alias="OfficePackageSigningResult" />
+    <Using Include="OfficeIMO.Security.OfficePackageSignatureWriter" Alias="OfficePackageSignatureWriter" />
   </ItemGroup>
 
   <ItemGroup>

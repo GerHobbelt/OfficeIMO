@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,9 +28,9 @@ namespace OfficeIMO.Drawing.Internal {
 #endif
 
             EnsureTargetDirectory(targetPath);
-            string temporaryPath = CreateTemporaryPath(targetPath);
+            string temporaryPath = string.Empty;
             try {
-                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None)) {
+                using (var stream = CreateTemporaryFile(targetPath, FileOptions.None, out temporaryPath)) {
                     writer(stream);
                     stream.Flush();
                 }
@@ -60,9 +61,9 @@ namespace OfficeIMO.Drawing.Internal {
 #endif
             EnsureTargetDirectory(targetPath);
             string fullTargetPath = GetFullTargetPath(targetPath);
-            string temporaryPath = CreateTemporaryPath(fullTargetPath);
+            string temporaryPath = string.Empty;
             try {
-                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None)) {
+                using (var stream = CreateTemporaryFile(fullTargetPath, FileOptions.None, out temporaryPath)) {
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush();
                 }
@@ -87,9 +88,9 @@ namespace OfficeIMO.Drawing.Internal {
 #endif
 
             EnsureTargetDirectory(targetPath);
-            string temporaryPath = CreateTemporaryPath(targetPath);
+            string temporaryPath = string.Empty;
             try {
-                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 8192, FileOptions.Asynchronous)) {
+                using (var stream = CreateTemporaryFile(targetPath, FileOptions.Asynchronous, out temporaryPath, 8192)) {
 #if NET6_0_OR_GREATER
                     await stream.WriteAsync(bytes.AsMemory(), cancellationToken).ConfigureAwait(false);
 #else
@@ -119,9 +120,9 @@ namespace OfficeIMO.Drawing.Internal {
             cancellationToken.ThrowIfCancellationRequested();
             EnsureTargetDirectory(targetPath);
             string fullTargetPath = GetFullTargetPath(targetPath);
-            string temporaryPath = CreateTemporaryPath(fullTargetPath);
+            string temporaryPath = string.Empty;
             try {
-                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 8192, FileOptions.Asynchronous)) {
+                using (var stream = CreateTemporaryFile(fullTargetPath, FileOptions.Asynchronous, out temporaryPath, 8192)) {
 #if NET6_0_OR_GREATER
                     await stream.WriteAsync(bytes.AsMemory(), cancellationToken).ConfigureAwait(false);
 #else
@@ -151,9 +152,9 @@ namespace OfficeIMO.Drawing.Internal {
 #endif
             cancellationToken.ThrowIfCancellationRequested();
             EnsureTargetDirectory(targetPath);
-            string temporaryPath = CreateTemporaryPath(targetPath);
+            string temporaryPath = string.Empty;
             try {
-                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 8192, FileOptions.Asynchronous)) {
+                using (var stream = CreateTemporaryFile(targetPath, FileOptions.Asynchronous, out temporaryPath, 8192)) {
                     writer(stream);
                     cancellationToken.ThrowIfCancellationRequested();
                     await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -180,10 +181,9 @@ namespace OfficeIMO.Drawing.Internal {
 #endif
             cancellationToken.ThrowIfCancellationRequested();
             EnsureTargetDirectory(targetPath);
-            string temporaryPath = CreateTemporaryPath(targetPath);
+            string temporaryPath = string.Empty;
             try {
-                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite,
-                           FileShare.None, 8192, FileOptions.Asynchronous)) {
+                using (var stream = CreateTemporaryFile(targetPath, FileOptions.Asynchronous, out temporaryPath, 8192)) {
                     await writer(stream, cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -207,6 +207,17 @@ namespace OfficeIMO.Drawing.Internal {
 
             string fileName = Path.GetFileName(fullTargetPath);
             return Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp");
+        }
+
+        /// <summary>Creates an owner-only same-directory staging file suitable for an atomic commit.</summary>
+        public static FileStream CreateTemporaryFile(
+            string targetPath,
+            FileOptions options,
+            out string temporaryPath,
+            int bufferSize = 81920) {
+            EnsureTargetDirectory(targetPath);
+            temporaryPath = CreateTemporaryPath(targetPath);
+            return OfficeTemporaryFile.CreateAtPath(temporaryPath, bufferSize, options);
         }
 
         /// <summary>Creates a same-directory staging path that preserves the destination extension.</summary>
@@ -250,7 +261,33 @@ namespace OfficeIMO.Drawing.Internal {
             string temporaryPath,
             string targetPath,
             Func<string, bool> destinationMatchesExpected,
-            Func<string, bool>? installedFileMatchesExpected = null) {
+            Func<string, bool>? installedFileMatchesExpected = null) =>
+            TryCommitTemporaryFileAtomicallyIfDestinationUnchangedCore(
+                temporaryPath,
+                targetPath,
+                destinationMatchesExpected,
+                installedFileMatchesExpected,
+                afterFirstRollbackReplacement: null);
+
+        internal static bool TryCommitTemporaryFileAtomicallyIfDestinationUnchangedForTesting(
+            string temporaryPath,
+            string targetPath,
+            Func<string, bool> destinationMatchesExpected,
+            Func<string, bool>? installedFileMatchesExpected,
+            Action<string> afterFirstRollbackReplacement) =>
+            TryCommitTemporaryFileAtomicallyIfDestinationUnchangedCore(
+                temporaryPath,
+                targetPath,
+                destinationMatchesExpected,
+                installedFileMatchesExpected,
+                afterFirstRollbackReplacement);
+
+        private static bool TryCommitTemporaryFileAtomicallyIfDestinationUnchangedCore(
+            string temporaryPath,
+            string targetPath,
+            Func<string, bool> destinationMatchesExpected,
+            Func<string, bool>? installedFileMatchesExpected,
+            Action<string>? afterFirstRollbackReplacement) {
             if (string.IsNullOrWhiteSpace(temporaryPath)) {
                 throw new ArgumentException("Temporary path cannot be empty.", nameof(temporaryPath));
             }
@@ -265,6 +302,7 @@ namespace OfficeIMO.Drawing.Internal {
             string backupPath = CreateTemporaryPath(fullTargetPath);
             string displacedPath = CreateTemporaryPath(fullTargetPath);
             bool targetContainsTemporary = false;
+            bool preserveBackupPath = false;
             bool preserveDisplacedPath = false;
             string installedTemporaryIdentity = ComputeFileIdentity(temporaryPath);
             try {
@@ -288,6 +326,8 @@ namespace OfficeIMO.Drawing.Internal {
                     displacedPath,
                     installedTemporaryIdentity,
                     ref targetContainsTemporary,
+                    ref preserveBackupPath,
+                    afterFirstRollbackReplacement,
                     ref preserveDisplacedPath);
                 return false;
             } catch (Exception commitException) {
@@ -299,6 +339,8 @@ namespace OfficeIMO.Drawing.Internal {
                             displacedPath,
                             installedTemporaryIdentity,
                             ref targetContainsTemporary,
+                            ref preserveBackupPath,
+                            afterFirstRollbackReplacement,
                             ref preserveDisplacedPath);
                     } catch (Exception rollbackException) {
                         throw new IOException(
@@ -309,7 +351,7 @@ namespace OfficeIMO.Drawing.Internal {
                 }
                 throw;
             } finally {
-                if (!targetContainsTemporary) DeleteIfExists(backupPath);
+                if (!targetContainsTemporary && !preserveBackupPath) DeleteIfExists(backupPath);
                 if (!preserveDisplacedPath) DeleteIfExists(displacedPath);
             }
         }
@@ -320,9 +362,13 @@ namespace OfficeIMO.Drawing.Internal {
             string displacedPath,
             string installedTemporaryIdentity,
             ref bool targetContainsTemporary,
+            ref bool preserveBackupPath,
+            Action<string>? afterFirstRollbackReplacement,
             ref bool preserveDisplacedPath) {
+            string restoredDestinationIdentity = ComputeFileIdentity(backupPath);
             ExecuteWithRetry(() => File.Replace(backupPath, targetPath, displacedPath));
             targetContainsTemporary = false;
+            afterFirstRollbackReplacement?.Invoke(targetPath);
             if (installedTemporaryIdentity.Length == 0 ||
                 string.Equals(installedTemporaryIdentity, ComputeFileIdentity(displacedPath), StringComparison.Ordinal)) {
                 DeleteIfExists(displacedPath);
@@ -334,7 +380,16 @@ namespace OfficeIMO.Drawing.Internal {
             preserveDisplacedPath = true;
             ExecuteWithRetry(() => File.Replace(displacedPath, targetPath, backupPath));
             preserveDisplacedPath = false;
-            DeleteIfExists(backupPath);
+            preserveBackupPath = true;
+            if (string.Equals(restoredDestinationIdentity, ComputeFileIdentity(backupPath), StringComparison.Ordinal)) {
+                preserveBackupPath = false;
+                DeleteIfExists(backupPath);
+                return;
+            }
+
+            throw new IOException(
+                "A newer concurrent save was displaced during guarded rollback and remains recoverable at '" +
+                backupPath + "'.");
         }
 
         private static string ComputeFileIdentity(string path) {
@@ -368,14 +423,12 @@ namespace OfficeIMO.Drawing.Internal {
                 // The destination appeared after the existence check. Replace it below.
             }
 
-#if NET6_0_OR_GREATER
-            if (!OperatingSystem.IsWindows()) {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 // A rename/replace installs the staging inode on Unix. Apply the existing
                 // destination's mode first so a restrictive workbook or document cannot be
                 // widened to the staging file's default umask-derived permissions.
-                File.SetUnixFileMode(temporaryPath, File.GetUnixFileMode(fullTargetPath));
+                OfficeTemporaryFile.CopyUnixFileMode(fullTargetPath, temporaryPath);
             }
-#endif
 
             try {
                 ExecuteWithRetry(() => File.Replace(temporaryPath, fullTargetPath, destinationBackupFileName: null));
@@ -517,6 +570,7 @@ namespace OfficeIMO.Drawing.Internal {
 
             try {
                 if (File.Exists(targetPath)) return false;
+                OfficeTemporaryFile.ApplyDefaultUnixCreationMode(sourcePath);
                 try {
                     ExecuteWithRetry(() => File.Move(sourcePath, targetPath));
                     return true;

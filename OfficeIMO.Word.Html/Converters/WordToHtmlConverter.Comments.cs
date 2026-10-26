@@ -35,13 +35,14 @@ namespace OfficeIMO.Word.Html {
 
             var sup = CreateOutputElement(htmlDoc, "sup");
             var anchor = CreateOutputElement(htmlDoc, "a");
-            anchor.SetAttribute("href", $"#comment{number.ToString(CultureInfo.InvariantCulture)}");
-            anchor.SetAttribute("id", $"commentref{number.ToString(CultureInfo.InvariantCulture)}");
-            anchor.SetAttribute("data-word-comment-id", commentId!);
+            string numberText = number.ToString(CultureInfo.InvariantCulture);
+            SetOutputAttribute(htmlDoc, anchor, "href", $"#comment{numberText}", "CommentReference:href");
+            SetOutputAttribute(htmlDoc, anchor, "id", $"commentref{numberText}", "CommentReference:id");
+            SetOutputAttribute(htmlDoc, anchor, "data-word-comment-id", commentId!, "CommentReference:comment-id");
             if (!string.IsNullOrEmpty(comment.Author)) {
-                anchor.SetAttribute("title", $"Comment by {comment.Author}");
+                SetOutputAttribute(htmlDoc, anchor, "title", $"Comment by {comment.Author}", "CommentReference:title");
             }
-            anchor.TextContent = $"[{number.ToString(CultureInfo.InvariantCulture)}]";
+            SetOutputText(htmlDoc, anchor, $"[{numberText}]", "CommentReference:text");
             sup.AppendChild(anchor);
             nodes.Add(sup);
             return true;
@@ -58,7 +59,7 @@ namespace OfficeIMO.Word.Html {
             }
 
             var commentSection = CreateOutputElement(htmlDoc, "section");
-            commentSection.SetAttribute("class", "comments");
+            SetOutputAttribute(commentSection, "class", "comments", "Comments:class");
             var hr = CreateOutputElement(htmlDoc, "hr");
             commentSection.AppendChild(hr);
             var ol = CreateOutputElement(htmlDoc, "ol");
@@ -72,22 +73,22 @@ namespace OfficeIMO.Word.Html {
 
         private static void AppendCommentListItem(IDocument htmlDoc, IElement parent, string id, WordComment comment, CancellationToken cancellationToken) {
             var li = CreateOutputElement(htmlDoc, "li");
-            li.SetAttribute("id", id);
+            SetOutputAttribute(li, "id", id, "Comment:id");
             SetIfNotEmpty(li, "data-word-comment-id", comment.Id);
             SetIfNotEmpty(li, "data-author", comment.Author);
             SetIfNotEmpty(li, "data-initials", comment.Initials);
             if (comment.DateTime.HasValue) {
-                li.SetAttribute("data-date", comment.DateTime.Value.ToString("o", CultureInfo.InvariantCulture));
+                SetOutputAttribute(li, "data-date", comment.DateTime.Value.ToString("o", CultureInfo.InvariantCulture), "Comment:data-date");
             }
 
             var paragraph = CreateOutputElement(htmlDoc, "p");
-            paragraph.TextContent = comment.Text ?? string.Empty;
+            SetOutputText(htmlDoc, paragraph, comment.Text ?? string.Empty, "Comment:text");
             li.AppendChild(paragraph);
 
             var replies = comment.Replies;
             if (replies.Count > 0) {
                 var replyList = CreateOutputElement(htmlDoc, "ol");
-                replyList.SetAttribute("class", "comment-replies");
+                SetOutputAttribute(replyList, "class", "comment-replies", "CommentReplies:class");
                 for (int i = 0; i < replies.Count; i++) {
                     cancellationToken.ThrowIfCancellationRequested();
                     AppendCommentListItem(htmlDoc, replyList, $"{id}-reply{(i + 1).ToString(CultureInfo.InvariantCulture)}", replies[i], cancellationToken);
@@ -100,7 +101,7 @@ namespace OfficeIMO.Word.Html {
 
         private static void SetIfNotEmpty(IElement element, string name, string? value) {
             if (!string.IsNullOrEmpty(value)) {
-                element.SetAttribute(name, value!);
+                SetOutputAttribute(element, name, value!, "CommentMetadata:" + name);
             }
         }
     }

@@ -35,6 +35,83 @@ namespace OfficeIMO.Word.Html {
             budget.ReserveCharacters(characters, message, source);
         }
 
+        private static void ReleaseOutputCharacters(IDocument owner, long characters) {
+            if (!OutputConstructionBudgets.TryGetValue(owner, out OutputConstructionBudget? budget)) {
+                throw new InvalidOperationException("The HTML output construction budget was not initialized.");
+            }
+            budget.ReleaseCharacters(characters);
+        }
+
+        private static void SetOutputAttribute(
+            IDocument owner,
+            IElement element,
+            string name,
+            string value,
+            string source) {
+            ReserveOutputCharacters(
+                owner,
+                SaturatingAdd(name.Length + 4L, GetHtmlEncodedLength(value, attributeValue: true)),
+                "Generated HTML attributes exceed the configured output-character limit before DOM construction.",
+                source);
+            element.SetAttribute(name, value);
+        }
+
+        private static void SetOutputAttribute(
+            IElement element,
+            string name,
+            string value,
+            string source) {
+            IDocument owner = element.Owner ??
+                throw new InvalidOperationException("The HTML output element is not attached to an owning document.");
+            SetOutputAttribute(owner, element, name, value, source);
+        }
+
+        private static void SetOutputAttributeAfterValueReservation(
+            IDocument owner,
+            IElement element,
+            string name,
+            string value,
+            string source) {
+            ReserveOutputCharacters(
+                owner,
+                name.Length + 4L,
+                "Generated HTML attribute syntax exceeds the configured output-character limit before DOM construction.",
+                source);
+            element.SetAttribute(name, value);
+        }
+
+        private static void SetOutputText(
+            IDocument owner,
+            IElement element,
+            string value,
+            string source) {
+            ReserveOutputCharacters(
+                owner,
+                GetHtmlEncodedLength(value, attributeValue: false),
+                "Generated HTML text exceeds the configured output-character limit before DOM construction.",
+                source);
+            element.TextContent = value;
+        }
+
+        private static void SetCollapsedCodeText(
+            IDocument owner,
+            IElement element,
+            IReadOnlyCollection<string> lines) {
+            ReserveOutputCharacters(
+                owner,
+                Math.Max(0, lines.Count - 1),
+                "Generated code-block separators exceed the configured output-character limit before materialization.",
+                "CodeBlockSeparators");
+            element.TextContent = string.Join("\n", lines);
+        }
+
+        private static long GetRemainingOutputCharacters(IDocument owner) {
+            if (!OutputConstructionBudgets.TryGetValue(owner, out OutputConstructionBudget? budget)) {
+                throw new InvalidOperationException("The HTML output construction budget was not initialized.");
+            }
+            return budget.RemainingCharacters;
+        }
+
         private sealed class OutputConstructionBudget {
             private readonly WordToHtmlOptions _options;
             private long _minimumOutputCharacters;
@@ -43,6 +120,8 @@ namespace OfficeIMO.Word.Html {
                 _options = options;
                 _minimumOutputCharacters = initialOutputCharacters;
             }
+
+            internal long RemainingCharacters => Math.Max(0, _options.MaxOutputCharacters - _minimumOutputCharacters);
 
             internal IElement CreateElement(IDocument owner, string tagName) {
                 long minimumSerializedCharacters = HtmlVoidElements.Contains(tagName)
@@ -67,6 +146,11 @@ namespace OfficeIMO.Word.Html {
                         _options.MaxOutputCharacters);
                 }
                 _minimumOutputCharacters = projectedCharacters;
+            }
+
+            internal void ReleaseCharacters(long characters) {
+                if (characters < 0) throw new ArgumentOutOfRangeException(nameof(characters));
+                _minimumOutputCharacters = Math.Max(0, _minimumOutputCharacters - characters);
             }
         }
     }

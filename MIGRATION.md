@@ -24,8 +24,45 @@ The repository source is on the coordinated `3.1.x` line; the latest NuGet relea
 | `OfficeIMO.OpenDocument.Pdf` | Install only the required `OfficeIMO.OpenDocument.Odt.Pdf`, `OfficeIMO.OpenDocument.Ods.Pdf`, or `OfficeIMO.OpenDocument.Odp.Pdf` adapter. |
 | `OfficeIMO.Reader.Tool` and the `officeimo-reader` executable | `OfficeIMO.Tool` and the `officeimo reader` command area. |
 | Public `SixLabors.ImageSharp` color/image helper types | First-party `OfficeIMO.Drawing` types such as `OfficeColor`. |
+| Cryptographic operations reached through a format package's transitive `OfficeIMO.Security` dependency | Install `OfficeIMO.Security` explicitly and pass `OfficeSecurityProvider.Default` through the format API. |
 
 There is no replacement umbrella OpenDocument PDF package. The focused packages keep Word, Excel, and PowerPoint dependencies out of applications that do not use those routes.
+
+### Optional security provider
+
+Word, PDF, and Email no longer pull cryptographic packages into applications that only create, read, inspect, or
+convert documents. Applications that create or cryptographically validate signatures, or decrypt S/MIME content,
+must add the optional provider explicitly:
+
+```powershell
+dotnet add package OfficeIMO.Security
+```
+
+```csharp
+using OfficeIMO.Security;
+
+IOfficeSecurityProvider security = OfficeSecurityProvider.Default;
+```
+
+Pass that provider to the format-owned operation. The format package continues to own byte ranges, package parts,
+relationships, signed-content selection, preservation policy, and document mutation. `OfficeIMO.Security` owns CMS,
+XML DSig, X.509, and RFC 3161 cryptography.
+
+| OfficeIMO 3.0 call shape | OfficeIMO 3.1 call shape |
+| --- | --- |
+| `WordDocument.SignPackage(path, certificateOrThumbprint, ...)` | `WordDocument.SignPackage(path, security, certificateOrThumbprint, ...)` |
+| `document.ValidateSignatures(options)` | `document.ValidateSignatures(security, options)` |
+| `WordDocument.SignMacroProject(path, certificateThumbprint, options)` | `WordDocument.SignMacroProject(path, security, certificateThumbprint, options)` |
+| `WordDocument.ValidateMacroProjectSignature(path, options)` | `WordDocument.ValidateMacroProjectSignature(path, security, options)` |
+| `new PdfCmsExternalSigner(certificate, ...)` | `new PdfCmsExternalSigner(security, certificate, ...)` |
+| `new PdfCmsSignatureCryptographyProvider(options)` | `new PdfCmsSignatureCryptographyProvider(security, options)` |
+| `EmailSmime.Verify(document, options)` | `EmailSmime.Verify(document, security, options)` |
+| `EmailSmime.Decrypt(document, certificate, options)` | `EmailSmime.Decrypt(document, certificate, security, options)` |
+
+Structural signature inspection and fail-safe mutation policies remain available without the optional package. Excel,
+PowerPoint, Visio, OpenDocument, and EPUB currently inspect or safely handle their native signature carriers without
+claiming cryptographic validation; they do not require `OfficeIMO.Security` until a provider-backed format adapter is
+implemented.
 
 | Route | Focused package | Reverse entry point |
 | --- | --- | --- |
@@ -38,6 +75,12 @@ OpenDocument forward PDF results expose the typed OpenDocument projection report
 `HasWarnings` remains the PDF-stage flag because source reports have format-specific diagnostic models. Use `new PdfConversionProofOptions().RequireNoLoss()` when conversion proof must enforce the same end-to-end fidelity rule. `PdfDocumentConversionResult.Warnings` describes the PDF stage only.
 
 ### Google Workspace preview options
+
+Google Workspace mutations now require `ExpectedAccount`, an `OperationPolicyProvider`, and an `OperationReceiptSink` on `GoogleWorkspaceSessionOptions`. Credential sources must attach provider-verified identity and grant evidence with `GoogleWorkspaceAccessToken.FromVerifiedCredential`; caller-entered account labels and requested scopes remain unverified and cannot authorize mutations. The built-in service-account source creates this evidence from its signed assertion and token exchange. Google APIs and installed-application callers supply a `GoogleWorkspaceCredentialBindingResolver` backed by provider token evidence. A provider-verified grant set may contain more scopes than one adapter operation requests; the session accepts that subset while the operation policy and receipt remain bound to the adapter's exact required scopes. Raw `StaticAccessTokenCredentialSource` values remain suitable for reads; mutation-capable raw-token applications must use a delegate source after independently verifying the token. Construct low-level mutation transport with `new GoogleWorkspaceHttpTransport(session)` so it can prove that the supplied token and required scope set were acquired by that session; the options-only constructor remains suitable for reads but rejects mutations. Build each policy from the operation context's `RequiredScopes`, `MaxRetryCount`, `MaxRetryElapsedTime`, and `RateLimitPolicy`; the transport snapshots and verifies those values before sending, so a policy cannot claim different scopes or mutable retry behavior. Policy targets preserve allowlisted operation-defining query values, including Drive parent changes, while sensitive and non-semantic query values are redacted or excluded. Adapter calls declare `GoogleWorkspaceMutationKind` independently of their HTTP verb and expose `RevisionPreconditionKind`: return `AdapterExpectedRevision` for payload-enforced Docs or Slides write control and for `ResumableSessionState`, a strong HTTP entity tag for enforced `If-Match`, `ResourceAbsentForCreateRevision` for an adapter-declared create, or `ExplicitlyUnversionedRevision(reason)` together with an accepted, named loss decision when the API has no usable conditional precondition. Resumable Drive session initiation and chunk receipts are actions; the create receipt is emitted only after Google confirms the completed file. Mutation receipts record the semantic mutation kind, selected mechanism, and revision or session state actually enforced. Any guarded mutation that fails before final response headers now records an ambiguous receipt and throws `GoogleWorkspaceAmbiguousMutationException`; reconcile the receipt target and request identifier before retrying. Sync plan items require a target resource and expected revision, and `GoogleWorkspaceSyncPlan.Create` requires the plan policy. Read sync executor decisions from `GoogleWorkspaceSyncItemResult.DecisionReceipt`; actual network mutation receipts continue to arrive through the session receipt sink.
+
+Email store content-search checkpoints are now source- and query-bound serialized envelopes. Replace direct `new EmailStoreContentSearchCheckpoint(offset)` construction with the checkpoint returned by `EmailStoreContentSearchReport.NextCheckpoint`; persisted legacy offset-only values cannot safely resume against a reopened or changed store.
+
+Email store table-page continuation tokens also use a version-2, source-bound envelope. Persisted version-1 `EmailStoreContinuationToken` values are intentionally rejected because they cannot prove that the reopened source is unchanged. Discard those tokens after upgrading and restart the affected table query from its first page.
 
 The completed Google Workspace adapters replace preview booleans that described behavior without proving that the fallback executed. Configure the operation through `UnsupportedFeatures`, `GoogleWorkspaceFidelityPolicy`, the format support catalog, and an executed fallback mode:
 
@@ -73,13 +116,108 @@ Replace the removed public reader roots as follows:
 | `CsvDocument.ReadFieldSpans*`, `CsvDocument.ReadRowFieldSpans*`, `CsvFieldSpanAction`, `ICsvFieldSpanVisitor`, `ICsvProjectedFieldSpanVisitor`, and `ICsvRowFieldSpanVisitor` | `CsvDocument.OpenDataReader(...)` for streaming, or `Load(...)` / `Parse(...)` for a materialized document |
 | `ExcelDocumentReader.Open(...)` | `ExcelDocument.OpenDataReader(...)` |
 | `ExcelRead.*`, `ExcelDocument.Read().Sheet().Range()`, or `ExcelSheetReader` | `ExcelDocument.OpenDataReader(...)` for streaming, or `ExcelDocument.Load(...)` for editing |
-| Concrete Excel reader return types | `DbDataReader` |
+| Concrete `ExcelDocumentReader` / `ExcelSheetReader` use | `ExcelWorkbookDataReader` returned by `ExcelDocument.OpenDataReader(...)` or `workbook.CreateDataReader(...)` |
 
-When configuring a streaming CSV read with `CsvLoadOptions`, set `Mode = CsvLoadMode.Stream`; the options object otherwise retains its in-memory default. Excel exposes worksheets as ordered `DbDataReader` results through `NextResult()`.
+`CsvLoadOptions.Mode`, `CsvLoadMode`, and `CsvDocument.Mode` are no longer
+public. Use `CsvDocument.OpenDataReader` for a forward-only read and
+`CsvDocument.Load` for a materialized model.
+`ExcelDocument.Sheets` now exposes `IReadOnlyList<ExcelSheet>` instead of
+`List<ExcelSheet>`. Enumerate or index the property as before, use the workbook's
+worksheet operations to edit the collection, or call `document.Sheets.ToList()`
+when a detached mutable snapshot is required.
+Excel exposes worksheets as ordered `ExcelWorkbookDataReader` results through
+`NextResult()`. Use `SheetName` or zero-based `SheetIndex` to select one sheet,
+`A1Range` to select a range, `CurrentSheetName` / `CurrentSheetIndex` to identify the
+workbook sheet, and `CurrentResultIndex` to identify its position in the selected results.
+
+The Excel/CSV adapter in `OfficeIMO.Reader.Excel` now uses the native CSV reader
+and writer pipelines. Replace `ImportDelimitedFile` with `ImportCsvFile`, and
+replace decoded-text `ImportDelimitedText` and worksheet `FromCsv` calls with
+`ImportCsvText`. Use `ImportCsv` when the source is a `CsvDocument` or `Stream`.
+Replace `ExcelDelimitedImportOptions` and `ExcelDelimitedImportResult` with
+`ExcelCsvImportOptions` and `ExcelCsvImportResult`. Use `SaveAsCsv` and
+`SaveAsExcel` for destination-shaped conversion entry points.
+
+Move the removed import-option properties into the CSV parsing and reader
+options owned by `ExcelCsvImportOptions`:
+
+| OfficeIMO 3.0 | OfficeIMO 3.1 |
+| --- | --- |
+| `Delimiter = value` | `LoadOptions.Delimiter = value` and `LoadOptions.DetectDelimiter = false` |
+| `Delimiter = null` | `LoadOptions.DetectDelimiter = true` |
+| `HeadersInFirstRow` | `LoadOptions.HasHeaderRow` |
+| `SkipInitialRecords` | `LoadOptions.SkipInitialRecords` |
+| `Culture` | `LoadOptions.Culture` |
+| `ConvertNumbersAndDates` | `ReaderOptions.InferSchema` |
+
+For example, an explicit semicolon import now uses nested options:
+
+```csharp
+using System.Globalization;
+using OfficeIMO.CSV;
+using OfficeIMO.Reader.Excel;
+
+var options = new ExcelCsvImportOptions {
+    SheetName = "Import",
+    LoadOptions = new CsvLoadOptions {
+        Delimiter = ';',
+        DetectDelimiter = false,
+        HasHeaderRow = true,
+        SkipInitialRecords = 1,
+        Culture = CultureInfo.GetCultureInfo("pl-PL")
+    },
+    ReaderOptions = new CsvDataReaderOptions { InferSchema = true }
+};
+```
+
+`CreateTable`, `SheetName`, `TableName`, and `TableStyle` keep the same names on
+`ExcelCsvImportOptions`. Leave `TableName` unset to use the effective worksheet
+name, matching the former import behavior. `IncludeHeaders` controls whether the
+reader's resolved field names are written into the worksheet and defaults to
+`true`.
+
+For a worksheet `FromCsv` call, move `startRow`, `startColumn`,
+`firstRowIsHeader`, and `includeHeaders` into `ExcelCsvImportOptions`, and pass
+`ct` as the `cancellationToken` argument. Set `CreateTable = false`, the comma
+delimiter, and disabled schema inference when the migration must preserve the
+former `FromCsv` no-table and string-valued parsing behavior:
+
+```csharp
+using OfficeIMO.CSV;
+using OfficeIMO.Reader.Excel;
+
+ExcelCsvImportResult imported = sheet.ImportCsvText(
+    csvText,
+    new ExcelCsvImportOptions {
+        StartRow = startRow,
+        StartColumn = startColumn,
+        IncludeHeaders = includeHeaders,
+        CreateTable = false,
+        LoadOptions = new CsvLoadOptions {
+            Delimiter = ',',
+            DetectDelimiter = false,
+            HasHeaderRow = firstRowIsHeader
+        },
+        ReaderOptions = new CsvDataReaderOptions { InferSchema = false }
+    },
+    cancellationToken: ct);
+
+string range = imported.Range;
+```
+
+The former `ExecutionMode` argument has no replacement; the shared import
+pipeline owns its execution strategy. The same cleanup removes `TableToCsv`;
+use the worksheet `ToCsv` / `SaveAsCsv` methods instead. Calls that passed
+`ToCsv` arguments positionally should use the current `headersInFirstRow`,
+`csvOptions`, `readOptions`, and `cancellationToken` parameter names. Replace
+old import-result properties
+`TableName`, `RowCount`, `ColumnCount`, `Delimiter`, and `Warnings` with the
+current `ExcelCsvImportResult.SheetName` and `Range`; inspect the configured CSV
+reader options or the resulting worksheet/table when those details are needed.
 
 CSV reader configuration remains in `CsvDataReaderOptions`. Excel reader safety limits remain in `ExcelReadOptions`: `MaxXlsbCells` limits aggregate workbook cells and `MaxDataReaderBufferedCells` limits a reader operation's buffer. Raise either limit only for trusted, intentionally larger workbooks.
 
-The shared `OfficeRenderingProfile` and Excel structural row mutation methods `PlanInsertRows(...)` and `PlanDeleteRows(...)` are additive. Existing callers do not need compatibility wrappers for them. Use a rendering profile when multiple conversion packages must share one quality policy, and use a mutation plan when an application must inspect workbook impact before applying a row change.
+The shared `OfficeRenderingProfile` and Excel structural mutation planning APIs are additive. Existing callers do not need compatibility wrappers for them. Use a rendering profile when multiple conversion packages must share one quality policy. Use `PlanInsertRows(...)` / `PlanDeleteRows(...)`, `PlanInsertColumns(...)` / `PlanDeleteColumns(...)`, or the range mutation plans when an application must inspect workbook impact before a transactional change; existing direct mutation calls remain available.
 
 ### PDF conversion and import
 
@@ -181,16 +319,6 @@ Template ownership and inspection names are also explicit:
 
 Replace `PowerPointChartData`, `PowerPointScatterChartData`, their series types, and chart-family-specific add methods with shared `OfficeIMO.Drawing.OfficeChartData` plus `AddChart`, `AddChartCm`, `AddChartInches`, or `AddChartPoints`.
 
-### Word signing, merge, fields, and conversion evidence
-
-Word 3.1 separates OPC package signatures from VBA macro-project signatures. Use `WordSigningCapabilities.Package` and `WordSigningCapabilities.MacroProject` before presenting a signing workflow. `WordDocument.SignPackage(...)` creates OPC XML signatures on every supported .NET platform; `ValidateSignatures(WordSignatureValidationOptions)` applies transform-aware digest, certificate-chain, revocation, and RFC 3161 timestamp policy. For `.docm` and `.dotm`, use `InspectMacroProjectSignatures(...)` cross-platform, `ValidateMacroProjectSignature(...)` with Microsoft's registered Office SIP on Windows, and the separate Windows-native `SignMacroProject(...)` workflow with OfficeSips tooling plus SignTool. VBA signing blocks existing OPC signatures by default because its package changes invalidate them; when both are required, sign the VBA project first and the OPC package last. Package signing still does not sign VBA code, and VBA signing does not replace package signing.
-
-Existing mail-merge convenience methods remain available. Use `ExecuteWithReport(...)` or `ExecuteBatchWithReport(...)` when missing values or unsupported text, numeric, and date picture switches must be gated with `EnsureComplete()`. Field update results now carry stable `DiagnosticCode` and `EvaluationBasis` values, and TOC/index/caption-list refresh reports expose their explicit-break page-number basis.
-
-Structured comparison reports now include stable `Limitations` entries for effective formatting and move semantics that require behavior OfficeIMO does not infer. Word-to-HTML callers that require fidelity evidence should use `ToHtmlResult()` and inspect `Report` or call `RequireNoLoss()`; configure the new document, embedded-image, aggregate-image, and output-character budgets for untrusted or service workloads.
-
-Before selecting `.doc` output, call `AssessLegacyDocWrite()` when the application needs a non-throwing capability gate. It executes the same bounded native encoder used by `Save` and `ToBytes` without committing a destination.
-
 ### Names and behavior
 
 | OfficeIMO 3.0 | OfficeIMO 3.1 |
@@ -285,7 +413,7 @@ OfficeIMO 2.0 established the shared lifecycle and result vocabulary used by the
 
 ### Shared foundation package
 
-The compiled `OfficeIMO.Shared` implementation package no longer exists. `OfficeIMO.SharedSource` is source-only and is not a runtime package replacement. Move direct package references and namespace imports to the public owner of each reusable value: shared colors, fonts, images, charts, lifecycle options, stream contracts, and export results belong to `OfficeIMO.Drawing`; normalized Reader contracts belong to `OfficeIMO.Reader.Core`; neutral CMS, X.509, and RFC 3161 contracts belong to `OfficeIMO.Security`. Native document behavior remains in its format package.
+The compiled `OfficeIMO.Shared` implementation package no longer exists. `OfficeIMO.SharedSource` is source-only and is not a runtime package replacement. Move direct package references and namespace imports to the public owner of each reusable value: shared colors, fonts, images, charts, lifecycle options, stream contracts, export results, and dependency-free security provider contracts belong to `OfficeIMO.Drawing`; normalized Reader contracts belong to `OfficeIMO.Reader.Core`; the optional concrete CMS, XML DSig, X.509, and RFC 3161 provider belongs to `OfficeIMO.Security`. Native document behavior remains in its format package.
 
 There is no `OfficeIMO.Core` package and no `.Drawing`-to-`.Core` rename. Native packages own parsing, loading, editing, validation, and serialization for their formats. Adapter packages project one native model into another rather than exposing another parser or document model. `OfficeIMO.Html` owns the canonical HTML source model and resource policy; format adapters consume it. These ownership changes replace direct use of the former shared implementation layer rather than introducing a catch-all dependency.
 
@@ -326,6 +454,25 @@ OpenDocument save methods now return `OdfSaveResult` directly. Replace the disca
 Reusable conversion options no longer retain operation state in members such as `LastSaveReport`, `LastSaveDiagnostics`, `ConversionReport`, or `Warnings`. Read that evidence from the returned result.
 
 The canonical forward PDF result method is `ToPdfDocumentResult()`. Reverse PDF adapters extend `PdfDocument` and `PdfLogicalDocument` with destination-shaped result methods such as `ToWordDocumentResult()`, `ToPowerPointPresentationResult()`, and `ToRtfDocumentResult()`. `SaveAsPdf(...)` returns `PdfSaveResult` evidence across Word, Excel, PowerPoint, HTML, Markdown, and RTF adapters, while `ToPdf()` remains the encoded-byte convenience API. Opening a generated file in another application is an explicit application action, not part of saving.
+
+`VisioDocument.Load(path)` and `Load(stream)` now apply a 512 MiB default input
+limit before opening the package. For trusted documents that intentionally
+exceed that size, pass `new VisioLoadOptions { MaxInputBytes = null }`. The
+options-first async overload keeps cancellation explicit:
+`LoadAsync(path, options, cancellationToken)`. Existing two-argument calls such
+as `LoadAsync(path, default)` continue to bind to the `CancellationToken`
+overload; use a typed or named token when the argument's purpose is not obvious.
+The former positional three-argument shape `LoadAsync(path, default, default)`
+is ambiguous while both the token-first compatibility overload and the
+options-first 3.1 overload are available. Replace it with
+`LoadAsync(path, options: null, cancellationToken: default)` (and use the same
+named arguments for the stream overload), or pass explicitly typed values.
+
+The modular Visio reader now registers `.vsdx` only. Earlier handler metadata
+listed `.vsdm`, `.vstx`, and `.vstm`, but the document loader did not accept
+their distinct main-part content types. Convert those files to `.vsdx` before
+using the document reader; use the dedicated stencil package APIs for `.vstx`
+master catalogs.
 
 ### Common member replacements
 

@@ -46,6 +46,28 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Test_WordToHtml_RevisionDiagnosticsDescribeOnlyExportedStories() {
+            using var document = WordDocument.Create();
+            document.AddParagraph("Visible body");
+            document.Sections[0]
+                .GetOrCreateHeader(HeaderFooterValues.Default)
+                .AddParagraph("Tracked header ")
+                .AddInsertedText("revision", "Reviewer");
+
+            HtmlTextConversionResult excluded = document.ToHtmlResult(new WordToHtmlOptions {
+                ExportHeadersAndFooters = false
+            });
+            HtmlTextConversionResult included = document.ToHtmlResult(new WordToHtmlOptions {
+                ExportHeadersAndFooters = true
+            });
+
+            Assert.DoesNotContain(excluded.Report.Diagnostics, diagnostic =>
+                diagnostic.Code is "TrackedRevisionTextOmitted" or "TrackedRevisionsFlattened");
+            Assert.Contains(included.Report.Diagnostics, diagnostic =>
+                diagnostic.Code == "TrackedRevisionTextOmitted");
+        }
+
+        [Fact]
         public async Task Test_WordToHtml_ReusedOptionsKeepConcurrentDiagnosticsIsolated() {
             using var documentWithHeader = WordDocument.Create();
             documentWithHeader.AddParagraph("Header document body");
@@ -162,7 +184,7 @@ namespace OfficeIMO.Tests {
             HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
 
             Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
-            Assert.Contains("document.xml", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("GeneratedElement:", exception.LimitSource, StringComparison.Ordinal);
             Assert.True(exception.Actual > exception.Limit);
         }
 
@@ -1003,6 +1025,32 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Test_WordToHtml_DropDownList_PreservesDistinctValuesAndDisplayTextOnRoundTrip() {
+            using var doc = WordDocument.Create();
+            WordDropDownList dropDown = doc.AddParagraph().AddDropDownList(new[] { "placeholder" });
+            ListItem item = dropDown._sdtRun.SdtProperties!
+                .GetFirstChild<SdtContentDropDownList>()!
+                .Elements<ListItem>()
+                .Single();
+            item.Value = "internal-id";
+            item.DisplayText = "Visible label";
+            dropDown.SelectedValue = "Visible label";
+
+            string html = doc.ToHtml();
+            using WordDocument roundTrip = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToWordDocument();
+
+            WordDropDownList imported = Assert.Single(roundTrip.DropDownLists);
+            Assert.Equal(new[] { "Visible label" }, imported.Items.ToArray());
+            Assert.Equal("internal-id", imported.SelectedValue);
+            ListItem importedItem = imported._sdtRun.SdtProperties!
+                .GetFirstChild<SdtContentDropDownList>()!
+                .Elements<ListItem>()
+                .Single();
+            Assert.Equal("internal-id", importedItem.Value!.Value);
+            Assert.Equal("Visible label", importedItem.DisplayText!.Value);
+        }
+
+        [Fact]
         public void Test_WordToHtml_ComboBox_ExportsInputWithDatalist() {
             using var doc = WordDocument.Create();
             var paragraph = doc.AddParagraph("Contact: ");
@@ -1018,6 +1066,34 @@ namespace OfficeIMO.Tests {
             Assert.Contains("<datalist id=\"word-combo-1\"", html, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("<option value=\"Email\"", html, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("<option value=\"Phone\"", html, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_ComboBox_UsesSelectedDisplayTextForDistinctInternalValue() {
+            using var doc = WordDocument.Create();
+            WordComboBox comboBox = doc.AddParagraph().AddComboBox(new[] { "placeholder" });
+            SdtContentComboBox properties = comboBox._sdtRun.SdtProperties!
+                .GetFirstChild<SdtContentComboBox>()!;
+            ListItem item = Assert.Single(properties.Elements<ListItem>());
+            item.Value = "internal-id";
+            item.DisplayText = "Visible label";
+            properties.LastValue = "internal-id";
+
+            string html = doc.ToHtml();
+
+            Assert.Contains("<input type=\"text\" disabled=\"\" list=\"word-combo-1\" value=\"Visible label\"", html,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("<option value=\"Visible label\" label=\"Visible label\" data-word-value=\"internal-id\"", html,
+                StringComparison.OrdinalIgnoreCase);
+
+            using WordDocument roundTrip = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToWordDocument();
+            WordComboBox imported = Assert.Single(roundTrip.ComboBoxes);
+            ListItem importedItem = Assert.Single(imported._sdtRun.SdtProperties!
+                .GetFirstChild<SdtContentComboBox>()!
+                .Elements<ListItem>());
+            Assert.Equal("internal-id", importedItem.Value?.Value);
+            Assert.Equal("Visible label", importedItem.DisplayText?.Value);
+            Assert.Equal("internal-id", imported.SelectedValue);
         }
 
         [Fact]

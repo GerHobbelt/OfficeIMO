@@ -1,5 +1,6 @@
 #nullable enable
 using DocumentFormat.OpenXml.Packaging;
+using OfficeIMO.Security;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -226,7 +227,8 @@ namespace OfficeIMO.Word {
             int maxCertificates = 64,
             long maxCertificateBytes = 4L * 1024 * 1024,
             long maxTotalCertificateBytes = 64L * 1024 * 1024,
-            bool verifyDigests = true) {
+            bool verifyDigests = true,
+            IOfficeSecurityProvider? securityProvider = null) {
             if (package == null) throw new ArgumentNullException(nameof(package));
             if (maxCertificates <= 0) throw new ArgumentOutOfRangeException(nameof(maxCertificates));
             if (maxCertificateBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxCertificateBytes));
@@ -238,14 +240,17 @@ namespace OfficeIMO.Word {
             var unsupportedDetails = new List<string>();
             var details = new List<string>();
             var certificateByteBudget = new OfficePackageCertificateByteBudget(maxTotalCertificateBytes);
-            var digestWorkBudget = new OfficePackageDigestWorkBudget(maxTotalDigestBytes);
             string? originRelationshipId = null;
 
             OfficePackageSignatureArchive? signatureArchive = null;
             string? digestInspectionUnavailableDetail = null;
             if (packageBytes != null) {
                 try {
-                    signatureArchive = new OfficePackageSignatureArchive(packageBytes, maxPackageParts);
+                    signatureArchive = new OfficePackageSignatureArchive(
+                        packageBytes,
+                        maxPackageParts,
+                        maxPartBytes,
+                        securityProvider);
                 } catch (OfficePackageSignatureResourceLimitException ex) {
                     digestInspectionUnavailableDetail = "Digest inspection was not performed because the bounded OPC archive could not be opened: " + ex.Message;
                     unsupportedDetails.Add(digestInspectionUnavailableDetail);
@@ -279,6 +284,7 @@ namespace OfficeIMO.Word {
                     HashSet<string> packagePartUris = GetPackagePartUris(packageParts);
                     if (signatureArchive != null) packagePartUris.UnionWith(signatureArchive.PartUris);
                     foreach (XmlSignaturePart signaturePart in originPart.XmlSignatureParts) {
+                        var digestWorkBudget = new OfficePackageDigestWorkBudget(maxTotalDigestBytes);
                         OfficePackageSignaturePartInfo partInfo = InspectSignaturePart(
                             originPart,
                             signaturePart,
@@ -380,6 +386,7 @@ namespace OfficeIMO.Word {
                     xml,
                     ds,
                     unsupportedDetails,
+                    maxSignedReferences,
                     out int authenticatedReferenceCount);
                 ValidateDigestWorkBudget(
                     referencesToInspect,
@@ -442,12 +449,19 @@ namespace OfficeIMO.Word {
             XDocument xml,
             XNamespace ds,
             List<string> unsupportedDetails,
+            int maxSignedReferences,
             out int authenticatedReferenceCount) {
             XElement? signedInfo = xml.Root?.Element(ds + "SignedInfo");
             List<XElement> signedInfoReferences = signedInfo?.Elements(ds + "Reference").ToList()
                 ?? new List<XElement>();
+            authenticatedReferenceCount = signedInfoReferences.Count;
+            if (authenticatedReferenceCount > maxSignedReferences) {
+                throw new InvalidDataException("The XML signature contains more than " + maxSignedReferences + " authenticated references.");
+            }
+
             var authenticatedManifests = new HashSet<XElement>();
             XElement[] allManifests = xml.Descendants(ds + "Manifest").ToArray();
+            Dictionary<string, XElement?> elementsById = BuildUniqueElementIdIndex(xml);
 
             foreach (XElement signedReference in signedInfoReferences) {
                 string uri = ((string?)signedReference.Attribute("URI"))?.Trim() ?? string.Empty;
@@ -457,30 +471,28 @@ namespace OfficeIMO.Word {
                 if (!uri.StartsWith("#", StringComparison.Ordinal) || uri.Length == 1) continue;
 
                 string id = uri.Substring(1);
-                XElement[] targets = xml.Root?
-                    .DescendantsAndSelf()
-                    .Where(element => HasElementId(element, id))
-                    .Take(2)
-                    .ToArray() ?? Array.Empty<XElement>();
-                if (targets.Length != 1) continue;
-                XElement[] targetManifests = targets[0]
+                if (!elementsById.TryGetValue(id, out XElement? target) || target == null) continue;
+                XElement[] targetManifests = target
                     .DescendantsAndSelf()
                     .Where(element => element.Name == ds + "Manifest")
                     .ToArray();
                 if (targetManifests.Length == 0) continue;
-                if (!FragmentReferencePreservesCompleteSubtree(signedReference, targets[0], ds)) {
+                if (!FragmentReferencePreservesCompleteSubtree(signedReference, target, ds)) {
                     unsupportedDetails.Add("Ignored package references from an XML DSig Manifest because its SignedInfo fragment reference uses a transform that does not preserve the complete target subtree.");
                     continue;
                 }
-                authenticatedManifests.UnionWith(targetManifests);
+                foreach (XElement manifest in targetManifests) {
+                    if (!authenticatedManifests.Add(manifest)) continue;
+                    authenticatedReferenceCount = checked(authenticatedReferenceCount + manifest.Elements(ds + "Reference").Count());
+                    if (authenticatedReferenceCount > maxSignedReferences) {
+                        throw new InvalidDataException("The XML signature contains more than " + maxSignedReferences + " authenticated references.");
+                    }
+                }
             }
 
             if (allManifests.Any(manifest => !authenticatedManifests.Contains(manifest))) {
                 unsupportedDetails.Add("Ignored package references from an XML DSig Manifest that is not authenticated by SignedInfo.");
             }
-
-            authenticatedReferenceCount = signedInfoReferences.Count + authenticatedManifests
-                .Sum(manifest => manifest.Elements(ds + "Reference").Count());
 
             List<XElement> result = signedInfoReferences
                 .Where(reference => NormalizePackagePartReference((string?)reference.Attribute("URI")) != null)
@@ -488,6 +500,25 @@ namespace OfficeIMO.Word {
                 .Distinct()
                 .ToList();
             return result.Count > 0 ? result : signedInfoReferences;
+        }
+
+        private static Dictionary<string, XElement?> BuildUniqueElementIdIndex(XDocument xml) {
+            var elementsById = new Dictionary<string, XElement?>(StringComparer.Ordinal);
+            if (xml.Root == null) return elementsById;
+
+            foreach (XElement element in xml.Root.DescendantsAndSelf()) {
+                foreach (XAttribute attribute in element.Attributes().Where(attribute =>
+                             attribute.Name.Namespace == XNamespace.None &&
+                             (attribute.Name.LocalName == "Id" || attribute.Name.LocalName == "ID" || attribute.Name.LocalName == "id"))) {
+                    string id = attribute.Value;
+                    if (!elementsById.TryGetValue(id, out XElement? existing)) {
+                        elementsById[id] = element;
+                    } else if (!ReferenceEquals(existing, element)) {
+                        elementsById[id] = null;
+                    }
+                }
+            }
+            return elementsById;
         }
 
         private static bool FragmentReferencePreservesCompleteSubtree(
@@ -507,15 +538,6 @@ namespace OfficeIMO.Word {
                        algorithm == "http://www.w3.org/2001/10/xml-exc-c14n#" ||
                        algorithm == "http://www.w3.org/2001/10/xml-exc-c14n#WithComments";
             });
-        }
-
-        private static bool HasElementId(XElement element, string id) {
-            foreach (XAttribute attribute in element.Attributes()) {
-                bool isId = attribute.Name.Namespace == XNamespace.None &&
-                            (attribute.Name.LocalName == "Id" || attribute.Name.LocalName == "ID" || attribute.Name.LocalName == "id");
-                if (isId && string.Equals(attribute.Value, id, StringComparison.Ordinal)) return true;
-            }
-            return false;
         }
 
         private static IReadOnlyList<OfficePackageSignatureTimestampInfo> ReadSignatureTimestamps(XDocument xml) {
@@ -643,11 +665,11 @@ namespace OfficeIMO.Word {
             if (signatureArchive != null) {
                 OfficePackageDigestResult transformed = signatureArchive.VerifyReference(reference, maxPartBytes);
                 switch (transformed.Status) {
-                    case OfficePackageSignatureDigestVerificationStatus.Passed:
+                    case OfficePackageSignatureValidationState.Passed:
                         return DigestVerificationResult.Passed(transformed.Detail);
-                    case OfficePackageSignatureDigestVerificationStatus.Failed:
+                    case OfficePackageSignatureValidationState.Failed:
                         return DigestVerificationResult.Failed(transformed.Detail);
-                    case OfficePackageSignatureDigestVerificationStatus.Unsupported:
+                    case OfficePackageSignatureValidationState.Unsupported:
                         return DigestVerificationResult.Unsupported(transformed.Detail);
                     default:
                         return DigestVerificationResult.NotChecked(transformed.Detail);

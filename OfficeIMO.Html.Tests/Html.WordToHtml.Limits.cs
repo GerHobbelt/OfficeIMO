@@ -30,5 +30,55 @@ namespace OfficeIMO.Tests {
             Assert.Contains("Visible body", html, StringComparison.Ordinal);
             Assert.DoesNotContain(hiddenText, html, StringComparison.Ordinal);
         }
+
+        [Fact]
+        public void Test_WordToHtml_OutputBudgetExcludesUnreferencedNotesAndComments() {
+            using var document = WordDocument.Create();
+            document.AddParagraph("Visible body");
+            string orphanedText = new string('x', 8192);
+            WordParagraph footnoteReference = document.AddParagraph().AddFootNote(orphanedText);
+            footnoteReference._run!.Remove();
+            WordParagraph commentParagraph = document.AddParagraph("Unreviewed text");
+            commentParagraph.AddComment("Reviewer", "R", orphanedText);
+            foreach (CommentReference reference in commentParagraph._paragraph.Descendants<CommentReference>().ToList()) {
+                reference.Remove();
+            }
+
+            string html = document.ToHtmlResult(new WordToHtmlOptions {
+                MaxOutputCharacters = 4096,
+                ExportFootnotes = true,
+                ExportComments = true,
+                IncludeDefaultCss = false
+            }).RequireValue();
+
+            Assert.Contains("Visible body", html, StringComparison.Ordinal);
+            Assert.DoesNotContain(orphanedText, html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_FieldDiagnosticOnlyDescribesExportedStories() {
+            using var document = WordDocument.Create();
+            document.AddParagraph("Visible body");
+            WordParagraph header = document.Sections[0]
+                .GetOrCreateHeader(HeaderFooterValues.Default)
+                .AddParagraph();
+            header._paragraph.Append(new SimpleField(new Run(new Text("Header field result"))) {
+                Instruction = "DATE"
+            });
+
+            var omitted = document.ToHtmlResult(new WordToHtmlOptions {
+                ExportHeadersAndFooters = false
+            });
+            var exported = document.ToHtmlResult(new WordToHtmlOptions {
+                ExportHeadersAndFooters = true
+            });
+
+            Assert.Contains(omitted.Report.Diagnostics, diagnostic =>
+                diagnostic.Code == "HeadersFootersOmitted");
+            Assert.DoesNotContain(omitted.Report.Diagnostics, diagnostic =>
+                diagnostic.Code == "FieldInstructionsFlattened");
+            Assert.Contains(exported.Report.Diagnostics, diagnostic =>
+                diagnostic.Code == "FieldInstructionsFlattened");
+        }
     }
 }

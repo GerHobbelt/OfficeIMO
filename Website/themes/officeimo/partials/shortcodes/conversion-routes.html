@@ -1,0 +1,27 @@
+{{ catalog = data.office_conversion_routes }}
+<div class="table-responsive">
+  <table>
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Destination</th>
+        <th>Focused package</th>
+        <th>Fidelity</th>
+        <th>Browser</th>
+        <th>Evidence contract</th>
+      </tr>
+    </thead>
+    <tbody>
+{{~ for route in catalog.routes ~}}
+<tr data-conversion-route="{{ route.id }}">
+<td>{{ route.source }}</td>
+<td>{{ route.target }}</td>
+<td><code>{{ route.packageId }}</code></td>
+<td>{{ route.fidelity }}</td>
+<td>{{ if route.browserAvailable }}Available{{ else }}Managed only{{ end }}</td>
+<td><code>{{ route.resultContract }}</code></td>
+</tr>
+{{~ end ~}}
+    </tbody>
+  </table>
+</div>

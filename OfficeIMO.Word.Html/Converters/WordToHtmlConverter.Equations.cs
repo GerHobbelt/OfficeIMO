@@ -1,9 +1,66 @@
 using AngleSharp.Dom;
+using AngleSharp.Html;
 using AngleSharp.Html.Dom;
+using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace OfficeIMO.Word.Html {
     internal partial class WordToHtmlConverter {
+        private static IElement? CreateEquationNode(
+            IHtmlDocument htmlDocument,
+            IElement context,
+            WordEquation equation,
+            WordToHtmlOptions options) {
+            string label = equation.Text;
+            if (equation.Representation == WordEquationRepresentation.EquationField) {
+                // InspectExport charged the cached field result as ordinary Word text. The
+                // MathML projection replaces that source text, so release it before charging
+                // the generated mtext and accessibility label that actually reach the output.
+                ReleaseOutputCharacters(
+                    htmlDocument,
+                    GetHtmlEncodedLength(label, attributeValue: false));
+            }
+            long remaining = GetRemainingOutputCharacters(htmlDocument);
+            string mathMl;
+            try {
+                mathMl = equation.ToMathMl(GetMathMlParserInputLimit(remaining));
+            } catch (WordMathMlOutputLimitExceededException) {
+                ThrowExportLimitExceeded(
+                    options,
+                    "WordHtmlOutputLimitExceeded",
+                    "Generated MathML exceeds the configured HTML output-character limit before DOM construction.",
+                    "EquationMathMl",
+                    SaturatingAdd(options.MaxOutputCharacters, 1),
+                    options.MaxOutputCharacters);
+                return null;
+            }
+            IElement? mathNode = new HtmlParser()
+                .ParseFragment(mathMl, context)
+                .OfType<IElement>()
+                .FirstOrDefault();
+            if (mathNode == null) return null;
+            using var countingWriter = new CountingHtmlWriter();
+            mathNode.ToHtml(countingWriter, HtmlMarkupFormatter.Instance);
+            ReserveOutputCharacters(
+                htmlDocument,
+                countingWriter.CharacterCount,
+                "Generated MathML exceeds the configured HTML output-character limit before DOM construction.",
+                "EquationMathMl");
+            ReserveOutputCharacters(
+                htmlDocument,
+                " aria-label=\"\"".Length + GetHtmlEncodedLength(label, attributeValue: true),
+                "Generated equation accessibility metadata exceeds the configured HTML output-character limit before DOM construction.",
+                "EquationAriaLabel");
+            // The complete serialized aria-label attribute is reserved before DOM assignment.
+            mathNode.SetAttribute("aria-label", label);
+            return mathNode;
+        }
+
+        private static long GetMathMlParserInputLimit(long remainingOutputCharacters) =>
+            remainingOutputCharacters > long.MaxValue / 6L
+                ? long.MaxValue
+                : remainingOutputCharacters * 6L;
+
         private INode CreateEquationAdjacentTextNode(
             IHtmlDocument htmlDocument,
             WordParagraph run,
@@ -63,22 +120,31 @@ namespace OfficeIMO.Word.Html {
                 string? font = run.FontFamily ?? options.FontFamily;
                 if (!string.IsNullOrEmpty(font)) {
                     var span = CreateOutputElement(htmlDocument, "span");
-                    span.SetAttribute("style", $"font-family:{QuoteCssString(font!)}");
+                    SetOutputAttribute(
+                        htmlDocument,
+                        span,
+                        "style",
+                        $"font-family:{QuoteCssString(font!)}",
+                        "EquationRunFontStyle");
                     span.AppendChild(node);
                     node = span;
                 }
             }
             if (run.FontSize != null) {
                 var span = CreateOutputElement(htmlDocument, "span");
-                span.SetAttribute("style", $"font-size:{run.FontSize.Value}pt");
+                SetOutputAttribute(span, "style", $"font-size:{run.FontSize.Value}pt", "EquationRunFormatting:font-size");
                 span.AppendChild(node);
                 node = span;
             }
             if (run.CapsStyle == CapsStyle.SmallCaps || run.CapsStyle == CapsStyle.Caps) {
                 var span = CreateOutputElement(htmlDocument, "span");
-                span.SetAttribute("style", run.CapsStyle == CapsStyle.SmallCaps
-                    ? "font-variant:small-caps"
-                    : "text-transform:uppercase");
+                SetOutputAttribute(
+                    span,
+                    "style",
+                    run.CapsStyle == CapsStyle.SmallCaps
+                        ? "font-variant:small-caps"
+                        : "text-transform:uppercase",
+                    "EquationRunFormatting:caps");
                 span.AppendChild(node);
                 node = span;
             }
@@ -104,14 +170,14 @@ namespace OfficeIMO.Word.Html {
                 }
                 if (styles.Count > 0) {
                     var span = CreateOutputElement(htmlDocument, "span");
-                    span.SetAttribute("style", string.Join(";", styles));
+                    SetOutputAttribute(span, "style", string.Join(";", styles), "EquationRunFormatting:color-highlight");
                     span.AppendChild(node);
                     node = span;
                 }
             }
             if (options.IncludeRunClasses && !string.IsNullOrEmpty(run.CharacterStyleId) && !handledHtmlStyle) {
                 var span = CreateOutputElement(htmlDocument, "span");
-                span.SetAttribute("class", GetSafeStyleClassName(run.CharacterStyleId));
+                SetOutputAttribute(span, "class", GetSafeStyleClassName(run.CharacterStyleId), "EquationRunFormatting:class");
                 span.AppendChild(node);
                 node = span;
                 runStyles.Add(run.CharacterStyleId!);
@@ -119,7 +185,7 @@ namespace OfficeIMO.Word.Html {
             string? language = NormalizeRunLanguage(run.Language, documentLanguage);
             if (!string.IsNullOrEmpty(language)) {
                 var span = CreateOutputElement(htmlDocument, "span");
-                span.SetAttribute("lang", language);
+                SetOutputAttribute(span, "lang", language!, "EquationRunFormatting:language");
                 span.AppendChild(node);
                 node = span;
             }
@@ -153,11 +219,11 @@ namespace OfficeIMO.Word.Html {
                     StringComparison.OrdinalIgnoreCase);
                 if (!string.IsNullOrEmpty(highlightCss) &&
                     (normalizedRunBackground != null || !isDefaultMarkHighlight)) {
-                    semanticNode.SetAttribute("style", $"background-color:{highlightCss}");
+                    SetOutputAttribute(semanticNode, "style", $"background-color:{highlightCss}", "EquationSemanticFormatting:highlight");
                 } else if (normalizedRunBackground != null) {
-                    semanticNode.SetAttribute("style", $"background-color:#{normalizedRunBackground}");
+                    SetOutputAttribute(semanticNode, "style", $"background-color:#{normalizedRunBackground}", "EquationSemanticFormatting:highlight");
                 } else if (run.Highlight == HighlightColorValues.None) {
-                    semanticNode.SetAttribute("style", "background-color:transparent");
+                    SetOutputAttribute(semanticNode, "style", "background-color:transparent", "EquationSemanticFormatting:highlight");
                 }
             } else if (string.Equals(run.CharacterStyleId, "HtmlCite", StringComparison.OrdinalIgnoreCase)) {
                 semanticNode = CreateOutputElement(htmlDocument, "cite");
@@ -172,7 +238,7 @@ namespace OfficeIMO.Word.Html {
                         dateTime = parsed.ToString("o");
                     }
                 }
-                semanticNode.SetAttribute("datetime", dateTime);
+                SetOutputAttribute(semanticNode, "datetime", dateTime, "EquationSemanticFormatting:datetime");
             } else if (string.Equals(run.CharacterStyleId, "HtmlCode", StringComparison.OrdinalIgnoreCase)) {
                 semanticNode = CreateOutputElement(htmlDocument, "code");
             } else {
@@ -194,13 +260,13 @@ namespace OfficeIMO.Word.Html {
             }
 
             IElement anchor = CreateOutputElement(htmlDocument, "a");
-            anchor.SetAttribute("href", href);
+            SetOutputAttribute(htmlDocument, anchor, "href", href!, "EquationHyperlink:href");
             if (!string.IsNullOrEmpty(hyperlink.Tooltip)) {
-                anchor.SetAttribute("title", hyperlink.Tooltip);
+                SetOutputAttribute(htmlDocument, anchor, "title", hyperlink.Tooltip!, "EquationHyperlink:title");
             }
             string? targetFrame = hyperlink._hyperlink.TargetFrame?.Value;
             if (!string.IsNullOrEmpty(targetFrame)) {
-                anchor.SetAttribute("target", targetFrame);
+                SetOutputAttribute(htmlDocument, anchor, "target", targetFrame!, "EquationHyperlink:target");
             }
             return anchor;
         }

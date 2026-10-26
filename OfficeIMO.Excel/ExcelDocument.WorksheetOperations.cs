@@ -27,6 +27,16 @@ namespace OfficeIMO.Excel {
         /// <param name="validationMode">How to validate or sanitize <paramref name="newSheetName"/>.</param>
         /// <returns>The copied worksheet.</returns>
         public ExcelSheet CopyWorksheet(ExcelSheet sourceSheet, string newSheetName, SheetNameValidationMode validationMode = SheetNameValidationMode.Sanitize) {
+            if (sourceSheet == null) throw new ArgumentNullException(nameof(sourceSheet));
+            if (!ReferenceEquals(sourceSheet.Document, this)) {
+                throw new ArgumentException("Source worksheet must belong to this workbook. Use CopyWorksheetFrom to copy between workbooks.", nameof(sourceSheet));
+            }
+            var limits = new ExcelWorksheetCopyOptions();
+            var inCellImageContext = new InCellImageCopyContext(
+                limits.MaxInCellImages,
+                limits.MaxInCellImageBytes,
+                limits.MaxTotalInCellImageBytes);
+            sourceSheet.PreflightInCellImages(inCellImageContext);
             return CopyWorksheetWithinWorkbook(sourceSheet, newSheetName, validationMode).Sheet;
         }
 
@@ -79,8 +89,17 @@ namespace OfficeIMO.Excel {
             options ??= new ExcelWorksheetCopyOptions();
             if (options.MaxDefinedNames <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxDefinedNames));
             if (options.MaxDefinedNameCharacters <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxDefinedNameCharacters));
+            if (options.MaxInCellImages <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxInCellImages));
+            if (options.MaxInCellImageBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxInCellImageBytes));
+            if (options.MaxTotalInCellImageBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxTotalInCellImageBytes));
             if (ReferenceEquals(sourceDocument, this) && options.CopyMode != ExcelWorksheetCopyMode.Values) {
-                return CopyWorksheet(sourceSheetName, newSheetName, validationMode);
+                ExcelSheet sourceSheet = GetSheet(sourceSheetName);
+                var inCellImageContext = new InCellImageCopyContext(
+                    options.MaxInCellImages,
+                    options.MaxInCellImageBytes,
+                    options.MaxTotalInCellImageBytes);
+                sourceSheet.PreflightInCellImages(inCellImageContext);
+                return CopyWorksheetWithinWorkbook(sourceSheet, newSheetName, validationMode).Sheet;
             }
 
             return options.CopyMode == ExcelWorksheetCopyMode.Values
@@ -691,87 +710,8 @@ namespace OfficeIMO.Excel {
             if (string.IsNullOrEmpty(formula) || tableNameMap.Count == 0) {
                 return formula ?? string.Empty;
             }
-
-            var mappings = tableNameMap
-                .Where(mapping => !string.IsNullOrEmpty(mapping.Key))
-                .OrderByDescending(mapping => mapping.Key.Length)
-                .ToArray();
-            if (mappings.Length == 0) {
-                return formula!;
-            }
-
-            var rewritten = new System.Text.StringBuilder(formula!.Length);
-            bool inStringLiteral = false;
-            for (int index = 0; index < formula!.Length;) {
-                char current = formula[index];
-                if (current == '"') {
-                    rewritten.Append(current);
-                    if (inStringLiteral && index + 1 < formula.Length && formula[index + 1] == '"') {
-                        rewritten.Append(formula[index + 1]);
-                        index += 2;
-                        continue;
-                    }
-
-                    inStringLiteral = !inStringLiteral;
-                    index++;
-                    continue;
-                }
-
-                if (!inStringLiteral && TryRewriteStructuredReferenceAt(formula, index, mappings, out string? replacement, out int consumed)) {
-                    rewritten.Append(replacement);
-                    index += consumed;
-                    continue;
-                }
-
-                rewritten.Append(current);
-                index++;
-            }
-
-            return rewritten.ToString();
-        }
-
-        private static bool TryRewriteStructuredReferenceAt(
-            string formula,
-            int index,
-            KeyValuePair<string, string>[] mappings,
-            out string? replacement,
-            out int consumed) {
-            replacement = null;
-            consumed = 0;
-            foreach (var mapping in mappings) {
-                string tableName = mapping.Key;
-                if (index > 0) {
-                    char previous = formula[index - 1];
-                    if (char.IsLetterOrDigit(previous) || previous == '_' || previous == '\\' || previous == '\'' || previous == '!' || previous == '[') {
-                        continue;
-                    }
-                }
-
-                int nextIndex = index + tableName.Length;
-                bool hasStructuredSpecifier = nextIndex < formula.Length && formula[nextIndex] == '[';
-                bool hasBareReferenceBoundary = nextIndex >= formula.Length || IsFormulaTokenBoundary(formula[nextIndex]);
-                if (!hasStructuredSpecifier && nextIndex < formula.Length && formula[nextIndex] == '(') {
-                    continue;
-                }
-
-                if (!hasStructuredSpecifier && !hasBareReferenceBoundary) {
-                    continue;
-                }
-
-                if (string.Compare(formula, index, tableName, 0, tableName.Length, StringComparison.OrdinalIgnoreCase) != 0) {
-                    continue;
-                }
-
-                replacement = mapping.Value;
-                consumed = tableName.Length;
-                return true;
-            }
-
-            return false;
-        }
-
-        private static bool IsFormulaTokenBoundary(char value) {
-            return !(char.IsLetterOrDigit(value) || value == '_' || value == '\\' || value == '\'' || value == '!' || value == ':' || value == '.');
+            return ExcelFormulaSyntaxTree.Parse(formula!).RewriteTableNames(name =>
+                tableNameMap.TryGetValue(name, out string? replacement) ? replacement : name);
         }
 
         private static string MakeUnusedRelationshipId(WorksheetPart worksheetPart) {

@@ -3,18 +3,18 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using System.Globalization;
 using System.IO;
-using System.Text.RegularExpressions;
 
 namespace OfficeIMO.Word {
     internal static partial class WordFieldUpdater {
-        private const string DefaultDateTimeFormat = "yyyy-MM-dd HH:mm:ss";
-
         internal static WordFieldUpdateReport Update(WordDocument document, WordFieldUpdateOptions options) {
             MainDocumentPart mainPart = document._wordprocessingDocument.MainDocumentPart
                 ?? throw new InvalidOperationException("MainDocumentPart is missing.");
 
             int totalPages = EstimateTotalPages(document);
             DateTime updateDateTime = options.CurrentDateTime ?? DateTime.Now;
+            WordFieldEvaluationReason dateTimeEvaluationReason = options.CurrentDateTime.HasValue
+                ? WordFieldEvaluationReason.CallerProvidedDateTime
+                : WordFieldEvaluationReason.RuntimeClock;
             var state = new FieldEvaluationState();
             var results = new List<WordFieldUpdateResult>();
             var replacedContainingFields = new List<MutableFieldCandidate>();
@@ -35,7 +35,8 @@ namespace OfficeIMO.Word {
                     continue;
                 }
 
-                WordFieldUpdateResult result = UpdateField(document, candidate, totalPages, state, updateDateTime);
+                WordFieldUpdateResult result = UpdateField(
+                    document, candidate, totalPages, state, updateDateTime, dateTimeEvaluationReason);
                 results.Add(result);
                 if (result.Status == WordFieldUpdateStatus.Updated &&
                     candidate.Representation == WordFieldRepresentation.Complex &&
@@ -43,8 +44,6 @@ namespace OfficeIMO.Word {
                     replacedContainingFields.Add(candidate);
                 }
             }
-
-            document.TableOfContent?.Update();
 
             return new WordFieldUpdateReport(results.OrderBy(result => result.Index).ToArray());
         }
@@ -69,18 +68,27 @@ namespace OfficeIMO.Word {
                 }
             }
 
-            document.TableOfContent?.Update();
         }
 
-        private static WordFieldUpdateResult UpdateField(WordDocument document, MutableFieldCandidate candidate, int totalPages, FieldEvaluationState state, DateTime updateDateTime) {
+        private static WordFieldUpdateResult UpdateField(
+            WordDocument document,
+            MutableFieldCandidate candidate,
+            int totalPages,
+            FieldEvaluationState state,
+            DateTime updateDateTime,
+            WordFieldEvaluationReason dateTimeEvaluationReason) {
             WordFieldInventory.ParsedFieldInstruction parsed = WordFieldInventory.ParseInstruction(candidate.InstructionText);
 
             if (parsed.Diagnostics.Count > 0 || parsed.FieldType == null) {
+                WordFieldUpdateStatus parseStatus = parsed.FieldType == null
+                    ? WordFieldUpdateStatus.ParseError
+                    : WordFieldUpdateStatus.Unsupported;
                 return candidate.ToResult(
                     parsed.FieldType,
-                    parsed.FieldType == null ? WordFieldUpdateStatus.ParseError : WordFieldUpdateStatus.Unsupported,
+                    parseStatus,
                     null,
-                    parsed.Diagnostics.Count == 0 ? "Field instruction could not be parsed." : string.Join(" ", parsed.Diagnostics));
+                    parsed.Diagnostics.Count == 0 ? "Field instruction could not be parsed." : string.Join(" ", parsed.Diagnostics),
+                    GetFailedEvaluationReason(candidate, parsed.FieldType, parseStatus, parsed.Diagnostics.Count == 0 ? string.Empty : string.Join(" ", parsed.Diagnostics)));
             }
 
             if (candidate.IsLocked) {
@@ -88,11 +96,47 @@ namespace OfficeIMO.Word {
             }
 
             if (!TryEvaluate(document, candidate, parsed, totalPages, state, updateDateTime, out string? value, out WordFieldUpdateStatus status, out string message)) {
-                return candidate.ToResult(parsed.FieldType, status, null, message);
+                return candidate.ToResult(parsed.FieldType, status, null, message, GetFailedEvaluationReason(candidate, parsed.FieldType, status, message));
             }
 
             SetResultText(candidate, value!);
-            return candidate.ToResult(parsed.FieldType, WordFieldUpdateStatus.Updated, value, message);
+            WordFieldEvaluationReason reason = parsed.FieldType is WordFieldType.Date or WordFieldType.Time
+                ? dateTimeEvaluationReason
+                : WordFieldEvaluationReason.Default;
+            return candidate.ToResult(parsed.FieldType, WordFieldUpdateStatus.Updated, value, message, reason);
+        }
+
+        private static WordFieldEvaluationReason GetFailedEvaluationReason(
+            MutableFieldCandidate candidate,
+            WordFieldType? fieldType,
+            WordFieldUpdateStatus status,
+            string message) {
+            if (candidate.NestingLevel > 0 &&
+                fieldType == WordFieldType.ListNum &&
+                message.IndexOf("Nested LISTNUM", StringComparison.OrdinalIgnoreCase) >= 0) {
+                return WordFieldEvaluationReason.NestedInstruction;
+            }
+
+            if (fieldType == WordFieldType.ListNum) {
+                return WordFieldEvaluationReason.ListNumberingProfileUnsupported;
+            }
+
+            if (message.IndexOf("nested table", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf("complex table geometry", StringComparison.OrdinalIgnoreCase) >= 0) {
+                return WordFieldEvaluationReason.ComplexTableProfileUnsupported;
+            }
+
+            if (message.IndexOf("locale-specific", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf("locale-dependent", StringComparison.OrdinalIgnoreCase) >= 0) {
+                return WordFieldEvaluationReason.LocaleProfileUnsupported;
+            }
+
+            if (message.IndexOf("layout", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                status == WordFieldUpdateStatus.Skipped && fieldType is WordFieldType.TOC or WordFieldType.Index) {
+                return WordFieldEvaluationReason.ExternalLayoutRequired;
+            }
+
+            return WordFieldEvaluationReason.Default;
         }
 
         private static bool TryEvaluate(
@@ -152,6 +196,8 @@ namespace OfficeIMO.Word {
                     return TryEvaluateFormula(candidate, parsed, out value, out status, out message);
                 case WordFieldType.Seq:
                     return TryEvaluateSequence(document, candidate, parsed, state, out value, out status, out message);
+                case WordFieldType.ListNum:
+                    return TryEvaluateListNum(document, candidate, parsed, state, out value, out status, out message);
                 case WordFieldType.Page:
                     return TryEvaluatePage(document, candidate, parsed, out value, out status, out message);
                 case WordFieldType.NumChars:
@@ -167,14 +213,12 @@ namespace OfficeIMO.Word {
                 case WordFieldType.SectionPages:
                     return TryEvaluateSectionPages(document, candidate, parsed, out value, out status, out message);
                 case WordFieldType.TOC:
-                    document.Settings.UpdateFieldsOnOpen = true;
                     status = WordFieldUpdateStatus.Skipped;
-                    message = "Table of contents refresh was queued for Word to update on open; call WordTableOfContent.RefreshEntries() to generate deterministic OfficeIMO entries.";
+                    message = "Table of contents refresh requires Word or another layout-aware application and was left unchanged; enable Settings.UpdateFieldsOnOpen explicitly to delegate document-wide refresh.";
                     return false;
                 case WordFieldType.Index:
-                    document.Settings.UpdateFieldsOnOpen = true;
                     status = WordFieldUpdateStatus.Skipped;
-                    message = "Index refresh requires Word or another layout-aware application and was left for update on open.";
+                    message = "Index refresh requires Word or another layout-aware application and was left unchanged; enable Settings.UpdateFieldsOnOpen explicitly to delegate document-wide refresh.";
                     return false;
                 default:
                     return false;
@@ -818,64 +862,6 @@ namespace OfficeIMO.Word {
             return false;
         }
 
-        internal static bool TryFormatDateTime(DateTime source, WordFieldInventory.ParsedFieldInstruction parsed, out string value, out string message) {
-            string? customFormat = GetDateTimeFormatSwitch(parsed.Switches);
-            if (string.IsNullOrWhiteSpace(customFormat)) {
-                value = source.ToString(DefaultDateTimeFormat, CultureInfo.InvariantCulture);
-                message = string.Empty;
-                return true;
-            }
-
-            string normalizedFormat = NormalizeDateTimeFormat(customFormat!);
-            try {
-                value = source.ToString(normalizedFormat, CultureInfo.InvariantCulture);
-                message = string.Empty;
-                return true;
-            } catch (FormatException) {
-                value = string.Empty;
-                message = $"Date/time format switch {customFormat} is not supported for deterministic field refresh.";
-                return false;
-            }
-        }
-
-        internal static bool TryFormatDateTime(DateTimeOffset source, WordFieldInventory.ParsedFieldInstruction parsed, out string value, out string message) {
-            string? customFormat = GetDateTimeFormatSwitch(parsed.Switches);
-            if (string.IsNullOrWhiteSpace(customFormat)) {
-                value = source.ToString(DefaultDateTimeFormat, CultureInfo.InvariantCulture);
-                message = string.Empty;
-                return true;
-            }
-
-            string normalizedFormat = NormalizeDateTimeFormat(customFormat!);
-            try {
-                value = source.ToString(normalizedFormat, CultureInfo.InvariantCulture);
-                message = string.Empty;
-                return true;
-            } catch (FormatException) {
-                value = string.Empty;
-                message = $"Date/time format switch {customFormat} is not supported for deterministic field refresh.";
-                return false;
-            }
-        }
-
-        private static string? GetDateTimeFormatSwitch(IReadOnlyList<string> switches) {
-            for (int index = switches.Count - 1; index >= 0; index--) {
-                string fieldSwitch = switches[index].Trim();
-                if (!fieldSwitch.StartsWith(@"\@", StringComparison.Ordinal)) {
-                    continue;
-                }
-
-                string format = fieldSwitch.Substring(2).Trim();
-                return string.IsNullOrWhiteSpace(format) ? null : TrimQuotes(format);
-            }
-
-            return null;
-        }
-
-        private static string NormalizeDateTimeFormat(string format) {
-            return Regex.Replace(format, "am/pm", "tt", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        }
-
         private static int EstimateTotalPages(WordDocument document) {
             Body? body = document._wordprocessingDocument.MainDocumentPart?.Document?.Body;
             if (body != null) {
@@ -1359,6 +1345,8 @@ namespace OfficeIMO.Word {
             internal Dictionary<string, int> Sequences { get; } = new(StringComparer.OrdinalIgnoreCase);
 
             internal Dictionary<string, string> SequenceHeadingResetKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+            internal Dictionary<string, ListNumSequenceState> ListNumSequences { get; } = new(StringComparer.OrdinalIgnoreCase);
         }
     }
 }

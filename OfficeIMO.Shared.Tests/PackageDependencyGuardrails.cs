@@ -187,15 +187,16 @@ public sealed class PackageDependencyGuardrailTests {
         Assert.True(workstreams.GetArrayLength() >= 5, "Image export evidence should cover the main document and QA owners.");
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        string roadmap = File.ReadAllText(GetRepositoryPath("Docs/ROADMAP.md"));
-        Assert.Contains("### Image-export evidence", roadmap, StringComparison.Ordinal);
-
         foreach (JsonElement workstream in workstreams.EnumerateArray()) {
             string id = workstream.GetProperty("id").GetString() ?? string.Empty;
             string owner = workstream.GetProperty("owner").GetString() ?? string.Empty;
             string policy = workstream.GetProperty("runtimeDependencyPolicy").GetString() ?? string.Empty;
             string currentContract = workstream.GetProperty("currentContract").GetString() ?? string.Empty;
             string boundary = workstream.GetProperty("boundary").GetString() ?? string.Empty;
+            string[] evidence = workstream.GetProperty("evidence")
+                .EnumerateArray()
+                .Select(item => item.GetString() ?? string.Empty)
+                .ToArray();
 
             Assert.False(string.IsNullOrWhiteSpace(id), "Every image export workstream needs an id.");
             Assert.True(ids.Add(id), "Image export evidence ids must be unique: " + id);
@@ -203,9 +204,15 @@ public sealed class PackageDependencyGuardrailTests {
             Assert.Equal("first-party-only", policy);
             Assert.False(string.IsNullOrWhiteSpace(currentContract), "Workstream '" + id + "' needs a current contract.");
             Assert.False(string.IsNullOrWhiteSpace(boundary), "Workstream '" + id + "' needs a current boundary.");
+            Assert.NotEmpty(evidence);
+            Assert.Equal(evidence.Length, evidence.Distinct(StringComparer.Ordinal).Count());
+            Assert.All(evidence, relativePath => {
+                Assert.False(string.IsNullOrWhiteSpace(relativePath), "Workstream '" + id + "' contains an empty evidence path.");
+                Assert.DoesNotContain("..", relativePath, StringComparison.Ordinal);
+                Assert.True(File.Exists(GetRepositoryPath(relativePath)), "Workstream '" + id + "' evidence is missing: " + relativePath);
+            });
             Assert.False(workstream.TryGetProperty("status", out _), "Planning status belongs in Docs/ROADMAP.md, not the capability manifest.");
             Assert.False(workstream.TryGetProperty("nextSlices", out _), "Open slices belong in Docs/ROADMAP.md, not the capability manifest.");
-            Assert.Contains("`" + owner + "`", roadmap, StringComparison.Ordinal);
         }
     }
 
@@ -547,10 +554,12 @@ public sealed class PackageDependencyGuardrailTests {
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundFileReader.cs",
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundFileReader.Inspection.cs",
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundFileReader.Selective.cs",
+                "OfficeIMO.SharedSource/Compound/OfficeCompoundFileReader.Stream.cs",
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundFileWriter.cs",
                 "OfficeIMO.SharedSource/Compound/OfficeCompoundWriterLayout.cs",
                 "OfficeIMO.SharedSource/OpenXml/OfficeOpenXmlPackagePayload.cs",
-                "OfficeIMO.SharedSource/OpenXml/OfficeOpenXmlThemeColorResolver.cs"
+                "OfficeIMO.SharedSource/OpenXml/OfficeOpenXmlThemeColorResolver.cs",
+                "OfficeIMO.SharedSource/Processes/OfficeWindowsSuspendedProcess.cs"
             },
             files);
     }
@@ -923,21 +932,54 @@ public sealed class PackageDependencyGuardrailTests {
     public void Security_IsTheNeutralSingleCmsOwner() {
         string projectPath = GetRepositoryPath("OfficeIMO.Security/OfficeIMO.Security.csproj");
 
-        Assert.Empty(GetProjectReferences(projectPath));
-        Assert.Equal(["BouncyCastle.Cryptography"], GetPackageReferences(projectPath));
+        Assert.Equal(
+            ["../OfficeIMO.Drawing/OfficeIMO.Drawing.csproj"],
+            GetProjectReferences(projectPath));
+        Assert.Equal(
+            ["BouncyCastle.Cryptography", "System.Security.Cryptography.Xml"],
+            GetPackageReferences(projectPath));
         Assert.False(File.Exists(GetRepositoryPath(
             "OfficeIMO.Pdf.Cryptography.Pkcs/OfficeIMO.Pdf.Cryptography.Pkcs.csproj")));
     }
 
     [Fact]
-    public void PdfAndEmail_ConsumeSecurityDirectlyWithoutACompatibilityLayer() {
+    public void DocumentPackages_ExposeSecurityOnlyThroughExplicitProviderOptIn() {
+        foreach (string project in new[] { "OfficeIMO.Word", "OfficeIMO.Pdf", "OfficeIMO.Email" }) {
+            string projectPath = GetRepositoryPath($"{project}/{project}.csproj");
+            Assert.DoesNotContain(
+                "../OfficeIMO.Security/OfficeIMO.Security.csproj",
+                GetProjectReferences(projectPath),
+                StringComparer.Ordinal);
+            Assert.DoesNotContain(
+                "BouncyCastle.Cryptography",
+                GetPackageReferences(projectPath),
+                StringComparer.OrdinalIgnoreCase);
+            Assert.DoesNotContain(
+                "System.Security.Cryptography.Xml",
+                GetPackageReferences(projectPath),
+                StringComparer.OrdinalIgnoreCase);
+        }
+
         Assert.Contains(
             "../OfficeIMO.Security/OfficeIMO.Security.csproj",
-            GetProjectReferences(GetRepositoryPath("OfficeIMO.Pdf/OfficeIMO.Pdf.csproj")),
+            GetProjectReferences(GetRepositoryPath("OfficeIMO.Pdf.Tests/OfficeIMO.Pdf.Tests.csproj")),
             StringComparer.Ordinal);
         Assert.Contains(
             "../OfficeIMO.Security/OfficeIMO.Security.csproj",
-            GetProjectReferences(GetRepositoryPath("OfficeIMO.Email/OfficeIMO.Email.csproj")),
+            GetProjectReferences(GetRepositoryPath("OfficeIMO.Email.Tests/OfficeIMO.Email.Tests.csproj")),
+            StringComparer.Ordinal);
+        Assert.Contains(
+            "../OfficeIMO.Security/OfficeIMO.Security.csproj",
+            GetProjectReferences(GetRepositoryPath("OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj")),
+            StringComparer.Ordinal);
+
+        Assert.DoesNotContain(
+            "../OfficeIMO.Security/OfficeIMO.Security.csproj",
+            GetProjectReferences(GetRepositoryPath("OfficeIMO.All.AotSmoke/OfficeIMO.All.AotSmoke.csproj")),
+            StringComparer.Ordinal);
+        Assert.Contains(
+            "../OfficeIMO.Security/OfficeIMO.Security.csproj",
+            GetProjectReferences(GetRepositoryPath("OfficeIMO.Security.AotSmoke/OfficeIMO.Security.AotSmoke.csproj")),
             StringComparer.Ordinal);
     }
 
@@ -1060,6 +1102,7 @@ public sealed class PackageDependencyGuardrailTests {
         string normalized = projectPath.Replace('\\', '/');
         return normalized.Contains("/OfficeIMO.Tests/", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains("/OfficeIMO.VerifyTests/", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("/Build/ProducerCorpus/", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains(".Tests/", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains(".Benchmarks", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains("/OfficeIMO.Examples/", StringComparison.OrdinalIgnoreCase);

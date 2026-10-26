@@ -6,10 +6,19 @@ namespace OfficeIMO.Security;
 internal enum CertificateUsagePurpose {
     CmsSigner,
     DocumentSigner,
+    EmailSigner,
     TimestampAuthority
 }
 
+internal enum OfflineCertificatePathSearchOutcome {
+    Complete,
+    Incomplete,
+    WorkLimitExceeded
+}
+
 internal static class CertificateChainValidator {
+    private const int MaxOfflineIssuerSignatureChecks = 65_536;
+
     internal static CertificateValidationResult Validate(
         X509Certificate2? certificate,
         IEnumerable<X509Certificate2> embeddedCertificates,
@@ -28,15 +37,31 @@ internal static class CertificateChainValidator {
                 : SecurityValidationStatus.Invalid);
         }
 
+        IReadOnlyList<X509Certificate2> embedded = embeddedCertificates as IReadOnlyList<X509Certificate2>
+            ?? embeddedCertificates.ToArray();
+
         using var chain = new X509Chain();
         chain.ChainPolicy.RevocationMode = options.RevocationMode;
         chain.ChainPolicy.RevocationFlag = options.RevocationFlag;
         chain.ChainPolicy.VerificationFlags = options.VerificationFlags;
         if (!TryApplyCertificateDownloadPolicy(chain.ChainPolicy, options.DisableCertificateDownloads)) {
+            IEnumerable<X509Certificate2> offlineCandidates = embedded
+                .Concat(options.ExtraCertificates.Cast<X509Certificate2>());
+            OfflineCertificatePathSearchOutcome offlinePath = FindCompleteOfflinePath(
+                certificate,
+                offlineCandidates,
+                MaxOfflineIssuerSignatureChecks);
             findings.Add(new SecurityFinding(
                 SecurityFindingSeverity.Warning,
-                "CertificateDownloadPolicyUnavailable",
-                role + " certificate chain was not built because this runtime cannot enforce the requested no-download policy.",
+                offlinePath == OfflineCertificatePathSearchOutcome.WorkLimitExceeded
+                    ? "CertificateOfflinePathSearchLimitExceeded"
+                    : "CertificateDownloadPolicyUnavailable",
+                role + " certificate chain was not built because this runtime cannot enforce the requested no-download policy. " +
+                (offlinePath == OfflineCertificatePathSearchOutcome.WorkLimitExceeded
+                    ? "The bounded offline issuer-path search exhausted its cryptographic work limit."
+                    : offlinePath == OfflineCertificatePathSearchOutcome.Complete
+                        ? "The supplied certificates contain a complete cryptographically verified issuer path, but platform trust and revocation cannot be evaluated without risking network retrieval."
+                        : "The supplied certificates do not contain a complete verified issuer path."),
                 signerIndex));
             return Empty(usageAccepted
                 ? SecurityValidationStatus.Indeterminate
@@ -47,7 +72,7 @@ internal static class CertificateChainValidator {
             chain.ChainPolicy.VerificationTime = options.VerificationTime.Value;
         }
 
-        foreach (X509Certificate2 candidate in embeddedCertificates) {
+        foreach (X509Certificate2 candidate in embedded) {
             if (!string.Equals(candidate.Thumbprint, certificate.Thumbprint, StringComparison.OrdinalIgnoreCase)) {
                 chain.ChainPolicy.ExtraStore.Add(candidate);
             }
@@ -146,6 +171,8 @@ internal static class CertificateChainValidator {
                         ? "timestamping."
                         : purpose == CertificateUsagePurpose.DocumentSigner
                             ? "document signing."
+                            : purpose == CertificateUsagePurpose.EmailSigner
+                                ? "email signing."
                             : "CMS signing."),
                 signerIndex));
         }
@@ -161,6 +188,11 @@ internal static class CertificateChainValidator {
             return oid is "2.5.29.37.0" or
                 "1.3.6.1.5.5.7.3.3" or
                 "1.3.6.1.4.1.311.10.3.12";
+        }
+
+        if (purpose == CertificateUsagePurpose.EmailSigner) {
+            return oid is "2.5.29.37.0" or
+                "1.3.6.1.5.5.7.3.4";
         }
 
         return oid is "2.5.29.37.0" or
@@ -192,6 +224,126 @@ internal static class CertificateChainValidator {
         chainPolicy.DisableCertificateDownloads = disableCertificateDownloads;
         return true;
 #endif
+    }
+
+    internal static bool HasCompleteOfflinePath(
+        X509Certificate2 certificate,
+        IEnumerable<X509Certificate2> issuerCandidates) =>
+        FindCompleteOfflinePath(certificate, issuerCandidates, MaxOfflineIssuerSignatureChecks) ==
+            OfflineCertificatePathSearchOutcome.Complete;
+
+    internal static OfflineCertificatePathSearchOutcome FindCompleteOfflinePath(
+        X509Certificate2 certificate,
+        IEnumerable<X509Certificate2> issuerCandidates,
+        int maxIssuerSignatureChecks) {
+#if NET8_0_OR_GREATER
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxIssuerSignatureChecks);
+#else
+        if (maxIssuerSignatureChecks <= 0) throw new ArgumentOutOfRangeException(nameof(maxIssuerSignatureChecks));
+#endif
+        var certificates = issuerCandidates
+            .Prepend(certificate)
+            .GroupBy(static candidate => candidate.Thumbprint ?? Convert.ToBase64String(candidate.GetCertHash()),
+                StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+        var candidatesBySubject = certificates
+            .GroupBy(static candidate => Convert.ToBase64String(candidate.SubjectName.RawData), StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => (IReadOnlyList<X509Certificate2>)group.ToArray(), StringComparer.Ordinal);
+        var memoized = new Dictionary<string, OfflineCertificatePathSearchOutcome>(StringComparer.OrdinalIgnoreCase);
+        var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int issuerSignatureChecks = 0;
+        return FindCompleteOfflinePath(
+            certificate,
+            candidatesBySubject,
+            memoized,
+            visiting,
+            ref issuerSignatureChecks,
+            maxIssuerSignatureChecks);
+    }
+
+    private static OfflineCertificatePathSearchOutcome FindCompleteOfflinePath(
+        X509Certificate2 certificate,
+        IReadOnlyDictionary<string, IReadOnlyList<X509Certificate2>> candidatesBySubject,
+        IDictionary<string, OfflineCertificatePathSearchOutcome> memoized,
+        HashSet<string> visiting,
+        ref int issuerSignatureChecks,
+        int maxIssuerSignatureChecks) {
+        string identity = certificate.Thumbprint ?? Convert.ToBase64String(certificate.GetCertHash());
+        if (memoized.TryGetValue(identity, out OfflineCertificatePathSearchOutcome cached)) return cached;
+        if (!visiting.Add(identity)) return OfflineCertificatePathSearchOutcome.Incomplete;
+        try {
+            if (certificate.IssuerName.RawData.SequenceEqual(certificate.SubjectName.RawData)) {
+                OfflineCertificatePathSearchOutcome rootResult = TryVerifyOfflineIssuerSignature(
+                    certificate,
+                    certificate,
+                    ref issuerSignatureChecks,
+                    maxIssuerSignatureChecks);
+                memoized[identity] = rootResult;
+                return rootResult;
+            }
+            string issuerName = Convert.ToBase64String(certificate.IssuerName.RawData);
+            if (!candidatesBySubject.TryGetValue(issuerName, out IReadOnlyList<X509Certificate2>? candidates)) {
+                memoized[identity] = OfflineCertificatePathSearchOutcome.Incomplete;
+                return OfflineCertificatePathSearchOutcome.Incomplete;
+            }
+            foreach (X509Certificate2 issuer in candidates) {
+                string issuerIdentity = issuer.Thumbprint ?? Convert.ToBase64String(issuer.GetCertHash());
+                if (string.Equals(identity, issuerIdentity, StringComparison.OrdinalIgnoreCase)) continue;
+                OfflineCertificatePathSearchOutcome signatureResult = TryVerifyOfflineIssuerSignature(
+                    certificate,
+                    issuer,
+                    ref issuerSignatureChecks,
+                    maxIssuerSignatureChecks);
+                if (signatureResult == OfflineCertificatePathSearchOutcome.WorkLimitExceeded) return signatureResult;
+                if (signatureResult != OfflineCertificatePathSearchOutcome.Complete) continue;
+                OfflineCertificatePathSearchOutcome issuerResult = FindCompleteOfflinePath(
+                    issuer,
+                    candidatesBySubject,
+                    memoized,
+                    visiting,
+                    ref issuerSignatureChecks,
+                    maxIssuerSignatureChecks);
+                if (issuerResult == OfflineCertificatePathSearchOutcome.Complete) {
+                    memoized[identity] = issuerResult;
+                    return issuerResult;
+                }
+                if (issuerResult == OfflineCertificatePathSearchOutcome.WorkLimitExceeded) return issuerResult;
+            }
+            memoized[identity] = OfflineCertificatePathSearchOutcome.Incomplete;
+            return OfflineCertificatePathSearchOutcome.Incomplete;
+        } finally {
+            visiting.Remove(identity);
+        }
+    }
+
+    private static OfflineCertificatePathSearchOutcome TryVerifyOfflineIssuerSignature(
+        X509Certificate2 certificate,
+        X509Certificate2 issuer,
+        ref int issuerSignatureChecks,
+        int maxIssuerSignatureChecks) {
+        if (issuerSignatureChecks >= maxIssuerSignatureChecks) {
+            return OfflineCertificatePathSearchOutcome.WorkLimitExceeded;
+        }
+        issuerSignatureChecks++;
+        return VerifyCertificateSignature(certificate, issuer)
+            ? OfflineCertificatePathSearchOutcome.Complete
+            : OfflineCertificatePathSearchOutcome.Incomplete;
+    }
+
+    private static bool VerifyCertificateSignature(
+        X509Certificate2 certificate,
+        X509Certificate2 issuer) {
+        try {
+            Org.BouncyCastle.X509.X509Certificate candidate =
+                Org.BouncyCastle.Security.DotNetUtilities.FromX509Certificate(certificate);
+            Org.BouncyCastle.X509.X509Certificate issuerCertificate =
+                Org.BouncyCastle.Security.DotNetUtilities.FromX509Certificate(issuer);
+            candidate.Verify(issuerCertificate.GetPublicKey());
+            return true;
+        } catch (Org.BouncyCastle.Security.GeneralSecurityException) {
+            return false;
+        }
     }
 
     private static SecurityValidationStatus ClassifyRevocation(X509Chain chain, X509RevocationMode revocationMode) {

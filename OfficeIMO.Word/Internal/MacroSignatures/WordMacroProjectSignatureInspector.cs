@@ -6,6 +6,20 @@ using OfficeIMO.Security;
 
 namespace OfficeIMO.Word {
     internal static class WordMacroProjectSignatureInspector {
+        internal sealed class InspectionBudget : IDisposable {
+            internal InspectionBudget(
+                WordMacroProjectSignatureInspectionOptions options,
+                IOfficeSecurityProvider? securityProvider) {
+                CmsSession = options.ValidateCms && securityProvider != null
+                    ? securityProvider.CreateCmsVerificationSession(options.CmsVerification)
+                    : null;
+            }
+
+            internal ICmsVerificationSession? CmsSession { get; }
+
+            public void Dispose() => CmsSession?.Dispose();
+        }
+
         internal const string LegacyRelationship = "http://schemas.microsoft.com/office/2006/relationships/vbaProjectSignature";
         internal const string AgileRelationship = "http://schemas.microsoft.com/office/2014/relationships/vbaProjectSignatureAgile";
         internal const string AgileRelationshipCompatibility = "http://schemas.microsoft.com/office/2006/relationships/vbaProjectSignatureAgile";
@@ -19,7 +33,30 @@ namespace OfficeIMO.Word {
             string filePath,
             WordMacroProjectSignatureInspectionOptions? options = null) {
             options ??= new WordMacroProjectSignatureInspectionOptions();
+            using var operationBudget = new InspectionBudget(options, securityProvider: null);
+            return Inspect(filePath, options, operationBudget, profileFilter: null, validateCmsOverride: false);
+        }
+
+        internal static WordMacroProjectSignatureInfo Inspect(
+            string filePath,
+            IOfficeSecurityProvider securityProvider,
+            WordMacroProjectSignatureInspectionOptions? options = null) {
+            if (securityProvider == null) throw new ArgumentNullException(nameof(securityProvider));
+            options ??= new WordMacroProjectSignatureInspectionOptions();
+            using var operationBudget = new InspectionBudget(options, securityProvider);
+            return Inspect(filePath, options, operationBudget);
+        }
+
+        internal static WordMacroProjectSignatureInfo Inspect(
+            string filePath,
+            WordMacroProjectSignatureInspectionOptions? options,
+            InspectionBudget? operationBudget,
+            WordMacroProjectSignatureProfile? profileFilter = null,
+            bool? validateCmsOverride = null,
+            Action? afterSnapshotCaptured = null) {
+            options ??= new WordMacroProjectSignatureInspectionOptions();
             ValidateOptions(options);
+            operationBudget ??= new InspectionBudget(options, securityProvider: null);
 
             string fullPath = NormalizePath(filePath);
             bool macroEnabled = IsMacroEnabledPath(fullPath);
@@ -45,10 +82,15 @@ namespace OfficeIMO.Word {
             long? discoveredVbaLength = null;
             string? discoveredVbaHash = null;
             try {
+                byte[] packageBytes;
                 using (FileStream packageStream = File.OpenRead(fullPath)) {
-                    OfficePackageSecurityInspector.Validate(packageStream, options.PackageSecurity);
+                    packageBytes = OfficePackageSecurityInspector.ReadAndValidate(
+                        packageStream,
+                        options.PackageSecurity);
                 }
-                using (WordprocessingDocument document = WordprocessingDocument.Open(fullPath, false)) {
+                afterSnapshotCaptured?.Invoke();
+                using (var documentStream = new MemoryStream(packageBytes, writable: false))
+                using (WordprocessingDocument document = WordprocessingDocument.Open(documentStream, false)) {
                     discoveredVbaUri = document.MainDocumentPart?.VbaProjectPart?.Uri;
                 }
                 if (discoveredVbaUri == null) {
@@ -57,7 +99,8 @@ namespace OfficeIMO.Word {
                     return Empty(fullPath, macroEnabled, findings);
                 }
 
-                using (Package package = Package.Open(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+                using (var packageStream = new MemoryStream(packageBytes, writable: false))
+                using (Package package = Package.Open(packageStream, FileMode.Open, FileAccess.Read)) {
                     if (!package.PartExists(discoveredVbaUri)) {
                         findings.Add(Finding("MacroProjectPartMissing", WordSignatureValidationState.Failed,
                             "The VBA project relationship target is missing from the package."));
@@ -70,7 +113,7 @@ namespace OfficeIMO.Word {
                     discoveredVbaHash = HashPart(vbaPart, options.MaxMacroProjectBytes, out long vbaLength);
                     discoveredVbaLength = vbaLength;
                     IReadOnlyList<WordMacroProjectSignaturePartInfo> signatures = InspectSignatureRelationships(
-                        package, vbaPart, options, findings);
+                        package, vbaPart, options, operationBudget, profileFilter, validateCmsOverride, findings);
                     return new WordMacroProjectSignatureInfo(fullPath, macroEnabled, true,
                         discoveredVbaUri.ToString(), discoveredVbaLength, discoveredVbaHash, signatures, findings);
                 }
@@ -97,9 +140,8 @@ namespace OfficeIMO.Word {
             if (options.MaxSignatureBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxSignatureBytes));
             if (options.MaxTotalSignatureBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxTotalSignatureBytes));
             if (options.MaxRelationships <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxRelationships));
-            if (options.CmsVerification.MaxEncodedBytes <= 0) {
-                throw new ArgumentOutOfRangeException(nameof(options.CmsVerification.MaxEncodedBytes));
-            }
+            OfficePackageSecurityInspector.ValidateOptions(options.PackageSecurity);
+            ValidateCmsOptions(options.CmsVerification);
         }
 
         internal static bool IsMacroEnabledPath(string filePath) {
@@ -112,6 +154,9 @@ namespace OfficeIMO.Word {
             Package package,
             PackagePart vbaPart,
             WordMacroProjectSignatureInspectionOptions options,
+            InspectionBudget operationBudget,
+            WordMacroProjectSignatureProfile? profileFilter,
+            bool? validateCmsOverride,
             ICollection<WordMacroProjectSignatureFinding> findings) {
             var signatures = new List<WordMacroProjectSignaturePartInfo>();
             var profiles = new HashSet<WordMacroProjectSignatureProfile>();
@@ -125,6 +170,7 @@ namespace OfficeIMO.Word {
                 if (!TryGetProfile(relationship.RelationshipType, out WordMacroProjectSignatureProfile profile)) {
                     continue;
                 }
+                if (profileFilter.HasValue && profile != profileFilter.Value) continue;
                 if (relationship.TargetMode != TargetMode.Internal) {
                     findings.Add(Finding("MacroSignatureExternalTarget", WordSignatureValidationState.Failed,
                         "A VBA signature relationship targets an external resource.", profile));
@@ -153,7 +199,7 @@ namespace OfficeIMO.Word {
                 }
 
                 signatures.Add(InspectSignaturePart(signaturePart, relationship.RelationshipType,
-                    profile, encodedPart, options));
+                    profile, encodedPart, options, operationBudget, validateCmsOverride));
             }
 
             signatures.Sort((left, right) => left.Profile.CompareTo(right.Profile));
@@ -165,7 +211,9 @@ namespace OfficeIMO.Word {
             string relationshipType,
             WordMacroProjectSignatureProfile profile,
             byte[] encodedPart,
-            WordMacroProjectSignatureInspectionOptions options) {
+            WordMacroProjectSignatureInspectionOptions options,
+            InspectionBudget operationBudget,
+            bool? validateCmsOverride) {
             long length = encodedPart.LongLength;
             var findings = new List<WordMacroProjectSignatureFinding>();
             string expectedContentType = GetExpectedContentType(profile);
@@ -174,7 +222,17 @@ namespace OfficeIMO.Word {
                     "The " + profile + " signature part content type is '" + part.ContentType +
                     "' instead of '" + expectedContentType + "'.", profile));
             }
-            if (!options.ValidateCms) {
+            if (!(validateCmsOverride ?? options.ValidateCms)) {
+                return CreatePartInfo(profile, part, relationshipType, length, false,
+                    WordSignatureValidationState.NotChecked, WordSignatureValidationState.NotChecked,
+                    WordSignatureValidationState.NotChecked, WordSignatureValidationState.NotChecked,
+                    null, null, findings);
+            }
+
+            if (operationBudget.CmsSession == null) {
+                findings.Add(Finding("SecurityProviderRequired", WordSignatureValidationState.NotChecked,
+                    "CMS signature, certificate, revocation, and timestamp validation requires an explicit OfficeIMO.Security provider.",
+                    profile));
                 return CreatePartInfo(profile, part, relationshipType, length, false,
                     WordSignatureValidationState.NotChecked, WordSignatureValidationState.NotChecked,
                     WordSignatureValidationState.NotChecked, WordSignatureValidationState.NotChecked,
@@ -191,12 +249,23 @@ namespace OfficeIMO.Word {
                     null, null, findings);
             }
 
-            CmsVerificationResult cms = CmsSignedDataVerifier.Verify(cmsBytes, options.CmsVerification);
-            CmsSignerVerificationResult? signer = cms.Signers.FirstOrDefault();
+            CmsVerificationResult cms = operationBudget.CmsSession.Verify(
+                cmsBytes,
+                CertificateValidationPurpose.DocumentSigning);
+            bool hasSingleSigner = cms.Signers.Count == 1;
+            if (!hasSingleSigner) {
+                findings.Add(Finding(
+                    "MacroSignatureSignerCountInvalid",
+                    WordSignatureValidationState.Failed,
+                    "A VBA signature profile must contain exactly one CMS signer; the container declares " +
+                    cms.Signers.Count + ".",
+                    profile));
+            }
+            CmsSignerVerificationResult? signer = hasSingleSigner ? cms.Signers[0] : null;
             foreach (SecurityFinding finding in cms.Findings.Concat(cms.Signers.SelectMany(item => item.Findings))) {
                 findings.Add(Finding(finding.Code, Map(finding.Severity), finding.Message, profile));
             }
-            WordSignatureValidationState crypto = cms.IsCryptographicallyValid
+            WordSignatureValidationState crypto = hasSingleSigner && cms.IsCryptographicallyValid
                 ? WordSignatureValidationState.Passed
                 : WordSignatureValidationState.Failed;
             WordSignatureValidationState chain = signer == null
@@ -234,23 +303,41 @@ namespace OfficeIMO.Word {
         }
 
         private static bool TryExtractCms(byte[] encodedPart, long maxCmsBytes, out byte[] cms, out string detail) {
+            const int digSigBlobHeaderLength = 8;
+            const int digSigInfoSerializedHeaderLength = 36;
             cms = Array.Empty<byte>();
             detail = string.Empty;
-            if (encodedPart.Length < 44) {
+            if (encodedPart.Length < digSigInfoSerializedHeaderLength) {
                 detail = "The VBA signature part is shorter than DigSigInfoSerialized.";
                 return false;
             }
             uint signatureLength = ReadUInt32(encodedPart, 0);
-            uint signatureOffset = ReadUInt32(encodedPart, 4);
-            if (signatureOffset < 44 || signatureLength == 0 || signatureLength > maxCmsBytes ||
-                signatureOffset > encodedPart.Length ||
-                signatureLength > encodedPart.Length - signatureOffset) {
+            uint serializedSignatureOffset = ReadUInt32(encodedPart, 4);
+            if (serializedSignatureOffset < digSigBlobHeaderLength + digSigInfoSerializedHeaderLength) {
+                detail = "The VBA signature CMS offset or length is outside the bounded signature part.";
+                return false;
+            }
+            uint partSignatureOffset = serializedSignatureOffset - digSigBlobHeaderLength;
+            if (signatureLength == 0 || signatureLength > maxCmsBytes ||
+                partSignatureOffset > encodedPart.Length ||
+                signatureLength > encodedPart.Length - partSignatureOffset) {
                 detail = "The VBA signature CMS offset or length is outside the bounded signature part.";
                 return false;
             }
             cms = new byte[signatureLength];
-            Buffer.BlockCopy(encodedPart, checked((int)signatureOffset), cms, 0, checked((int)signatureLength));
+            Buffer.BlockCopy(encodedPart, checked((int)partSignatureOffset), cms, 0, checked((int)signatureLength));
             return true;
+        }
+
+        private static void ValidateCmsOptions(CmsVerificationOptions options) {
+            if (options == null) throw new ArgumentNullException(nameof(options));
+            if (options.MaxEncodedBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxEncodedBytes));
+            if (options.MaxContentBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxContentBytes));
+            if (options.MaxSigners <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxSigners));
+            if (options.MaxCertificates <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxCertificates));
+            if (options.MaxTimestampTokens <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxTimestampTokens));
+            if (options.MaxTimestampTokenBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxTimestampTokenBytes));
+            if (options.MaxTotalTimestampBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxTotalTimestampBytes));
         }
 
         private static uint ReadUInt32(byte[] bytes, int offset) =>

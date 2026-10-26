@@ -13,7 +13,7 @@ namespace OfficeIMO.Excel {
             internal int End { get; }
         }
 
-        private readonly struct FormulaLexicalBinding {
+        internal readonly struct FormulaLexicalBinding {
             internal FormulaLexicalBinding(
                 string name,
                 int declarationStart,
@@ -44,13 +44,20 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        private static IReadOnlyList<FormulaLexicalBinding> GetFormulaLexicalBindings(string formula) {
+        internal static IReadOnlyList<FormulaLexicalBinding> GetFormulaLexicalBindings(string formula) {
+            if (formula.IndexOf("LET", StringComparison.OrdinalIgnoreCase) < 0
+                && formula.IndexOf("LAMBDA", StringComparison.OrdinalIgnoreCase) < 0) {
+                return Array.Empty<FormulaLexicalBinding>();
+            }
+            int[] closingParentheses = IndexFormulaClosingParentheses(formula);
             List<FormulaLexicalBinding>? bindings = null;
             for (int index = 0; index < formula.Length; index++) {
                 if (!TryGetFormulaLexicalFunctionCall(formula, index, out bool isLet, out int openingParenthesis)
-                    || !TryFindClosingFormulaParenthesis(formula, openingParenthesis, out int closingParenthesis)) {
+                    || openingParenthesis >= closingParentheses.Length
+                    || closingParentheses[openingParenthesis] < 0) {
                     continue;
                 }
+                int closingParenthesis = closingParentheses[openingParenthesis];
 
                 List<FormulaArgumentSpan> arguments = GetFormulaArgumentSpans(
                     formula,
@@ -87,6 +94,62 @@ namespace OfficeIMO.Excel {
             }
 
             return bindings ?? (IReadOnlyList<FormulaLexicalBinding>)Array.Empty<FormulaLexicalBinding>();
+        }
+
+        private static int[] IndexFormulaClosingParentheses(string formula) {
+            var closingParentheses = new int[formula.Length];
+            for (int index = 0; index < closingParentheses.Length; index++) {
+                closingParentheses[index] = -1;
+            }
+
+            var openings = new Stack<int>();
+            int arrayDepth = 0;
+            int bracketDepth = 0;
+            bool inQuotedQualifier = false;
+            for (int index = 0; index < formula.Length; index++) {
+                char character = formula[index];
+                if (character == '\'' && bracketDepth == 0) {
+                    if (inQuotedQualifier && index + 1 < formula.Length && formula[index + 1] == '\'') {
+                        index++;
+                    } else {
+                        inQuotedQualifier = !inQuotedQualifier;
+                    }
+                    continue;
+                }
+                if (inQuotedQualifier) {
+                    continue;
+                }
+                if (character == '[' && !IsEscapedStructuredReferenceBracket(formula, index)) {
+                    bracketDepth++;
+                    continue;
+                }
+                if (character == ']'
+                    && !IsEscapedStructuredReferenceBracket(formula, index)
+                    && bracketDepth > 0) {
+                    bracketDepth--;
+                    continue;
+                }
+                if (bracketDepth > 0) {
+                    continue;
+                }
+                if (character == '{') {
+                    arrayDepth++;
+                    continue;
+                }
+                if (character == '}' && arrayDepth > 0) {
+                    arrayDepth--;
+                    continue;
+                }
+                if (arrayDepth > 0) {
+                    continue;
+                }
+                if (character == '(') {
+                    openings.Push(index);
+                } else if (character == ')' && openings.Count > 0) {
+                    closingParentheses[openings.Pop()] = index;
+                }
+            }
+            return closingParentheses;
         }
 
         private static void AddFormulaLexicalBinding(
@@ -155,7 +218,7 @@ namespace OfficeIMO.Excel {
             bool inQuotedQualifier = false;
             for (int index = 0; index < formula.Length; index++) {
                 char character = formula[index];
-                if (character == '\'') {
+                if (character == '\'' && structuredReferenceDepth == 0) {
                     if (inQuotedQualifier && index + 1 < formula.Length && formula[index + 1] == '\'') {
                         index++;
                     } else {
@@ -166,11 +229,14 @@ namespace OfficeIMO.Excel {
                 if (inQuotedQualifier) {
                     continue;
                 }
-                if (character == '[') {
+                if (character == '['
+                    && !IsEscapedStructuredReferenceBracket(formula, index)) {
                     structuredReferenceDepth++;
                     continue;
                 }
-                if (character == ']' && structuredReferenceDepth > 0) {
+                if (character == ']'
+                    && !IsEscapedStructuredReferenceBracket(formula, index)
+                    && structuredReferenceDepth > 0) {
                     structuredReferenceDepth--;
                     continue;
                 }
@@ -300,7 +366,7 @@ namespace OfficeIMO.Excel {
             bool inQuotedQualifier = false;
             for (int index = 0; index < formula.Length; index++) {
                 char character = formula[index];
-                if (character == '\'') {
+                if (character == '\'' && structuredReferenceDepth == 0) {
                     if (inQuotedQualifier && index + 1 < formula.Length && formula[index + 1] == '\'') {
                         index++;
                     } else {
@@ -311,11 +377,14 @@ namespace OfficeIMO.Excel {
                 if (inQuotedQualifier) {
                     continue;
                 }
-                if (character == '[') {
+                if (character == '['
+                    && !IsEscapedStructuredReferenceBracket(formula, index)) {
                     structuredReferenceDepth++;
                     continue;
                 }
-                if (character == ']' && structuredReferenceDepth > 0) {
+                if (character == ']'
+                    && !IsEscapedStructuredReferenceBracket(formula, index)
+                    && structuredReferenceDepth > 0) {
                     structuredReferenceDepth--;
                     continue;
                 }
@@ -381,7 +450,7 @@ namespace OfficeIMO.Excel {
             bool inQuotedQualifier = false;
             for (int index = openingParenthesis; index < formula.Length; index++) {
                 char character = formula[index];
-                if (character == '\'') {
+                if (character == '\'' && bracketDepth == 0) {
                     if (inQuotedQualifier && index + 1 < formula.Length && formula[index + 1] == '\'') {
                         index++;
                     } else {
@@ -389,9 +458,12 @@ namespace OfficeIMO.Excel {
                     }
                 } else if (inQuotedQualifier) {
                     continue;
-                } else if (character == '[') {
+                } else if (character == '['
+                    && !IsEscapedStructuredReferenceBracket(formula, index)) {
                     bracketDepth++;
-                } else if (character == ']' && bracketDepth > 0) {
+                } else if (character == ']'
+                    && !IsEscapedStructuredReferenceBracket(formula, index)
+                    && bracketDepth > 0) {
                     bracketDepth--;
                 } else if (bracketDepth == 0 && character == '{') {
                     arrayDepth++;
@@ -421,7 +493,7 @@ namespace OfficeIMO.Excel {
             int argumentStart = start;
             for (int index = start; index < end; index++) {
                 char character = formula[index];
-                if (character == '\'') {
+                if (character == '\'' && bracketDepth == 0) {
                     if (inQuotedQualifier && index + 1 < end && formula[index + 1] == '\'') {
                         index++;
                     } else {
@@ -429,9 +501,12 @@ namespace OfficeIMO.Excel {
                     }
                 } else if (inQuotedQualifier) {
                     continue;
-                } else if (character == '[') {
+                } else if (character == '['
+                    && !IsEscapedStructuredReferenceBracket(formula, index)) {
                     bracketDepth++;
-                } else if (character == ']' && bracketDepth > 0) {
+                } else if (character == ']'
+                    && !IsEscapedStructuredReferenceBracket(formula, index)
+                    && bracketDepth > 0) {
                     bracketDepth--;
                 } else if (bracketDepth == 0 && character == '{') {
                     arrayDepth++;

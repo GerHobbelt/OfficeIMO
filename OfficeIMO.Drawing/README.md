@@ -136,6 +136,21 @@ OfficeDrawing mathDrawing = OfficeMathRenderer.Render(expression);
 
 The same immutable expression tree feeds native OneNote math and Word OMML adapters. The shared model includes right and left scripts, centered upper/lower limits, built-up and slashed fractions, delimiter lists, stacks, matrices, equation arrays, n-ary operators, accents, bars, boxes, and phantoms. OneNote maps all of those structures natively. Word maps the lossless OMML subset; `Stack` and `StretchStack` fail with `NotSupportedException` because OMML has no equivalent, and callers can choose `EquationArray` explicitly when that projection is intended. Drawing owns the AST, portable markup, measurement, and visual layout; each document package owns only its native codec. MathML and LaTeX parsing default to a nesting limit of 128 and expose bounded overloads; excessive nesting fails with `OfficeMathParseException.Code == "DRAWING_MATH_DEPTH"`.
 
+## Conversion capability discovery
+
+`OfficeConversionCapabilityCatalog` is the package-neutral inventory of source-to-target routes. It names the focused adapter, accepted extensions, fidelity kind, public result contract, and whether the shipped browser converter executes the route. The same catalog feeds generated package documentation, MCP capability discovery, and the browser route list.
+
+```csharp
+using OfficeIMO.Drawing;
+
+foreach (OfficeConversionCapability route in
+         OfficeConversionCapabilityCatalog.FindBySourceExtension(".docx")) {
+    Console.WriteLine($"{route.Id}: {route.PackageId} -> {route.TargetExtension}");
+}
+```
+
+Capability discovery does not imply that `OfficeIMO.Drawing` executes a conversion. Add the focused package named by `PackageId`, call its public adapter API, and inspect the route's result or report contract.
+
 ## Examples
 
 ### Build a reusable vector scene
@@ -209,6 +224,7 @@ if (font != null) {
 ## What it provides
 
 - `DocumentAccessMode`, `DocumentPersistenceMode`, `DocumentCreateOptions`, and `DocumentLoadOptions` for one lifecycle vocabulary across document packages.
+- Dependency-free `IOfficeSecurityProvider`, CMS/X.509/XML-signature requests, options, findings, and results under the `OfficeIMO.Security` namespace. The same layer owns bounded OPC, VBA, and ODF/EPUB XML package-signature structure and atomic commit policy. The optional `OfficeIMO.Security` package supplies the concrete cryptographic provider.
 - `OfficeColor` immutable RGBA values with named colors and hex parsing.
 - `OfficeColorSpaceConverter` for dependency-free CMYK, CIE Lab/XYZ, calibrated gray, and calibrated RGB conversion to sRGB.
 - `OfficeImageReader` and `OfficeImageInfo` for dependency-free image inspection where supported.
@@ -228,6 +244,7 @@ if (font != null) {
 ## Boundaries
 
 - This package owns shared lifecycle contracts, persistence mechanics, drawing intent, ink/math models and renderers, raster buffers, SVG and raster encoding primitives, image projection, text layout helpers, chart drawing, and document-agnostic visual diagnostics.
+- Security contracts live here so format packages can expose strongly typed opt-in APIs without depending on a cryptographic implementation. No CMS, XML DSig, certificate-chain, or private-key operation is implemented here.
 - Word, Excel, PowerPoint, Visio, and PDF packages own source-document semantics: package parsing, layout policy, coordinate systems, style/theme resolution, and user-facing export APIs.
 - Document packages should not add private ink or math ASTs, pixel engines, image encoders/decoders, SVG primitive writers, text wrapping engines, or duplicate image-transform loops when the behavior can reasonably live here.
 - PDF keeps PDF-stream and page-writer behavior in `OfficeIMO.Pdf`; when it needs generic image-like drawing, vector descriptors, colors, chart snapshots, PNG helpers, or raster visual QA, it should use `OfficeIMO.Drawing`.
