@@ -16,10 +16,18 @@ namespace OfficeIMO.Excel {
     /// <summary>Controls resource use while an Excel structural mutation plan is inspected.</summary>
     public sealed class ExcelMutationPlanOptions {
         /// <summary>
-        /// Maximum Open XML elements inspected while building a dry-run impact summary.
-        /// The bounded scan completes before semantic mutation preflight is allowed to run.
+        /// Maximum Open XML parts and elements admitted for one dry-run inspection phase.
+        /// Unloaded package XML is bounded before materialization, and the impact scan applies
+        /// the same limit independently before semantic mutation preflight is allowed to run.
         /// </summary>
         public int MaximumScannedElements { get; set; } = 250_000;
+
+        /// <summary>
+        /// Maximum XML characters admitted per lazily loaded part before semantic inspection. The same value is
+        /// also applied as a conservative aggregate decompressed-byte ceiling across all lazily loaded XML parts,
+        /// before any Open XML DOM is materialized.
+        /// </summary>
+        public long MaximumScannedCharacters { get; set; } = 64_000_000;
 
         internal ExcelMutationPlanOptions CloneAndValidate() {
             if (MaximumScannedElements < 1) {
@@ -27,9 +35,15 @@ namespace OfficeIMO.Excel {
                     nameof(MaximumScannedElements),
                     "The mutation-plan element budget must be positive.");
             }
+            if (MaximumScannedCharacters < 1) {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaximumScannedCharacters),
+                    "The mutation-plan character budget must be positive.");
+            }
 
             return new ExcelMutationPlanOptions {
-                MaximumScannedElements = MaximumScannedElements
+                MaximumScannedElements = MaximumScannedElements,
+                MaximumScannedCharacters = MaximumScannedCharacters
             };
         }
     }
@@ -121,11 +135,7 @@ namespace OfficeIMO.Excel {
             }
 
             try {
-                if (Kind == ExcelRowMutationKind.Insert) {
-                    _owner.InsertRows(FirstRow, Count);
-                } else {
-                    _owner.DeleteRows(FirstRow, Count);
-                }
+                _owner.ApplyStructuralRowMutationPlan(Kind, FirstRow, Count);
                 Volatile.Write(ref _applyState, 2);
             } catch {
                 Volatile.Write(ref _applyState, 3);

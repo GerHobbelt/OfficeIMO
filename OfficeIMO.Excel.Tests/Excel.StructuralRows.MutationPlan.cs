@@ -2,6 +2,7 @@ using System;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Xml.Linq;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
@@ -73,6 +74,42 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Test_StructuralRows_MutationPlanRejectsUnloadedLargeSheetBeforeMaterializingItsDom() {
+            string path = Path.Combine(
+                Path.GetTempPath(),
+                $"OfficeIMO.Excel.MutationBudget.{Guid.NewGuid():N}.xlsx");
+            try {
+                using (var source = ExcelDocument.Create(path)) {
+                    ExcelSheet target = source.AddWorksheet("Target");
+                    target.CellValue(1, 1, "Value");
+                    ExcelSheet unrelated = source.AddWorksheet("Unrelated");
+                    for (int row = 1; row <= 100; row++) {
+                        unrelated.CellValue(row, 1, row);
+                    }
+                    source.Save();
+                }
+
+                using var document = ExcelDocument.Load(path);
+                Sheet unrelatedSheet = document.WorkbookRoot.Sheets!
+                    .Elements<Sheet>()
+                    .Single(sheet => sheet.Name?.Value == "Unrelated");
+                WorksheetPart unrelatedPart = (WorksheetPart)document.WorkbookPartRoot
+                    .GetPartById(unrelatedSheet.Id!);
+                Assert.False(unrelatedPart.IsRootElementLoaded);
+
+                InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                    document["Target"].PlanInsertRows(
+                        1,
+                        options: new ExcelMutationPlanOptions { MaximumScannedElements = 50 }));
+
+                Assert.Contains("exceeded its limit", exception.Message, StringComparison.Ordinal);
+                Assert.False(unrelatedPart.IsRootElementLoaded);
+            } finally {
+                File.Delete(path);
+            }
+        }
+
+        [Fact]
         public void Test_StructuralRows_MutationPlanRejectsDeferredWritesWithoutMaterializing() {
             using var document = ExcelDocument.Create(new MemoryStream());
             ExcelSheet sheet = document.AddWorksheet("Data");
@@ -89,6 +126,89 @@ namespace OfficeIMO.Tests {
 
             Assert.Contains("pending deferred", exception.Message, StringComparison.OrdinalIgnoreCase);
             Assert.True(document.HasDeferredDirectDataSetImport);
+        }
+
+        [Fact]
+        public void Test_StructuralRows_MutationPlanBudgetsCommentVmlBeforeMaterializingIt() {
+            using var document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("Data");
+            sheet.CellAt(2, 1).SetValue("Commented");
+            sheet.SetComment(2, 1, "Review", author: "Tester");
+            int baseline = sheet.PlanInsertRows(2).ScannedElements;
+
+            VmlDrawingPart vmlPart = Assert.Single(sheet.WorksheetPart.VmlDrawingParts);
+            XDocument vml;
+            using (Stream source = vmlPart.GetStream()) {
+                vml = XDocument.Load(source);
+            }
+            XNamespace vmlNamespace = "urn:schemas-microsoft-com:vml";
+            for (int index = 0; index < 1_000; index++) {
+                vml.Root!.Add(
+                    new XElement(
+                        vmlNamespace + "shape",
+                        new XAttribute("id", $"_budget_shape_{index}")));
+            }
+            using (Stream destination = vmlPart.GetStream(FileMode.Create, FileAccess.Write)) {
+                vml.Save(destination);
+            }
+
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                sheet.PlanInsertRows(
+                    2,
+                    options: new ExcelMutationPlanOptions {
+                        MaximumScannedElements = baseline + 20
+                    }));
+
+            Assert.Contains("exceeded its limit", exception.Message, StringComparison.Ordinal);
+            Assert.Equal("Commented", sheet.CellAt(2, 1).GetValue<string>());
+        }
+
+        [Fact]
+        public void Test_StructuralRows_MutationPlanAppliesCharacterBudgetToUnloadedVml() {
+            string path = Path.Combine(
+                Path.GetTempPath(),
+                $"OfficeIMO.Excel.MutationVmlCharacterBudget.{Guid.NewGuid():N}.xlsx");
+            try {
+                using (var source = ExcelDocument.Create(path)) {
+                    ExcelSheet sourceSheet = source.AddWorksheet("Data");
+                    sourceSheet.CellAt(2, 1).SetValue("Commented");
+                    sourceSheet.SetComment(2, 1, "Review", author: "Tester");
+                    source.Save();
+                }
+
+                using (SpreadsheetDocument package = SpreadsheetDocument.Open(path, true)) {
+                    VmlDrawingPart vmlPart = Assert.Single(
+                        package.WorkbookPart!.WorksheetParts.Single().VmlDrawingParts);
+                    XDocument vml;
+                    using (Stream source = vmlPart.GetStream()) {
+                        vml = XDocument.Load(source);
+                    }
+                    vml.Root!.SetAttributeValue(
+                        "data-mutation-budget-padding",
+                        new string('x', 100_000));
+                    using Stream destination = vmlPart.GetStream(FileMode.Create, FileAccess.Write);
+                    vml.Save(destination);
+                }
+
+                using var document = ExcelDocument.Load(path);
+                ExcelSheet sheet = document["Data"];
+                VmlDrawingPart unloadedVmlPart = Assert.Single(sheet.WorksheetPart.VmlDrawingParts);
+                Assert.False(unloadedVmlPart.IsRootElementLoaded);
+
+                InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                    sheet.PlanInsertRows(
+                        2,
+                        options: new ExcelMutationPlanOptions {
+                            MaximumScannedElements = 10_000,
+                            MaximumScannedCharacters = 64_000
+                        }));
+
+                Assert.Contains("decompressed XML bytes", exception.Message, StringComparison.Ordinal);
+                Assert.False(unloadedVmlPart.IsRootElementLoaded);
+                Assert.Equal("Commented", sheet.CellAt(2, 1).GetValue<string>());
+            } finally {
+                File.Delete(path);
+            }
         }
 
         [Fact]
@@ -288,6 +408,33 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Test_StructuralRows_MutationPlanBudgetsThreadedCommentsBeforeCollectingThem() {
+            using var document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("Data");
+            WorksheetThreadedCommentsPart threadedPart =
+                sheet.WorksheetPart.AddNewPart<WorksheetThreadedCommentsPart>();
+            var threadedComments = new Threaded.ThreadedComments();
+            for (int index = 0; index < 128; index++) {
+                threadedComments.Append(new Threaded.ThreadedComment(
+                    new Threaded.ThreadedCommentText($"Comment {index}")) {
+                    Id = $"{{00000000-0000-0000-0000-{index:D12}}}",
+                    Ref = "A3"
+                });
+            }
+            threadedPart.ThreadedComments = threadedComments;
+
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                sheet.PlanDeleteRows(
+                    3,
+                    options: new ExcelMutationPlanOptions {
+                        MaximumScannedElements = 64
+                    }));
+
+            Assert.Contains("exceeded its limit", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(128, threadedPart.ThreadedComments.Elements<Threaded.ThreadedComment>().Count());
+        }
+
+        [Fact]
         public void Test_StructuralRows_MutationPlanIncludesChartsHostedOnOtherSheets() {
             using var document = ExcelDocument.Create(new MemoryStream());
             ExcelSheet data = document.AddWorksheet("Data");
@@ -326,6 +473,29 @@ namespace OfficeIMO.Tests {
                 plan.Impacts,
                 impact => impact.Category == "pivots");
             Assert.True(pivots.ItemCount >= 1);
+        }
+
+        [Fact]
+        public void Test_StructuralRows_MutationPlanBudgetsEveryPivotDefinitionElement() {
+            using var document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = CreatePivotSheet(document);
+            PivotTablePart pivotPart = Assert.Single(sheet.WorksheetPart.PivotTableParts);
+            PivotFields pivotFields = Assert.IsType<PivotFields>(
+                pivotPart.PivotTableDefinition!.GetFirstChild<PivotFields>());
+            for (int index = 0; index < 256; index++) {
+                pivotFields.Append(new PivotField());
+            }
+            pivotFields.Count = (uint)pivotFields.ChildElements.Count;
+
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                sheet.PlanInsertRows(
+                    2,
+                    options: new ExcelMutationPlanOptions {
+                        MaximumScannedElements = 128
+                    }));
+
+            Assert.Contains("exceeded its limit", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(258, pivotFields.ChildElements.Count);
         }
 
         [Fact]

@@ -59,6 +59,47 @@ public sealed class CmsSecurityTests {
     }
 
     [Fact]
+    public void DocumentSigningValidationRejectsEmailProtectionOnlyCertificates() {
+        using X509Certificate2 certificate = CreateRsaCertificate(
+            "OfficeIMO Email Protection Only",
+            new Oid("1.3.6.1.5.5.7.3.4"));
+        var options = new CertificateValidationOptions {
+            ChainEvaluator = static (_, _) => true,
+            RevocationMode = X509RevocationMode.NoCheck
+        };
+
+        CertificateTrustValidationResult result = CertificateValidator.Validate(
+            certificate,
+            options: options,
+            purpose: CertificateValidationPurpose.DocumentSigning);
+
+        Assert.Equal(SecurityValidationStatus.Invalid, result.Validation.ChainStatus);
+        Assert.Contains(result.Findings, finding => finding.Code == "CertificateEnhancedKeyUsageInvalid");
+    }
+
+    [Fact]
+    public void CertificateUsageValidationRemainsActiveWhenPlatformChainBuildingIsDisabled() {
+        using X509Certificate2 certificate = CreateRsaCertificate("OfficeIMO Non-Timestamp Authority");
+        using X509Certificate2 timestampAuthority = CreateTimestampCertificate();
+        var options = new CertificateValidationOptions { ValidateChain = false };
+
+        CertificateTrustValidationResult invalid = CertificateValidator.Validate(
+            certificate,
+            options: options,
+            purpose: CertificateValidationPurpose.TimestampAuthority);
+        CertificateTrustValidationResult valid = CertificateValidator.Validate(
+            timestampAuthority,
+            options: options,
+            purpose: CertificateValidationPurpose.TimestampAuthority);
+
+        Assert.Equal(SecurityValidationStatus.Invalid, invalid.Validation.ChainStatus);
+        Assert.Contains(invalid.Findings, finding => finding.Code == "CertificateEnhancedKeyUsageInvalid");
+        Assert.Equal(SecurityValidationStatus.NotPerformed, valid.Validation.ChainStatus);
+        Assert.DoesNotContain(valid.Findings, finding => finding.Code is
+            "CertificateKeyUsageInvalid" or "CertificateEnhancedKeyUsageInvalid");
+    }
+
+    [Fact]
     public void EncapsulatedSignature_StopsAtTheConfiguredContentLimit() {
         byte[] content = Enumerable.Repeat((byte)0x5a, 4096).ToArray();
         using X509Certificate2 certificate = CreateRsaCertificate("OfficeIMO CMS Bounded Encapsulated");
@@ -142,6 +183,77 @@ public sealed class CmsSecurityTests {
             () => CmsSignedDataVerifier.Verify(new byte[] { 1, 2, 3 }, options));
 
         Assert.Contains("exceeds the configured limit", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Verification_BoundsTimestampTokensAcrossTheCmsOperation() {
+        byte[] content = Encoding.UTF8.GetBytes("CMS timestamp budget");
+        using X509Certificate2 certificate = CreateRsaCertificate("OfficeIMO Timestamp Budget");
+        byte[] encoded = CmsSignedDataSigner.SignEncapsulated(content, certificate);
+        var signedData = new Org.BouncyCastle.Cms.CmsSignedData(encoded);
+        Org.BouncyCastle.Cms.SignerInformation signer =
+            signedData.GetSignerInfos().GetSigners().Single();
+        var timestampValues = new Org.BouncyCastle.Asn1.Asn1EncodableVector();
+        timestampValues.Add(new Org.BouncyCastle.Asn1.DerSequence());
+        timestampValues.Add(new Org.BouncyCastle.Asn1.DerSequence());
+        timestampValues.Add(new Org.BouncyCastle.Asn1.DerSequence());
+        Org.BouncyCastle.Asn1.DerObjectIdentifier timestampOid =
+            Org.BouncyCastle.Asn1.Pkcs.PkcsObjectIdentifiers.IdAASignatureTimeStampToken;
+        var timestampAttribute = new Org.BouncyCastle.Asn1.Cms.Attribute(
+            timestampOid,
+            new Org.BouncyCastle.Asn1.DerSet(timestampValues));
+        var unsignedAttributes = new Org.BouncyCastle.Asn1.Cms.AttributeTable(
+            new Dictionary<Org.BouncyCastle.Asn1.DerObjectIdentifier, object> {
+                [timestampOid] = timestampAttribute
+            });
+        Org.BouncyCastle.Cms.SignerInformation withTimestamps =
+            Org.BouncyCastle.Cms.SignerInformation.ReplaceUnsignedAttributes(signer, unsignedAttributes);
+        Org.BouncyCastle.Cms.CmsSignedData repeated = Org.BouncyCastle.Cms.CmsSignedData.ReplaceSigners(
+            signedData,
+            new Org.BouncyCastle.Cms.SignerInformationStore(new[] { withTimestamps }));
+        CmsVerificationOptions options = TrustSelfSigned();
+        options.MaxTimestampTokens = 2;
+
+        CmsVerificationResult result = CmsSignedDataVerifier.Verify(repeated.GetEncoded(), options);
+
+        CmsSignerVerificationResult verifiedSigner = Assert.Single(result.Signers);
+        Assert.Equal(SecurityValidationStatus.Invalid, verifiedSigner.TimestampStatus);
+        Assert.Contains(verifiedSigner.Findings,
+            finding => finding.Code == "CmsTimestampCountLimitExceeded");
+    }
+
+    [Fact]
+    public void Verification_BoundsTimestampTokenWhileEncodingUnsignedAttributes() {
+        byte[] content = Encoding.UTF8.GetBytes("CMS timestamp encoding budget");
+        using X509Certificate2 certificate = CreateRsaCertificate("OfficeIMO Timestamp Encoding Budget");
+        byte[] encoded = CmsSignedDataSigner.SignEncapsulated(content, certificate);
+        var signedData = new Org.BouncyCastle.Cms.CmsSignedData(encoded);
+        Org.BouncyCastle.Cms.SignerInformation signer =
+            signedData.GetSignerInfos().GetSigners().Single();
+        Org.BouncyCastle.Asn1.DerObjectIdentifier timestampOid =
+            Org.BouncyCastle.Asn1.Pkcs.PkcsObjectIdentifiers.IdAASignatureTimeStampToken;
+        var timestampAttribute = new Org.BouncyCastle.Asn1.Cms.Attribute(
+            timestampOid,
+            new Org.BouncyCastle.Asn1.DerSet(
+                new Org.BouncyCastle.Asn1.DerOctetString(new byte[4096])));
+        var unsignedAttributes = new Org.BouncyCastle.Asn1.Cms.AttributeTable(
+            new Dictionary<Org.BouncyCastle.Asn1.DerObjectIdentifier, object> {
+                [timestampOid] = timestampAttribute
+            });
+        Org.BouncyCastle.Cms.SignerInformation withTimestamp =
+            Org.BouncyCastle.Cms.SignerInformation.ReplaceUnsignedAttributes(signer, unsignedAttributes);
+        Org.BouncyCastle.Cms.CmsSignedData oversized = Org.BouncyCastle.Cms.CmsSignedData.ReplaceSigners(
+            signedData,
+            new Org.BouncyCastle.Cms.SignerInformationStore(new[] { withTimestamp }));
+        CmsVerificationOptions options = TrustSelfSigned();
+        options.MaxTimestampTokenBytes = 32;
+
+        CmsVerificationResult result = CmsSignedDataVerifier.Verify(oversized.GetEncoded(), options);
+
+        CmsSignerVerificationResult verifiedSigner = Assert.Single(result.Signers);
+        Assert.Equal(SecurityValidationStatus.Invalid, verifiedSigner.TimestampStatus);
+        Assert.Contains(verifiedSigner.Findings,
+            finding => finding.Code == "CmsTimestampSizeLimitExceeded");
     }
 
     [Fact]
@@ -241,6 +353,62 @@ public sealed class CmsSecurityTests {
         Assert.Equal(SecurityValidationStatus.Invalid, untrusted.Status);
         Assert.Equal(SecurityValidationStatus.Invalid, untrusted.CertificateValidation.ChainStatus);
     }
+
+    [Theory]
+    [InlineData(SecurityValidationStatus.Invalid, SecurityValidationStatus.Invalid)]
+    [InlineData(SecurityValidationStatus.Indeterminate, SecurityValidationStatus.Indeterminate)]
+    [InlineData(SecurityValidationStatus.Valid, SecurityValidationStatus.Valid)]
+    [InlineData(SecurityValidationStatus.NotPerformed, SecurityValidationStatus.Valid)]
+    public void TimestampVerifier_CombinesTsaRevocationWithTrust(
+        SecurityValidationStatus revocationStatus,
+        SecurityValidationStatus expectedStatus) {
+        SecurityValidationStatus status = Rfc3161TimestampVerifier.ResolveTimestampStatus(
+            signatureValid: true,
+            imprintValid: true,
+            certificateStatus: SecurityValidationStatus.Valid,
+            revocationStatus);
+
+        Assert.Equal(expectedStatus, status);
+    }
+
+    [Fact]
+    public void CmsSignerTrustUsesEarliestValidTimestampUnlessCallerOverridesTime() {
+        DateTimeOffset earlier = DateTimeOffset.UtcNow.AddYears(-2);
+        DateTimeOffset later = earlier.AddMinutes(5);
+        var timestamps = new[] {
+            CreateTimestampResult(SecurityValidationStatus.Valid, later),
+            CreateTimestampResult(SecurityValidationStatus.Valid, earlier),
+            CreateTimestampResult(SecurityValidationStatus.Invalid, earlier.AddYears(-1))
+        };
+        var source = new CertificateValidationOptions();
+
+        CertificateValidationOptions resolved =
+            CmsSignedDataVerifier.ResolveSignerCertificateValidation(source, timestamps);
+
+        Assert.Equal(earlier.UtcDateTime, resolved.VerificationTime);
+        Assert.Null(source.VerificationTime);
+
+        DateTime explicitTime = DateTime.UtcNow.AddDays(-3);
+        source.VerificationTime = explicitTime;
+        CertificateValidationOptions explicitResult =
+            CmsSignedDataVerifier.ResolveSignerCertificateValidation(source, timestamps);
+        Assert.Equal(explicitTime, explicitResult.VerificationTime);
+    }
+
+    private static Rfc3161TimestampVerificationResult CreateTimestampResult(
+        SecurityValidationStatus status,
+        DateTimeOffset timestamp) =>
+        new Rfc3161TimestampVerificationResult(
+            status,
+            timestamp,
+            policyOid: null,
+            messageImprintAlgorithmOid: null,
+            tsaCertificate: null,
+            certificateValidation: new CertificateValidationResult(
+                SecurityValidationStatus.Valid,
+                SecurityValidationStatus.NotPerformed,
+                Array.Empty<string>()),
+            findings: Array.Empty<SecurityFinding>());
 
     private static CmsVerificationOptions TrustSelfSigned() {
         var options = new CmsVerificationOptions();

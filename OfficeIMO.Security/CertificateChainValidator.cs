@@ -5,6 +5,7 @@ namespace OfficeIMO.Security;
 
 internal enum CertificateUsagePurpose {
     CmsSigner,
+    DocumentSigner,
     TimestampAuthority
 }
 
@@ -20,14 +21,27 @@ internal static class CertificateChainValidator {
         if (certificate == null) {
             return Empty(SecurityValidationStatus.Indeterminate);
         }
+        bool usageAccepted = ValidateCertificateUsage(certificate, purpose, findings, role, signerIndex);
         if (!options.ValidateChain) {
-            return Empty(SecurityValidationStatus.NotPerformed);
+            return Empty(usageAccepted
+                ? SecurityValidationStatus.NotPerformed
+                : SecurityValidationStatus.Invalid);
         }
 
         using var chain = new X509Chain();
         chain.ChainPolicy.RevocationMode = options.RevocationMode;
         chain.ChainPolicy.RevocationFlag = options.RevocationFlag;
         chain.ChainPolicy.VerificationFlags = options.VerificationFlags;
+        if (!TryApplyCertificateDownloadPolicy(chain.ChainPolicy, options.DisableCertificateDownloads)) {
+            findings.Add(new SecurityFinding(
+                SecurityFindingSeverity.Warning,
+                "CertificateDownloadPolicyUnavailable",
+                role + " certificate chain was not built because this runtime cannot enforce the requested no-download policy.",
+                signerIndex));
+            return Empty(usageAccepted
+                ? SecurityValidationStatus.Indeterminate
+                : SecurityValidationStatus.Invalid);
+        }
         chain.ChainPolicy.UrlRetrievalTimeout = options.UrlRetrievalTimeout;
         if (options.VerificationTime.HasValue) {
             chain.ChainPolicy.VerificationTime = options.VerificationTime.Value;
@@ -49,11 +63,12 @@ internal static class CertificateChainValidator {
                 "CertificateChainFailed",
                 role + " certificate chain could not be built: " + exception.Message,
                 signerIndex));
-            return Empty(SecurityValidationStatus.Indeterminate);
+            return Empty(usageAccepted
+                ? SecurityValidationStatus.Indeterminate
+                : SecurityValidationStatus.Invalid);
         }
 
         bool chainAccepted = options.ChainEvaluator?.Invoke(certificate, chain) ?? platformResult;
-        bool usageAccepted = ValidateCertificateUsage(certificate, purpose, findings, role, signerIndex);
         bool accepted = chainAccepted && usageAccepted;
         string[] statuses = chain.ChainStatus
             .Select(static status => string.IsNullOrWhiteSpace(status.StatusInformation)
@@ -127,7 +142,11 @@ internal static class CertificateChainValidator {
                 SecurityFindingSeverity.Error,
                 "CertificateEnhancedKeyUsageInvalid",
                 role + " certificate enhanced key usage is not valid for " +
-                    (purpose == CertificateUsagePurpose.TimestampAuthority ? "timestamping." : "document or CMS signing."),
+                    (purpose == CertificateUsagePurpose.TimestampAuthority
+                        ? "timestamping."
+                        : purpose == CertificateUsagePurpose.DocumentSigner
+                            ? "document signing."
+                            : "CMS signing."),
                 signerIndex));
         }
         return permitted;
@@ -136,6 +155,12 @@ internal static class CertificateChainValidator {
     private static bool IsPermittedEnhancedKeyUsage(string? oid, CertificateUsagePurpose purpose) {
         if (purpose == CertificateUsagePurpose.TimestampAuthority) {
             return string.Equals(oid, "1.3.6.1.5.5.7.3.8", StringComparison.Ordinal);
+        }
+
+        if (purpose == CertificateUsagePurpose.DocumentSigner) {
+            return oid is "2.5.29.37.0" or
+                "1.3.6.1.5.5.7.3.3" or
+                "1.3.6.1.4.1.311.10.3.12";
         }
 
         return oid is "2.5.29.37.0" or
@@ -150,6 +175,24 @@ internal static class CertificateChainValidator {
             chainStatus,
             SecurityValidationStatus.NotPerformed,
             Array.Empty<string>());
+
+    private static bool TryApplyCertificateDownloadPolicy(
+        X509ChainPolicy chainPolicy,
+        bool disableCertificateDownloads) {
+#if NETSTANDARD2_0 || NETFRAMEWORK
+        System.Reflection.PropertyInfo? property = typeof(X509ChainPolicy).GetProperty("DisableCertificateDownloads");
+        if (property == null || !property.CanWrite) return !disableCertificateDownloads;
+        try {
+            property.SetValue(chainPolicy, disableCertificateDownloads, null);
+            return true;
+        } catch (Exception exception) when (exception is ArgumentException or System.Reflection.TargetInvocationException) {
+            return !disableCertificateDownloads;
+        }
+#else
+        chainPolicy.DisableCertificateDownloads = disableCertificateDownloads;
+        return true;
+#endif
+    }
 
     private static SecurityValidationStatus ClassifyRevocation(X509Chain chain, X509RevocationMode revocationMode) {
         if (revocationMode == X509RevocationMode.NoCheck) return SecurityValidationStatus.NotPerformed;

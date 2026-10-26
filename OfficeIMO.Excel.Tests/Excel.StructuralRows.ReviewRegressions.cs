@@ -169,5 +169,89 @@ namespace OfficeIMO.Tests {
             Assert.Equal("Data!A2", hyperlink.Location!.Value);
             Assert.Equal("External", sheet.CellAt(3, 1).GetValue<string>());
         }
+
+        [Fact]
+        public void Test_StructuralRows_MutationPlanBoundsLazyWorksheetCharacterScan() {
+            string path = Path.Combine(
+                Path.GetTempPath(),
+                $"OfficeIMO.Excel.MutationCharacterBudget.{Guid.NewGuid():N}.xlsx");
+            try {
+                using (var source = ExcelDocument.Create(path)) {
+                    source.AddWorksheet("Target").CellValue(1, 1, "Value");
+                    ExcelSheet unrelated = source.AddWorksheet("Unrelated");
+                    unrelated.CellValue(1, 1, "placeholder");
+                    Cell cell = Assert.Single(
+                        unrelated.WorksheetPart.Worksheet.Descendants<Cell>());
+                    cell.DataType = CellValues.InlineString;
+                    cell.CellValue = null;
+                    cell.InlineString = new InlineString(new Text(new string('x', 4096)));
+                    source.Save();
+                }
+
+                using var document = ExcelDocument.Load(path);
+                Sheet unrelatedSheet = document.WorkbookRoot.Sheets!
+                    .Elements<Sheet>()
+                    .Single(sheet => sheet.Name?.Value == "Unrelated");
+                WorksheetPart unrelatedPart = (WorksheetPart)document.WorkbookPartRoot
+                    .GetPartById(unrelatedSheet.Id!);
+                Assert.False(unrelatedPart.IsRootElementLoaded);
+
+                InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                    document["Target"].PlanInsertRows(
+                        1,
+                        options: new ExcelMutationPlanOptions {
+                            MaximumScannedElements = 100,
+                            MaximumScannedCharacters = 1024
+                        }));
+
+                Assert.Contains("decompressed XML bytes", exception.Message);
+                Assert.False(unrelatedPart.IsRootElementLoaded);
+            } finally {
+                File.Delete(path);
+            }
+        }
+
+        [Fact]
+        public void Test_StructuralRows_MutationPlanBoundsAggregateLazyXmlCharacters() {
+            string path = Path.Combine(
+                Path.GetTempPath(),
+                $"OfficeIMO.Excel.AggregateMutationCharacterBudget.{Guid.NewGuid():N}.xlsx");
+            try {
+                using (var source = ExcelDocument.Create(path)) {
+                    source.AddWorksheet("Target").CellValue(1, 1, "Value");
+                    foreach (string name in new[] { "First", "Second" }) {
+                        ExcelSheet unrelated = source.AddWorksheet(name);
+                        unrelated.CellValue(1, 1, "placeholder");
+                        Cell cell = Assert.Single(
+                            unrelated.WorksheetPart.Worksheet.Descendants<Cell>());
+                        cell.DataType = CellValues.InlineString;
+                        cell.CellValue = null;
+                        cell.InlineString = new InlineString(new Text(new string('x', 900)));
+                    }
+                    source.Save();
+                }
+
+                using var document = ExcelDocument.Load(path);
+                WorksheetPart[] unrelatedParts = document.WorkbookRoot.Sheets!
+                    .Elements<Sheet>()
+                    .Where(sheet => sheet.Name?.Value is "First" or "Second")
+                    .Select(sheet => (WorksheetPart)document.WorkbookPartRoot.GetPartById(sheet.Id!))
+                    .ToArray();
+                Assert.All(unrelatedParts, part => Assert.False(part.IsRootElementLoaded));
+
+                InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                    document["Target"].PlanInsertRows(
+                        1,
+                        options: new ExcelMutationPlanOptions {
+                            MaximumScannedElements = 1000,
+                            MaximumScannedCharacters = 1700
+                        }));
+
+                Assert.Contains("decompressed XML bytes", exception.Message);
+                Assert.All(unrelatedParts, part => Assert.False(part.IsRootElementLoaded));
+            } finally {
+                File.Delete(path);
+            }
+        }
     }
 }

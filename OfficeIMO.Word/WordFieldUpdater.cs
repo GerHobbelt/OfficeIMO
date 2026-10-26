@@ -30,7 +30,8 @@ namespace OfficeIMO.Word {
                         WordFieldInventory.ParseInstruction(candidate.InstructionText).FieldType,
                         WordFieldUpdateStatus.Skipped,
                         null,
-                        "Nested field was left unchanged because its containing field result was replaced."));
+                        "Nested field was left unchanged because its containing field result was replaced.",
+                        WordFieldEvaluationReason.ContainingResultReplaced));
                     continue;
                 }
 
@@ -166,8 +167,14 @@ namespace OfficeIMO.Word {
                 case WordFieldType.SectionPages:
                     return TryEvaluateSectionPages(document, candidate, parsed, out value, out status, out message);
                 case WordFieldType.TOC:
+                    document.Settings.UpdateFieldsOnOpen = true;
                     status = WordFieldUpdateStatus.Skipped;
                     message = "Table of contents refresh was queued for Word to update on open; call WordTableOfContent.RefreshEntries() to generate deterministic OfficeIMO entries.";
+                    return false;
+                case WordFieldType.Index:
+                    document.Settings.UpdateFieldsOnOpen = true;
+                    status = WordFieldUpdateStatus.Skipped;
+                    message = "Index refresh requires Word or another layout-aware application and was left for update on open.";
                     return false;
                 default:
                     return false;
@@ -811,7 +818,27 @@ namespace OfficeIMO.Word {
             return false;
         }
 
-        private static bool TryFormatDateTime(DateTime source, WordFieldInventory.ParsedFieldInstruction parsed, out string value, out string message) {
+        internal static bool TryFormatDateTime(DateTime source, WordFieldInventory.ParsedFieldInstruction parsed, out string value, out string message) {
+            string? customFormat = GetDateTimeFormatSwitch(parsed.Switches);
+            if (string.IsNullOrWhiteSpace(customFormat)) {
+                value = source.ToString(DefaultDateTimeFormat, CultureInfo.InvariantCulture);
+                message = string.Empty;
+                return true;
+            }
+
+            string normalizedFormat = NormalizeDateTimeFormat(customFormat!);
+            try {
+                value = source.ToString(normalizedFormat, CultureInfo.InvariantCulture);
+                message = string.Empty;
+                return true;
+            } catch (FormatException) {
+                value = string.Empty;
+                message = $"Date/time format switch {customFormat} is not supported for deterministic field refresh.";
+                return false;
+            }
+        }
+
+        internal static bool TryFormatDateTime(DateTimeOffset source, WordFieldInventory.ParsedFieldInstruction parsed, out string value, out string message) {
             string? customFormat = GetDateTimeFormatSwitch(parsed.Switches);
             if (string.IsNullOrWhiteSpace(customFormat)) {
                 value = source.ToString(DefaultDateTimeFormat, CultureInfo.InvariantCulture);
@@ -1233,7 +1260,12 @@ namespace OfficeIMO.Word {
                     simpleField.FieldLock?.Value ?? false);
             }
 
-            internal WordFieldUpdateResult ToResult(WordFieldType? fieldType, WordFieldUpdateStatus status, string? resultText, string message) {
+            internal WordFieldUpdateResult ToResult(
+                WordFieldType? fieldType,
+                WordFieldUpdateStatus status,
+                string? resultText,
+                string message,
+                WordFieldEvaluationReason reason = WordFieldEvaluationReason.Default) {
                 return new WordFieldUpdateResult(
                     Index,
                     Representation,
@@ -1243,7 +1275,9 @@ namespace OfficeIMO.Word {
                     fieldType,
                     status,
                     resultText,
-                    message);
+                    message,
+                    IsLocked,
+                    reason);
             }
 
             internal static MutableFieldCandidate ForComplex(WordFieldInventory.FieldRoot root, ComplexFieldBuilder builder) {

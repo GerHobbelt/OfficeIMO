@@ -44,18 +44,32 @@ public sealed partial class PdfOptions {
                 ?? Enumerable.Empty<string>(),
             StringComparer.OrdinalIgnoreCase);
         ReadOnlyCollection<PdfEmbeddedFontFamily> families = CreateProfileFontFamilies(profileFonts);
-        existingFallbacks = PromoteCompatibilitySlotFallbacks(
-            existingFallbacks,
-            families,
-            preservedNamedFamilyNames,
-            mode);
+        ReadOnlyCollection<PdfEmbeddedFontFamily> effectiveFamilies =
+            mode == OfficeRenderingProfileApplyMode.Overlay
+                ? families
+                    .Where(family =>
+                        !preservedNamedFamilyNames.Contains(family.FamilyName))
+                    .ToList()
+                    .AsReadOnly()
+                : families;
+        if (effectiveFamilies.Count > 0) {
+            existingFallbacks = PromoteCompatibilitySlotFallbacks(
+                existingFallbacks,
+                effectiveFamilies,
+                preservedNamedFamilyNames,
+                mode);
+        }
         var preservedFallbackNames = new HashSet<string>(
             existingFallbacks?.Candidates
                 .Select(candidate => candidate.FontName)
                 .Where(name => !profileOwnedFallbackNames.Contains(name))
                 ?? Enumerable.Empty<string>(),
             StringComparer.OrdinalIgnoreCase);
-        ValidateRenderingProfileFamilyCapacity(families, existingFallbacks, mode);
+        ValidateRenderingProfileFamilyCapacity(
+            effectiveFamilies,
+            existingFallbacks,
+            mode);
+        ValidateOptionalLanguage(profile.TextShapingLanguage, nameof(profile));
 
         if (mode == OfficeRenderingProfileApplyMode.Replace || profile.TextShapingProvider != null) {
             TextShapingProvider = profile.TextShapingProvider;
@@ -72,36 +86,50 @@ public sealed partial class PdfOptions {
             _renderingProfileDeclaredFallbackCandidates = null;
             _renderingProfileOwnedNamedFamilyNames?.Clear();
         }
-        if (families.Count > 0) {
-            foreach (PdfEmbeddedFontFamily family in families) {
-                if (mode == OfficeRenderingProfileApplyMode.Overlay
-                    && preservedNamedFamilyNames.Contains(family.FamilyName)) {
-                    continue;
-                }
-                RegisterRenderingProfileNamedFamily(family);
+        if (effectiveFamilies.Count > 0) {
+            foreach (PdfEmbeddedFontFamily family in effectiveFamilies) {
+                RegisterRenderingProfileNamedFamily(
+                    mode == OfficeRenderingProfileApplyMode.Overlay
+                        ? MergeRenderingProfileNamedFamily(family, profileFonts)
+                        : family);
             }
         }
 
-        RegisterProfileFamilyFallbacks(profileFonts, preservedNamedFamilyNames);
+        RegisterProfileFamilyFallbacks(
+            profileFonts,
+            mode == OfficeRenderingProfileApplyMode.Overlay
+                ? preservedNamedFamilyNames
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 
         PdfEmbeddedFontFallbackCandidate[] profileCandidates =
             CreateProfileFallbackCandidates(profileFonts);
+        PdfEmbeddedFontFallbackCandidate[] inheritedFamilyRefreshCandidates =
+            mode == OfficeRenderingProfileApplyMode.Overlay
+                ? CreateProfileFallbackCandidates(
+                    profileFonts,
+                    EnumerateDeclaredFallbackFamilyNames(
+                        _renderingProfileDeclaredFallbackCandidates))
+                : Array.Empty<PdfEmbeddedFontFallbackCandidate>();
+        PdfEmbeddedFontFallbackCandidate[] overlayCandidates =
+            ConcatDistinctCandidateVariants(
+                inheritedFamilyRefreshCandidates,
+                profileCandidates);
         PdfEmbeddedFontFallbackCandidate[] profileCandidateVariants = mode == OfficeRenderingProfileApplyMode.Overlay
-            ? profileCandidates
+            ? overlayCandidates
                 .Where(candidate =>
                     !preservedFallbackNames.Contains(candidate.FontName)
                     && !preservedNamedFamilyNames.Contains(candidate.FontName))
                 .ToArray()
-            : profileCandidates;
+            : overlayCandidates;
         _renderingProfileDeclaredFallbackCandidates =
             _renderingProfileDeclaredFallbackCandidates == null
                 ? profileCandidateVariants
-                : OverlayFallbackCandidateVariants(
+                : OverlayDeclaredFallbackCandidateVariants(
                     _renderingProfileDeclaredFallbackCandidates,
                     profileCandidateVariants);
         PdfEmbeddedFontFallbackCandidate[] regularProfileCandidates =
             SelectRenderingProfileCandidates(
-                profileCandidateVariants,
+                _renderingProfileDeclaredFallbackCandidates,
                 bold: false,
                 italic: false);
         PdfEmbeddedFontFallbackCandidate[] combinedCandidates =
@@ -109,7 +137,7 @@ public sealed partial class PdfOptions {
                 existingFallbacks,
                 regularProfileCandidates,
                 profileOwnedFallbackNames);
-        if (combinedCandidates.Length > 0) {
+        if (effectiveFamilies.Count > 0 && combinedCandidates.Length > 0) {
             EnsureNamedFallbackCandidatesRegistered(combinedCandidates);
 
             // The named families above may include complete styled profile families.
@@ -143,15 +171,39 @@ public sealed partial class PdfOptions {
         return true;
     }
 
+    internal bool HasRenderingProfileFamilyPlanner(string? familyName) =>
+        TryGetRenderingProfileFamilyCandidates(familyName, out _);
+
     internal bool ShouldPreferSelectedCallerFamily(string? familyName) {
-        if (!TryGetNamedFontFamily(
-                familyName,
-                out PdfEmbeddedFontFamily? selectedFamily)
-            || selectedFamily == null) {
+        if (string.IsNullOrWhiteSpace(familyName)) {
             return false;
         }
-        return _renderingProfileOwnedNamedFamilyNames?.Contains(
-            selectedFamily.FamilyName) != true;
+
+        foreach (string candidate in EnumerateOfficeFontFamilyCandidates(familyName!)) {
+            if (TryGetNamedFontFamilyDirect(
+                    candidate,
+                    out PdfEmbeddedFontFamily? directFamily)
+                && directFamily != null) {
+                return _renderingProfileOwnedNamedFamilyNames?.Contains(
+                    directFamily.FamilyName) != true;
+            }
+            if (HasRenderingProfileFamilyPlanner(candidate)) {
+                return false;
+            }
+            if (TryGetFontFamilySubstitution(
+                    candidate,
+                    out PdfFontFamilySubstitution? substitution)
+                && substitution != null
+                && TryGetNamedFontFamilyDirect(
+                    substitution.TargetFontFamily,
+                    out PdfEmbeddedFontFamily? substitutedFamily)
+                && substitutedFamily != null) {
+                return _renderingProfileOwnedNamedFamilyNames?.Contains(
+                    substitutedFamily.FamilyName) != true;
+            }
+        }
+
+        return false;
     }
 
     internal bool TryGetEffectiveRenderingProfileFallbacks(
@@ -169,17 +221,13 @@ public sealed partial class PdfOptions {
 
         PdfEmbeddedFontFallbackCandidate[] styledCandidates =
             SelectRenderingProfileFamilyCandidates(registered, bold, italic);
-        PdfEmbeddedFontFallbackCandidate[] declaredCandidates =
-            SelectRenderingProfileCandidates(
-                _renderingProfileDeclaredFallbackCandidates
-                    ?? Array.Empty<PdfEmbeddedFontFallbackCandidate>(),
-                bold,
-                italic);
-        styledCandidates = MergeFallbackCandidates(
-            styledCandidates,
-            declaredCandidates);
+        PdfEmbeddedFontFallbackSet? declaredFallbacks =
+            GetEffectiveRenderingProfileDeclaredFallbacks(bold, italic);
         PdfEmbeddedFontFallbackCandidate[] combinedCandidates =
-            MergeFallbackCandidates(styledCandidates, _embeddedFontFallbacks?.Candidates);
+            MergeFallbackCandidates(
+                styledCandidates,
+                declaredFallbacks?.Candidates
+                    ?? _embeddedFontFallbacks?.Candidates);
         if (combinedCandidates.Length == 0) {
             return false;
         }
@@ -228,10 +276,15 @@ public sealed partial class PdfOptions {
                 _renderingProfileDeclaredFallbackCandidates,
                 bold,
                 italic);
+        var profileOwnedFallbackNames = new HashSet<string>(
+            _renderingProfileDeclaredFallbackCandidates
+                .Select(candidate => candidate.FontName),
+            StringComparer.OrdinalIgnoreCase);
         PdfEmbeddedFontFallbackCandidate[] combinedCandidates =
-            MergeFallbackCandidates(
+            MergeProfileFallbackCandidates(
+                _embeddedFontFallbacks,
                 declaredCandidates,
-                _embeddedFontFallbacks?.Candidates);
+                profileOwnedFallbackNames);
         if (combinedCandidates.Length == 0) {
             return null;
         }
@@ -252,12 +305,7 @@ public sealed partial class PdfOptions {
             .GroupBy(face => face.FamilyName, StringComparer.OrdinalIgnoreCase)) {
             PdfEmbeddedFontFallbackCandidate[] candidates = family
                 .Where(face => !excludedResourceFamilyNames.Contains(face.ResourceFamilyName))
-                .Where(face => !face.UnicodeRanges.IsAll)
                 .Reverse()
-                .Concat(family
-                    .Where(face => !excludedResourceFamilyNames.Contains(face.ResourceFamilyName))
-                    .Where(face => face.UnicodeRanges.IsAll)
-                    .Reverse())
                 .GroupBy(
                     face => face.ResourceFamilyName
                         + "\u001f"
@@ -269,7 +317,8 @@ public sealed partial class PdfOptions {
                     face.ResourceFamilyName,
                     face.Data,
                     face.UnicodeRanges,
-                    face.Style))
+                    face.Style,
+                    face.FamilyName))
                 .ToArray();
             if (candidates.Length == 0) {
                 continue;
@@ -299,54 +348,49 @@ public sealed partial class PdfOptions {
         IReadOnlyList<PdfEmbeddedFontFallbackCandidate> candidates,
         bool bold,
         bool italic) {
-        OfficeFontStyle[] precedence = RenderingProfileStylePrecedence(bold, italic);
+        OfficeFontStyle requested =
+            (bold ? OfficeFontStyle.Bold : OfficeFontStyle.Regular)
+            | (italic ? OfficeFontStyle.Italic : OfficeFontStyle.Regular);
         var selected = new List<PdfEmbeddedFontFallbackCandidate>();
-        foreach (IGrouping<string, PdfEmbeddedFontFallbackCandidate> family in candidates
-            .GroupBy(candidate => candidate.FontName, StringComparer.OrdinalIgnoreCase)) {
-            foreach (OfficeFontStyle style in precedence) {
-                PdfEmbeddedFontFallbackCandidate? candidate =
-                    family.FirstOrDefault(item => item.Style == style);
-                if (candidate != null) {
-                    selected.Add(candidate);
-                    break;
-                }
-            }
+        foreach (IGrouping<string, PdfEmbeddedFontFallbackCandidate> family in
+                 candidates.GroupBy(
+                     CandidateFamilyKey,
+                     StringComparer.OrdinalIgnoreCase)) {
+            IEnumerable<PdfEmbeddedFontFallbackCandidate> familyCandidates =
+                family
+                    .GroupBy(
+                        CandidateSelectionGroupKey,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(rangeVariants =>
+                        rangeVariants.FirstOrDefault(
+                            item => item.Style == requested)
+                        ?? rangeVariants.FirstOrDefault(
+                            item => item.Style == OfficeFontStyle.Regular)
+                        ?? rangeVariants.First())
+                    .OrderBy(candidate =>
+                        candidate.Style == requested
+                            ? 0
+                            : candidate.Style == OfficeFontStyle.Regular
+                                ? 1
+                                : 2);
+            selected.AddRange(familyCandidates);
         }
         return selected.ToArray();
     }
 
-    private static OfficeFontStyle[] RenderingProfileStylePrecedence(
-        bool bold,
-        bool italic) {
-        OfficeFontStyle requested =
-            (bold ? OfficeFontStyle.Bold : OfficeFontStyle.Regular)
-            | (italic ? OfficeFontStyle.Italic : OfficeFontStyle.Regular);
-        return requested switch {
-            OfficeFontStyle.Bold | OfficeFontStyle.Italic => new[] {
-                OfficeFontStyle.Bold | OfficeFontStyle.Italic,
-                OfficeFontStyle.Regular,
-                OfficeFontStyle.Bold,
-                OfficeFontStyle.Italic
-            },
-            OfficeFontStyle.Bold => new[] {
-                OfficeFontStyle.Bold,
-                OfficeFontStyle.Regular,
-                OfficeFontStyle.Bold | OfficeFontStyle.Italic,
-                OfficeFontStyle.Italic
-            },
-            OfficeFontStyle.Italic => new[] {
-                OfficeFontStyle.Italic,
-                OfficeFontStyle.Regular,
-                OfficeFontStyle.Bold | OfficeFontStyle.Italic,
-                OfficeFontStyle.Bold
-            },
-            _ => new[] {
-                OfficeFontStyle.Regular,
-                OfficeFontStyle.Bold,
-                OfficeFontStyle.Italic,
-                OfficeFontStyle.Bold | OfficeFontStyle.Italic
-            }
-        };
+    private static string CandidateSelectionGroupKey(
+        PdfEmbeddedFontFallbackCandidate candidate) {
+        string ranges = candidate.UnicodeRanges.IsAll
+            ? "*"
+            : string.Join(
+                ",",
+                candidate.UnicodeRanges.Ranges.Select(range =>
+                    range.Start.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    + "-"
+                    + range.End.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)));
+        return CandidateFamilyKey(candidate) + "\u001f" + ranges;
     }
 
     private void EnsureNamedFallbackCandidatesRegistered(
@@ -370,15 +414,62 @@ public sealed partial class PdfOptions {
             .Add(family.FamilyName);
     }
 
+    private PdfEmbeddedFontFamily MergeRenderingProfileNamedFamily(
+        PdfEmbeddedFontFamily supplied,
+        OfficeFontFaceCollection profileFonts) {
+        if (_renderingProfileOwnedNamedFamilyNames?.Contains(supplied.FamilyName) != true
+            || !TryGetNamedFontFamilyDirect(
+                supplied.FamilyName,
+                out PdfEmbeddedFontFamily? existing)
+            || existing == null) {
+            return supplied;
+        }
+
+        OfficeFontFace[] suppliedFaces = profileFonts.Faces
+            .Where(face => string.Equals(
+                face.ResourceFamilyName,
+                supplied.FamilyName,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        OfficeFontFace? regular = SelectProfileFace(
+            suppliedFaces,
+            OfficeFontStyle.Regular);
+        OfficeFontFace? bold = SelectProfileFace(
+            suppliedFaces,
+            OfficeFontStyle.Bold);
+        OfficeFontFace? italic = SelectProfileFace(
+            suppliedFaces,
+            OfficeFontStyle.Italic);
+        OfficeFontFace? boldItalic = SelectProfileFace(
+            suppliedFaces,
+            OfficeFontStyle.Bold | OfficeFontStyle.Italic);
+        return new PdfEmbeddedFontFamily(
+            supplied.FamilyName,
+            regular?.Data ?? existing.RegularSnapshot,
+            bold?.Data ?? existing.BoldSnapshot,
+            italic?.Data ?? existing.ItalicSnapshot,
+            boldItalic?.Data ?? existing.BoldItalicSnapshot);
+    }
+
     private void ReleaseRenderingProfileFontOwnership(string familyName) {
-        bool releasedProfileOwnedFamily =
-            _renderingProfileOwnedNamedFamilyNames?.Remove(familyName) == true;
+        HashSet<string> releasedNames =
+            GetRenderingProfileReleasedFamilyNames(familyName);
+        bool releasedProfileOwnedFamily = false;
+        foreach (string releasedName in releasedNames) {
+            releasedProfileOwnedFamily =
+                _renderingProfileOwnedNamedFamilyNames?.Remove(releasedName) == true
+                || releasedProfileOwnedFamily;
+            string key = NormalizeNamedFontFamilyKey(releasedName);
+            if (_namedFontFamilies?.Remove(key) == true) {
+                RemoveNamedFontProgramCache(key);
+            }
+        }
         if (_renderingProfileDeclaredFallbackCandidates != null) {
             _renderingProfileDeclaredFallbackCandidates =
                 _renderingProfileDeclaredFallbackCandidates
-                    .Where(candidate =>
-                        !string.Equals(
-                            candidate.FontName,
+                    .Where(candidate => !releasedNames.Contains(candidate.FontName)
+                        && !string.Equals(
+                            CandidateFamilyKey(candidate),
                             familyName,
                             StringComparison.OrdinalIgnoreCase))
                     .ToArray();
@@ -386,9 +477,9 @@ public sealed partial class PdfOptions {
         if (releasedProfileOwnedFamily && _embeddedFontFallbacks != null) {
             PdfEmbeddedFontFallbackCandidate[] candidates =
                 _embeddedFontFallbacks.Candidates
-                    .Where(candidate =>
-                        !string.Equals(
-                            candidate.FontName,
+                    .Where(candidate => !releasedNames.Contains(candidate.FontName)
+                        && !string.Equals(
+                            CandidateFamilyKey(candidate),
                             familyName,
                             StringComparison.OrdinalIgnoreCase))
                     .ToArray();
@@ -405,8 +496,9 @@ public sealed partial class PdfOptions {
                             Slot = _embeddedFontFallbacks.FontSlots[index]
                         })
                         .Where(entry =>
-                            !string.Equals(
-                                entry.Candidate.FontName,
+                            !releasedNames.Contains(entry.Candidate.FontName)
+                            && !string.Equals(
+                                CandidateFamilyKey(entry.Candidate),
                                 familyName,
                                 StringComparison.OrdinalIgnoreCase))
                         .Select(entry => entry.Slot)
@@ -419,12 +511,13 @@ public sealed partial class PdfOptions {
         if (_renderingProfileFamilyFallbacks == null) {
             return;
         }
+        _renderingProfileFamilyFallbacks.Remove(familyName);
         foreach (string key in _renderingProfileFamilyFallbacks.Keys.ToArray()) {
             PdfEmbeddedFontFallbackCandidate[] remaining =
                 _renderingProfileFamilyFallbacks[key]
-                    .Where(candidate =>
-                        !string.Equals(
-                            candidate.FontName,
+                    .Where(candidate => !releasedNames.Contains(candidate.FontName)
+                        && !string.Equals(
+                            CandidateFamilyKey(candidate),
                             familyName,
                             StringComparison.OrdinalIgnoreCase))
                     .ToArray();
@@ -436,19 +529,48 @@ public sealed partial class PdfOptions {
         }
     }
 
+    private HashSet<string> GetRenderingProfileReleasedFamilyNames(
+        string familyName) {
+        var releasedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            familyName
+        };
+        if (_renderingProfileDeclaredFallbackCandidates == null) {
+            return releasedNames;
+        }
+        foreach (PdfEmbeddedFontFallbackCandidate candidate in
+            _renderingProfileDeclaredFallbackCandidates) {
+            if (string.Equals(
+                    CandidateFamilyKey(candidate),
+                    familyName,
+                    StringComparison.OrdinalIgnoreCase)) {
+                releasedNames.Add(candidate.FontName);
+            }
+        }
+        return releasedNames;
+    }
+
     private void ValidateRenderingProfileFamilyCapacity(
         IEnumerable<PdfEmbeddedFontFamily> profileFamilies,
         PdfEmbeddedFontFallbackSet? promotedFallbacks,
-        OfficeRenderingProfileApplyMode mode) {
+        OfficeRenderingProfileApplyMode mode,
+        IEnumerable<string>? releasedCallerFamilyNames = null) {
         var familyKeys = new HashSet<string>(StringComparer.Ordinal);
         if (mode == OfficeRenderingProfileApplyMode.Overlay
             && _namedFontFamilies != null) {
             familyKeys.UnionWith(_namedFontFamilies.Keys);
         }
+        if (releasedCallerFamilyNames != null) {
+            foreach (string familyName in releasedCallerFamilyNames) {
+                foreach (string releasedName in
+                    GetRenderingProfileReleasedFamilyNames(familyName)) {
+                    familyKeys.Remove(NormalizeNamedFontFamilyKey(releasedName));
+                }
+            }
+        }
         foreach (PdfEmbeddedFontFamily family in profileFamilies) {
             familyKeys.Add(NormalizeNamedFontFamilyKey(family.FamilyName));
         }
-        if (promotedFallbacks != null) {
+        if (promotedFallbacks?.UsesNamedFontFamilies == true) {
             foreach (PdfEmbeddedFontFallbackCandidate candidate in promotedFallbacks.Candidates) {
                 familyKeys.Add(NormalizeNamedFontFamilyKey(candidate.FontName));
             }
@@ -485,16 +607,26 @@ public sealed partial class PdfOptions {
 
         var promoted = new List<PdfEmbeddedFontFallbackCandidate>(
             fallbackSet.Candidates.Count);
+        var promotedFamilyKeys = new HashSet<string>(StringComparer.Ordinal);
         for (int index = 0; index < fallbackSet.Candidates.Count; index++) {
             PdfEmbeddedFontFallbackCandidate candidate = fallbackSet.Candidates[index];
             string familyName = candidate.FontName;
             string key = NormalizeNamedFontFamilyKey(familyName);
-            if (prospectiveFamilies.TryGetValue(key, out PdfEmbeddedFontFamily? existing)
-                && !NamedFamilyMatchesFallbackCandidate(existing, candidate)) {
-                familyName = CreatePromotedFallbackFamilyName(
-                    candidate.FontName,
+            if (promotedFamilyKeys.Contains(key)
+                || (prospectiveFamilies.TryGetValue(key, out PdfEmbeddedFontFamily? existing)
+                    && !NamedFamilyMatchesFallbackCandidate(existing, candidate))) {
+                string? reusableFamilyName = FindReusablePromotedFallbackFamilyName(
+                    candidate,
                     fallbackSet.FontSlots[index],
                     prospectiveFamilies);
+                familyName = reusableFamilyName != null
+                        && !promotedFamilyKeys.Contains(
+                            NormalizeNamedFontFamilyKey(reusableFamilyName))
+                    ? reusableFamilyName
+                    : CreatePromotedFallbackFamilyName(
+                        candidate.FontName,
+                        fallbackSet.FontSlots[index],
+                        prospectiveFamilies);
                 key = NormalizeNamedFontFamilyKey(familyName);
             }
 
@@ -502,8 +634,10 @@ public sealed partial class PdfOptions {
                 familyName,
                 candidate.DataSnapshot,
                 candidate.UnicodeRanges,
-                candidate.Style);
+                candidate.Style,
+                candidate.PlannerFamilyName);
             promoted.Add(promotedCandidate);
+            promotedFamilyKeys.Add(key);
             if (!prospectiveFamilies.ContainsKey(key)) {
                 prospectiveFamilies[key] = new PdfEmbeddedFontFamily(
                     familyName,
@@ -532,17 +666,67 @@ public sealed partial class PdfOptions {
         return selected.SequenceEqual(candidate.DataSnapshot);
     }
 
+    private string? FindReusablePromotedFallbackFamilyName(
+        PdfEmbeddedFontFallbackCandidate candidate,
+        PdfStandardFont slot,
+        Dictionary<string, PdfEmbeddedFontFamily> prospectiveFamilies) {
+        if (_embeddedFontFallbacks?.UsesNamedFontFamilies != true) {
+            return null;
+        }
+
+        string stem = CreatePromotedFallbackFamilyNameStem(
+            candidate.FontName,
+            slot);
+        foreach (PdfEmbeddedFontFallbackCandidate active in
+            _embeddedFontFallbacks.Candidates) {
+            if (!string.Equals(
+                    active.PlannerFamilyName,
+                    candidate.PlannerFamilyName,
+                    StringComparison.OrdinalIgnoreCase)
+                || !IsPromotedFallbackFamilyName(active.FontName, stem)
+                || !prospectiveFamilies.ContainsKey(
+                    NormalizeNamedFontFamilyKey(active.FontName))) {
+                continue;
+            }
+            return active.FontName;
+        }
+        return null;
+    }
+
     private static string CreatePromotedFallbackFamilyName(
         string originalName,
         PdfStandardFont slot,
         Dictionary<string, PdfEmbeddedFontFamily> prospectiveFamilies) {
-        string stem = $"{originalName} [compatibility {PdfStandardFontMapper.GetFontFamily(slot)}]";
+        string stem = CreatePromotedFallbackFamilyNameStem(originalName, slot);
         string candidate = stem;
         int suffix = 2;
         while (prospectiveFamilies.ContainsKey(NormalizeNamedFontFamilyKey(candidate))) {
             candidate = $"{stem} {suffix++}";
         }
         return candidate;
+    }
+
+    private static string CreatePromotedFallbackFamilyNameStem(
+        string originalName,
+        PdfStandardFont slot) =>
+        $"{originalName} [compatibility {PdfStandardFontMapper.GetFontFamily(slot)}]";
+
+    private static bool IsPromotedFallbackFamilyName(
+        string familyName,
+        string stem) {
+        if (string.Equals(familyName, stem, StringComparison.OrdinalIgnoreCase)) {
+            return true;
+        }
+        string prefix = stem + " ";
+        if (!familyName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+            return false;
+        }
+        return int.TryParse(
+                familyName.Remove(0, prefix.Length),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out int suffix)
+            && suffix >= 2;
     }
 
     private static PdfEmbeddedFontFallbackCandidate[] MergeFallbackCandidates(
@@ -597,12 +781,22 @@ public sealed partial class PdfOptions {
     private static PdfEmbeddedFontFallbackCandidate[] OverlayFallbackCandidateVariants(
         IEnumerable<PdfEmbeddedFontFallbackCandidate> existing,
         IEnumerable<PdfEmbeddedFontFallbackCandidate> overlay) {
-        var replacements = overlay.ToDictionary(
+        PdfEmbeddedFontFallbackCandidate[] overlayCandidates = overlay.ToArray();
+        var replacements = overlayCandidates.ToDictionary(
             CandidateVariantKey,
             candidate => candidate,
             StringComparer.OrdinalIgnoreCase);
+        var existingKeys = new HashSet<string>(
+            existing.Select(CandidateVariantKey),
+            StringComparer.OrdinalIgnoreCase);
         var merged = new List<PdfEmbeddedFontFallbackCandidate>();
         var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (PdfEmbeddedFontFallbackCandidate candidate in overlayCandidates) {
+            string key = CandidateVariantKey(candidate);
+            if (!existingKeys.Contains(key) && keys.Add(key)) {
+                merged.Add(candidate);
+            }
+        }
         foreach (PdfEmbeddedFontFallbackCandidate candidate in existing) {
             string key = CandidateVariantKey(candidate);
             PdfEmbeddedFontFallbackCandidate selected =
@@ -614,14 +808,75 @@ public sealed partial class PdfOptions {
             }
             replacements.Remove(key);
         }
-        foreach (PdfEmbeddedFontFallbackCandidate candidate in overlay) {
-            string key = CandidateVariantKey(candidate);
-            if (replacements.ContainsKey(key) && keys.Add(key)) {
+        return merged.ToArray();
+    }
+
+    private static PdfEmbeddedFontFallbackCandidate[] OverlayDeclaredFallbackCandidateVariants(
+        IEnumerable<PdfEmbeddedFontFallbackCandidate> existing,
+        IEnumerable<PdfEmbeddedFontFallbackCandidate> overlay) {
+        PdfEmbeddedFontFallbackCandidate[] existingCandidates = existing.ToArray();
+        PdfEmbeddedFontFallbackCandidate[] overlayCandidates = overlay.ToArray();
+        string[] existingFamilies = existingCandidates
+            .Select(CandidateFamilyKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] overlayFamilies = overlayCandidates
+            .Select(CandidateFamilyKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var merged = new List<PdfEmbeddedFontFallbackCandidate>();
+        foreach (string family in existingFamilies) {
+            PdfEmbeddedFontFallbackCandidate[] existingFamily = existingCandidates
+                .Where(candidate => string.Equals(
+                    CandidateFamilyKey(candidate),
+                    family,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            PdfEmbeddedFontFallbackCandidate[] overlayFamily = overlayCandidates
+                .Where(candidate => string.Equals(
+                    CandidateFamilyKey(candidate),
+                    family,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            merged.AddRange(overlayFamily.Length == 0
+                ? existingFamily
+                : OverlayFallbackCandidateVariants(existingFamily, overlayFamily));
+        }
+        foreach (string family in overlayFamilies.Where(family =>
+            !existingFamilies.Contains(family, StringComparer.OrdinalIgnoreCase))) {
+            merged.AddRange(overlayCandidates.Where(candidate => string.Equals(
+                CandidateFamilyKey(candidate),
+                family,
+                StringComparison.OrdinalIgnoreCase)));
+        }
+        return merged.ToArray();
+    }
+
+    private static PdfEmbeddedFontFallbackCandidate[] ConcatDistinctCandidateVariants(
+        IEnumerable<PdfEmbeddedFontFallbackCandidate> first,
+        IEnumerable<PdfEmbeddedFontFallbackCandidate> second) {
+        var merged = new List<PdfEmbeddedFontFallbackCandidate>();
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (PdfEmbeddedFontFallbackCandidate candidate in first.Concat(second)) {
+            if (keys.Add(CandidateVariantKey(candidate))) {
                 merged.Add(candidate);
             }
         }
         return merged.ToArray();
     }
+
+    private static IEnumerable<string> EnumerateDeclaredFallbackFamilyNames(
+        IEnumerable<PdfEmbeddedFontFallbackCandidate>? candidates) =>
+        candidates?
+            .Select(CandidateFamilyKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+        ?? Enumerable.Empty<string>();
+
+    private static string CandidateFamilyKey(
+        PdfEmbeddedFontFallbackCandidate candidate) =>
+        string.IsNullOrWhiteSpace(candidate.PlannerFamilyName)
+            ? candidate.FontName
+            : candidate.PlannerFamilyName;
 
     private static string CandidateVariantKey(PdfEmbeddedFontFallbackCandidate candidate) =>
         candidate.FontName + "\u001f" + ((int)candidate.Style).ToString(
@@ -633,13 +888,9 @@ public sealed partial class PdfOptions {
         HashSet<string> profileOwnedFallbackNames) {
         var merged = new List<PdfEmbeddedFontFallbackCandidate>();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var replacements = new HashSet<string>(
-            profileCandidates.Select(candidate => candidate.FontName),
-            StringComparer.OrdinalIgnoreCase);
         if (existingFallbacks != null) {
             foreach (PdfEmbeddedFontFallbackCandidate candidate in existingFallbacks.Candidates) {
-                if (profileOwnedFallbackNames.Contains(candidate.FontName)
-                    && replacements.Contains(candidate.FontName)) {
+                if (profileOwnedFallbackNames.Contains(candidate.FontName)) {
                     continue;
                 }
                 if (names.Add(candidate.FontName)) {
@@ -679,7 +930,8 @@ public sealed partial class PdfOptions {
                     candidate.FontName,
                     candidate.DataSnapshot,
                     candidate.UnicodeRanges,
-                    candidate.Style))
+                    candidate.Style,
+                    candidate.PlannerFamilyName))
                 .ToArray();
         }
         return clone;
@@ -714,10 +966,15 @@ public sealed partial class PdfOptions {
     }
 
     private static PdfEmbeddedFontFallbackCandidate[] CreateProfileFallbackCandidates(
-        OfficeFontFaceCollection fonts) {
+        OfficeFontFaceCollection fonts) =>
+        CreateProfileFallbackCandidates(fonts, fonts.FallbackFamilies);
+
+    private static PdfEmbeddedFontFallbackCandidate[] CreateProfileFallbackCandidates(
+        OfficeFontFaceCollection fonts,
+        IEnumerable<string> fallbackFamilies) {
         var candidates = new List<PdfEmbeddedFontFallbackCandidate>();
         var addedVariants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string fallbackFamily in fonts.FallbackFamilies) {
+        foreach (string fallbackFamily in fallbackFamilies) {
             OfficeFontFace[] matching = fonts.Faces
                 .Where(face =>
                     string.Equals(face.FamilyName, fallbackFamily, StringComparison.OrdinalIgnoreCase)
@@ -737,7 +994,13 @@ public sealed partial class PdfOptions {
                     face.ResourceFamilyName,
                     face.Data,
                     face.UnicodeRanges,
-                    face.Style));
+                    face.Style,
+                    string.Equals(
+                        face.ResourceFamilyName,
+                        fallbackFamily,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? face.ResourceFamilyName
+                        : face.FamilyName));
             }
         }
 

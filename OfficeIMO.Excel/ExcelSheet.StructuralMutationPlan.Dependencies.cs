@@ -28,7 +28,7 @@ namespace OfficeIMO.Excel {
                     conditionalFormattingImpacts.Add(ancestor);
                     return;
                 }
-                if (ancestor is X14.Sparkline) {
+                if (ancestor is X14.Sparkline || ancestor is X14.SparklineGroup) {
                     sparklineImpacts.Add(ancestor);
                     return;
                 }
@@ -42,7 +42,9 @@ namespace OfficeIMO.Excel {
             uint previous = 0U;
             foreach (Row row in worksheetElements.OfType<Row>()) {
                 uint effective = GetEffectiveRowIndex(row, previous);
-                if (effective >= (uint)firstRow) {
+                if (effective >= (uint)firstRow
+                    || row.RowIndex?.Value is not uint explicitIndex
+                    || explicitIndex == 0U) {
                     count++;
                 }
                 previous = effective;
@@ -63,6 +65,12 @@ namespace OfficeIMO.Excel {
                 firstRow,
                 lastRow,
                 count);
+            ILookup<OpenXmlElement?, OpenXmlElement> directChildren =
+                worksheetElements
+                    .Where(element => element is InputCells
+                        || element is SortCondition
+                        || element is X14.SortCondition)
+                    .ToLookup(element => element.Parent);
 
             foreach (AutoFilter filter in worksheetElements.OfType<AutoFilter>()) {
                 if (Changes(filter.Reference?.Value)) {
@@ -95,8 +103,13 @@ namespace OfficeIMO.Excel {
                 if (Changes(scenarios.SequenceOfReferences?.InnerText)) {
                     affected.Add(scenarios);
                 }
-                foreach (Scenario scenario in scenarios.Elements<Scenario>()) {
-                    if (scenario.Elements<InputCells>()
+                foreach (Scenario scenario in worksheetElements
+                    .OfType<Scenario>()
+                    .Where(candidate => ReferenceEquals(
+                        candidate.Parent,
+                        scenarios))) {
+                    if (directChildren[scenario]
+                        .OfType<InputCells>()
                         .Any(input => Changes(input.CellReference?.Value))) {
                         affected.Add(scenario);
                     }
@@ -127,9 +140,11 @@ namespace OfficeIMO.Excel {
 
             foreach (SortState sortState in worksheetElements.OfType<SortState>()) {
                 if (Changes(sortState.Reference?.Value)
-                    || sortState.Elements<SortCondition>()
+                    || directChildren[sortState]
+                        .OfType<SortCondition>()
                         .Any(condition => Changes(condition.Reference?.Value))
-                    || sortState.Elements<X14.SortCondition>()
+                    || directChildren[sortState]
+                        .OfType<X14.SortCondition>()
                         .Any(condition => Changes(condition.Reference?.Value))) {
                     affected.Add(sortState);
                 }
@@ -170,31 +185,32 @@ namespace OfficeIMO.Excel {
         }
 
         private int CountQueryTableSortPlanImpacts(
-            QueryTable? queryTable,
+            IReadOnlyList<OpenXmlElement> queryElements,
             ExcelRowMutationKind kind,
             int firstRow,
             int lastRow,
             int count) {
-            if (queryTable == null) {
-                return 0;
-            }
-
             int impacts = 0;
-            foreach (SortState sortState in queryTable.Descendants<SortState>()) {
+            ILookup<OpenXmlElement?, OpenXmlElement> directChildren =
+                queryElements
+                    .Where(element => element is SortCondition
+                        || element is X14.SortCondition)
+                    .ToLookup(element => element.Parent);
+            foreach (SortState sortState in queryElements.OfType<SortState>()) {
                 if (ReferenceListChangesForPlan(
                         sortState.Reference?.Value,
                         kind,
                         firstRow,
                         lastRow,
                         count)
-                    || sortState.Elements<SortCondition>().Any(condition =>
+                    || directChildren[sortState].OfType<SortCondition>().Any(condition =>
                         ReferenceListChangesForPlan(
                             condition.Reference?.Value,
                             kind,
                             firstRow,
                             lastRow,
                             count))
-                    || sortState.Elements<X14.SortCondition>().Any(condition =>
+                    || directChildren[sortState].OfType<X14.SortCondition>().Any(condition =>
                         ReferenceListChangesForPlan(
                             condition.Reference?.Value,
                             kind,
@@ -209,6 +225,7 @@ namespace OfficeIMO.Excel {
 
         private bool TableMetadataChangesForPlan(
             Table? table,
+            IReadOnlyList<OpenXmlElement> tableElements,
             ExcelRowMutationKind kind,
             int firstRow,
             int lastRow,
@@ -223,25 +240,36 @@ namespace OfficeIMO.Excel {
                 firstRow,
                 lastRow,
                 count);
+            ILookup<OpenXmlElement?, OpenXmlElement> directChildren =
+                tableElements
+                    .Where(element => element is SortCondition
+                        || element is X14.SortCondition
+                        || element is AutoFilter)
+                    .ToLookup(element => element.Parent);
 
             return Changes(table.Reference?.Value)
-                || Changes(table.GetFirstChild<AutoFilter>()?.Reference?.Value)
-                || table.Descendants<SortState>().Any(sortState =>
+                || Changes(directChildren[table]
+                    .OfType<AutoFilter>()
+                    .FirstOrDefault()
+                    ?.Reference?.Value)
+                || tableElements.OfType<SortState>().Any(sortState =>
                     Changes(sortState.Reference?.Value)
-                    || sortState.Elements<SortCondition>()
+                    || directChildren[sortState].OfType<SortCondition>()
                         .Any(condition => Changes(condition.Reference?.Value))
-                    || sortState.Elements<X14.SortCondition>()
+                    || directChildren[sortState].OfType<X14.SortCondition>()
                         .Any(condition => Changes(condition.Reference?.Value)));
         }
 
-        private static bool ChartFormulaCacheWillBeInvalidated(OpenXmlLeafTextElement formula) {
+        private static bool ChartFormulaCacheWillBeInvalidated(
+            OpenXmlLeafTextElement formula,
+            ILookup<OpenXmlElement?, OpenXmlElement> directChildren) {
             OpenXmlElement? reference = formula.Parent;
             return reference != null
-                && (reference.ChildElements.Any(element =>
+                && (directChildren[reference].Any(element =>
                         element.LocalName.EndsWith("Cache", StringComparison.OrdinalIgnoreCase))
                     || (string.Equals(reference.LocalName, "numDim", StringComparison.Ordinal)
                         || string.Equals(reference.LocalName, "strDim", StringComparison.Ordinal))
-                    && reference.ChildElements.Any(element =>
+                    && directChildren[reference].Any(element =>
                         string.Equals(element.LocalName, "lvl", StringComparison.Ordinal)));
         }
 
@@ -283,10 +311,12 @@ namespace OfficeIMO.Excel {
             int firstRow,
             int lastRow,
             int count,
-            MutationPlanScanBudget budget) {
+            MutationPlanScanBudget budget,
+            out IReadOnlyList<OpenXmlElement> tableElements) {
             budget.Consume();
             Table? table = tablePart.Table;
             if (table == null) {
+                tableElements = Array.Empty<OpenXmlElement>();
                 return 0;
             }
 
@@ -303,8 +333,10 @@ namespace OfficeIMO.Excel {
                 out int totalsRowAnchorRow);
 
             int impacts = 0;
+            var inspectedElements = new List<OpenXmlElement>();
             foreach (OpenXmlElement element in table.Descendants()) {
                 budget.Consume();
+                inspectedElements.Add(element);
                 bool changes;
                 if (element is CalculatedColumnFormula calculatedColumnFormula) {
                     changes = rewriteUnqualifiedReferences
@@ -354,49 +386,41 @@ namespace OfficeIMO.Excel {
                     impacts++;
                 }
             }
+            tableElements = inspectedElements;
             return impacts;
         }
 
         private int CountAnchoredMetadataFormulaPlanImpacts(
             OpenXmlElement metadata,
+            IReadOnlyDictionary<OpenXmlElement, List<string?>>
+                anchoredMetadataFormulaTexts,
             ExcelRowMutationKind kind,
             int firstRow,
             int lastRow,
             int count) {
             string? references;
-            IEnumerable<string?> formulaTexts;
             switch (metadata) {
                 case DataValidation validation:
                     references = validation.SequenceOfReferences?.InnerText;
-                    formulaTexts = new[] {
-                        validation.Formula1?.Text,
-                        validation.Formula2?.Text
-                    };
                     break;
                 case X14.DataValidation validation:
                     references = validation.ReferenceSequence?.Text;
-                    formulaTexts = new[] {
-                        validation.DataValidationForumla1?.Formula?.Text,
-                        validation.DataValidationForumla2?.Formula?.Text
-                    };
                     break;
                 case ConditionalFormatting formatting:
                     references = formatting.SequenceOfReferences?.InnerText;
-                    formulaTexts = formatting.Descendants<Formula>()
-                        .Select(formula => formula.Text)
-                        .Concat(formatting.Descendants<ConditionalFormatValueObject>()
-                            .Where(threshold =>
-                                threshold.Type?.Value == ConditionalFormatValueObjectValues.Formula)
-                            .Select(threshold => threshold.Val?.Value));
                     break;
                 case X14.ConditionalFormatting formatting:
                     references = formatting.GetFirstChild<Xm.ReferenceSequence>()?.Text;
-                    formulaTexts = formatting.Descendants<Xm.Formula>()
-                        .Select(formula => formula.Text);
                     break;
                 default:
                     return 0;
             }
+            IReadOnlyList<string?> formulaTexts =
+                anchoredMetadataFormulaTexts.TryGetValue(
+                    metadata,
+                    out List<string?>? recordedFormulaTexts)
+                    ? recordedFormulaTexts
+                    : Array.Empty<string?>();
 
             if (string.IsNullOrWhiteSpace(references)
                 || !TryGetReferenceListAnchorRow(references!, out int oldAnchorRow)) {
@@ -413,7 +437,8 @@ namespace OfficeIMO.Excel {
                     lastDeletedRow,
                     out List<string> remapped)) {
                 if (remapped.Count == 0) {
-                    return 0;
+                    return formulaTexts.Count(formulaText =>
+                        !string.IsNullOrEmpty(formulaText));
                 }
                 updatedReferences = string.Join(" ", remapped);
             }
@@ -439,6 +464,53 @@ namespace OfficeIMO.Excel {
                     relativeReferencesFollowAnchor: false,
                     relativeFormulaSourceRowDelta,
                     relativeFormulaAnchorRow: null));
+        }
+
+        private static void AddAnchoredMetadataFormulaText(
+            IDictionary<OpenXmlElement, List<string?>> formulaTextsByMetadata,
+            OpenXmlElement element) {
+            string? formulaText;
+            switch (element) {
+                case Formula1 formula1:
+                    formulaText = formula1.Text;
+                    break;
+                case Formula2 formula2:
+                    formulaText = formula2.Text;
+                    break;
+                case Formula formula:
+                    formulaText = formula.Text;
+                    break;
+                case Xm.Formula xmFormula:
+                    formulaText = xmFormula.Text;
+                    break;
+                case ConditionalFormatValueObject threshold
+                    when threshold.Type?.Value ==
+                        ConditionalFormatValueObjectValues.Formula:
+                    formulaText = threshold.Val?.Value;
+                    break;
+                default:
+                    return;
+            }
+
+            OpenXmlElement? metadata = element.Parent;
+            while (metadata != null
+                && metadata is not DataValidation
+                && metadata is not X14.DataValidation
+                && metadata is not ConditionalFormatting
+                && metadata is not X14.ConditionalFormatting) {
+                metadata = metadata.Parent;
+            }
+            if (metadata == null) {
+                return;
+            }
+
+            if (!formulaTextsByMetadata.TryGetValue(
+                    metadata,
+                    out List<string?>? formulaTexts)) {
+                formulaTexts = new List<string?>();
+                formulaTextsByMetadata.Add(metadata, formulaTexts);
+            }
+            formulaTexts.Add(formulaText);
         }
 
         private int CountCommentPlanImpacts(
@@ -476,20 +548,22 @@ namespace OfficeIMO.Excel {
             VmlDrawingPart? commentVmlPart = TryGetCommentVmlPart();
             if (commentVmlPart != null) {
                 budget.Consume();
+                ConsumeVmlElementsForMutationPlan(commentVmlPart, budget);
                 XDocument document = LoadOrCreateVmlDocument(commentVmlPart);
                 XNamespace vmlNamespace = "urn:schemas-microsoft-com:vml";
                 XNamespace excelNamespace =
                     "urn:schemas-microsoft-com:office:excel";
                 XElement? root = document.Root;
+                var shapes = new List<XElement>();
                 if (root != null) {
-                    budget.Consume();
-                    foreach (XElement _ in root.Descendants()) {
-                        budget.Consume();
+                    foreach (XElement element in root.Descendants()) {
+                        if (element.Name == vmlNamespace + "shape"
+                            && ReferenceEquals(element.Parent, root)) {
+                            shapes.Add(element);
+                        }
                     }
                 }
-                foreach (XElement shape in
-                    root?.Elements(vmlNamespace + "shape")
-                        ?? Enumerable.Empty<XElement>()) {
+                foreach (XElement shape in shapes) {
                     XElement? clientData =
                         shape.Element(excelNamespace + "ClientData");
                     if (clientData == null
@@ -533,14 +607,14 @@ namespace OfficeIMO.Excel {
                 }
 
                 budget.Consume();
-                List<Threaded.ThreadedComment> allComments = root
-                    .Elements<Threaded.ThreadedComment>()
-                    .ToList();
+                var allComments = new List<Threaded.ThreadedComment>();
                 var removedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var childrenByParentId =
                     new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                foreach (Threaded.ThreadedComment comment in allComments) {
+                foreach (Threaded.ThreadedComment comment in
+                    root.Elements<Threaded.ThreadedComment>()) {
                     budget.Consume();
+                    allComments.Add(comment);
                     if (comment.Id?.Value is string commentId
                         && comment.ParentId?.Value is string parentId) {
                         if (!childrenByParentId.TryGetValue(

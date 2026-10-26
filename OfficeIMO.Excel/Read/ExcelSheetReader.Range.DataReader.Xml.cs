@@ -150,7 +150,9 @@ namespace OfficeIMO.Excel {
             }
 
             /// <inheritdoc />
-            public override byte GetByte(int ordinal) => Convert.ToByte(GetNonDbNullValue(ordinal), _culture);
+            public override byte GetByte(int ordinal) => TryGetPrimitiveDouble(ordinal, out double value)
+                ? Convert.ToByte(value)
+                : Convert.ToByte(GetNonDbNullValue(ordinal), _culture);
 
             /// <inheritdoc />
             public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length) =>
@@ -196,18 +198,15 @@ namespace OfficeIMO.Excel {
             }
 
             /// <inheritdoc />
-            public override decimal GetDecimal(int ordinal) => Convert.ToDecimal(GetNonDbNullValue(ordinal), _culture);
+            public override decimal GetDecimal(int ordinal) => TryGetPrimitiveDouble(ordinal, out double value)
+                ? Convert.ToDecimal(value)
+                : Convert.ToDecimal(GetNonDbNullValue(ordinal), _culture);
 
             /// <inheritdoc />
             public override double GetDouble(int ordinal) {
-                EnsureOpenRow();
-                EnsureCurrentValue(ordinal, XmlDataReaderTargetKind.Double);
-                if (IsCurrentStreamingRow && _currentPrimitiveKinds[ordinal] == XmlDataReaderPrimitiveKind.Double) {
-                    return _currentDoubleValues[ordinal];
-                }
-
-                object value = GetNonDbNullValue(ordinal);
-                return value is double number ? number : Convert.ToDouble(value, _culture);
+                return TryGetPrimitiveDouble(ordinal, out double value)
+                    ? value
+                    : Convert.ToDouble(GetNonDbNullValue(ordinal), _culture);
             }
 
             /// <inheritdoc />
@@ -216,7 +215,9 @@ namespace OfficeIMO.Excel {
             public override Type GetFieldType(int ordinal) => _columnTypes[ordinal];
 
             /// <inheritdoc />
-            public override float GetFloat(int ordinal) => Convert.ToSingle(GetNonDbNullValue(ordinal), _culture);
+            public override float GetFloat(int ordinal) => TryGetPrimitiveDouble(ordinal, out double value)
+                ? (float)value
+                : Convert.ToSingle(GetNonDbNullValue(ordinal), _culture);
 
             /// <inheritdoc />
             public override Guid GetGuid(int ordinal) {
@@ -225,22 +226,21 @@ namespace OfficeIMO.Excel {
             }
 
             /// <inheritdoc />
-            public override short GetInt16(int ordinal) => Convert.ToInt16(GetNonDbNullValue(ordinal), _culture);
+            public override short GetInt16(int ordinal) => TryGetPrimitiveDouble(ordinal, out double value)
+                ? Convert.ToInt16(value)
+                : Convert.ToInt16(GetNonDbNullValue(ordinal), _culture);
 
             /// <inheritdoc />
             public override int GetInt32(int ordinal) {
-                EnsureOpenRow();
-                EnsureCurrentValue(ordinal, XmlDataReaderTargetKind.Int32);
-                if (IsCurrentStreamingRow && _currentPrimitiveKinds[ordinal] == XmlDataReaderPrimitiveKind.Double) {
-                    return ConvertDataReaderInt32(_currentDoubleValues[ordinal]);
-                }
-
-                object value = GetNonDbNullValue(ordinal);
-                return ConvertDataReaderInt32(value, _culture);
+                return TryGetPrimitiveDouble(ordinal, out double value)
+                    ? ConvertDataReaderInt32(value)
+                    : ConvertDataReaderInt32(GetNonDbNullValue(ordinal), _culture);
             }
 
             /// <inheritdoc />
-            public override long GetInt64(int ordinal) => Convert.ToInt64(GetNonDbNullValue(ordinal), _culture);
+            public override long GetInt64(int ordinal) => TryGetPrimitiveDouble(ordinal, out double value)
+                ? Convert.ToInt64(value)
+                : Convert.ToInt64(GetNonDbNullValue(ordinal), _culture);
 
             /// <inheritdoc />
             public override string GetName(int ordinal) => _columnNames[ordinal];
@@ -542,8 +542,9 @@ namespace OfficeIMO.Excel {
                         out _currentDateTimeValues[ordinal],
                         out _currentBooleanValues[ordinal],
                         out _,
+                        out bool deferObjectMaterialization,
                         out _currentValues[ordinal]);
-                    _currentValueLoaded[ordinal] = true;
+                    _currentValueLoaded[ordinal] = !deferObjectMaterialization;
                     return;
                 }
 
@@ -755,17 +756,30 @@ namespace OfficeIMO.Excel {
                 return value;
             }
 
+            private bool TryGetPrimitiveDouble(int ordinal, out double value) {
+                EnsureOpenRow();
+                EnsureCurrentValue(ordinal, XmlDataReaderTargetKind.Numeric);
+                if (IsCurrentStreamingRow
+                    && _currentPrimitiveKinds[ordinal] == XmlDataReaderPrimitiveKind.Double) {
+                    value = _currentDoubleValues[ordinal];
+                    return true;
+                }
+
+                value = 0;
+                return false;
+            }
+
             private object? MaterializeCurrentValue(int ordinal) {
                 if (!IsCurrentStreamingRow || _currentPrimitiveKinds[ordinal] == XmlDataReaderPrimitiveKind.None) {
                     return _currentRow![ordinal];
                 }
 
-                object value = _currentPrimitiveKinds[ordinal] switch {
+                object value = _currentValues[ordinal] ?? (_currentPrimitiveKinds[ordinal] switch {
                     XmlDataReaderPrimitiveKind.Double => _currentDoubleValues[ordinal],
                     XmlDataReaderPrimitiveKind.DateTime => _currentDateTimeValues[ordinal],
                     XmlDataReaderPrimitiveKind.Boolean => BoxBoolean(_currentBooleanValues[ordinal]),
                     _ => _currentRow![ordinal]!
-                };
+                });
                 _currentValues[ordinal] = value;
                 _currentPrimitiveKinds[ordinal] = XmlDataReaderPrimitiveKind.None;
                 return value;

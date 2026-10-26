@@ -51,7 +51,6 @@ public sealed partial class PdfOptions {
         }
         (_namedFontFamilies ??= new Dictionary<string, PdfEmbeddedFontFamily>(StringComparer.Ordinal))[key] = fontFamily.Clone();
         RemoveNamedFontProgramCache(key);
-        MarkFontConfigurationChanged();
         return true;
     }
 
@@ -247,6 +246,10 @@ public sealed partial class PdfOptions {
         }
 
         foreach (string candidate in EnumerateOfficeFontFamilyCandidates(familyName!)) {
+            if (_renderingProfileOwnedNamedFamilyNames?.Contains(candidate) == true
+                && TryGetNamedFontFamilyDirect(candidate, out family)) {
+                return true;
+            }
             if (TryGetFontFamilySubstitution(candidate, out PdfFontFamilySubstitution? substitution) &&
                 substitution != null &&
                 TryGetNamedFontFamilyDirect(substitution.TargetFontFamily, out family)) {

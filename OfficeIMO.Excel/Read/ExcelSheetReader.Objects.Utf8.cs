@@ -40,6 +40,7 @@ namespace OfficeIMO.Excel {
                             out _,
                             out _,
                             out _,
+                            out _,
                             out headerValues[columnOffset]);
                     }
 
@@ -117,6 +118,7 @@ namespace OfficeIMO.Excel {
                 out DateTime dateTimeValue,
                 out bool booleanValue,
                 out bool isFormulaText,
+                out _,
                 out object? objectValue);
 
             switch (primitiveKind) {
@@ -203,8 +205,8 @@ namespace OfficeIMO.Excel {
 
         private static XmlDataReaderTargetKind GetUtf8TargetKind(TypedBindingKind bindingKind) =>
             bindingKind switch {
-                TypedBindingKind.Int32 => XmlDataReaderTargetKind.Int32,
-                TypedBindingKind.Double => XmlDataReaderTargetKind.Double,
+                TypedBindingKind.Int32 => XmlDataReaderTargetKind.Numeric,
+                TypedBindingKind.Double => XmlDataReaderTargetKind.Numeric,
                 TypedBindingKind.Boolean => XmlDataReaderTargetKind.Boolean,
                 TypedBindingKind.DateTime => XmlDataReaderTargetKind.DateTime,
                 TypedBindingKind.String => XmlDataReaderTargetKind.String,

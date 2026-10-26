@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Xml;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
@@ -19,6 +20,7 @@ namespace OfficeIMO.Excel {
             ExcelMutationPlanOptions effective = (options ?? new ExcelMutationPlanOptions()).CloneAndValidate();
             return Locking.ExecuteRead(_excelDocument.EnsureLock(), () => {
                 EnsureMutationPlanCanInspectWithoutMaterializing();
+                EnsureMutationPlanPartsFitWithinBudget(effective);
                 ExcelRowMutationPlan plan = BuildRowMutationPlan(
                     ExcelRowMutationKind.Insert,
                     firstRow,
@@ -41,6 +43,7 @@ namespace OfficeIMO.Excel {
             ExcelMutationPlanOptions effective = (options ?? new ExcelMutationPlanOptions()).CloneAndValidate();
             return Locking.ExecuteRead(_excelDocument.EnsureLock(), () => {
                 EnsureMutationPlanCanInspectWithoutMaterializing();
+                EnsureMutationPlanPartsFitWithinBudget(effective);
                 ExcelRowMutationPlan plan = BuildRowMutationPlan(
                     ExcelRowMutationKind.Delete,
                     firstRow,
@@ -56,7 +59,9 @@ namespace OfficeIMO.Excel {
             int firstRow,
             int count,
             ExcelMutationPlanOptions effective) {
-            var budget = new MutationPlanScanBudget(effective.MaximumScannedElements);
+            var budget = new MutationPlanScanBudget(
+                effective.MaximumScannedElements,
+                effective.MaximumScannedCharacters);
             var impacts = new List<ExcelMutationImpact>();
             int lastRow = firstRow + count - 1;
             int cells = 0;
@@ -109,17 +114,23 @@ namespace OfficeIMO.Excel {
                 }
                 sheetIndex++;
                 if (sheetElement.Id?.Value is not string relationshipId
-                    || WorkbookPartRoot.GetPartById(relationshipId) is not WorksheetPart worksheetPart
-                    || worksheetPart.Worksheet == null) {
+                    || WorkbookPartRoot.GetPartById(relationshipId) is not WorksheetPart worksheetPart) {
                     continue;
                 }
 
                 bool rewriteUnqualified = ReferenceEquals(worksheetPart, _worksheetPart)
                     || string.Equals(sheetElement.Name?.Value, Name, StringComparison.OrdinalIgnoreCase);
-                var worksheetElements = new List<OpenXmlElement>();
-                foreach (OpenXmlElement element in worksheetPart.Worksheet.Descendants()) {
-                    budget.Consume();
-                    worksheetElements.Add(element);
+                List<OpenXmlElement>? worksheetElements =
+                    LoadWorksheetElementsWithinBudget(worksheetPart, budget);
+                if (worksheetElements == null) {
+                    continue;
+                }
+                var anchoredMetadataFormulaTexts =
+                    new Dictionary<OpenXmlElement, List<string?>>();
+                foreach (OpenXmlElement element in worksheetElements) {
+                    AddAnchoredMetadataFormulaText(
+                        anchoredMetadataFormulaTexts,
+                        element);
                 }
                 ExcelSheet inspectedSheet = ReferenceEquals(worksheetPart, _worksheetPart)
                     ? this
@@ -129,9 +140,13 @@ namespace OfficeIMO.Excel {
                         sheetElement,
                         registerSheetWrapper: false);
                 IReadOnlyDictionary<Cell, (int Row, int Column)> effectiveCoordinates =
-                    inspectedSheet.BuildEffectiveCellCoordinates();
+                    inspectedSheet.BuildEffectiveCellCoordinates(
+                        worksheetElements.OfType<Row>(),
+                        worksheetElements.OfType<Cell>());
                 IReadOnlyDictionary<uint, SharedFormulaDefinition> sharedFormulaDefinitions =
-                    inspectedSheet.BuildSharedFormulaDefinitions(effectiveCoordinates);
+                    inspectedSheet.BuildSharedFormulaDefinitions(
+                        effectiveCoordinates,
+                        worksheetElements.OfType<Cell>());
                 bool isPendingOwner = pendingOwner != null
                     && ReferenceEquals(worksheetPart, pendingOwner._worksheetPart);
                 if (rewriteUnqualified) {
@@ -144,26 +159,32 @@ namespace OfficeIMO.Excel {
                         }
 
                         long coordinate = ((long)effectiveCoordinate.Row << 32) | (uint)effectiveCoordinate.Column;
+                        object? pendingValue = null;
                         bool pendingValueIsAuthoritative = isPendingOwner
-                            && pendingOwnerCells.ContainsKey(coordinate);
+                            && pendingOwnerCells.TryGetValue(coordinate, out pendingValue);
                         if (rewriteUnqualified
                             && targetCellCoordinates.Add(coordinate)
                             && effectiveCoordinate.Row >= firstRow) {
                             cells++;
                         }
 
-                        if (!pendingValueIsAuthoritative
+                        if ((!pendingValueIsAuthoritative || pendingValue is not DirectFormulaCellValue)
                             && cell.CellFormula is CellFormula cellFormula) {
-                            bool formulaImpactRecorded = FormulaChangesForPlan(
-                                    inspectedSheet.ResolveCellFormulaText(
-                                        cell,
-                                        sharedFormulaDefinitions,
-                                        effectiveCoordinates),
-                                    kind,
-                                    firstRow,
-                                    lastRow,
-                                    count,
-                                    rewriteUnqualified);
+                            bool formulaImpactRecorded =
+                                rewriteUnqualified
+                                && kind == ExcelRowMutationKind.Delete
+                                && effectiveCoordinate.Row >= firstRow
+                                && effectiveCoordinate.Row <= lastRow;
+                            formulaImpactRecorded |= FormulaChangesForPlan(
+                                inspectedSheet.ResolveCellFormulaText(
+                                    cell,
+                                    sharedFormulaDefinitions,
+                                    effectiveCoordinates),
+                                kind,
+                                firstRow,
+                                lastRow,
+                                count,
+                                rewriteUnqualified);
                             if (rewriteUnqualified
                                 && cellFormula.FormulaType?.Value != CellFormulaValues.Shared
                                 && ReferenceListChangesForPlan(
@@ -213,7 +234,8 @@ namespace OfficeIMO.Excel {
                             count,
                             rewriteUnqualified)) {
                         formulas++;
-                        if (!rewriteUnqualified) {
+                        if (!rewriteUnqualified
+                            || formula.Parent is X14.SparklineGroup) {
                             ClassifyExternalFormulaPlanImpact(
                                 formula,
                                 externalValidationImpacts,
@@ -282,6 +304,7 @@ namespace OfficeIMO.Excel {
                         int metadataFormulaImpacts =
                             CountAnchoredMetadataFormulaPlanImpacts(
                             element,
+                            anchoredMetadataFormulaTexts,
                             kind,
                             firstRow,
                             lastRow,
@@ -351,11 +374,13 @@ namespace OfficeIMO.Excel {
                         firstRow,
                         lastRow,
                         count,
-                        budget);
+                        budget,
+                        out IReadOnlyList<OpenXmlElement> tableElements);
                     formulas += tableFormulaImpacts;
                     if ((rewriteUnqualified
                             && TableMetadataChangesForPlan(
                                 tablePart.Table,
+                                tableElements,
                                 kind,
                                 firstRow,
                                 lastRow,
@@ -411,8 +436,16 @@ namespace OfficeIMO.Excel {
 
             foreach (PivotTablePart pivotPart in _worksheetPart.PivotTableParts) {
                 budget.Consume();
+                PivotTableDefinition? definition = pivotPart.PivotTableDefinition;
+                if (definition == null) {
+                    continue;
+                }
+                budget.Consume();
+                foreach (OpenXmlElement _ in definition.Descendants()) {
+                    budget.Consume();
+                }
                 if (ReferenceListChangesForPlan(
-                        pivotPart.PivotTableDefinition?.Location?.Reference?.Value,
+                        definition.Location?.Reference?.Value,
                         kind,
                         firstRow,
                         lastRow,
@@ -422,11 +455,22 @@ namespace OfficeIMO.Excel {
             }
             foreach (PivotTableCacheDefinitionPart cachePart in GetWorkbookPivotCacheDefinitionParts()) {
                 budget.Consume();
+                var rangeSets = new List<RangeSet>();
                 foreach (OpenXmlElement _ in cachePart.PivotCacheDefinition?.Descendants()
                     ?? Enumerable.Empty<OpenXmlElement>()) {
                     budget.Consume();
+                    if (_ is RangeSet rangeSet) {
+                        rangeSets.Add(rangeSet);
+                    }
                 }
-                if (PivotSourceChangesForPlan(cachePart, firstRow, lastRow, count, kind)) {
+                if (PivotSourceChangesForPlan(
+                        cachePart,
+                        rangeSets,
+                        firstRow,
+                        lastRow,
+                        count,
+                        kind,
+                        budget)) {
                     pivots++;
                 }
             }
@@ -434,12 +478,14 @@ namespace OfficeIMO.Excel {
             var queryConnectionIds = new HashSet<uint>();
             foreach (QueryTablePart queryPart in _worksheetPart.QueryTableParts) {
                 budget.Consume();
-                foreach (OpenXmlElement _ in queryPart.QueryTable?.Descendants()
+                var queryElements = new List<OpenXmlElement>();
+                foreach (OpenXmlElement element in queryPart.QueryTable?.Descendants()
                     ?? Enumerable.Empty<OpenXmlElement>()) {
                     budget.Consume();
+                    queryElements.Add(element);
                 }
                 queryTableSorts += CountQueryTableSortPlanImpacts(
-                    queryPart.QueryTable,
+                    queryElements,
                     kind,
                     firstRow,
                     lastRow,
@@ -730,10 +776,12 @@ namespace OfficeIMO.Excel {
 
         private bool PivotSourceChangesForPlan(
             PivotTableCacheDefinitionPart cachePart,
+            IReadOnlyList<RangeSet> rangeSets,
             int firstRow,
             int lastRow,
             int count,
-            ExcelRowMutationKind kind) {
+            ExcelRowMutationKind kind,
+            MutationPlanScanBudget budget) {
             WorksheetSource? source = cachePart.PivotCacheDefinition?.CacheSource?.WorksheetSource;
             if (source != null
                 && string.IsNullOrWhiteSpace(source.Id?.Value)
@@ -750,14 +798,20 @@ namespace OfficeIMO.Excel {
             }
 
             if (string.IsNullOrWhiteSpace(source?.Id?.Value)
-                && source?.Name?.Value is string sourceName
-                && IsNamedPivotSourceAffected(sourceName, firstRow)) {
-                return true;
+                && source?.Name?.Value is string sourceName) {
+                foreach (TableDefinitionPart _ in _worksheetPart.TableDefinitionParts) {
+                    budget.Consume();
+                }
+                foreach (DefinedName _ in WorkbookRoot.DefinedNames?.Elements<DefinedName>()
+                    ?? Enumerable.Empty<DefinedName>()) {
+                    budget.Consume();
+                }
+                if (IsNamedPivotSourceAffected(sourceName, firstRow)) {
+                    return true;
+                }
             }
 
-            return cachePart.PivotCacheDefinition?.CacheSource?.Consolidation?.RangeSets?
-                .Elements<RangeSet>()
-                .Any(rangeSet =>
+            return rangeSets.Any(rangeSet =>
                     string.IsNullOrWhiteSpace(rangeSet.Id?.Value)
                     && string.Equals(rangeSet.Sheet?.Value, Name, StringComparison.OrdinalIgnoreCase)
                     && FormulaChangesForPlan(
@@ -766,7 +820,7 @@ namespace OfficeIMO.Excel {
                         firstRow,
                         lastRow,
                         count,
-                        rewriteUnqualifiedReferences: true)) == true;
+                        rewriteUnqualifiedReferences: true));
         }
 
         private void CountDrawingPlanImpacts(
@@ -830,9 +884,15 @@ namespace OfficeIMO.Excel {
                 }
 
                 budget.Consume();
-                bool chartChanges = false;
+                var chartElements = new List<OpenXmlElement>();
                 foreach (OpenXmlElement element in chartRoot.Descendants()) {
                     budget.Consume();
+                    chartElements.Add(element);
+                }
+                ILookup<OpenXmlElement?, OpenXmlElement> chartDirectChildren =
+                    chartElements.ToLookup(element => element.Parent);
+                bool chartChanges = false;
+                foreach (OpenXmlElement element in chartElements) {
                     if (element is OpenXmlLeafTextElement formula
                         && string.Equals(formula.LocalName, "f", StringComparison.Ordinal)) {
                         if (FormulaChangesForPlan(
@@ -845,7 +905,9 @@ namespace OfficeIMO.Excel {
                             formulas++;
                             chartChanges = true;
                         }
-                        if (ChartFormulaCacheWillBeInvalidated(formula)) {
+                        if (ChartFormulaCacheWillBeInvalidated(
+                                formula,
+                                chartDirectChildren)) {
                             chartChanges = true;
                         }
                     }
@@ -1005,6 +1067,51 @@ namespace OfficeIMO.Excel {
             || element is Formula2
             || string.Equals(element.LocalName, "f", StringComparison.Ordinal);
 
+        private static List<OpenXmlElement>? LoadWorksheetElementsWithinBudget(
+            WorksheetPart worksheetPart,
+            MutationPlanScanBudget budget) {
+            if (worksheetPart.IsRootElementLoaded) {
+                Worksheet? loadedWorksheet = worksheetPart.Worksheet;
+                if (loadedWorksheet == null) {
+                    return null;
+                }
+
+                var loadedElements = new List<OpenXmlElement>();
+                foreach (OpenXmlElement element in loadedWorksheet.Descendants()) {
+                    budget.Consume();
+                    loadedElements.Add(element);
+                }
+                return loadedElements;
+            }
+
+            using (Stream stream = worksheetPart.GetStream(FileMode.Open, FileAccess.Read))
+            using (XmlReader reader = XmlReader.Create(
+                stream,
+                new XmlReaderSettings {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    IgnoreComments = true,
+                    IgnoreProcessingInstructions = true,
+                    MaxCharactersInDocument = budget.MaximumCharacters
+                })) {
+                bool rootSeen = false;
+                while (reader.Read()) {
+                    if (reader.NodeType != XmlNodeType.Element) {
+                        continue;
+                    }
+                    if (!rootSeen) {
+                        rootSeen = true;
+                        continue;
+                    }
+
+                    budget.Consume();
+                }
+            }
+
+            Worksheet? worksheet = worksheetPart.Worksheet;
+            return worksheet?.Descendants().ToList();
+        }
+
         private static int CountBounded<T>(
             IEnumerable<T> items,
             MutationPlanScanBudget budget) {
@@ -1028,12 +1135,17 @@ namespace OfficeIMO.Excel {
 
         private sealed class MutationPlanScanBudget {
             private readonly int _maximum;
+            private long _remainingXmlBytes;
 
-            internal MutationPlanScanBudget(int maximum) {
+            internal MutationPlanScanBudget(int maximum, long maximumCharacters) {
                 _maximum = maximum;
+                MaximumCharacters = maximumCharacters;
+                _remainingXmlBytes = maximumCharacters;
             }
 
             internal int Scanned { get; private set; }
+
+            internal long MaximumCharacters { get; }
 
             internal void Consume() {
                 if (Scanned >= _maximum) {
@@ -1043,6 +1155,26 @@ namespace OfficeIMO.Excel {
                 }
 
                 Scanned++;
+            }
+
+            internal int GetBudgetedReadSize(int requestedBytes) {
+                if (requestedBytes < 0) {
+                    throw new ArgumentOutOfRangeException(nameof(requestedBytes));
+                }
+                long probeLimit = _remainingXmlBytes == long.MaxValue
+                    ? long.MaxValue
+                    : _remainingXmlBytes + 1L;
+                long probeSize = Math.Min(requestedBytes, probeLimit);
+                return checked((int)probeSize);
+            }
+
+            internal void ConsumeXmlBytes(int count) {
+                if (count > _remainingXmlBytes) {
+                    throw new InvalidOperationException(
+                        $"Excel mutation impact analysis exceeded its limit of {MaximumCharacters} decompressed XML bytes. " +
+                        "Increase ExcelMutationPlanOptions.MaximumScannedCharacters explicitly for this workbook.");
+                }
+                _remainingXmlBytes -= count;
             }
         }
     }

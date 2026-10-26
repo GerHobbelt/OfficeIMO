@@ -65,7 +65,7 @@ namespace OfficeIMO.Excel.Xlsb.Read {
             ValidateReadableOrdinal(ordinal);
             return _kinds[ordinal] == XlsbTabularValueKind.Empty
                    || _kinds[ordinal] == XlsbTabularValueKind.Custom
-                   && _customValues[ordinal] == null;
+                   && IsMissingCustomValue(_customValues[ordinal]);
         }
 
         public override string GetString(int ordinal) {
@@ -75,7 +75,7 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                 XlsbTabularValueKind.Number => _numbers[ordinal].ToString("R", _options.Culture),
                 XlsbTabularValueKind.Boolean => _booleans[ordinal].ToString(),
                 XlsbTabularValueKind.Date => ConvertDate(_numbers[ordinal]).ToString(_options.Culture),
-                XlsbTabularValueKind.Custom when _customValues[ordinal] != null =>
+                XlsbTabularValueKind.Custom when !IsMissingCustomValue(_customValues[ordinal]) =>
                     Convert.ToString(_customValues[ordinal], _options.Culture)
                     ?? string.Empty,
                 _ => throw new InvalidCastException("The XLSB cell is blank.")
@@ -93,49 +93,49 @@ namespace OfficeIMO.Excel.Xlsb.Read {
 
         public override byte GetByte(int ordinal) {
             ValidateReadableOrdinal(ordinal);
-            return _kinds[ordinal] == XlsbTabularValueKind.Number
+            return IsNumericValueKind(_kinds[ordinal])
                 ? Convert.ToByte(_numbers[ordinal])
                 : Convert.ToByte(GetValue(ordinal), _options.Culture);
         }
 
         public override short GetInt16(int ordinal) {
             ValidateReadableOrdinal(ordinal);
-            return _kinds[ordinal] == XlsbTabularValueKind.Number
+            return IsNumericValueKind(_kinds[ordinal])
                 ? Convert.ToInt16(_numbers[ordinal])
                 : Convert.ToInt16(GetValue(ordinal), _options.Culture);
         }
 
         public override int GetInt32(int ordinal) {
             ValidateReadableOrdinal(ordinal);
-            return _kinds[ordinal] == XlsbTabularValueKind.Number
+            return IsNumericValueKind(_kinds[ordinal])
                 ? Convert.ToInt32(_numbers[ordinal])
                 : Convert.ToInt32(GetValue(ordinal), _options.Culture);
         }
 
         public override long GetInt64(int ordinal) {
             ValidateReadableOrdinal(ordinal);
-            return _kinds[ordinal] == XlsbTabularValueKind.Number
+            return IsNumericValueKind(_kinds[ordinal])
                 ? Convert.ToInt64(_numbers[ordinal])
                 : Convert.ToInt64(GetValue(ordinal), _options.Culture);
         }
 
         public override float GetFloat(int ordinal) {
             ValidateReadableOrdinal(ordinal);
-            return _kinds[ordinal] == XlsbTabularValueKind.Number
+            return IsNumericValueKind(_kinds[ordinal])
                 ? (float)_numbers[ordinal]
                 : Convert.ToSingle(GetValue(ordinal), _options.Culture);
         }
 
         public override double GetDouble(int ordinal) {
             ValidateReadableOrdinal(ordinal);
-            return _kinds[ordinal] == XlsbTabularValueKind.Number
+            return IsNumericValueKind(_kinds[ordinal])
                 ? _numbers[ordinal]
                 : Convert.ToDouble(GetValue(ordinal), _options.Culture);
         }
 
         public override decimal GetDecimal(int ordinal) {
             ValidateReadableOrdinal(ordinal);
-            return _kinds[ordinal] == XlsbTabularValueKind.Number
+            return IsNumericValueKind(_kinds[ordinal])
                 ? ConvertExcelNumberToDecimal(_numbers[ordinal])
                 : Convert.ToDecimal(GetValue(ordinal), _options.Culture);
         }
@@ -151,6 +151,10 @@ namespace OfficeIMO.Excel.Xlsb.Read {
             object value = GetValue(ordinal);
             return value is Guid guid ? guid : Guid.Parse(Convert.ToString(value, _options.Culture)!);
         }
+
+        private static bool IsNumericValueKind(XlsbTabularValueKind kind) =>
+            kind == XlsbTabularValueKind.Number
+            || kind == XlsbTabularValueKind.Date;
 
         public override char GetChar(int ordinal) => Convert.ToChar(GetValue(ordinal), _options.Culture);
 

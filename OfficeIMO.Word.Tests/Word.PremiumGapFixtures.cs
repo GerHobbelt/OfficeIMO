@@ -88,22 +88,32 @@ namespace OfficeIMO.Tests {
             }
 
             string repositoryRoot = LocateRepositoryRootForPremiumGapTests();
-            string planPath = Path.Combine(repositoryRoot, "Docs", "officeimo.word-premium-gap-plan.md");
-            string plan = File.ReadAllText(planPath);
-            Assert.Contains("OfficeIMO.TestAssets/Documents/Word/PremiumGaps/premium-gap-fixtures.xml", plan, StringComparison.Ordinal);
-            Assert.Contains("officeimo.word-template-mail-merge-scenarios.md", plan, StringComparison.Ordinal);
-            Assert.DoesNotContain("Docs/reviews/officeimo.word-review", plan, StringComparison.OrdinalIgnoreCase);
+            string roadmapPath = Path.Combine(repositoryRoot, "Docs", "ROADMAP.md");
+            string roadmap = File.ReadAllText(roadmapPath);
+            Assert.Contains("## Word", roadmap, StringComparison.Ordinal);
+            Assert.DoesNotContain("VBA macro-project signing", roadmap, StringComparison.Ordinal);
+            Assert.Contains("advanced drawing, imported chart mutation, SmartArt editing", roadmap, StringComparison.Ordinal);
+            Assert.Contains("effective-formatting and true move semantics", roadmap, StringComparison.Ordinal);
+            Assert.Contains("aggregate budgets for supported non-image resources", roadmap, StringComparison.Ordinal);
 
-            string capabilityAssessmentPath = Path.Combine(repositoryRoot, "Docs", "officeimo.word-excel-capability-assessment.md");
-            string capabilityAssessment = File.ReadAllText(capabilityAssessmentPath);
-            Assert.Contains("Docs/officeimo.word-premium-gap-plan.md", capabilityAssessment, StringComparison.Ordinal);
-            Assert.Contains("Website/content/docs/word/market-readiness/index.md", capabilityAssessment, StringComparison.Ordinal);
-            Assert.DoesNotContain("Docs/reviews/officeimo.word-review", capabilityAssessment, StringComparison.OrdinalIgnoreCase);
+            string compatibilityPath = Path.Combine(repositoryRoot, "OfficeIMO.Word", "COMPATIBILITY.md");
+            string compatibility = File.ReadAllText(compatibilityPath);
+            Assert.Contains("Cross-platform OPC XML-signature creation", compatibility, StringComparison.Ordinal);
+            Assert.Contains("relationship-transform", compatibility, StringComparison.Ordinal);
+            Assert.Contains("RFC 3161", compatibility, StringComparison.Ordinal);
+            Assert.Contains("VBA macro-project signatures", compatibility, StringComparison.Ordinal);
+            Assert.Contains("SignMacroProject", compatibility, StringComparison.Ordinal);
+            Assert.Contains("stable limitation codes", compatibility, StringComparison.Ordinal);
+            Assert.Contains("WordPageNumberBasis.ExplicitBreakEstimate", compatibility, StringComparison.Ordinal);
 
-            string reviewsPath = Path.Combine(repositoryRoot, "Docs", "reviews");
-            if (Directory.Exists(reviewsPath)) {
-                Assert.Empty(Directory.EnumerateFiles(reviewsPath, "officeimo.word-review-*.md"));
-            }
+            string fixtureManifestPath = Path.Combine(
+                repositoryRoot,
+                "OfficeIMO.TestAssets",
+                "Documents",
+                "Word",
+                "PremiumGaps",
+                "premium-gap-fixtures.xml");
+            Assert.True(File.Exists(fixtureManifestPath), $"Missing premium-gap fixture manifest: {fixtureManifestPath}");
 
             string matrixPath = Path.Combine(repositoryRoot, "Docs", "officeimo.word-template-mail-merge-scenarios.md");
             Assert.True(File.Exists(matrixPath), $"Missing template/mail-merge scenario matrix: {matrixPath}");
@@ -140,6 +150,11 @@ namespace OfficeIMO.Tests {
 
             Assert.Contains("--word-mail-merge-workflows", matrix, StringComparison.Ordinal);
             Assert.Contains("WordMailMerge.PreflightTemplate", matrix, StringComparison.Ordinal);
+            Assert.Contains("Word-native record controls", matrix, StringComparison.Ordinal);
+            Assert.Contains("`NEXT`, `NEXTIF`, `SKIPIF`, `MERGEREC`, and `MERGESEQ`", matrix, StringComparison.Ordinal);
+            Assert.Contains("`UnsupportedMailMergeControlField`", matrix, StringComparison.Ordinal);
+            Assert.Contains("`CanBindTemplate` to `false`", matrix, StringComparison.Ordinal);
+            Assert.Contains("Test_MailMerge_PreflightTemplateReportsUnsupportedWordNativeRecordControlFields", matrix, StringComparison.Ordinal);
 
             Assert.Contains("unknown-document-feature-preflight", manifest.ToString(SaveOptions.DisableFormatting), StringComparison.Ordinal);
             Assert.Contains("feature-report.md", manifest.ToString(SaveOptions.DisableFormatting), StringComparison.Ordinal);

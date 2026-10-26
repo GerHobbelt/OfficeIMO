@@ -1,5 +1,6 @@
 using AngleSharp.Dom;
 using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Html;
 using OfficeIMO.Word;
@@ -8,10 +9,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace OfficeIMO.Tests {
-    public class HtmlWordToHtml {
+    public partial class HtmlWordToHtml {
         [Fact]
         public void Test_WordToHtml_ExposesSharedTextResultContract() {
             using var doc = WordDocument.Create();
@@ -20,7 +22,242 @@ namespace OfficeIMO.Tests {
             HtmlTextConversionResult result = doc.ToHtmlResult();
 
             Assert.True(result.Succeeded);
+            Assert.False(result.HasLoss);
             Assert.Contains("Result contract", result.RequireValue(), StringComparison.Ordinal);
+            Assert.Equal(result.Value, result.RequireNoLoss());
+        }
+
+        [Fact]
+        public void Test_WordToHtml_ResultReportsFlattenedAndOmittedWordSemantics() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Tracked ").AddInsertedText("text", "Reviewer");
+            doc.AddParagraph("Comment target").AddComment("Reviewer", "R", "Review note");
+            doc.AddParagraph("Author: ").AddField(WordFieldType.Author);
+
+            HtmlTextConversionResult result = doc.ToHtmlResult();
+
+            Assert.True(result.Succeeded);
+            Assert.True(result.HasLoss);
+            Assert.Contains(result.Report.Diagnostics, diagnostic =>
+                diagnostic.Code == "TrackedRevisionTextOmitted" &&
+                diagnostic.LossKind == HtmlConversionLossKind.Omission);
+            Assert.Contains(result.Report.Diagnostics, diagnostic => diagnostic.Code == "CommentsOmitted");
+            Assert.Contains(result.Report.Diagnostics, diagnostic => diagnostic.Code == "FieldInstructionsFlattened");
+        }
+
+        [Fact]
+        public async Task Test_WordToHtml_ReusedOptionsKeepConcurrentDiagnosticsIsolated() {
+            using var documentWithHeader = WordDocument.Create();
+            documentWithHeader.AddParagraph("Header document body");
+            documentWithHeader.Sections[0].GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Omitted header");
+            using var plainDocument = WordDocument.Create();
+            plainDocument.AddParagraph("Plain document body");
+            var options = new WordToHtmlOptions();
+
+            for (int i = 0; i < 20; i++) {
+                Task<HtmlTextConversionResult> withHeader = Task.Run(() => documentWithHeader.ToHtmlResult(options));
+                Task<HtmlTextConversionResult> plain = Task.Run(() => plainDocument.ToHtmlResult(options));
+                HtmlTextConversionResult[] results = await Task.WhenAll(withHeader, plain);
+
+                Assert.Contains(results[0].Report.Diagnostics, diagnostic => diagnostic.Code == "HeadersFootersOmitted");
+                Assert.DoesNotContain(results[1].Report.Diagnostics, diagnostic => diagnostic.Code == "HeadersFootersOmitted");
+                Assert.False(results[1].HasLoss);
+            }
+        }
+
+        [Fact]
+        public void Test_WordToHtml_EnforcesOutputCharacterBudget() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Budgeted output");
+            var options = new WordToHtmlOptions { MaxOutputCharacters = 10 };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
+            Assert.Equal(10, exception.Limit);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_EnforcesImageBudgetBeforeMaterializingImage() {
+            using var doc = WordDocument.Create();
+            string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+            doc.AddParagraph().AddImage(assetPath, 20, 20);
+            var options = new WordToHtmlOptions { MaxEmbeddedImageBytes = 1 };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordImageSizeLimitExceeded", exception.Code);
+            Assert.Equal(1, exception.Limit);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_RejectsBase64ImageBeforeBuildingAnOversizedDataUri() {
+            using var doc = WordDocument.Create();
+            string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+            doc.AddParagraph().AddImage(assetPath, 20, 20);
+            var options = new WordToHtmlOptions { MaxOutputCharacters = 4096 };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
+            Assert.Contains("OfficeIMO.png", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+            Assert.True(exception.Actual > exception.Limit);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_Base64ImageBudgetIncludesExistingMarkup() {
+            using var doc = WordDocument.Create();
+            string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+            doc.AddParagraph(new string('x', 2048));
+            doc.AddParagraph().AddImage(assetPath, 20, 20);
+            long imageBytes = new FileInfo(assetPath).Length;
+            long imageDataUriCharacters = "data:image/png;base64,".Length + ((imageBytes + 2L) / 3L) * 4L;
+            var options = new WordToHtmlOptions { MaxOutputCharacters = imageDataUriCharacters + 100L };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
+            Assert.Contains("OfficeIMO.png", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+            Assert.True(exception.Actual > imageDataUriCharacters);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_Base64ImageBudgetAccumulatesWithoutReserializingTheDocument() {
+            using var doc = WordDocument.Create();
+            string assetPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "OfficeIMO.png");
+            doc.AddParagraph().AddImage(assetPath, 20, 20);
+            doc.AddParagraph().AddImage(assetPath, 20, 20);
+            long imageBytes = new FileInfo(assetPath).Length;
+            long imageDataUriCharacters = "data:image/png;base64,".Length + ((imageBytes + 2L) / 3L) * 4L;
+            var options = new WordToHtmlOptions { MaxOutputCharacters = imageDataUriCharacters * 2L };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
+            Assert.Contains("OfficeIMO.png", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+            Assert.True(exception.Actual > imageDataUriCharacters * 2L);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_PlainParagraphHonorsRequestedRunFontStyles() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Plain font contract");
+
+            string html = doc.ToHtml(new WordToHtmlOptions {
+                FontFamily = "OfficeIMO Contract Font",
+                IncludeFontStyles = true
+            });
+
+            Assert.Contains("<span style=\"font-family:&quot;OfficeIMO Contract Font&quot;\">Plain font contract</span>", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_RejectsInlineSvgDocumentBeforeParsingPastOutputBudget() {
+            using var doc = WordDocument.Create();
+            string assetPath = Path.Combine(AppContext.BaseDirectory, "Images", "Sample.svg");
+            doc.AddParagraph(new string('x', 32));
+            doc.AddParagraph().AddImage(assetPath, 20, 20);
+            var options = new WordToHtmlOptions { MaxOutputCharacters = new FileInfo(assetPath).Length };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
+            Assert.Contains("document.xml", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+            Assert.True(exception.Actual > exception.Limit);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_RejectsLargeTextBeforeConstructingHtmlDom() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph(new string('x', 8192));
+            var options = new WordToHtmlOptions { MaxOutputCharacters = 256 };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
+            Assert.Contains("document.xml", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+            Assert.True(exception.Actual > exception.Limit);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_DocumentElementBudgetIncludesCommentsPart() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Small visible body");
+            MainDocumentPart mainPart = doc._wordprocessingDocument.MainDocumentPart!;
+            WordprocessingCommentsPart commentsPart = mainPart.WordprocessingCommentsPart
+                ?? mainPart.AddNewPart<WordprocessingCommentsPart>();
+            commentsPart.Comments = new Comments();
+            for (int i = 0; i < 32; i++) {
+                commentsPart.Comments.Append(new Comment(
+                    new Paragraph(new Run(new Text("Budget comment " + i)))) {
+                    Id = i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Author = "Reviewer"
+                });
+            }
+            var options = new WordToHtmlOptions { MaxDocumentElements = 100 };
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => doc.ToHtmlResult(options));
+
+            Assert.Equal("WordElementLimitExceeded", exception.Code);
+            Assert.Contains("comments.xml", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_DocumentElementBudgetIncludesExportedCustomProperties() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Small visible body");
+            CustomFilePropertiesPart sourceCustomPart = doc._wordprocessingDocument.AddCustomFilePropertiesPart();
+            sourceCustomPart.Properties = new DocumentFormat.OpenXml.CustomProperties.Properties();
+            for (int i = 0; i < 200; i++) {
+                sourceCustomPart.Properties.Append(new DocumentFormat.OpenXml.CustomProperties.CustomDocumentProperty(
+                    new DocumentFormat.OpenXml.VariantTypes.VTLPWSTR("Value" + i)) {
+                    FormatId = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}",
+                    PropertyId = i + 2,
+                    Name = "BudgetProperty" + i
+                });
+            }
+            sourceCustomPart.Properties.Save();
+            var options = new WordToHtmlOptions {
+                IncludeCustomProperties = true,
+                MaxDocumentElements = 100
+            };
+            using MemoryStream package = doc.ToStream();
+            using WordDocument loaded = WordDocument.Load(package);
+            CustomFilePropertiesPart customPart = Assert.IsType<CustomFilePropertiesPart>(loaded._wordprocessingDocument.CustomFilePropertiesPart);
+            Assert.True(customPart.Properties!.Descendants().Count() > 100);
+
+            HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() => loaded.ToHtmlResult(options));
+
+            Assert.Equal("WordElementLimitExceeded", exception.Code);
+            Assert.Contains("custom.xml", exception.LimitSource, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Test_WordToHtml_ReportsSingleLandscapeSectionGeometryWhenMetadataIsDisabled() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Landscape content");
+            doc.Sections[0].PageOrientation = PageOrientationValues.Landscape;
+
+            HtmlTextConversionResult result = doc.ToHtmlResult();
+
+            Assert.Contains(result.Report.Diagnostics, diagnostic =>
+                diagnostic.Code == "SectionLayoutFlattened" &&
+                diagnostic.LossKind == HtmlConversionLossKind.Approximation);
+            Assert.Throws<HtmlConversionException>(() => result.RequireNoLoss());
+        }
+
+        [Fact]
+        public void Test_WordToHtml_ReportsApplicationOnlySignatureMetadataAsOmitted() {
+            using var doc = WordDocument.Create();
+            doc.AddParagraph("Application signature metadata only");
+            doc.ApplicationProperties.DigitalSignature = new DocumentFormat.OpenXml.ExtendedProperties.DigitalSignature();
+
+            HtmlTextConversionResult result = doc.ToHtmlResult();
+
+            Assert.Contains(result.Report.Diagnostics, diagnostic =>
+                diagnostic.Code == "PackageSignaturesOmitted" &&
+                diagnostic.LossKind == HtmlConversionLossKind.Omission);
+            Assert.Throws<HtmlConversionException>(() => result.RequireNoLoss());
         }
 
         [Fact]

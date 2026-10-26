@@ -55,7 +55,8 @@ public sealed partial class PdfOptions {
     private bool _hasExplicitDefaultFont;
     private bool _hasExplicitHeaderFont;
     private bool _hasExplicitFooterFont;
-    private long _fontConfigurationVersion;
+    private long _fontConfigurationAssignmentVersion;
+    private long _defaultFontSizeAssignmentVersion;
     private int _pageNumberStart = 1;
     private bool _hasExplicitPageNumberStart;
     private PdfPageNumberStyle _pageNumberStyle = PdfPageNumberStyle.Arabic;
@@ -121,11 +122,18 @@ public sealed partial class PdfOptions {
     private System.Collections.Generic.List<PdfEmbeddedFile>? _embeddedFiles;
     private PdfPortfolioOptions? _portfolio;
 
-    internal long FontConfigurationVersion => _fontConfigurationVersion;
+    internal long FontConfigurationAssignmentVersion => _fontConfigurationAssignmentVersion;
+    internal long DefaultFontSizeAssignmentVersion => _defaultFontSizeAssignmentVersion;
 
-    private void MarkFontConfigurationChanged() {
+    private void MarkFontConfigurationAssigned() {
         unchecked {
-            _fontConfigurationVersion++;
+            _fontConfigurationAssignmentVersion++;
+        }
+    }
+
+    private void MarkDefaultFontSizeAssigned() {
+        unchecked {
+            _defaultFontSizeAssignmentVersion++;
         }
     }
 }

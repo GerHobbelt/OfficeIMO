@@ -88,26 +88,37 @@ namespace OfficeIMO.Excel {
                 options);
         }
 
-        private static void ValidateLegacyFormulaProjection(
+        internal static void ValidateLegacyFormulaProjection(
             LegacyXlsWorkbook workbook,
             ExcelReadOptions options) {
             if (options.UseCachedFormulaResult) {
                 return;
             }
 
+            options.CancellationToken.ThrowIfCancellationRequested();
             foreach (LegacyXlsWorksheet worksheet in workbook.Worksheets) {
-                LegacyXlsCell? unprojectable = worksheet.Cells.FirstOrDefault(cell =>
-                    cell.IsFormula &&
-                    (string.IsNullOrWhiteSpace(cell.FormulaText) ||
-                     !LegacyXlsWorkbookProjector.ShouldProjectFormula(workbook, cell.FormulaText!)));
-                if (unprojectable == null) {
+                options.CancellationToken.ThrowIfCancellationRequested();
+                if (!string.IsNullOrWhiteSpace(options.SheetName)
+                    && !string.Equals(
+                        worksheet.Name,
+                        options.SheetName,
+                        StringComparison.OrdinalIgnoreCase)) {
                     continue;
                 }
 
-                string reference = A1.CellReference(unprojectable.Row, unprojectable.Column);
-                throw new NotSupportedException(
-                    $"Legacy XLS formula text cannot be projected for '{worksheet.Name}'!{reference}. " +
-                    "UseCachedFormulaResult=false cannot return the cached value as ordinary data.");
+                foreach (LegacyXlsCell cell in worksheet.Cells) {
+                    options.CancellationToken.ThrowIfCancellationRequested();
+                    if (!cell.IsFormula
+                        || (!string.IsNullOrWhiteSpace(cell.FormulaText)
+                            && LegacyXlsWorkbookProjector.ShouldProjectFormula(workbook, cell.FormulaText!))) {
+                        continue;
+                    }
+
+                    string reference = A1.CellReference(cell.Row, cell.Column);
+                    throw new NotSupportedException(
+                        $"Legacy XLS formula text cannot be projected for '{worksheet.Name}'!{reference}. " +
+                        "UseCachedFormulaResult=false cannot return the cached value as ordinary data.");
+                }
             }
         }
 
@@ -143,19 +154,29 @@ namespace OfficeIMO.Excel {
                 ? owner
                 : new CompositeOwner(owner, additionalOwner);
             try {
-                IReadOnlyList<string> sheets = SelectSheets(owner.GetSheetNames(), options.SheetName);
+                IReadOnlyList<string> availableSheets = owner.GetValidatedWorksheetNames();
+                ValidateUniqueSheetNames(availableSheets, options.CancellationToken);
+                IReadOnlyList<string> sheets = SelectSheets(availableSheets, options.SheetName);
                 return new ExcelWorkbookDataReader(
                     sheets,
-                    index => (DbDataReader)owner.GetSheet(sheets[index]).ReadUsedRangeAsDataReader(
-                        headersInFirstRow: options.HasHeaderRow,
-                        schemaSampleRows: options.InferSchema ? options.SchemaSampleRows : 0,
-                        ct: options.CancellationToken),
+                    index => OpenOpenXmlSheet(owner, sheets[index], options),
                     lifetime,
                     options.Culture);
             } catch {
                 lifetime.Dispose();
                 throw;
             }
+        }
+
+        private static DbDataReader OpenOpenXmlSheet(
+            ExcelDocumentReader owner,
+            string sheetName,
+            ExcelReadOptions options) {
+            ExcelSheetReader sheet = owner.GetSheet(sheetName);
+            return (DbDataReader)sheet.ReadUsedRangeAsDataReader(
+                headersInFirstRow: options.HasHeaderRow,
+                schemaSampleRows: options.InferSchema ? options.SchemaSampleRows : 0,
+                ct: options.CancellationToken);
         }
 
         private static ExcelWorkbookDataReader CreateBinary(
@@ -175,6 +196,19 @@ namespace OfficeIMO.Excel {
             } catch {
                 owner.Dispose();
                 throw;
+            }
+        }
+
+        private static void ValidateUniqueSheetNames(
+            IReadOnlyList<string> sheetNames,
+            CancellationToken cancellationToken) {
+            var uniqueNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string sheetName in sheetNames) {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!uniqueNames.Add(sheetName)) {
+                    throw new InvalidDataException(
+                        $"The workbook contains duplicate worksheet name '{sheetName}' under case-insensitive matching.");
+                }
             }
         }
 
@@ -201,9 +235,29 @@ namespace OfficeIMO.Excel {
             }
 
             _current.Dispose();
-            _sheetIndex++;
-            _current = _openSheet(_sheetIndex);
+            int nextSheetIndex = _sheetIndex + 1;
+            try {
+                _current = _openSheet(nextSheetIndex);
+            } catch {
+                CloseAfterSheetOpenFailure();
+                throw;
+            }
+            _sheetIndex = nextSheetIndex;
             return true;
+        }
+
+        private void CloseAfterSheetOpenFailure() {
+            _closed = true;
+            try {
+                _current.Dispose();
+            } catch {
+                // Preserve the worksheet-open failure while attempting complete cleanup.
+            }
+            try {
+                _owner.Dispose();
+            } catch {
+                // Preserve the worksheet-open failure while attempting complete cleanup.
+            }
         }
 
         public override void Close() {

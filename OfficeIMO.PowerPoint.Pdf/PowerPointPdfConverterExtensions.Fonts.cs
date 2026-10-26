@@ -283,6 +283,10 @@ public static partial class PowerPointPdfConverterExtensions {
         int slideNumber,
         bool reportSubstitution = true) {
         if (PdfCore.PdfOptions.TryAddOfficeFontFamilyKey(familyName, registeredFamilies, normalizeKey: null, out string trimmedFamilyName)) {
+            if (pdfOptions.HasRenderingProfileFamilyPlanner(trimmedFamilyName)) {
+                return;
+            }
+
             if (pdfOptions.TryResolveFontFamilySubstitution(
                     trimmedFamilyName,
                     out PdfCore.PdfFontFamilySubstitution? substitution) &&

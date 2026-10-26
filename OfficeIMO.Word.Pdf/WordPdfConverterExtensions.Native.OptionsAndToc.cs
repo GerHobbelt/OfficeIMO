@@ -21,7 +21,9 @@ namespace OfficeIMO.Word.Pdf {
             NativeDocumentDefaults defaults = GetNativeDocumentDefaults(document);
             bool hasConfiguredPdfOptions =
                 options?.HasExplicitPdfFontConfiguration == true;
-            if (!hasConfiguredPdfOptions) {
+            bool hasConfiguredDefaultFontSize =
+                options?.HasExplicitPdfDefaultFontSizeConfiguration == true;
+            if (!hasConfiguredDefaultFontSize) {
                 pdfOptions.DefaultFontSize = defaults.FontSize;
             }
             if ((string.IsNullOrWhiteSpace(pdfOptions.Language) ||
@@ -397,6 +399,11 @@ namespace OfficeIMO.Word.Pdf {
 
         private static void RegisterNativeFontCandidate(string? familyName, PdfCore.PdfOptions pdfOptions, HashSet<string> registeredFamilies, HashSet<PdfCore.PdfStandardFont> registeredFontSlots, bool allowSystemFontEmbedding, NativeFontMap nativeFontMap) {
             if (!PdfCore.PdfOptions.TryAddOfficeFontFamilyKey(familyName, registeredFamilies, NormalizeNativeFontFamily, out string trimmedFamilyName)) {
+                return;
+            }
+
+            if (pdfOptions.HasRenderingProfileFamilyPlanner(trimmedFamilyName)) {
+                nativeFontMap.RegisterNamed(trimmedFamilyName, trimmedFamilyName);
                 return;
             }
 

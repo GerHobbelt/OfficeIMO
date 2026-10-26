@@ -101,9 +101,16 @@ namespace OfficeIMO.Excel {
                         firstColumn,
                         fieldCount);
                     buffer = null;
-                    if (!candidate.TryIndexRows(firstRow, lastRow)) {
+                    try {
+                        if (!candidate.TryIndexRows(firstRow, lastRow)) {
+                            candidate.Dispose();
+                            return false;
+                        }
+
+                        candidate.ValidateBufferedWorksheetXml(ct);
+                    } catch {
                         candidate.Dispose();
-                        return false;
+                        throw;
                     }
 
                     source = candidate;
@@ -152,6 +159,7 @@ namespace OfficeIMO.Excel {
                 out DateTime dateTimeValue,
                 out bool booleanValue,
                 out bool isFormulaText,
+                out bool deferObjectMaterialization,
                 out object? objectValue) {
                 EnsureNotDisposed();
                 primitiveKind = XmlDataReaderPrimitiveKind.None;
@@ -159,6 +167,7 @@ namespace OfficeIMO.Excel {
                 dateTimeValue = default;
                 booleanValue = false;
                 isFormulaText = false;
+                deferObjectMaterialization = false;
                 objectValue = null;
 
                 int cellIndex = _currentRowOffset + ordinal;
@@ -221,6 +230,9 @@ namespace OfficeIMO.Excel {
                         objectValue = DecodeString(start, length);
                         return;
                     case Utf8CellKind.Number:
+                        deferObjectMaterialization =
+                            targetKind == XmlDataReaderTargetKind.Numeric
+                            && IsDateStyle(_styleIndexes![cellIndex]);
                         ReadNumberValue(cellIndex, value, targetKind, out primitiveKind, out doubleValue, out dateTimeValue, out objectValue);
                         return;
                     default:
@@ -397,59 +409,30 @@ namespace OfficeIMO.Excel {
                         _styleIndexes![cellIndex] = styleIndex;
                     }
 
-                    if (!tag.IsEmpty && !TryIndexCell(ref position, cellIndex, kind)) {
-                        return false;
-                    }
-                }
-
-                return false;
-            }
-
-            private bool TryIndexCell(ref int position, int cellIndex, Utf8CellKind kind) {
-                while (TryReadNextTag(ref position, _length, out Utf8Tag tag)) {
-                    if (tag.IsEnd && LocalNameEquals(tag, "c")) {
-                        return true;
-                    }
-
-                    if (!tag.IsEnd && kind == Utf8CellKind.InlineString && LocalNameEquals(tag, "is")) {
-                        return TryIndexSimpleInlineStringCell(ref position, tag, cellIndex);
-                    }
-
-                    if (tag.IsEnd || (!LocalNameEquals(tag, "v") && !LocalNameEquals(tag, "f"))) {
+                    bool sharedFormulaFollower = false;
+                    bool hasCachedValue = false;
+                    int valueStart = -1;
+                    int valueLength = -1;
+                    if (!tag.IsEmpty && !TryIndexCell(
+                            ref position,
+                            cellIndex,
+                            kind,
+                            out sharedFormulaFollower,
+                            out hasCachedValue,
+                            out valueStart,
+                            out valueLength)) {
                         return false;
                     }
 
-                    if (tag.IsEmpty) {
-                        if (cellIndex >= 0) {
-                            if (LocalNameEquals(tag, "v")) {
-                                _valueStarts![cellIndex] = tag.End;
-                                _valueLengths![cellIndex] = 0;
-                            } else {
-                                _formulaStarts![cellIndex] = tag.End;
-                                _formulaLengths![cellIndex] = 0;
-                            }
-                        }
-                        continue;
-                    }
-
-                    if (!TryReadNextTag(ref position, _length, out Utf8Tag endTag)
-                        || !endTag.IsEnd
-                        || !LocalNamesEqual(tag, endTag)
-                        || ContainsByte(tag.End + 1, endTag.Start, (byte)'<')) {
-                        return false;
-                    }
-
-                    if (cellIndex >= 0) {
-                        int contentStart = tag.End + 1;
-                        int contentLength = Math.Max(0, endTag.Start - contentStart);
-                        if (LocalNameEquals(tag, "v")) {
-                            _valueStarts![cellIndex] = contentStart;
-                            _valueLengths![cellIndex] = contentLength;
-                        } else {
-                            _formulaStarts![cellIndex] = contentStart;
-                            _formulaLengths![cellIndex] = contentLength;
-                        }
-                    }
+                    ValidateIndexedCell(
+                        rowIndex,
+                        columnIndex,
+                        kind,
+                        styleIndex,
+                        sharedFormulaFollower,
+                        hasCachedValue,
+                        valueStart,
+                        valueLength);
                 }
 
                 return false;
@@ -524,10 +507,7 @@ namespace OfficeIMO.Excel {
                 dateTimeValue = default;
                 objectValue = null;
                 ReadOnlySpan<byte> trimmed = TrimAsciiWhitespace(value);
-                bool dateStyle = (targetKind == XmlDataReaderTargetKind.None
-                        || targetKind == XmlDataReaderTargetKind.DateTime
-                        || targetKind == XmlDataReaderTargetKind.String)
-                    && IsDateStyle(_styleIndexes![ordinal]);
+                bool dateStyle = IsDateStyle(_styleIndexes![ordinal]);
                 if (targetKind == XmlDataReaderTargetKind.String) {
                     if (dateStyle && TryParseDouble(trimmed, out double serialDate)) {
                         objectValue = _owner.FromExcelSerialDate(serialDate).ToString(_options.Culture);
@@ -539,7 +519,8 @@ namespace OfficeIMO.Excel {
                 }
 
                 if (TryParseDouble(trimmed, out double number)) {
-                    if (dateStyle) {
+                    if (dateStyle
+                        && targetKind != XmlDataReaderTargetKind.Numeric) {
                         DateTime date = _owner.FromExcelSerialDate(number);
                         if (targetKind == XmlDataReaderTargetKind.DateTime) {
                             primitiveKind = XmlDataReaderPrimitiveKind.DateTime;
@@ -551,14 +532,14 @@ namespace OfficeIMO.Excel {
                         return;
                     }
 
-                    if (!_options.NumericAsDecimal) {
-                        if (targetKind == XmlDataReaderTargetKind.Int32 || targetKind == XmlDataReaderTargetKind.Double) {
-                            primitiveKind = XmlDataReaderPrimitiveKind.Double;
-                            doubleValue = number;
-                        } else {
-                            objectValue = number;
-                        }
+                    if (targetKind == XmlDataReaderTargetKind.Numeric) {
+                        primitiveKind = XmlDataReaderPrimitiveKind.Double;
+                        doubleValue = number;
+                        return;
+                    }
 
+                    if (!_options.NumericAsDecimal) {
+                        objectValue = number;
                         return;
                     }
 
@@ -597,7 +578,9 @@ namespace OfficeIMO.Excel {
                 bool parsedNumber = double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, _options.Culture, out double number)
                     || TryParseInvariantDoubleFast(value, out number)
                     || double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out number);
-                if (parsedNumber && dateStyle) {
+                if (parsedNumber
+                    && dateStyle
+                    && targetKind != XmlDataReaderTargetKind.Numeric) {
                     DateTime date = _owner.FromExcelSerialDate(number);
                     if (targetKind == XmlDataReaderTargetKind.DateTime) {
                         primitiveKind = XmlDataReaderPrimitiveKind.DateTime;
@@ -609,14 +592,15 @@ namespace OfficeIMO.Excel {
                     return;
                 }
 
-                if (!_options.NumericAsDecimal && parsedNumber) {
-                    if (targetKind == XmlDataReaderTargetKind.Int32 || targetKind == XmlDataReaderTargetKind.Double) {
-                        primitiveKind = XmlDataReaderPrimitiveKind.Double;
-                        doubleValue = number;
-                    } else {
-                        objectValue = number;
-                    }
+                if (parsedNumber
+                    && targetKind == XmlDataReaderTargetKind.Numeric) {
+                    primitiveKind = XmlDataReaderPrimitiveKind.Double;
+                    doubleValue = number;
+                    return;
+                }
 
+                if (!_options.NumericAsDecimal && parsedNumber) {
+                    objectValue = number;
                     return;
                 }
 
