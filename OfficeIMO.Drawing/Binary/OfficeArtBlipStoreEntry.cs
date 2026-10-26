@@ -12,7 +12,8 @@ public sealed class OfficeArtBlipStoreEntry {
         string uidHex, ushort tag, uint sizeBytes, uint referenceCount, uint delayedStreamOffset,
         byte nameByteCount, string? name, OfficeArtBlipStorage storage, byte? blipRecordVersion,
         ushort? blipRecordInstance, ushort? blipRecordType, uint? blipPayloadLength,
-        int? blipPayloadAvailableLength, string? blipPayloadSha256, byte[]? imageBytes) {
+        int? blipPayloadAvailableLength, string? blipPayloadSha256,
+        byte[]? imageBytes, bool wasImageRejectedBySizeLimit) {
         RecordInstance = recordInstance;
         RecordInstanceBlipType = TryGetBlipType(recordInstance);
         RecordInstanceBlipTypeName = GetBlipTypeName(recordInstance);
@@ -40,6 +41,7 @@ public sealed class OfficeArtBlipStoreEntry {
         ContentType = GetContentType(blipRecordType, RecordInstanceBlipType,
             Win32BlipTypeKind, MacOsBlipTypeKind);
         _imageBytes = imageBytes == null ? Array.Empty<byte>() : (byte[])imageBytes.Clone();
+        WasImageRejectedBySizeLimit = wasImageRejectedBySizeLimit;
     }
 
     /// <summary>Gets the BLIP type value stored in the FBSE OfficeArt record instance field.</summary>
@@ -124,8 +126,13 @@ public sealed class OfficeArtBlipStoreEntry {
     /// <summary>Gets a defensive copy of image bytes suitable for an Open XML image part.</summary>
     public byte[] ImageBytes => (byte[])_imageBytes.Clone();
 
+    /// <summary>Gets the number of decoded image bytes retained by this entry.</summary>
+    public int ImageByteCount => _imageBytes.Length;
+
     /// <summary>Gets whether this entry can be projected as an Open XML image.</summary>
     public bool HasImportableImage => _imageBytes.Length > 0 && !string.IsNullOrWhiteSpace(ContentType);
+
+    internal bool WasImageRejectedBySizeLimit { get; }
 
     internal static OfficeArtBlipType? TryGetBlipType(ushort value) => value switch {
         0x00 => OfficeArtBlipType.Error,
@@ -157,7 +164,7 @@ public sealed class OfficeArtBlipStoreEntry {
         _ => $"BlipRecordType:0x{recordType.Value:X4}"
     };
 
-    private static string? GetContentType(ushort? recordType, OfficeArtBlipType? recordInstanceType,
+    internal static string? GetContentType(ushort? recordType, OfficeArtBlipType? recordInstanceType,
         OfficeArtBlipType? win32Type, OfficeArtBlipType? macOsType) {
         OfficeArtBlipType? type = GetBlipTypeFromRecord(recordType)
             ?? recordInstanceType ?? win32Type ?? macOsType;

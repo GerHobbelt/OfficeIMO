@@ -21,13 +21,15 @@ namespace OfficeIMO.Drawing.Internal {
         internal IReadOnlyList<OfficeCompoundWriterEntry> Streams => _entries.Where(entry => entry.ObjectType == 2).ToArray();
 
         internal static OfficeCompoundWriterLayout Create(IReadOnlyList<OfficeCompoundStream> streams,
-            OfficeCompoundFile? source = null) {
+            OfficeCompoundFile? source = null,
+            IReadOnlyCollection<string>? removedPaths = null) {
             var root = new OfficeCompoundWriterEntry("Root Entry", string.Empty, 5, null);
             var layout = new OfficeCompoundWriterLayout(root);
             if (source != null) {
                 root.ApplyMetadata(source.RootEntry);
                 foreach (OfficeCompoundFileEntry storage in source.Entries.Where(entry =>
-                             entry.ObjectType == 1 && !entry.IsFallback)
+                             entry.ObjectType == 1 && !entry.IsFallback
+                             && !IsRemoved(entry.Path, removedPaths))
                          .OrderBy(entry => entry.Path.Count(character => character == '/'))
                          .ThenBy(entry => entry.Path, StringComparer.OrdinalIgnoreCase)) {
                     layout.AddStorage(storage.Path);
@@ -38,6 +40,17 @@ namespace OfficeIMO.Drawing.Internal {
             layout.AssignDirectoryEntries();
             layout.AssignTreeLinks(root);
             return layout;
+        }
+
+        private static bool IsRemoved(string path, IReadOnlyCollection<string>? removedPaths) {
+            if (removedPaths == null) return false;
+            foreach (string removedPath in removedPaths) {
+                if (string.Equals(path, removedPath, StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith(removedPath + "/", StringComparison.OrdinalIgnoreCase)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void AddStorage(string storagePath) {
@@ -102,7 +115,7 @@ namespace OfficeIMO.Drawing.Internal {
                 }
 
                 var created = new OfficeCompoundWriterEntry(name, path, isStream ? (byte)2 : (byte)1,
-                    isStream ? stream.Bytes : null);
+                    isStream ? stream : (OfficeCompoundStream?)null);
                 parent.Children.Add(created);
                 parent = created;
             }
@@ -148,11 +161,11 @@ namespace OfficeIMO.Drawing.Internal {
     }
 
     internal sealed class OfficeCompoundWriterEntry {
-        internal OfficeCompoundWriterEntry(string name, string path, byte objectType, byte[]? bytes) {
+        internal OfficeCompoundWriterEntry(string name, string path, byte objectType, OfficeCompoundStream? stream) {
             Name = name;
             Path = path;
             ObjectType = objectType;
-            Bytes = bytes;
+            Stream = stream;
         }
 
         internal string Name { get; }
@@ -161,7 +174,7 @@ namespace OfficeIMO.Drawing.Internal {
 
         internal byte ObjectType { get; }
 
-        internal byte[]? Bytes { get; }
+        internal OfficeCompoundStream? Stream { get; }
 
         internal List<OfficeCompoundWriterEntry> Children { get; } = new List<OfficeCompoundWriterEntry>();
 

@@ -15,15 +15,15 @@ public enum ReaderInputKind {
     /// </summary>
     Unknown = 0,
     /// <summary>
-    /// Word document (DOCX/DOCM).
+    /// Word document (DOCX/DOCM/DOC).
     /// </summary>
     Word = 1,
     /// <summary>
-    /// Excel workbook (XLSX/XLSM).
+    /// Excel workbook (XLSX/XLSM/XLS).
     /// </summary>
     Excel = 2,
     /// <summary>
-    /// PowerPoint presentation (PPTX/PPTM).
+    /// PowerPoint presentation (PPTX/PPTM/PPT/POT/PPS).
     /// </summary>
     PowerPoint = 3,
     /// <summary>
@@ -89,13 +89,22 @@ public enum ReaderInputKind {
     /// <summary>
     /// Email, Outlook item, TNEF payload, or mbox mailbox.
     /// </summary>
-    Email = 19
+    Email = 19,
+    /// <summary>
+    /// Offline Microsoft OneNote artifact.
+    /// </summary>
+    OneNote = 20
 }
 
 /// <summary>
 /// A normalized extraction chunk produced by <see cref="OfficeDocumentReader"/>.
 /// </summary>
 public sealed class ReaderChunk {
+    // Adapter projections can span multiple bounded chunks while remaining one
+    // logical Markdown block. This is intentionally an internal aggregation
+    // contract rather than part of the versioned transport schema.
+    internal bool ContinuesPreviousChunk { get; set; }
+
     /// <summary>
     /// Stable, ASCII-only identifier.
     /// </summary>

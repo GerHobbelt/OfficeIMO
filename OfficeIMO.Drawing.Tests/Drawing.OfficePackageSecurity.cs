@@ -58,6 +58,36 @@ public sealed class DrawingOfficePackageSecurityTests {
     }
 
     [Fact]
+    public void UntrustedPolicyClassifiesActiveContentByContentTypeAndRelationshipType() {
+        byte[] package = CreateZip(archive => {
+            AddEntry(archive, "[Content_Types].xml",
+                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                "<Override PartName=\"/custom/macro.bin\" ContentType=\"application/vnd.ms-office.vbaProject\" />" +
+                "</Types>");
+            AddEntry(archive, "custom/macro.bin", "vba");
+            AddEntry(archive, "payload/ole.bin", "ole");
+            AddEntry(archive, "payload/control.bin", "control");
+            AddEntry(archive, "_rels/.rels",
+                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                "<Relationship Id=\"rOle\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject\" Target=\"payload/ole.bin\" />" +
+                "<Relationship Id=\"rControl\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/control\" Target=\"payload/control.bin\" />" +
+                "</Relationships>");
+        });
+
+        OfficePackageSecurityReport report = OfficePackageSecurityInspector.Inspect(
+            package,
+            OfficePackageSecurityOptions.UntrustedDefaults);
+
+        Assert.False(report.IsValid);
+        Assert.Equal(1, report.MacroPartCount);
+        Assert.Equal(1, report.EmbeddedPayloadPartCount);
+        Assert.Equal(1, report.ActiveXPartCount);
+        Assert.Contains(report.Findings, finding => finding.Rule == OfficePackageSecurityRule.Macros);
+        Assert.Contains(report.Findings, finding => finding.Rule == OfficePackageSecurityRule.EmbeddedPayloads);
+        Assert.Contains(report.Findings, finding => finding.Rule == OfficePackageSecurityRule.ActiveX);
+    }
+
+    [Fact]
     public void ValidatorRejectsHighlyCompressedPartsBeforeOpeningThem() {
         byte[] package = CreateZip(archive => {
             ZipArchiveEntry entry = archive.CreateEntry("xl/worksheets/sheet1.xml", CompressionLevel.Optimal);
@@ -73,6 +103,52 @@ public sealed class DrawingOfficePackageSecurityTests {
         Assert.Equal(OfficePackageSecurityRule.CompressionRatio, exception.Rule);
         Assert.Equal("/xl/worksheets/sheet1.xml", exception.PartName);
         Assert.True(exception.ObservedValue > exception.Limit);
+    }
+
+    [Fact]
+    public void InspectorDoesNotParseRelationshipPartsThatExceedCompressionLimits() {
+        byte[] package = CreateZip(archive =>
+            AddEntry(archive, "_rels/.rels", new string('A', 256 * 1024)));
+        var options = OfficePackageSecurityOptions.SecureDefaults;
+        options.MaxCompressionRatio = 10;
+
+        OfficePackageSecurityReport report = OfficePackageSecurityInspector.Inspect(package, options);
+
+        Assert.Contains(report.Findings, finding => finding.Rule == OfficePackageSecurityRule.CompressionRatio);
+        Assert.DoesNotContain(report.Findings, finding => finding.Rule == OfficePackageSecurityRule.MalformedRelationship);
+        Assert.Equal(0, report.ExternalRelationshipCount);
+    }
+
+    [Fact]
+    public void InspectorCountsDirectoryEntriesBeforeMaterializingZipParts() {
+        byte[] package = CreateZip(archive => {
+            archive.CreateEntry("one/");
+            archive.CreateEntry("two/");
+            archive.CreateEntry("three/");
+        });
+        var options = OfficePackageSecurityOptions.SecureDefaults;
+        options.MaxPartCount = 2;
+
+        OfficePackageSecurityReport report = OfficePackageSecurityInspector.Inspect(package, options);
+
+        OfficePackageSecurityFinding finding = Assert.Single(
+            report.Findings,
+            item => item.Rule == OfficePackageSecurityRule.PartCount);
+        Assert.Equal(3D, finding.ObservedValue);
+        Assert.Equal(2D, finding.Limit);
+        Assert.Equal(0, report.PartCount);
+    }
+
+    [Fact]
+    public void InspectorRejectsRepeatedCentralDirectoryDigitalSignatures() {
+        byte[] package = CreateZipWithRepeatedCentralDirectorySignatures();
+
+        OfficePackageSecurityReport report = OfficePackageSecurityInspector.Inspect(package);
+
+        OfficePackageSecurityFinding finding = Assert.Single(
+            report.Findings,
+            item => item.Rule == OfficePackageSecurityRule.MalformedPackage);
+        Assert.Contains("more than one digital-signature record", finding.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -255,6 +331,28 @@ public sealed class DrawingOfficePackageSecurityTests {
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true)) {
             populate(archive);
+        }
+        return output.ToArray();
+    }
+
+    private static byte[] CreateZipWithRepeatedCentralDirectorySignatures() {
+        using var output = new MemoryStream();
+        using (var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true)) {
+            writer.Write(0x04034b50U); // Leading ZIP local-header signature for container detection.
+            uint centralDirectoryOffset = checked((uint)output.Position);
+            writer.Write(0x05054b50U);
+            writer.Write((ushort)0);
+            writer.Write(0x05054b50U);
+            writer.Write((ushort)0);
+            uint centralDirectorySize = checked((uint)output.Position - centralDirectoryOffset);
+            writer.Write(0x06054b50U);
+            writer.Write((ushort)0);
+            writer.Write((ushort)0);
+            writer.Write((ushort)0);
+            writer.Write((ushort)0);
+            writer.Write(centralDirectorySize);
+            writer.Write(centralDirectoryOffset);
+            writer.Write((ushort)0);
         }
         return output.ToArray();
     }

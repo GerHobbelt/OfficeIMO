@@ -5,15 +5,16 @@
 The package supports:
 
 - EML and MIME messages, including multipart bodies, encoded headers, inline resources, attachments, and embedded messages
-- Outlook MSG files with standard and named MAPI properties, legacy code pages, recipients, embedded messages, linked attachments, and OLE/custom-storage attachments
+- Outlook MSG and OFT files with standard and named MAPI properties, legacy code pages, recipients, embedded messages, linked attachments, and OLE/custom-storage attachments
 - MS-OXRTFCP compressed and uncompressed RTF bodies, including bounded expansion and checksum validation
 - Outlook messages, appointments, contacts, tasks, journals, and sticky notes with typed read/write models
 - standards-based iCalendar (`VEVENT`/`VTODO`) and vCard projection when appointments, tasks, or contacts cross the EML boundary
 - TNEF payloads such as `winmail.dat`
 - mboxo and mboxrd mailbox archives
-- reopenable attachment content and per-message mbox streaming for large or store-backed workflows
-- bounded synchronous and asynchronous reads, immutable reader configuration, cancellation, and structured diagnostics
-- deterministic EML, MSG, TNEF, and mbox writing with explicit conversion-loss policy
+- reopenable attachment content, file-backed streaming reads, and per-message mbox streaming for large or store-backed workflows
+- bounded synchronous and genuinely asynchronous source/destination I/O, immutable reader configuration, cancellation, and structured diagnostics
+- deterministic EML, MSG, OFT, TNEF, and mbox writing with explicit conversion-loss policy
+- versioned semantic fingerprints and value-free comparison reports for migration verification and deduplication
 
 MSG output includes the root storage identity, complete named-property forward and reverse mappings, and the compatibility metadata required by native Outlook. A document without an explicit date receives a deterministic creation-time fallback; set `Date` or `MessageMetadata.CreatedDate` when the real timestamp matters.
 
@@ -32,7 +33,7 @@ Console.WriteLine(message.Body.Text);
 message.Save("message.eml");
 ```
 
-`Save` infers EML, MSG, or TNEF from `.eml`, `.mime`, `.msg`, `.tnef`, or `winmail.dat`. The convenience methods throw `InvalidDataException` instead of silently returning a partial document or output when an error diagnostic is produced. Use the explicit overload only when the destination name has another extension:
+`Save` infers EML, MSG, OFT, or TNEF from `.eml`, `.mime`, `.msg`, `.oft`, `.tnef`, or `winmail.dat`. The convenience methods throw `InvalidDataException` instead of silently returning a partial document or output when an error diagnostic is produced. Use the explicit overload only when the destination name has another extension:
 
 ```csharp
 message.Save("artifact.bin", EmailFileFormat.OutlookMsg);
@@ -64,7 +65,26 @@ if (result.HasErrors) {
 }
 ```
 
-The same model can be written as EML, MSG, or TNEF. Conversion is a load followed by a save:
+When attachment payloads should not be retained in managed arrays, use the streaming reader. Ordinary MIME,
+MSG/OFT, and TNEF attachments become reopenable temporary-file sources while headers, bodies, recipients, and typed
+Outlook fields keep the same model:
+
+```csharp
+using EmailReadResult result = await new EmailDocumentReader(options)
+    .ReadStreamingAsync("large-message.msg", cancellationToken);
+
+foreach (EmailAttachment attachment in result.Document.Attachments) {
+    using Stream content = await attachment.OpenContentStreamAsync(cancellationToken);
+    await content.CopyToAsync(destination, 81920, cancellationToken);
+}
+```
+
+Dispose the `EmailReadResult` after consuming its file-backed content. Its temporary files and attachment sources
+belong to that result and become unavailable after disposal. `Write` and `WriteAsync` consume `ContentSource`
+attachments in chunks; the async path uses asynchronous source and destination I/O rather than wrapping the
+synchronous writer in a task.
+
+The same model can be written as EML, MSG, OFT, or TNEF. Conversion is a load followed by a save:
 
 ```csharp
 EmailDocument.Load("source.eml").Save("converted.msg");
@@ -91,6 +111,26 @@ if (report.CanWrite) {
 Use `EmailConversionLossPolicy.Warn` only when the application has made an explicit decision to accept a documented
 loss. Opaque MAPI/TNEF metadata that has no portable EML equivalent is reported as a warning while common message
 content remains writable.
+
+## Compare message semantics
+
+Semantic comparison hashes a canonical, versioned projection rather than serialized bytes. The migration profile
+normalizes store identity and serialization details, the strict profile includes representation details, and the
+deduplication profile excludes synchronization and modification state:
+
+```csharp
+EmailSemanticComparisonReport comparison = EmailSemanticComparer.Compare(source, destination);
+
+if (!comparison.IsMatch) {
+    foreach (EmailSemanticDifference difference in comparison.Differences) {
+        Console.WriteLine($"{difference.Kind}: {difference.Path}");
+    }
+}
+```
+
+Difference reports contain canonical paths and lengths, not message values. Before persisting fingerprints for
+private mail, provide a random `digestKey` through `EmailSemanticComparisonOptions`; the resulting HMAC-SHA-256
+fingerprints cannot be correlated without that caller-owned key.
 
 ## Read an mbox archive
 
@@ -140,6 +180,14 @@ if (item.OutlookItemKind == OutlookItemKind.Appointment && item.Appointment is n
 
 Equivalent projections are available through `Contact`, `Task`, `Journal`, and `Note`.
 
+An Outlook template uses the same model and compound-file engine as MSG while retaining its template identity:
+
+```csharp
+EmailDocument template = EmailDocument.Load("meeting.oft");
+template.Subject = "Reusable meeting request";
+template.Save("updated.oft");
+```
+
 When an appointment or task is written as EML, it becomes a `text/calendar` iCalendar part. Contacts become vCard
 attachments. Reminders become `VALARM`; task fields without a direct iCalendar property use valid `X-OFFICEIMO-*`
 extensions so they survive an OfficeIMO EML/MSG/TNEF cycle while remaining ignorable to other calendar readers.
@@ -180,7 +228,22 @@ if (protectedMessage.Protection.IsProtected) {
 }
 ```
 
-## Store-backed attachment content
+## Mailbox stores and store-backed content
+
+PST, OST, Outlook for Mac OLM, and Apple Mail EMLX containers belong to the optional `OfficeIMO.Email.Store` package. It yields ordinary `EmailDocument` instances while preserving folder paths, store metadata, diagnostics, and bounded attachment behavior:
+
+```csharp
+using OfficeIMO.Email.Store;
+
+using EmailStoreSession session = EmailStoreSession.Open("archive.pst");
+EmailStoreItemReference firstReference = session.EnumerateItems(
+    new EmailStoreEnumerationOptions(maxItems: 1)).Single();
+EmailDocument firstMessage = session.ReadItem(firstReference).Document;
+```
+
+`OfficeIMO.Email` remains sufficient for individual EML, MSG, OFT, TNEF, and mbox artifacts.
+
+### Store-backed attachment content
 
 `EmailAttachment.Content` remains the simple in-memory representation. A mailbox or archive provider can instead set
 `ContentSource` to an `IEmailContentSource` that opens a fresh decoded stream on demand:
@@ -193,8 +256,8 @@ await content.CopyToAsync(destination, 81920, cancellationToken);
 ```
 
 EML, MSG, and TNEF writers consume either representation through the same bounded path. The interface deliberately
-contains no PST, OST, MAPI, or Outlook types, so a future mailbox-store package can yield ordinary `EmailDocument`
-instances while keeping store lifetime and property-stream access in the store owner.
+contains no PST, OST, MAPI, or Outlook types, so mailbox and store owners can yield ordinary `EmailDocument`
+instances while keeping source lifetime and property-stream access in the owning package.
 
 ## Resource limits
 
@@ -206,7 +269,7 @@ that define the typed item are retained because they are semantic message conten
 
 ## Reader integration
 
-`OfficeIMO.Reader` recognizes `.eml`, `.msg`, `.mbox`, `.mbx`, `.tnef`, and `winmail.dat`. Its rich result includes envelope and Outlook metadata, structured diagnostics, materializable attachment assets, embedded messages, and chunks extracted from supported attachment formats.
+`OfficeIMO.Reader` recognizes `.eml`, `.msg`, `.oft`, `.mbox`, `.mbx`, `.tnef`, and `winmail.dat`. Add `OfficeIMO.Reader.EmailStore` for PST, OST, OLM, and EMLX. Its rich result includes envelope and Outlook metadata, structured diagnostics, materializable attachment assets, embedded messages, and chunks extracted from supported attachment formats.
 
 ```csharp
 using OfficeIMO.Reader;
@@ -223,11 +286,11 @@ foreach (OfficeDocumentAsset attachment in result.Assets) {
 
 `OfficeIMO.Email` owns offline artifact parsing, serialization, and format-neutral Outlook data. It does not connect to mail servers, authenticate users, resolve certificates or keys, verify DKIM/ARC/PGP/S/MIME signatures, or decrypt protected messages. MailKit, MimeKit, and applications such as Mailozaurr remain the owners for those operations.
 
-The package does not expose general-purpose CFB transactions and does not yet read or modify PST/OST mailbox stores.
-Its compound implementation serves MSG and structured attachments only. `IEmailContentSource`, the format-neutral
-`EmailDocument`, and streaming mbox APIs are the compatibility boundary for a future dedicated PST/OST package; store
-folder traversal, named-property mapping, item mutation, allocation tables, and transactional commits still belong in
-that separate owner.
+The package does not expose general-purpose CFB transactions or mailbox-store traversal. Its compound implementation
+serves MSG/OFT and structured attachments only. `OfficeIMO.Email.Store` is the separate source and new-PST owner
+for PST, OST, OLM, EMLX, Apple Mail, and Maildir traversal, selection, validation, export, verified conversion, and
+multi-store merge. Existing PST/OST mutation, append, repair, compaction, and OST writing remain outside both
+packages.
 
 For exact pass-through of an ordinary unprotected artifact, read with `preserveRawSource: true` and write with
 `usePreservedRawSource: true`. Protected artifacts use safe unchanged pass-through automatically.

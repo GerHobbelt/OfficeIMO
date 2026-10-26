@@ -61,10 +61,27 @@ Built-in and modular adapters can extract:
 
 - Word (`.docx`, `.docm`, `.doc`) as Markdown chunks.
 - Excel (`.xlsx`, `.xlsm`, `.xls`) as table chunks and optional Markdown previews.
-- PowerPoint (`.pptx`, `.pptm`) as slide-aligned chunks, optionally including notes.
+- PowerPoint (`.pptx`, `.pptm`, `.ppt`, `.pot`, `.pps`) as slide-aligned chunks, optionally including notes. Binary files use the OfficeIMO.PowerPoint projection model and expose import diagnostics as warnings.
 - Markdown (`.md`, `.markdown`) as parser-aware heading chunks.
 - EML/MIME, Outlook MSG/MAPI, TNEF/`winmail.dat`, and mbox as message, body, attachment, and embedded-item chunks. Rich results include attachment assets and typed Outlook metadata.
-- OpenDocument (`.odt`, `.ods`, `.odp`), PDF, RTF, Visio, HTML, CSV/TSV, JSON, XML, YAML, EPUB, ZIP, and structured text through modular adapter packages.
+- OpenDocument (`.odt`, `.ods`, `.odp`), PDF, RTF, Visio, HTML, CSV/TSV, JSON, XML, YAML, EPUB, ZIP, standalone images, Jupyter notebooks, SRT/WebVTT subtitles, and structured text through modular adapter packages.
+
+Use `OpenPassword` for password-protected Open XML or legacy binary Office input. Binary PowerPoint images
+are returned through the same rich-result asset contract as PPTX images:
+
+```csharp
+OfficeDocumentReadResult deck = DocumentReader.ReadDocument(
+    "protected.ppt",
+    new ReaderOptions {
+        OpenPassword = "open-password",
+        IncludePowerPointNotes = true
+    });
+
+Console.WriteLine($"{deck.Pages.Count} slides, {deck.Assets.Count} assets");
+foreach (OfficeDocumentDiagnostic diagnostic in deck.Diagnostics) {
+    Console.WriteLine($"{diagnostic.Code}: {diagnostic.Message}");
+}
+```
 
 ## Modular adapters
 
@@ -74,10 +91,13 @@ For services and concurrent hosts, build an isolated reader with only the adapte
 using OfficeIMO.Reader.Csv;
 using OfficeIMO.Reader.Epub;
 using OfficeIMO.Reader.Html;
+using OfficeIMO.Reader.Image;
 using OfficeIMO.Reader.Json;
+using OfficeIMO.Reader.Notebook;
 using OfficeIMO.Reader.OpenDocument;
 using OfficeIMO.Reader.Pdf;
 using OfficeIMO.Reader.Rtf;
+using OfficeIMO.Reader.Subtitles;
 using OfficeIMO.Reader.Visio;
 using OfficeIMO.Reader.Xml;
 using OfficeIMO.Reader.Yaml;
@@ -87,10 +107,13 @@ OfficeDocumentReader reader = new OfficeDocumentReaderBuilder()
     .AddCsvHandler()
     .AddEpubHandler()
     .AddHtmlHandler()
+    .AddImageHandler()
     .AddJsonHandler()
+    .AddNotebookHandler()
     .AddOpenDocumentHandler()
     .AddPdfHandler()
     .AddRtfHandler()
+    .AddSubtitleHandler()
     .AddVisioHandler()
     .AddXmlHandler()
     .AddYamlHandler()
@@ -116,7 +139,32 @@ OfficeDocumentReader reader = new OfficeDocumentReaderBuilder()
     .Build();
 ```
 
-The preset contains no parser or provider logic. It excludes OCR engines, process adapters, network clients, and hosted providers; those remain explicit host choices.
+The preset contains no parser or provider logic. It excludes OCR engines, process adapters, network clients, and hosted providers; those remain explicit host choices. Standalone images expose header metadata, source assets, and optional OCR candidates without running OCR. Notebook cells are never executed, and subtitle support reads local SRT/WebVTT text only.
+
+### Explicit bounded web transport
+
+Install `OfficeIMO.Reader.Web` only in hosts that intentionally allow network retrieval:
+
+```powershell
+dotnet add package OfficeIMO.Reader.Web
+```
+
+```csharp
+using OfficeIMO.Reader.Web;
+
+OfficeDocumentWebReader webReader = reader.CreateWebReader(
+    httpClient,
+    new ReaderWebOptions {
+        AllowedHosts = new[] { "docs.example.com" },
+        MaxResponseBytes = 16L * 1024 * 1024
+    });
+
+OfficeDocumentReadResult remote = await webReader.ReadDocumentAsync(
+    new Uri("https://docs.example.com/guide.html"),
+    cancellationToken: cancellationToken);
+```
+
+The web package performs bounded HTTP(S) GET retrieval and routes the bytes through the same configured Reader handlers and processors. It captures its options, bounds bytes, time, and concurrent operations, blocks obvious private literal targets by default, and omits query strings from metadata by default. The caller owns the `HttpClient` and its authentication, DNS, redirect, proxy, certificate, retry, and connection policy. It is deliberately absent from `OfficeIMO.Reader.All` and the global tool, so neither surface gains implicit network access.
 
 For scripts and shell pipelines, install the dependency-bounded global tool:
 
@@ -388,7 +436,7 @@ Rich handlers return `OfficeDocumentReadResult` directly and can populate the co
 
 ## Host contracts
 
-- `ReaderOptions` controls chunk size, table row limits, footnotes/notes, Excel ranges, Markdown heading chunking, hashes, and input budgets.
+- `ReaderOptions` controls chunk size, table row limits, footnotes/notes, passwords, Excel ranges, Markdown heading chunking, hashes, and input budgets.
 - `ReaderFolderOptions` controls recursion, file limits, byte limits, reparse-point handling, and deterministic folder order.
 - `OfficeDocumentReader.GetCapabilities()` and `GetCapabilityManifestJson()` expose the frozen configuration of that reader instance.
 - Capability records distinguish basic path/stream support from native rich-result support through `SupportsDocumentPath` and `SupportsDocumentStream`.

@@ -8,11 +8,19 @@ internal static class MimeWriter {
     };
 
     internal static byte[] Write(EmailDocument document, EmailWriterOptions options, IList<EmailDiagnostic> diagnostics) {
-        MimeWriterState state = new MimeWriterState(options, diagnostics);
         using (EmailBoundedMemoryStream output = new EmailBoundedMemoryStream(options.MaxOutputBytes)) {
-            WriteMessage(output, document, state, 0);
+            Write(output, document, options, diagnostics);
             return output.ToArray();
         }
+    }
+
+    internal static void Write(Stream output, EmailDocument document,
+        EmailWriterOptions options, IList<EmailDiagnostic> diagnostics) {
+        if (output == null || !output.CanWrite) {
+            throw new ArgumentException("MIME output requires a writable stream.", nameof(output));
+        }
+        MimeWriterState state = new MimeWriterState(options, diagnostics);
+        WriteMessage(output, document, state, 0);
     }
 
     private static void WriteMessage(Stream output, EmailDocument document, MimeWriterState state, int depth) {
@@ -214,7 +222,8 @@ internal static class MimeWriter {
              document.OutlookItemKind != OutlookItemKind.Contact);
         bool hasAlternative = CountBodyAlternatives(document.Body, includeTextBody) +
             (calendarContent == null ? 0 : 1) > 1;
-        bool hasRelatedResources = regularAttachments.Any(attachment => IsRelatedResource(document, attachment));
+        bool hasRelatedResources = document.Body.IsHtmlRelatedRoot ||
+            regularAttachments.Any(attachment => IsRelatedResource(document, attachment));
         bool hasUnrelatedAttachments = regularAttachments.Any(attachment => !IsRelatedResource(document, attachment));
         if (hasUnrelatedAttachments) {
             string boundary = CreateBoundary(document, depth, "mixed");
@@ -252,7 +261,14 @@ internal static class MimeWriter {
         EmailAttachment? contactBodyPart,
         IReadOnlyList<EmailAttachment> attachments) {
         string boundary = CreateBoundary(document, depth, "related");
-        WriteLine(output, string.Concat("Content-Type: multipart/related; boundary=\"", boundary, "\""));
+        string rootType = hasAlternative ? "multipart/alternative" : document.Body.Html != null
+            ? "text/html"
+            : "text/plain";
+        string start = !hasAlternative && !string.IsNullOrWhiteSpace(document.Body.HtmlContentId)
+            ? string.Concat("; start=\"<", SanitizeMessageId(document.Body.HtmlContentId!), ">\"")
+            : string.Empty;
+        WriteLine(output, string.Concat("Content-Type: multipart/related; boundary=\"", boundary,
+            "\"; type=\"", rootType, "\"", start));
         WriteLine(output, string.Empty);
         WriteLine(output, string.Concat("--", boundary));
         WriteBodyEntity(output, document, state, depth, hasAlternative, includeTextBody, calendarContent,
@@ -266,6 +282,7 @@ internal static class MimeWriter {
     }
 
     private static bool IsRelatedResource(EmailDocument document, EmailAttachment attachment) {
+        if (attachment.IsMimeRelated) return true;
         if (string.IsNullOrWhiteSpace(document.Body.Html)) return false;
         if (!string.IsNullOrWhiteSpace(attachment.ContentId) &&
             MimeRelatedResourceReference.ContainsContentId(document.Body.Html!, attachment.ContentId!)) {
@@ -288,7 +305,8 @@ internal static class MimeWriter {
             }
             if (document.Body.Html != null) {
                 WriteLine(output, string.Concat("--", boundary));
-                WriteTextPart(output, "text/html", document.Body.Html, state.Options.Base64LineLength);
+                WriteTextPart(output, "text/html", document.Body.Html, state.Options.Base64LineLength,
+                    document.Body.HtmlContentId, document.Body.HtmlContentLocation);
             }
             if (document.Body.Rtf != null) {
                 WriteLine(output, string.Concat("--", boundary));
@@ -304,7 +322,8 @@ internal static class MimeWriter {
         } else if (contactBodyPart != null) {
             WriteAttachment(output, contactBodyPart, state, depth + 1, 0);
         } else if (document.Body.Html != null) {
-            WriteTextPart(output, "text/html", document.Body.Html, state.Options.Base64LineLength);
+            WriteTextPart(output, "text/html", document.Body.Html, state.Options.Base64LineLength,
+                document.Body.HtmlContentId, document.Body.HtmlContentLocation);
         } else if (document.Body.Rtf != null) {
             WriteRtfPart(output, document.Body.Rtf, state, "body/rtf");
         } else {
@@ -369,9 +388,16 @@ internal static class MimeWriter {
         return (includeTextBody ? 1 : 0) + (body.Html == null ? 0 : 1) + (body.Rtf == null ? 0 : 1);
     }
 
-    private static void WriteTextPart(Stream output, string mediaType, string text, int base64LineLength) {
+    private static void WriteTextPart(Stream output, string mediaType, string text, int base64LineLength,
+        string? contentId = null, string? contentLocation = null) {
         WriteLine(output, string.Concat("Content-Type: ", mediaType, "; charset=utf-8"));
         WriteLine(output, "Content-Transfer-Encoding: base64");
+        if (!string.IsNullOrWhiteSpace(contentId)) {
+            WriteLine(output, string.Concat("Content-ID: <", SanitizeMessageId(contentId!), ">"));
+        }
+        if (!string.IsNullOrWhiteSpace(contentLocation)) {
+            WriteLine(output, string.Concat("Content-Location: ", EncodeHeaderText(contentLocation!)));
+        }
         WriteLine(output, string.Empty);
         WriteBase64(output, Encoding.UTF8.GetBytes(text), base64LineLength);
     }
@@ -424,9 +450,9 @@ internal static class MimeWriter {
             return;
         }
 
-        byte[]? retainedContent = EmailAttachmentContent.ReadOrNull(attachment, state.Options.MaxOutputBytes);
-        byte[] content = retainedContent ?? Array.Empty<byte>();
-        if (retainedContent == null && attachment.Length > 0) {
+        bool hasContent = attachment.Content != null || attachment.ContentSource != null ||
+            EmailAttachmentStreamScope.HasStagedContent(attachment);
+        if (!hasContent && attachment.Length > 0) {
             state.Diagnostics.Add(new EmailDiagnostic("EMAIL_ATTACHMENT_CONTENT_UNAVAILABLE",
                 string.Concat("Attachment ", index.ToString(CultureInfo.InvariantCulture),
                     " has a declared length but no retained content; an empty payload was written."),
@@ -435,24 +461,50 @@ internal static class MimeWriter {
         if (contentType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase)) {
             WriteLine(output, "Content-Transfer-Encoding: 8bit");
             WriteLine(output, string.Empty);
-            WriteRawEntity(output, content);
+            using (Stream input = EmailAttachmentStreamScope.OpenRead(attachment)) {
+                WriteRawEntity(output, input, state.Options.MaxOutputBytes);
+            }
             return;
         }
 
         WriteLine(output, "Content-Transfer-Encoding: base64");
         WriteLine(output, string.Empty);
-        WriteBase64(output, content, state.Options.Base64LineLength);
+        using (Stream input = EmailAttachmentStreamScope.OpenRead(attachment)) {
+            WriteBase64(output, input, state.Options.Base64LineLength,
+                state.Options.MaxOutputBytes);
+        }
     }
 
     private static void WriteBase64(Stream output, byte[] data, int lineLength) {
-        string value = Convert.ToBase64String(data);
-        if (value.Length == 0) {
-            WriteLine(output, string.Empty);
-            return;
+        using (var input = new MemoryStream(data, writable: false)) {
+            WriteBase64(output, input, lineLength, data.LongLength);
         }
-        for (int offset = 0; offset < value.Length; offset += lineLength) {
-            int count = Math.Min(lineLength, value.Length - offset);
-            WriteLine(output, value.Substring(offset, count));
+    }
+
+    private static void WriteBase64(Stream output, Stream input, int lineLength, long maximumInputBytes) {
+        int bytesPerLine = checked(lineLength / 4 * 3);
+        var buffer = new byte[bytesPerLine];
+        long total = 0;
+        bool wrote = false;
+        while (true) {
+            int count = 0;
+            while (count < buffer.Length) {
+                int read = input.Read(buffer, count, buffer.Length - count);
+                if (read == 0) break;
+                count += read;
+                total = checked(total + read);
+                if (total > maximumInputBytes) {
+                    throw new EmailLimitExceededException(nameof(EmailWriterOptions.MaxOutputBytes),
+                        total, maximumInputBytes);
+                }
+            }
+            if (count == 0) break;
+            WriteLine(output, Convert.ToBase64String(buffer, 0, count));
+            wrote = true;
+            if (count < buffer.Length) break;
+        }
+        if (!wrote) {
+            WriteLine(output, string.Empty);
         }
     }
 
@@ -588,9 +640,29 @@ internal static class MimeWriter {
         return result.ToString();
     }
 
-    private static void WriteRawEntity(Stream output, byte[] content) {
-        if (content.Length > 0) output.Write(content, 0, content.Length);
-        if (content.Length < 2 || content[content.Length - 2] != '\r' || content[content.Length - 1] != '\n') {
+    private static void WriteRawEntity(Stream output, Stream input, long maximumInputBytes) {
+        var buffer = new byte[81920];
+        long total = 0;
+        int trailingFirst = -1;
+        int trailingSecond = -1;
+        while (true) {
+            int read = input.Read(buffer, 0, buffer.Length);
+            if (read == 0) break;
+            total = checked(total + read);
+            if (total > maximumInputBytes) {
+                throw new EmailLimitExceededException(nameof(EmailWriterOptions.MaxOutputBytes),
+                    total, maximumInputBytes);
+            }
+            output.Write(buffer, 0, read);
+            if (read == 1) {
+                trailingFirst = trailingSecond;
+                trailingSecond = buffer[0];
+            } else {
+                trailingFirst = buffer[read - 2];
+                trailingSecond = buffer[read - 1];
+            }
+        }
+        if (trailingFirst != '\r' || trailingSecond != '\n') {
             WriteLine(output, string.Empty);
         }
     }

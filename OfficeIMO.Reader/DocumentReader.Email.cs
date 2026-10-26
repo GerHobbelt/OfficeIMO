@@ -23,7 +23,8 @@ internal static partial class DocumentReaderEngine {
         EnforceFileSize(path, GetEffectiveEmailMaxInputBytes(opt));
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         EmailExtraction extraction = ExtractEmail(stream, path, opt, cancellationToken);
-        SourceInfo source = BuildSourceInfoFromPath(path, opt.ComputeHashes);
+        SourceInfo source = BuildSourceInfoFromPath(path, opt.ComputeHashes,
+            cancellationToken);
         EnrichEmailChunks(extraction.Chunks, source, opt.ComputeHashes);
         return BuildEmailDocumentResult(extraction, path, BuildPathDocumentSource(path, extraction.Chunks));
     }
@@ -37,7 +38,8 @@ internal static partial class DocumentReaderEngine {
         snapshot.Position = 0;
         EmailExtraction extraction = ExtractEmail(snapshot.ToArray(), sourceName, opt, cancellationToken);
         snapshot.Position = 0;
-        SourceInfo source = BuildSourceInfoFromStream(snapshot, sourceName, opt.ComputeHashes);
+        SourceInfo source = BuildSourceInfoFromStream(snapshot, sourceName,
+            opt.ComputeHashes, cancellationToken);
         EnrichEmailChunks(extraction.Chunks, source, opt.ComputeHashes);
         return BuildEmailDocumentResult(extraction, sourceName, BuildStreamDocumentSource(snapshot, sourceName, extraction.Chunks));
     }
@@ -69,7 +71,8 @@ internal static partial class DocumentReaderEngine {
                 extraction.MailboxEntries.Add(entry);
             }
         } else {
-            EmailReadResult result = new EmailDocumentReader(emailOptions).Read(bytes, cancellationToken);
+            EmailReadResult result = new EmailDocumentReader(emailOptions).Read(bytes, sourceName,
+                cancellationToken);
             extraction.Format = result.Document.Format;
             extraction.Diagnostics.AddRange(result.Diagnostics);
             extraction.Documents.Add(result.Document);
@@ -187,6 +190,7 @@ internal static partial class DocumentReaderEngine {
         internal string SourceName { get; }
         internal List<EmailDocument> Documents { get; } = new List<EmailDocument>();
         internal List<EmailMailboxEntry?> MailboxEntries { get; } = new List<EmailMailboxEntry?>();
+        internal List<string?> LogicalPaths { get; } = new List<string?>();
         internal List<EmailDiagnostic> Diagnostics { get; } = new List<EmailDiagnostic>();
         internal List<ReaderChunk> Chunks { get; } = new List<ReaderChunk>();
         internal List<OfficeDocumentAsset> Assets { get; } = new List<OfficeDocumentAsset>();

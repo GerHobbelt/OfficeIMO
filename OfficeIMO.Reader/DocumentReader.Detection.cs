@@ -117,20 +117,34 @@ internal static partial class DocumentReaderEngine {
         return await DetectAsync(stream, sourceName, options, cancellationToken).ConfigureAwait(false);
     }
 
-    private static ReaderDetectionResult DetectForRead(string path, ReaderOptions options) {
-        return Detect(path, CreateDetectionOptions(options));
+    private static ReaderDetectionResult DetectForRead(string path,
+        ReaderOptions options, CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        ReaderDetectionResult detection = Detect(path,
+            CreateDetectionOptions(options));
+        cancellationToken.ThrowIfCancellationRequested();
+        return ResolveEncryptedOpenXmlDetection(path, options, detection,
+            cancellationToken);
     }
 
-    private static ReaderDetectionResult DetectForRead(Stream stream, string? sourceName, ReaderOptions options) {
-        return Detect(stream, sourceName, CreateDetectionOptions(options));
+    private static ReaderDetectionResult DetectForRead(Stream stream,
+        string? sourceName, ReaderOptions options,
+        CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        ReaderDetectionResult detection = Detect(stream, sourceName,
+            CreateDetectionOptions(options));
+        cancellationToken.ThrowIfCancellationRequested();
+        return ResolveEncryptedOpenXmlDetection(stream, sourceName,
+            options, detection, cancellationToken);
     }
 
     private static bool TryResolvePathHandler(
         string path,
         ReaderOptions options,
+        CancellationToken cancellationToken,
         out ReaderHandlerDescriptor handler,
         out ReaderDetectionResult detection) {
-        detection = DetectForRead(path, options);
+        detection = DetectForRead(path, options, cancellationToken);
         return TrySelectPathHandler(path, options, detection, out handler);
     }
 
@@ -157,9 +171,11 @@ internal static partial class DocumentReaderEngine {
         Stream stream,
         string? sourceName,
         ReaderOptions options,
+        CancellationToken cancellationToken,
         out ReaderHandlerDescriptor handler,
         out ReaderDetectionResult detection) {
-        detection = DetectForRead(stream, sourceName, options);
+        detection = DetectForRead(stream, sourceName, options,
+            cancellationToken);
         return TrySelectStreamHandler(sourceName, options, detection, out handler);
     }
 
@@ -209,6 +225,8 @@ internal static partial class DocumentReaderEngine {
             path,
             CreateDetectionOptions(options),
             cancellationToken).ConfigureAwait(false);
+        detection = ResolveEncryptedOpenXmlDetection(path, options,
+            detection, cancellationToken);
         bool hasHandler = TrySelectPathHandler(path, options, detection, out ReaderHandlerDescriptor handler);
         return new HandlerDetectionResolution(hasHandler ? handler : null, detection);
     }
@@ -223,6 +241,8 @@ internal static partial class DocumentReaderEngine {
             sourceName,
             CreateDetectionOptions(options),
             cancellationToken).ConfigureAwait(false);
+        detection = ResolveEncryptedOpenXmlDetection(stream, sourceName,
+            options, detection, cancellationToken);
         bool hasHandler = TrySelectStreamHandler(sourceName, options, detection, out ReaderHandlerDescriptor handler);
         return new HandlerDetectionResolution(hasHandler ? handler : null, detection);
     }
@@ -263,8 +283,14 @@ internal static partial class DocumentReaderEngine {
                 }
             } else if (IsOleCompound(prefix) && options.InspectContainers) {
                 candidate = restorePosition
-                    ? InspectEmailCompound(stream, originalPosition, options.MaxContainerEntries)
-                    : InspectEmailCompound(prefix);
+                    ? InspectOfficeCompound(stream, originalPosition,
+                        options.MaxContainerEntries)
+                    : InspectOfficeCompound(prefix);
+                containerInspected = true;
+            } else if (IsCabinet(prefix) && options.InspectContainers) {
+                candidate = restorePosition
+                    ? InspectCabinetContainer(stream, originalPosition, options.MaxContainerEntries)
+                    : InspectCabinetContainer(prefix, options.MaxContainerEntries);
                 containerInspected = true;
             }
 
@@ -305,8 +331,18 @@ internal static partial class DocumentReaderEngine {
                 if (containerCandidate.Kind != ReaderInputKind.Unknown) candidate = containerCandidate;
             } else if (IsOleCompound(prefix) && options.InspectContainers) {
                 candidate = restorePosition
-                    ? InspectEmailCompound(stream, originalPosition, options.MaxContainerEntries)
-                    : InspectEmailCompound(prefix);
+                    ? InspectOfficeCompound(stream, originalPosition,
+                        options.MaxContainerEntries, cancellationToken)
+                    : InspectOfficeCompound(prefix);
+                containerInspected = true;
+            } else if (IsCabinet(prefix) && options.InspectContainers) {
+                candidate = restorePosition
+                    ? await InspectCabinetContainerAsync(
+                        stream,
+                        originalPosition,
+                        options.MaxContainerEntries,
+                        cancellationToken).ConfigureAwait(false)
+                    : InspectCabinetContainer(prefix, options.MaxContainerEntries);
                 containerInspected = true;
             }
 
@@ -445,6 +481,12 @@ internal static partial class DocumentReaderEngine {
         if (prefix.Length == 0) {
             return DetectionCandidate.Unknown("content:empty");
         }
+        if (StartsWith(prefix, new byte[] { 0xE4, 0x52, 0x5C, 0x7B, 0x8C, 0xD8, 0xA7, 0x4D, 0xAE, 0xB1, 0x53, 0x78, 0xD0, 0x29, 0x96, 0xD3 })) {
+            return DetectionCandidate.High(ReaderInputKind.OneNote, "application/onenote", "signature:onenote-section");
+        }
+        if (StartsWith(prefix, new byte[] { 0xA1, 0x2F, 0xFF, 0x43, 0xD9, 0xEF, 0x76, 0x4C, 0x9E, 0xE2, 0x10, 0xEA, 0x57, 0x22, 0x76, 0x5F })) {
+            return DetectionCandidate.High(ReaderInputKind.OneNote, "application/onenote", "signature:onenote-toc");
+        }
         if (IndexOfAscii(prefix, "%PDF-", Math.Min(prefix.Length, 1024)) >= 0) {
             return DetectionCandidate.High(ReaderInputKind.Pdf, "application/pdf", "signature:pdf");
         }
@@ -458,6 +500,9 @@ internal static partial class DocumentReaderEngine {
         }
         if (StartsWith(prefix, new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 })) {
             return DetectionCandidate.Unknown("signature:ole-compound");
+        }
+        if (IsCabinet(prefix)) {
+            return DetectionCandidate.Unknown("signature:cabinet");
         }
 
         string? text = DecodeTextPrefix(prefix);
@@ -639,6 +684,7 @@ internal static partial class DocumentReaderEngine {
             ReaderInputKind.Markdown => "text/markdown",
             ReaderInputKind.Pdf => "application/pdf",
             ReaderInputKind.Email => "message/rfc822",
+            ReaderInputKind.OneNote => "application/onenote",
             ReaderInputKind.Text => "text/plain",
             ReaderInputKind.Csv => "text/csv",
             ReaderInputKind.Json => "application/json",
@@ -660,8 +706,10 @@ internal static partial class DocumentReaderEngine {
             ".xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.12",
             ".xls" => "application/vnd.ms-excel",
             ".pptm" => "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+            ".ppt" or ".pot" or ".pps" => "application/vnd.ms-powerpoint",
             ".eml" => "message/rfc822",
             ".msg" => "application/vnd.ms-outlook",
+            ".oft" => "application/vnd.ms-outlook",
             ".mbox" or ".mbx" => "application/mbox",
             ".tnef" => "application/ms-tnef",
             ".csv" => "text/csv",

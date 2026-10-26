@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 
 namespace OfficeIMO.Reader;
@@ -26,6 +27,7 @@ internal static partial class DocumentReaderEngine {
         bool hasCustomPathHandler = TryResolvePathHandler(
             path,
             opt,
+            cancellationToken,
             out ReaderHandlerDescriptor customPathHandler,
             out ReaderDetectionResult detection);
         ReaderInputKind kind = detection.Kind;
@@ -71,7 +73,8 @@ internal static partial class DocumentReaderEngine {
         string logicalSourceName = NormalizeLogicalSourceName(sourceName, "memory");
         Stream readStream = ReaderInputLimits.EnsureSeekableReadStream(
             stream,
-            ResolveInitialMaxInputBytes(logicalSourceName, opt),
+            ResolveStreamMaxInputBytes(logicalSourceName, opt,
+                stream.CanSeek),
             cancellationToken,
             out bool ownsReadStream);
         try {
@@ -79,6 +82,7 @@ internal static partial class DocumentReaderEngine {
                 readStream,
                 logicalSourceName,
                 opt,
+                cancellationToken,
                 out ReaderHandlerDescriptor customStreamHandler,
                 out ReaderDetectionResult detection);
             ReaderInputKind kind = detection.Kind;
@@ -98,30 +102,39 @@ internal static partial class DocumentReaderEngine {
                     detection);
             }
 
-            using MemoryStream snapshot = ownsReadStream && readStream is MemoryStream bufferedInput
-                ? bufferedInput
-                : CopyToMemory(readStream, cancellationToken, opt.MaxInputBytes);
-            snapshot.Position = 0;
-            ReaderChunk[] chunks = Read(snapshot, logicalSourceName, opt, cancellationToken).ToArray();
-            snapshot.Position = 0;
-            bool customStreamReaderOwnsExtension = hasCustomStreamHandler && customStreamHandler.ReadStream != null;
-            IReadOnlyList<OfficeDocumentAsset> assets = customStreamReaderOwnsExtension
-                ? Array.Empty<OfficeDocumentAsset>()
-                : ReadOpenXmlImageAssets(snapshot, logicalSourceName, kind, opt, cancellationToken);
-            ReaderInputKind fallbackKind = customStreamReaderOwnsExtension ? customStreamHandler.Kind : kind;
-            OfficeDocumentReadResult result = BuildChunkDocumentResult(
-                chunks,
-                logicalSourceName,
-                fallbackKind,
-                BuildStreamDocumentSource(snapshot, logicalSourceName, chunks),
-                assets,
-                detection);
-            if (customStreamReaderOwnsExtension) {
-                return result;
+            MemoryStream? ownedSnapshot = null;
+            MemoryStream snapshot;
+            if (ReaderInputLimits.IsSnapshotStream(readStream)) {
+                snapshot = (MemoryStream)readStream;
+            } else {
+                ownedSnapshot = CopyToMemory(readStream, cancellationToken, opt.MaxInputBytes);
+                snapshot = ownedSnapshot;
             }
+            try {
+                snapshot.Position = 0;
+                ReaderChunk[] chunks = Read(snapshot, logicalSourceName, opt, cancellationToken).ToArray();
+                snapshot.Position = 0;
+                bool customStreamReaderOwnsExtension = hasCustomStreamHandler && customStreamHandler.ReadStream != null;
+                IReadOnlyList<OfficeDocumentAsset> assets = customStreamReaderOwnsExtension
+                    ? Array.Empty<OfficeDocumentAsset>()
+                    : ReadOpenXmlImageAssets(snapshot, logicalSourceName, kind, opt, cancellationToken);
+                ReaderInputKind fallbackKind = customStreamReaderOwnsExtension ? customStreamHandler.Kind : kind;
+                OfficeDocumentReadResult result = BuildChunkDocumentResult(
+                    chunks,
+                    logicalSourceName,
+                    fallbackKind,
+                    BuildStreamDocumentSource(snapshot, logicalSourceName, chunks),
+                    assets,
+                    detection);
+                if (customStreamReaderOwnsExtension) {
+                    return result;
+                }
 
-            snapshot.Position = 0;
-            return EnrichBuiltInDocumentResult(snapshot, logicalSourceName, kind, opt, result, cancellationToken);
+                snapshot.Position = 0;
+                return EnrichBuiltInDocumentResult(snapshot, logicalSourceName, kind, opt, result, cancellationToken);
+            } finally {
+                ownedSnapshot?.Dispose();
+            }
         } finally {
             if (ownsReadStream) {
                 readStream.Dispose();
@@ -181,14 +194,17 @@ internal static partial class DocumentReaderEngine {
         ReaderInputKind fallbackKind,
         OfficeDocumentSource source,
         IReadOnlyList<OfficeDocumentAsset>? assets = null,
-        ReaderDetectionResult? detection = null) {
+        ReaderDetectionResult? detection = null,
+        IReadOnlyList<OfficeDocumentOcrCandidate>? ocrCandidates = null) {
         ReaderInputKind kind = chunks.Count > 0 ? chunks[0].Kind : fallbackKind;
         ReaderTable[] tables = ExtractTables(chunks).ToArray();
         ReaderVisual[] visuals = ExtractVisuals(chunks).ToArray();
         OfficeDocumentAsset[] assetArray = assets == null || assets.Count == 0 ? Array.Empty<OfficeDocumentAsset>() : assets.ToArray();
         OfficeDocumentBlock[] blocks = BuildChunkDocumentBlocks(chunks).ToArray();
-        OfficeDocumentOcrCandidate[] ocrCandidates = BuildChunkDocumentOcrCandidates(blocks, assetArray).ToArray();
-        IReadOnlyList<OfficeDocumentPage> pages = BuildChunkDocumentPages(chunks, blocks, tables, assetArray, ocrCandidates);
+        OfficeDocumentOcrCandidate[] candidateArray = ocrCandidates == null
+            ? BuildChunkDocumentOcrCandidates(blocks, assetArray).ToArray()
+            : ocrCandidates.ToArray();
+        IReadOnlyList<OfficeDocumentPage> pages = BuildChunkDocumentPages(chunks, blocks, tables, assetArray, candidateArray);
 
         return new OfficeDocumentReadResult {
             Kind = kind,
@@ -201,11 +217,11 @@ internal static partial class DocumentReaderEngine {
             Blocks = blocks,
             Tables = tables,
             Visuals = visuals,
-            Diagnostics = BuildChunkDocumentDiagnostics(chunks, ocrCandidates, detection),
+            Diagnostics = BuildChunkDocumentDiagnostics(chunks, candidateArray, detection),
             Assets = assetArray,
             Links = Array.Empty<OfficeDocumentLink>(),
             Forms = Array.Empty<OfficeDocumentFormField>(),
-            OcrCandidates = ocrCandidates
+            OcrCandidates = candidateArray
         };
     }
 
@@ -270,15 +286,29 @@ internal static partial class DocumentReaderEngine {
     }
 
     private static string? BuildChunkDocumentMarkdown(IReadOnlyList<ReaderChunk> chunks) {
-        if (chunks.Count == 0) {
-            return null;
-        }
+        return JoinChunkMarkdown(
+            chunks,
+            static (chunk, _) => string.IsNullOrWhiteSpace(chunk.Markdown) ? chunk.Text : chunk.Markdown);
+    }
 
-        var parts = chunks
-            .Select(static chunk => string.IsNullOrWhiteSpace(chunk.Markdown) ? chunk.Text : chunk.Markdown)
-            .Where(static text => !string.IsNullOrWhiteSpace(text))
-            .ToArray();
-        return parts.Length == 0 ? null : string.Join(Environment.NewLine + Environment.NewLine, parts);
+    private static string? JoinChunkMarkdown(
+        IReadOnlyList<ReaderChunk> chunks,
+        Func<ReaderChunk, int, string?> valueSelector) {
+        StringBuilder? markdown = null;
+        for (int index = 0; index < chunks.Count; index++) {
+            ReaderChunk chunk = chunks[index];
+            string? value = valueSelector(chunk, index);
+            if (string.IsNullOrEmpty(value) ||
+                (string.IsNullOrWhiteSpace(value) && !chunk.ContinuesPreviousChunk)) continue;
+
+            if (markdown == null) {
+                markdown = new StringBuilder(value!.Length);
+            } else if (!chunk.ContinuesPreviousChunk) {
+                markdown.AppendLine().AppendLine();
+            }
+            markdown.Append(value);
+        }
+        return markdown?.ToString();
     }
 
     private static IEnumerable<OfficeDocumentBlock> BuildChunkDocumentBlocks(IReadOnlyList<ReaderChunk> chunks) {

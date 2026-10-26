@@ -3,7 +3,8 @@
 [![nuget version](https://img.shields.io/nuget/v/OfficeIMO.PowerPoint)](https://www.nuget.org/packages/OfficeIMO.PowerPoint)
 [![nuget downloads](https://img.shields.io/nuget/dt/OfficeIMO.PowerPoint?label=nuget%20downloads)](https://www.nuget.org/packages/OfficeIMO.PowerPoint)
 
-`OfficeIMO.PowerPoint` creates and edits `.pptx` presentations with Open XML. It is for generating editable decks without COM automation and without Microsoft PowerPoint installed.
+`OfficeIMO.PowerPoint` creates, reads, edits, and writes `.pptx` presentations and PowerPoint 97-2003
+`.ppt`, `.pot`, and `.pps` files. It works without COM automation and without Microsoft PowerPoint installed.
 
 If OfficeIMO saves you time, please consider supporting the work through [GitHub Sponsors](https://github.com/sponsors/PrzemyslawKlys) or [PayPal](https://paypal.me/PrzemyslawKlys). PowerShell users should use [PSWriteOffice](https://github.com/EvotecIT/PSWriteOffice) for the PowerShell-facing experience.
 
@@ -53,16 +54,111 @@ streamed.AddSlide().AddTitle("Stream-backed deck");
 streamed.Save();
 ```
 
+### PowerPoint 97-2003 binary files
+
+Normal loading detects the OLE document streams, so callers do not need a separate code path for `.ppt`,
+`.pot`, or `.pps` input. Supported binary content is projected into the same editable model used for PPTX:
+
+```csharp
+using var presentation = PowerPointPresentation.Load("legacy-deck.ppt");
+
+Console.WriteLine(presentation.SourceFormat); // Ppt
+presentation.ReplaceText("Draft", "Approved");
+presentation.SaveCopy("updated.pptx");
+```
+
+Use `LoadLegacyPptWithReport(...)` when an import gate needs parser diagnostics and a conversion-loss result:
+
+```csharp
+using OfficeIMO.PowerPoint.LegacyPpt;
+
+using LegacyPptLoadResult result =
+    PowerPointPresentation.LoadLegacyPptWithReport("legacy-deck.ppt");
+
+result.EnsureNoImportErrors();
+if (result.HasConversionLoss) {
+    foreach (var diagnostic in result.Diagnostics) {
+        Console.WriteLine(diagnostic);
+    }
+}
+
+PowerPointPresentation presentation = result.Document;
+```
+
+Native binary saving is selected by a `.ppt`, `.pot`, or `.pps` destination, or explicitly through
+`ToBytes(PowerPointFileFormat.Ppt)`. Fresh binary authoring and supported PPTX conversion use the same
+slides, masters, layouts, placeholders, themes, text, shapes, pictures, notes, comments, interactions,
+transitions, animations, properties, macros, embedded objects, and media contracts exposed by the normal
+PowerPoint model:
+
+Open XML output is always a macro-free `.pptx`. VBA imported from a binary presentation remains available
+in the editable model and is retained when saving back to `.ppt`, `.pot`, or `.pps`, but it is omitted from
+`Save("output.pptx")` and `ToBytes(PowerPointFileFormat.Pptx)` so the package content matches its extension.
+
+```csharp
+using OfficeIMO.PowerPoint.LegacyPpt;
+
+using var presentation = PowerPointPresentation.Create("simple-deck.ppt");
+var slide = presentation.AddSlide();
+slide.AddTitle("Binary PowerPoint");
+slide.AddTextBox("Written without PowerPoint automation.");
+slide.AddRectangle(600000, 3200000, 1800000, 700000);
+
+LegacyPptWritePreflightReport report = presentation.AnalyzeLegacyPptWrite();
+if (report.CanWrite) {
+    presentation.Save();
+}
+```
+
+Imported binary files use a preservation-aware writer: no-op saves can retain the original compound file,
+representable edits append compatible records, and unrelated or unknown records and streams remain intact.
+Saving blocks on known loss by default. Tables, charts, and SmartArt can be converted to deterministic static
+PNG visuals only after the caller accepts the reported loss with
+`new PowerPointSaveOptions { LossPolicy = PowerPointConversionLossPolicy.Allow }`. Features with no safe
+binary representation are blocked rather than silently omitted.
+
+The versioned capability catalog is the source of truth for import, fresh binary authoring, binary round-trip,
+and PPTX-to-binary behavior:
+
+```csharp
+using OfficeIMO.PowerPoint.LegacyPpt.Capabilities;
+
+string json = LegacyPptCapabilityCatalog.ToJson();
+string markdown = LegacyPptCapabilityCatalog.ToMarkdown();
+LegacyPptCapability pictures = LegacyPptCapabilityCatalog.Get(
+    LegacyPptFeature.RasterPictures);
+```
+
+Password-to-open encryption works for both Open XML and binary presentations. Binary destinations use RC4
+CryptoAPI for PowerPoint 97-2003 compatibility; it is a legacy interoperability mechanism, not modern
+cryptography:
+
+```csharp
+using var encrypted = PowerPointPresentation.LoadEncrypted(
+    "protected.ppt", "open-password");
+
+encrypted.SaveEncrypted("protected-copy.ppt", "new-password",
+    new PowerPointSaveOptions {
+        LegacyPptEncryptionKeySizeBits = 128,
+        LegacyPptEncryptDocumentProperties = true
+    });
+```
+
+`InspectSignatures()` detects Open XML and legacy binary signature metadata. The safe default blocks a
+mutating save of signed content; callers must explicitly choose whether invalidated signature markup should
+be removed or preserved.
+
 ## What it does
 
 - Creates and edits PowerPoint presentations, slides, slide size, text boxes, pictures, tables, charts, backgrounds, transitions, notes, and metadata.
+- Reads and writes `.ppt`, `.pot`, and `.pps` through a dependency-free binary parser, native writer, and preservation-aware incremental writer.
 - Keeps generated output as editable PowerPoint content instead of screenshots.
 - Reports editable, partially editable, preserved, and unsupported deck features through `InspectFeatures()` before edit-heavy round trips.
 - Composes reusable semantic plans through one `presentation.Compose(plan, options)` workflow.
 - Provides semantic executive-summary, chart-story, comparison, screenshot-story, appendix-table, architecture, and closing families with two editable variants each.
 - Inspects deck rhythm before rendering so repetitive layouts, dense streaks, long sections, and missing closings are visible to automation.
 - Authors every `OfficeIMO.Drawing.OfficeChartKind` family from one shared chart contract, including categorical combo charts and secondary value axes.
-- Supports encrypted presentation save/load workflows.
+- Supports encrypted Open XML and RC4 CryptoAPI binary presentation save/load workflows.
 - Uses Open XML directly, making it suitable for services, build agents, desktop apps, and automation hosts.
 
 ## Runnable samples
@@ -439,6 +535,27 @@ no separate PowerPoint builder vocabulary to learn or keep synchronized.
 
 See [the breaking API migration guide](../Docs/officeimo.powerpoint-api-migration.md) for old-to-new mappings.
 
+## Managed image export
+
+Slides and presentation batches can be exported as PNG, JPEG, TIFF, lossless WebP, or SVG:
+
+```csharp
+using OfficeIMO.Drawing;
+
+byte[] jpeg = slide.ToJpeg(new PowerPointImageExportOptions {
+    RasterEncoding = new OfficeRasterEncodingOptions {
+        Jpeg = new OfficeJpegEncodeOptions { Quality = 92 }
+    }
+});
+
+presentation.ToImages()
+    .ForSlideRange(1, 3)
+    .AsWebp()
+    .Save("slide-previews");
+```
+
+PowerPoint owns slide semantics and scene construction; `OfficeIMO.Drawing` owns the common raster encoders. `SaveAsJpeg`, `SaveAsTiff`, and `SaveAsWebp` remain thin wrappers over the shared export builder.
+
 ## Adjacent packages
 
 | Package | Use it for |
@@ -461,6 +578,6 @@ See [the breaking API migration guide](../Docs/officeimo.powerpoint-api-migratio
 ## Dependency footprint
 
 - **External:** Open XML SDK for `.pptx` package mechanics. Microsoft BCL compatibility packages are used on older targets.
-- **OfficeIMO:** `OfficeIMO.Drawing`. The presentation model, composition system, inspection, encryption workflow, and PNG/SVG export are first-party.
+- **OfficeIMO:** `OfficeIMO.Drawing`. The presentation model, composition system, inspection, encryption workflow, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

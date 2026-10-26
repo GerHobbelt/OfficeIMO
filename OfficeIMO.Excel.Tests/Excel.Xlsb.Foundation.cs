@@ -224,6 +224,25 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Xlsb_NormalLoad_ReadOnlyModeUsesReadOnlyPackageAndRejectsSave() {
+            using ExcelDocument document = ExcelDocument.Load(
+                GetExcelGeneratedXlsbFixturePath(),
+                new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+
+            Assert.Equal(OfficeIMO.Drawing.DocumentAccessMode.ReadOnly, document.AccessMode);
+            Assert.Equal(FileAccess.Read, document.FileOpenAccess);
+            Assert.Equal(ExcelFileFormat.Xlsb, document.SourceFormat);
+            Assert.True(document.Sheets[0].TryGetCellText(2, 2, out string? value));
+            Assert.Equal("42", value);
+
+            using var destination = new MemoryStream();
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+                document.Save(destination, ExcelFileFormat.Xlsb));
+            Assert.Contains("read-only", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, destination.Length);
+        }
+
+        [Fact]
         public void Xlsb_StyledExcelFixture_ProjectsDateSystemFormatsAndCellStyles() {
             using ExcelDocument document = ExcelDocument.Load(GetStyledExcelGeneratedXlsbFixturePath());
 
@@ -1548,7 +1567,8 @@ namespace OfficeIMO.Tests {
                 Assert.True(
                     expected[index].Record.Data.SequenceEqual(actual[index].Record.Data),
                     $"Worksheet record {index} (type {expected[index].Record.Type}, cell {expected[index].Cell}) changed unexpectedly. " +
-                    $"Expected {Convert.ToHexString(expected[index].Record.Data)}, actual {Convert.ToHexString(actual[index].Record.Data)}.");
+                    $"Expected {BitConverter.ToString(expected[index].Record.Data).Replace("-", string.Empty)}, " +
+                    $"actual {BitConverter.ToString(actual[index].Record.Data).Replace("-", string.Empty)}.");
             }
         }
 
