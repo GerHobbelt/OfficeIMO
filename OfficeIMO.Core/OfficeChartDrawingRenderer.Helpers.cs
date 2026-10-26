@@ -212,27 +212,30 @@ public static partial class OfficeChartDrawingRenderer {
     private static bool IsFiniteChartValue(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
 
     private static double ToPlotY(double value, double min, double max, double plotTop, double plotHeight) {
-        double range = max - min;
-        double ratio = range <= 0D ? 0.5D : (value - min) / range;
-        if (ratio < 0D) {
-            ratio = 0D;
-        } else if (ratio > 1D) {
-            ratio = 1D;
-        }
-
+        double ratio = GetPlotRatio(value, min, max);
         return plotTop + plotHeight - plotHeight * ratio;
     }
 
     private static double ToPlotX(double value, double min, double max, double plotLeft, double plotWidth) {
-        double range = max - min;
-        double ratio = range <= 0D ? 0.5D : (value - min) / range;
+        double ratio = GetPlotRatio(value, min, max);
+        return plotLeft + plotWidth * ratio;
+    }
+
+    private static double GetPlotRatio(double value, double min, double max) {
+        double ratio = GetUnclampedPlotRatio(value, min, max);
         if (ratio < 0D) {
             ratio = 0D;
         } else if (ratio > 1D) {
             ratio = 1D;
         }
+        return ratio;
+    }
 
-        return plotLeft + plotWidth * ratio;
+    private static double GetUnclampedPlotRatio(double value, double min, double max) {
+        double range = max - min;
+        return range <= 0D ? 0.5D : double.IsInfinity(range)
+            ? (value * 0.5D - min * 0.5D) / (max * 0.5D - min * 0.5D)
+            : (value - min) / range;
     }
 
     private static IReadOnlyList<double> GetScatterXValues(IReadOnlyList<string> categories) {
@@ -349,7 +352,17 @@ public static partial class OfficeChartDrawingRenderer {
             ? layout.HorizontalAxisMaximum ?? range.Max
             : layout.VerticalAxisMaximum ?? range.Max;
         if (max <= min) {
-            return range;
+            double span = range.Max - range.Min;
+            if (double.IsNaN(span) || double.IsInfinity(span) || span <= 0D)
+                span = 1D;
+            bool explicitMin = horizontal ? layout.HorizontalAxisMinimum.HasValue : layout.VerticalAxisMinimum.HasValue;
+            bool explicitMax = horizontal ? layout.HorizontalAxisMaximum.HasValue : layout.VerticalAxisMaximum.HasValue;
+            if (!explicitMin && !explicitMax) return range;
+            if (explicitMin && !explicitMax) max = min + span;
+            else if (explicitMax && !explicitMin) min = max - span;
+            else throw new ArgumentException("The value-axis maximum must exceed its minimum.", nameof(layout));
+            if (double.IsInfinity(min) || double.IsInfinity(max) || max <= min)
+                throw new ArgumentException("The value-axis bounds cannot form a finite range.", nameof(layout));
         }
 
         return new ValueRange(min, max);
@@ -370,9 +383,9 @@ public static partial class OfficeChartDrawingRenderer {
         if (!majorUnit.HasValue || majorUnit.Value <= 0D) {
             return new[] {
                 range.Min,
-                range.Min + (range.Max - range.Min) * 0.25D,
-                range.Min + (range.Max - range.Min) * 0.5D,
-                range.Min + (range.Max - range.Min) * 0.75D,
+                range.Min * 0.75D + range.Max * 0.25D,
+                range.Min * 0.5D + range.Max * 0.5D,
+                range.Min * 0.25D + range.Max * 0.75D,
                 range.Max
             };
         }
@@ -407,7 +420,12 @@ public static partial class OfficeChartDrawingRenderer {
     private static IReadOnlyList<double> GetValueAxisLabelTicks(ValueRange range, double? majorUnit) =>
         GetValueAxisMajorTicks(range, majorUnit);
 
-    private static IReadOnlyList<double> GetValueAxisMinorTicks(ValueRange range, double? minorUnit, IReadOnlyList<double> majorTicks) {
+    private static IReadOnlyList<double> GetValueAxisMinorTicks(ValueRange range, double? minorUnit,
+        IReadOnlyList<double> majorTicks, bool automaticWhenVisible = false) {
+        if (!minorUnit.HasValue && automaticWhenVisible && majorTicks.Count >= 2) {
+            double interval = majorTicks[1] - majorTicks[0];
+            if (interval > 0D && !double.IsInfinity(interval)) minorUnit = interval / 5D;
+        }
         if (!minorUnit.HasValue || minorUnit.Value <= 0D) {
             return Array.Empty<double>();
         }

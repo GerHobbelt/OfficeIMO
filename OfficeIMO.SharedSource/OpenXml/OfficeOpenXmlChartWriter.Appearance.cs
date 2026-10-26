@@ -24,13 +24,14 @@ namespace OfficeIMO.OpenXml.Internal {
             bool reenableBubbleOutline = kind == OfficeChartKind.Bubble &&
                 series.ShowMarkerOutline &&
                 properties.GetFirstChild<A.Outline>()?.GetFirstChild<A.NoFill>() != null;
-            bool reenableConnectingLine = !IsFilledSharedKind(kind) && series.ConnectLine &&
+            bool reenableConnectingLine = (!IsFilledSharedKind(kind) || IsAreaKind(kind)) && series.ConnectLine &&
                 properties.GetFirstChild<A.Outline>()?.GetFirstChild<A.NoFill>() != null;
+            bool hideAreaOutline = IsAreaKind(kind) && !series.ConnectLine;
             if (!fillColor.HasValue && !outlineColor.HasValue && outlineWidth == null &&
                 (kind != OfficeChartKind.Bubble || series.ShowMarkerOutline) &&
                 series.StrokeDashStyle == null &&
                 (series.ConnectLine || IsFilledSharedKind(kind)) &&
-                !reenableBubbleOutline && !reenableConnectingLine) return;
+                !reenableBubbleOutline && !reenableConnectingLine && !hideAreaOutline) return;
             if (fillColor.HasValue && IsFilledSharedKind(kind)) {
                 properties.RemoveAllChildren<A.SolidFill>();
                 properties.RemoveAllChildren<A.NoFill>();
@@ -44,6 +45,7 @@ namespace OfficeIMO.OpenXml.Internal {
             bool replaceOutlineFill = reenableBubbleOutline || reenableConnectingLine ||
                 (kind == OfficeChartKind.Bubble && !series.ShowMarkerOutline) ||
                 (!series.ConnectLine && !IsFilledSharedKind(kind)) ||
+                hideAreaOutline ||
                 outlineColor.HasValue;
             if (replaceOutlineFill) {
                 outline.RemoveAllChildren<A.SolidFill>();
@@ -55,8 +57,7 @@ namespace OfficeIMO.OpenXml.Internal {
                 if (kind == OfficeChartKind.Bubble &&
                     !series.ShowMarkerOutline) {
                     outline.AddChild(new A.NoFill(), true);
-                } else if (!series.ConnectLine &&
-                           !IsFilledSharedKind(kind)) {
+                } else if (hideAreaOutline || (!series.ConnectLine && !IsFilledSharedKind(kind))) {
                     outline.AddChild(new A.NoFill(), true);
                 } else if (outlineColor.HasValue) {
                     outline.AddChild(new A.SolidFill(CreateSharedRgbColor(outlineColor.Value)), true);
@@ -64,10 +65,17 @@ namespace OfficeIMO.OpenXml.Internal {
             }
             if (outlineWidth.HasValue) {
                 outline.Width = checked((int)FromPoints(outlineWidth.Value));
+            } else if (reenableConnectingLine && outline.Width?.Value == 0) {
+                // A hidden native area outline may have zero width as well as no fill.
+                outline.Width = null;
             }
             if (series.StrokeDashStyle.HasValue) {
                 outline.RemoveAllChildren<A.PresetDash>();
                 outline.AddChild(new A.PresetDash { Val = MapDash(series.StrokeDashStyle.Value) }, true);
+            } else if (reenableConnectingLine || reenableBubbleOutline) {
+                // A hidden imported outline can retain an unsupported dash. Re-enabling it
+                // without an explicit shared dash means a solid native outline.
+                outline.RemoveAllChildren<A.PresetDash>();
             }
             if (outline.Parent == null) properties.AddChild(outline, true);
             if (properties.Parent == null) InsertSharedSeriesProperties(seriesElement, properties);
@@ -111,7 +119,7 @@ namespace OfficeIMO.OpenXml.Internal {
                 (OpenXmlElement?)seriesElement.GetFirstChild<C.Values>() ??
                 (OpenXmlElement?)seriesElement.GetFirstChild<C.XValues>() ?? seriesElement.GetFirstChild<C.YValues>();
             var pointsByIndex = new Dictionary<uint, C.DataPoint>();
-            foreach (C.DataPoint existingPoint in seriesElement.Elements<C.DataPoint>()) {
+            foreach (C.DataPoint existingPoint in OfficeOpenXmlChartPointStyles.GetBoundedPoints(seriesElement)) {
                 uint? existingIndex = existingPoint.Index?.Val?.Value;
                 if (existingIndex.HasValue && !pointsByIndex.ContainsKey(existingIndex.Value)) {
                     pointsByIndex.Add(existingIndex.Value, existingPoint);

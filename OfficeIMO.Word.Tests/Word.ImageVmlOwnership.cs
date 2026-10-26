@@ -7,6 +7,31 @@ using V = DocumentFormat.OpenXml.Vml;
 namespace OfficeIMO.Tests;
 
 public sealed class WordImageVmlOwnershipTests {
+    [Fact]
+    public void VmlImageDimensionSettersPersistWithoutChangingOtherStyleDeclarations() {
+        using var document = WordDocument.Create();
+        var imagePart = document.MainDocumentPartRoot.AddImagePart(ImagePartType.Gif);
+        imagePart.FeedData(new MemoryStream(Convert.FromBase64String(
+            "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")));
+        string id = document.MainDocumentPartRoot.GetIdOfPart(imagePart);
+        var shape = new V.Shape(new V.ImageData { RelationshipId = id }) {
+            Id = "Resizable", Style = "position:absolute;width:15pt;height:15pt;rotation:30"
+        };
+        var paragraph = document.AddParagraph("Image");
+        paragraph._run!.Append(new W.Picture(shape));
+        WordImage image = paragraph.Image!;
+        image.Width = 48;
+        image.Height = 32;
+        Assert.Equal(48, image.Width);
+        Assert.Equal(32, image.Height);
+        Assert.Contains("rotation:30", shape.Style!.Value);
+        using var bytes = document.ToStream();
+        using var reopened = WordDocument.Load(bytes);
+        WordImage persisted = reopened.Paragraphs.Single(item => item.IsImage).Image!;
+        Assert.Equal(48, persisted.Width);
+        Assert.Equal(32, persisted.Height);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -65,6 +90,25 @@ public sealed class WordImageVmlOwnershipTests {
         Assert.NotNull(document.Paragraphs[1].Image);
         clone.Remove();
         Assert.Null(document.Paragraphs[1].Image);
+    }
+    [Fact]
+    public void ImageRemoval_PreservesPartReferencedByVmlFill() {
+        using var document = WordDocument.Create();
+        byte[] expected = Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
+        var image = document.AddParagraph().AddImage(new MemoryStream(expected), "shared.gif", 20, 20).Image!;
+        var owner = document.MainDocumentPartRoot;
+        string id = image.RelationshipId!;
+        var fill = new V.Fill();
+        fill.SetAttribute(new DocumentFormat.OpenXml.OpenXmlAttribute("r", "id",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships", id));
+        document.AddParagraph("Texture")._run!.Append(new W.Picture(new V.Shape(fill) { Id = "Texture", Style = "width:15pt;height:15pt" }));
+        image.Remove();
+        Assert.True(owner.TryGetPartById(id, out _));
+        using var bytes = document.ToStream();
+        using var reopened = WordDocument.Load(bytes);
+        using var content = new MemoryStream();
+        reopened.MainDocumentPartRoot.GetPartById(id).GetStream().CopyTo(content);
+        Assert.Equal(expected, content.ToArray());
     }
     [Theory]
     [InlineData(false)]

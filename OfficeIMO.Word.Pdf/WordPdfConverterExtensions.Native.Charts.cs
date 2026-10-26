@@ -71,7 +71,10 @@ namespace OfficeIMO.Word.Pdf {
             List<OpenXmlElement> allChartElements = plotArea.ChildElements
                 .Where(IsNativeWordChartElement)
                 .ToList();
-            if (allChartElements.Count > 1 || allChartElements.Any(element => element is BubbleChart)) {
+            // The shared reader owns qualified legend-frame appearance, including its native
+            // fill and outline. Keep the PDF chart on that same projection when it is styled.
+            if (allChartElements.Count > 1 || allChartElements.Any(element => element is BubbleChart) ||
+                HasMaterialNativeLegendFrame(openXmlChart)) {
                 return TryCreateSharedNativeWordChartSnapshot(chart, out snapshot, out warning);
             }
             List<OpenXmlElement> chartElements = allChartElements
@@ -126,6 +129,13 @@ namespace OfficeIMO.Word.Pdf {
             }
 
             return true;
+        }
+
+        private static bool HasMaterialNativeLegendFrame(Chart? chart) {
+            var properties = chart?.GetFirstChild<Legend>()?.GetFirstChild<ChartShapeProperties>();
+            return properties?.ChildElements.Any(child => child is A.Outline outline
+                ? outline.GetFirstChild<A.NoFill>() == null
+                : child is not A.NoFill && (child.HasAttributes || child.HasChildren)) == true;
         }
 
         private static bool IsNativeSupportedWordChartElement(OpenXmlElement element) =>

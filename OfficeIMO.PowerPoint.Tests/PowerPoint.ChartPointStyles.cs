@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using DocumentFormat.OpenXml.Drawing;
+using DocumentFormat.OpenXml.Drawing.Charts;
 using OfficeIMO.Drawing;
 using OfficeIMO.PowerPoint;
 using OfficeIMO.PowerPoint.Html;
@@ -11,6 +13,41 @@ using Xunit;
 namespace OfficeIMO.Tests;
 
 public sealed class PowerPointChartPointStylesTests {
+    [Fact]
+    public void PointOutlineJoinSurvivesSemanticHtmlRoundTrip() {
+        var outline = new OfficeChartPointStyle(noFill: true, outlineColor: OfficeColor.Black,
+            outlineWidth: 2, outlineJoin: OfficeStrokeLineJoin.Round);
+        using PowerPointPresentation authored = PowerPointPresentation.Create();
+        authored.AddSlide().AddChartPoints(OfficeChartKind.Pie,
+            Data(OfficeChartKind.Pie, new OfficeChartPointStyle?[] { outline, null, null }), 20, 20, 600, 320);
+        using PowerPointPresentation htmlReopened = OfficeIMO.Html.HtmlConversionDocument.Parse(authored.ToHtml())
+            .ToPowerPointPresentation();
+        Assert.True(htmlReopened.Slides.Single().Charts.Single().TryGetOfficeSnapshot(out OfficeChartSnapshot snapshot));
+        Assert.Equal(OfficeStrokeLineJoin.Round, snapshot.Data.Series[0].PointStyles![0]!.OutlineJoin);
+    }
+
+    [Fact]
+    public void PointStyles_ClearCompetingDirectAndMarkerOverrides() {
+        using PowerPointPresentation presentation = PowerPointPresentation.Create();
+        PowerPointChart chart = presentation.AddSlide().AddChart(OfficeChartKind.Line,
+            Data(OfficeChartKind.Line, new OfficeChartPointStyle?[] { null, null, null }));
+        LineChartSeries series = presentation.Slides.Single().SlidePart.ChartParts.Single()
+            .ChartSpace!.Descendants<LineChartSeries>().Single();
+        var point = new DataPoint(new DocumentFormat.OpenXml.Drawing.Charts.Index { Val = 0U },
+            new ChartShapeProperties(new SolidFill(new RgbColorModelHex { Val = "FF0000" })),
+            new Marker(new ChartShapeProperties(new SolidFill(new RgbColorModelHex { Val = "0000FF" }))));
+        series.AddChild(point, true);
+
+        chart.SetDataPointStyle(0, 0, new OfficeChartPointStyle(OfficeColor.FromRgb(0, 128, 0)));
+        Assert.Null(point.ChartShapeProperties?.GetFirstChild<SolidFill>());
+        Assert.Equal("008000", point.Marker!.ChartShapeProperties!.GetFirstChild<SolidFill>()!
+            .GetFirstChild<RgbColorModelHex>()!.Val!.Value);
+        chart.SetDataPointStyle(0, 0, null);
+        Assert.Null(point.ChartShapeProperties?.GetFirstChild<SolidFill>());
+        Assert.Null(point.Marker?.ChartShapeProperties?.GetFirstChild<SolidFill>());
+        Assert.Empty(presentation.ValidateDocument());
+    }
+
     [Fact]
     public void PointStyles_WidthOnlyColumnOutlineMatchesDirectAndReopenedRendering() {
         var data = Data(OfficeChartKind.ColumnClustered, new OfficeChartPointStyle?[] {

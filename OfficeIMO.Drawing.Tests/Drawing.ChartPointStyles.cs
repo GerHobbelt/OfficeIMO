@@ -4,6 +4,38 @@ using Xunit;
 namespace OfficeIMO.Tests;
 
 public sealed class DrawingChartPointStylesTests {
+    [Fact]
+    public void DoughnutLegendUsesTheFirstRenderableRingWhenOnlyInnerRingHasPointStyles() {
+        var outer = new OfficeChartSeries("Outer", new[] { 3d, 2d }, null, OfficeColor.Parse("#1845A3"));
+        var inner = new OfficeChartSeries("Inner", new[] { 4d, 1d })
+            .WithPointStyles(new OfficeChartPointStyle?[] {
+                new(fillColor: OfficeColor.Parse("#D02020")), null
+            });
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("", null,
+            OfficeChartKind.Doughnut, new OfficeChartData(new[] { "A", "B" }, new[] { outer, inner }),
+            480, 300, layout: new OfficeChartLayout(showLegend: true)));
+        string svg = OfficeDrawingSvgExporter.ToSvg(drawing);
+        Assert.Contains("#1845A3", svg, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("#D02020", svg, StringComparison.OrdinalIgnoreCase);
+        var legend = Assert.Single(drawing.Elements.OfType<OfficeDrawingText>(), text => text.Text == "A");
+        Assert.Contains(drawing.Shapes, shape => shape.Y <= legend.Y + legend.Height &&
+            shape.Y + shape.Shape.Height >= legend.Y && shape.Shape.FillColor == OfficeColor.Parse("#1845A3"));
+    }
+
+    [Theory]
+    [InlineData(OfficeChartKind.Line)]
+    [InlineData(OfficeChartKind.Pie)]
+    public void LegendWidthRespectsConfiguredChartRatio(OfficeChartKind kind) {
+        var data = new OfficeChartData(new[] { "A long category", "B" },
+            new[] { new OfficeChartSeries("A long series name", new[] { 3d, 2d }) });
+        var layout = new OfficeChartLayout(seriesLegendWidthRatio: 0.1, categoryLegendWidthRatio: 0.1);
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("Legend", null,
+            kind, data, 400, 240, layout: layout));
+        string name = kind == OfficeChartKind.Pie ? "A long category" : "A long series name";
+        OfficeDrawingText legend = Assert.Single(drawing.Elements.OfType<OfficeDrawingText>(), text => text.Text == name);
+        Assert.True(legend.Width < 40, $"Legend text width {legend.Width} exceeds the 40-point legend budget.");
+    }
+
     [Theory]
     [InlineData(OfficeChartKind.Pie, false)]
     [InlineData(OfficeChartKind.Pie, true)]

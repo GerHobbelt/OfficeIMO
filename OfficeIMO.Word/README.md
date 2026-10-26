@@ -490,8 +490,10 @@ charts into the shared Drawing contract, including numeric X coordinates, bubble
 category combinations, secondary-axis assignments, native plotting order, and point styles.
 Word page images and Markdown SVG fallbacks use this projection. PDF uses it for bubble and
 combination charts; its existing single-family route retains its separate cached-data limits.
-Secondary-axis projections use automatic scales. Independent secondary-axis limits, formats,
-titles, and appearance require a richer projection and reject this snapshot.
+Secondary value axes retain their own linear bounds, major/minor tick units and appearance, numeric label format, and title.
+Use `chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout(minimum: 0, maximum: 1,
+majorUnit: 0.2, numberFormat: "0%").WithTitle("Completion rate"))` on a chart with a secondary series.
+Independent secondary colours, line styles and gridlines, and logarithmic or reversed scales still reject this snapshot.
 
 Snapshots preserve chart and plot surfaces, primary axes and gridlines, radial geometry,
 uniform body fonts, separate chart-title and axis-title fonts, uniform text size, style and
@@ -501,7 +503,8 @@ outside or best-fit radial leader lines, unsupported effects, and unrepresented 
 without changing the native document. Native authoring remains available for these charts.
 Deleted axes suppress their lines, and primary tick-label placement and automatic/minimum/maximum
 axis crossing are preserved where the renderer supports them; automatic zero crossing through a negative
-value range and maximum crossing on horizontal bars are rejected. Nonstandard axis arrangements, title or legend shape fills,
+value range and maximum crossing on horizontal bars are rejected. Nonstandard axis arrangements,
+title shape fills or unsupported legend fills,
 manual title layouts, unsupported numeric formats, exploded slices, and nondefault bar spacing
 require a richer projection and return false. Analytical overlays, sparse, empty, unequal or nonnumeric value caches,
 time-scaled date axes, inverted negative bars, unresolved native style presets, per-entry legend text,
@@ -557,12 +560,15 @@ chart.SetDataPointStyle(0, 1,
 
 Use `chart.SetDataPointStyle(seriesIndex, pointIndex, style)` to apply an
 `OfficeIMO.Drawing.OfficeChartPointStyle` to a native Word chart. Solid fill, explicit no-fill,
-outlines, and six hatch patterns are supported without changing the chart values.
+outlines with optional joins, and seven hatch patterns are supported without changing
+the chart values.
 Passing null clears the point's fill and outline overrides.
 
 Native save/reopen, chart snapshots, managed images, PDF export, and Markdown SVG chart
 fallbacks carry supported point styles. Pie legend swatches follow their slices.
-Static area charts use the series fill and report unsupported per-point styling.
+Static area charts use the opaque series fill, honor an explicit no-outline series,
+and report unsupported per-point styling. Imported native point overrides remain
+in the editable chart package.
 See the [shared style example](../OfficeIMO.Core/README.md#style-individual-chart-points).
 
 ## Managed image export

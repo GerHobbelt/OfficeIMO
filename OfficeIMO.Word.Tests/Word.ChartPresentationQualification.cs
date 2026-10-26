@@ -8,11 +8,74 @@ using C = DocumentFormat.OpenXml.Drawing.Charts;
 namespace OfficeIMO.Tests;
 
 public sealed class WordChartPresentationQualificationTests {
+    [Fact]
+    public void Snapshot_AcceptsEmptyTitleShapeProperties() {
+        using var document = WordDocument.Create();
+        var chart = Create(document, OfficeChartKind.ColumnClustered);
+        chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.Title!.AddChild(new C.ChartShapeProperties(), true);
+        Assert.True(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsUnrepresentedLegendOutlineJoin() {
+        using var document = WordDocument.Create();
+        var chart = Create(document, OfficeChartKind.ColumnClustered);
+        chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.Legend!.AddChild(
+            new C.ChartShapeProperties(new A.Outline(new A.SolidFill(new A.RgbColorModelHex { Val = "445566" }), new A.Round())), true);
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsMidpointCrossingInMixedAreaAndLinePlot() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.Area, new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Area", new[] { 3d, 4d }),
+            new OfficeChartSeries("Line", new[] { 5d, 6d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line,
+                axisGroup: OfficeChartAxisGroup.Secondary)
+        }));
+        chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>().Last()
+            .GetFirstChild<C.CrossBetween>()!.Val = C.CrossBetweenValues.MidpointCategory;
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsDifferentCrossBetweenModesAcrossAreaAxes() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.Area, new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Primary", new[] { 3d, 4d }),
+            new OfficeChartSeries("Secondary", new[] { 5d, 6d }, null, null, null, true,
+                renderKind: OfficeChartKind.Area,
+                axisGroup: OfficeChartAxisGroup.Secondary)
+        }));
+        var axes = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.PlotArea!.Elements<C.ValueAxis>().ToArray();
+        Assert.Equal(2, axes.Length);
+        axes[1].GetFirstChild<C.CrossBetween>()!.Val = C.CrossBetweenValues.MidpointCategory;
+        string native = chart.ChartPart.ChartSpace.OuterXml;
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+        Assert.Equal(native, chart.ChartPart.ChartSpace.OuterXml);
+        axes[0].GetFirstChild<C.CrossBetween>()!.Val = C.CrossBetweenValues.MidpointCategory;
+        Assert.True(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Theory]
+    [InlineData("legend")]
+    [InlineData("chart")]
+    public void Snapshot_RejectsVisibleSurfaceOutlineWithUnresolvedColour(string surface) {
+        using var document = WordDocument.Create();
+        var chart = Create(document, OfficeChartKind.ColumnClustered);
+        var native = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!;
+        if (surface == "legend") native.Legend!.AddChild(
+            new C.ChartShapeProperties(new A.Outline { Width = 25400 }), true);
+        else chart.ChartPart.ChartSpace.AddChild(new C.ShapeProperties(new A.Outline { Width = 25400 }), true);
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
     [Theory]
     [InlineData(OfficeChartKind.Line)]
     [InlineData(OfficeChartKind.Area)]
     [InlineData(OfficeChartKind.Scatter)]
-    public void Snapshot_RejectsUnclippedPointsOutsideExplicitValueBounds(OfficeChartKind kind) {
+    public void Snapshot_ClipsPointsOutsideExplicitValueBounds(OfficeChartKind kind) {
         using var document = WordDocument.Create();
         var data = new OfficeChartData(new[] { "A", "B", "C" }, new[] {
             new OfficeChartSeries("Values", new[] { 0d, 10d, 20d }, kind == OfficeChartKind.Scatter ? new[] { 1d, 2d, 3d } : null) });
@@ -20,33 +83,42 @@ public sealed class WordChartPresentationQualificationTests {
         var plot = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.PlotArea!;
         plot.Elements<C.ValueAxis>().Last().GetFirstChild<C.Scaling>()!.AddChild(new C.MaxAxisValue { Val = 15d }, true);
         string native = chart.ChartPart.ChartSpace.OuterXml;
-        Assert.False(chart.TryGetOfficeSnapshot(out _));
+        Assert.True(chart.TryGetOfficeSnapshot(out OfficeChartSnapshot snapshot));
+        Assert.Equal(15d, snapshot.Layout.VerticalAxisMaximum);
+        Assert.Contains(OfficeChartDrawingRenderer.Render(snapshot).Elements,
+            element => element is OfficeDrawingGroup);
         Assert.Equal(native, chart.ChartPart.ChartSpace.OuterXml);
     }
 
     [Fact]
-    public void Snapshot_RejectsUnclippedScatterPointsOutsideExplicitHorizontalBounds() {
+    public void Snapshot_ClipsScatterPointsOutsideExplicitHorizontalBounds() {
         using var document = WordDocument.Create();
         var chart = document.AddChart(OfficeChartKind.Scatter, new OfficeChartData(new[] { "A", "B", "C" }, new[] {
             new OfficeChartSeries("Values", new[] { 1d, 2d, 3d }, new[] { 1d, 2d, 3d }) }));
         var plot = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.PlotArea!;
         plot.Elements<C.ValueAxis>().First().GetFirstChild<C.Scaling>()!.AddChild(new C.MaxAxisValue { Val = 2d }, true);
         string native = chart.ChartPart.ChartSpace.OuterXml;
-        Assert.False(chart.TryGetOfficeSnapshot(out _));
+        Assert.True(chart.TryGetOfficeSnapshot(out OfficeChartSnapshot snapshot));
+        Assert.Equal(2d, snapshot.Layout.HorizontalAxisMaximum);
+        Assert.Contains(OfficeChartDrawingRenderer.Render(snapshot).Elements,
+            element => element is OfficeDrawingGroup);
         Assert.Equal(native, chart.ChartPart.ChartSpace.OuterXml);
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void Snapshot_RejectsAreaBaselineOutsideExplicitVerticalBounds(bool positive) {
+    public void Snapshot_ClipsAreaBaselineOutsideExplicitVerticalBounds(bool positive) {
         using var document = WordDocument.Create();
         var chart = document.AddChart(OfficeChartKind.Area, new OfficeChartData(new[] { "A", "B" }, new[] {
             new OfficeChartSeries("Values", positive ? new[] { 10d, 20d } : new[] { -10d, -20d }) }));
         var axis = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.PlotArea!.Elements<C.ValueAxis>().Single();
         axis.GetFirstChild<C.Scaling>()!.AddChild(positive ? new C.MinAxisValue { Val = 5d } : new C.MaxAxisValue { Val = -5d }, true);
+        if (!positive) axis.GetFirstChild<C.Crosses>()!.Val = C.CrossesValues.Minimum;
         string native = chart.ChartPart.ChartSpace.OuterXml;
-        Assert.False(chart.TryGetOfficeSnapshot(out _));
+        Assert.True(chart.TryGetOfficeSnapshot(out OfficeChartSnapshot snapshot));
+        Assert.Contains(OfficeChartDrawingRenderer.Render(snapshot).Elements,
+            element => element is OfficeDrawingGroup);
         Assert.Equal(native, chart.ChartPart.ChartSpace.OuterXml);
     }
 
@@ -107,10 +179,54 @@ public sealed class WordChartPresentationQualificationTests {
             var title = new C.Title(new C.ChartText(new C.RichText(new A.BodyProperties(), new A.ListStyle(), new A.Paragraph(new A.Run(new A.Text("Axis"))))),
                 new C.Layout(new C.ManualLayout(new C.Left { Val = .3 })));
             native.PlotArea.GetFirstChild<C.ValueAxis>()!.AddChild(title, true);
+        } else if (feature == "legendShape") {
+            native.GetFirstChild<C.Legend>()!.AddChild(new C.ChartShapeProperties(new A.GradientFill()), true);
         } else {
-            OpenXmlCompositeElement owner = feature == "titleShape" ? native.GetFirstChild<C.Title>()! : native.GetFirstChild<C.Legend>()!;
-            owner.AddChild(new C.ChartShapeProperties(new A.SolidFill(new A.RgbColorModelHex { Val = "FF0000" })), true);
+            native.GetFirstChild<C.Title>()!.AddChild(new C.ChartShapeProperties(
+                new A.SolidFill(new A.RgbColorModelHex { Val = "FF0000" })), true);
         }
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsDateFormattingOnNumericCategoryLabels() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.Area, new OfficeChartData(
+            new[] { "1", "2" }, new[] { new OfficeChartSeries("Values", new[] { 3d, 4d }) }));
+        var categoryAxis = chart.ChartPart!.ChartSpace!.Descendants<C.CategoryAxis>().Single();
+        categoryAxis.GetFirstChild<C.NumberingFormat>()!.FormatCode = "m/d/yyyy";
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Theory]
+    [InlineData("point")]
+    [InlineData("legendKey")]
+    [InlineData("bubbleSize")]
+    public void Snapshot_RejectsVisibleLabelsWithoutGlobalValueFlags(string label) {
+        using var document = WordDocument.Create();
+        var chart = label == "bubbleSize"
+            ? document.AddChart(OfficeChartKind.Bubble, new OfficeChartData(new[] { "A", "B" }, new[] {
+                OfficeChartSeries.CreateBubble("Values", new[] { 1d, 2d }, new[] { 3d, 4d }, new[] { 5d, 6d }) }))
+            : Create(document, OfficeChartKind.Pie);
+        var plot = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.PlotArea!;
+        C.DataLabels labels = label switch {
+            "point" => new C.DataLabels(new C.DataLabel(new C.Index { Val = 0 }, new C.ShowValue { Val = true })),
+            "legendKey" => new C.DataLabels(new C.ShowLegendKey { Val = true }),
+            _ => new C.DataLabels(new C.ShowBubbleSize { Val = true })
+        };
+        if (label == "bubbleSize") plot.GetFirstChild<C.BubbleChart>()!.AddChild(labels, true);
+        else plot.GetFirstChild<C.PieChart>()!.AddChild(labels, true);
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsSeriesLabelSuppressionBelowVisibleChartLabels() {
+        using var document = WordDocument.Create();
+        var chart = Create(document, OfficeChartKind.ColumnClustered);
+        var bars = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.PlotArea!.GetFirstChild<C.BarChart>()!;
+        bars.AddChild(new C.DataLabels(new C.ShowValue { Val = true }), true);
+        bars.GetFirstChild<C.BarChartSeries>()!.AddChild(
+            new C.DataLabels(new C.ShowValue { Val = false }), true);
         Assert.False(chart.TryGetOfficeSnapshot(out _));
     }
 

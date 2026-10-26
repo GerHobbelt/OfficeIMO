@@ -577,6 +577,31 @@ foreach (var issue in rendered.QualityReport.Issues) {
 }
 ```
 
+Set a legend frame fill and outline through the shared chart style:
+
+```csharp
+var framedStyle = new OfficeChartStyle(
+    showBackground: true,
+    legendBackgroundColor: OfficeColor.Parse("#FFFFFF"),
+    legendBorderColor: OfficeColor.Parse("#375A7F"),
+    legendBorderWidth: 1);
+var framedSnapshot = new OfficeChartSnapshot("RevenueChart", "Revenue by quarter",
+    OfficeChartKind.ColumnClustered, snapshot.Data, 420, 260, style: framedStyle);
+OfficeDrawing framedChart = OfficeChartDrawingRenderer.Render(framedSnapshot);
+```
+
+The background and border are optional; the border width is a positive value in points.
+These settings style the chart legend frame in shared static renders.
+
+Use `layout.WithSecondaryValueAxis(new OfficeChartValueAxisLayout(minimum: 0, maximum: 1,
+majorUnit: 0.2, numberFormat: "0%").WithTitle("Completion rate"))` for an independent secondary value-axis scale and title.
+Updating the scale without `WithTitle` preserves an existing native title; `WithTitle(null)` removes it explicitly.
+Use optional `majorTickMark` and `minorTickMark` settings to select independent tick appearance.
+The returned layout preserves the primary axis settings and leaves the original layout unchanged.
+Bounds must be finite and ordered; tick units must be positive.
+Explicit numeric bounds clip line, area, and scatter series paint to the plot; points outside the range
+do not gain false edge markers or labels. Data labels for visible points can extend beyond the plot.
+
 ### Style individual chart points
 
 Use `OfficeChartSeries.WithPointStyles` to attach appearances aligned with the series values.
@@ -587,18 +612,21 @@ colour; an explicit no-fill style leaves an outlined slice visible without chang
 var status = new OfficeChartSeries("Status", new[] { 8d, 2d, 1d })
     .WithPointStyles(new OfficeChartPointStyle?[] {
         new(fillColor: OfficeColor.Parse("#168A56")),
-        new(noFill: true, outlineColor: OfficeColor.Black, outlineWidth: 2),
-        new(hatch: OfficeChartHatchPattern.DiagonalCross,
+        new(noFill: true, outlineColor: OfficeColor.Black, outlineWidth: 2,
+            outlineJoin: OfficeStrokeLineJoin.Round),
+        new(hatch: OfficeChartHatchPattern.WideForwardDiagonal,
             hatchColor: OfficeColor.Parse("#7300A3"), outlineColor: OfficeColor.Black)
     });
 ```
 
-Hatches support horizontal, vertical, forward diagonal, backward diagonal, cross, and
-diagonal cross strokes. Their default background is white; set `fillColor` to choose another
-background. Outline widths use points. `showOutline: false` hides the outline explicitly.
+Hatches support horizontal, vertical, forward diagonal, backward diagonal, cross,
+diagonal cross, and wide forward diagonal strokes. Their default background is white;
+set `fillColor` to choose another background. Outline widths use points; joins can be
+round, bevel, or miter. `showOutline: false` hides the outline explicitly.
 The renderer clips hatches to slice, bar, and marker geometry and styles category legend
 swatches with the same appearance. Per-point area styling is not applied by static rendering;
-`RenderWithQuality` reports `UnsupportedAppearance` and retains the series fill.
+`RenderWithQuality` reports `UnsupportedAppearance` and retains the opaque series fill.
+An area series with no native outline renders without a connecting line.
 
 ### Pie and doughnut geometry
 

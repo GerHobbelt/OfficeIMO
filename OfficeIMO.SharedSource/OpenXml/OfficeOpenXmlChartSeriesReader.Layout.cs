@@ -35,8 +35,18 @@ namespace OfficeIMO.OpenXml.Internal {
                 throw new NotSupportedException("Category-axis label and tick skipping cannot be projected.");
             if (plot?.Descendants<C.LabelAlignment>().Any(alignment => alignment.Val?.Value is C.LabelAlignmentValues value && value != C.LabelAlignmentValues.Center) == true)
                 throw new NotSupportedException("Non-centered category label alignment cannot be projected.");
+            bool area = kind is OfficeChartKind.Area or OfficeChartKind.AreaStacked or OfficeChartKind.AreaStacked100;
+            var chartLayers = plot?.ChildElements.OfType<OpenXmlCompositeElement>()
+                .Where(element => element.LocalName.EndsWith("Chart", StringComparison.Ordinal)).ToArray();
+            bool areaOnly = area && chartLayers?.Length > 0 &&
+                chartLayers.All(element => element.LocalName is "areaChart" or "area3DChart");
+            if (areaOnly && plot!.Elements<C.ValueAxis>()
+                .Select(axis => axis.GetFirstChild<C.CrossBetween>()?.Val?.Value ?? C.CrossBetweenValues.Between)
+                .Distinct().Skip(1).Any())
+                throw new NotSupportedException("Independent area-axis cross-between geometry cannot be projected.");
             if (plot?.Descendants<C.LabelOffset>().Any(offset => offset.Val?.Value is ushort value && value != 100) == true ||
-                plot?.Descendants<C.CrossBetween>().Any(crossing => crossing.Val?.Value is C.CrossBetweenValues value && value != C.CrossBetweenValues.Between) == true)
+                plot?.Descendants<C.CrossBetween>().Any(crossing => crossing.Val?.Value is C.CrossBetweenValues value &&
+                    value != C.CrossBetweenValues.Between && !(areaOnly && value == C.CrossBetweenValues.MidpointCategory)) == true)
                 throw new NotSupportedException("Independent category label offsets and cross-between geometry cannot be projected.");
             OpenXmlCompositeElement? horizontal = null, vertical = null;
             if (!radial && plot != null) {
@@ -83,7 +93,8 @@ namespace OfficeIMO.OpenXml.Internal {
                  data.Series.Any(series => series.AxisGroup == OfficeChartAxisGroup.Primary &&
                      series.Values.Any(value => value < 0D))))
                 throw new NotSupportedException("A zero-crossing category axis cannot be projected at the plot edge.");
-            QualifySecondaryLayout(plot, vertical);
+            QualifySecondaryLayout(plot);
+            OfficeOpenXmlChartSecondaryAxis.QualifyLinearProjection(plot);
             // Titles, visibility and category direction describe logical roles;
             // scales and tick marks describe the physical horizontal/vertical axes.
             var categoryAxis = horizontal;
@@ -104,7 +115,7 @@ namespace OfficeIMO.OpenXml.Internal {
                 dataLabelSeparator: labels.Separator, dataLabelNumberFormat: labels.NumberFormat, dataLabelPosition: labels.Position,
                 fillRadarSeries: chart.PlotArea?.GetFirstChild<C.RadarChart>()?.RadarStyle?.Val?.Value == C.RadarStyleValues.Filled,
                 categoryAxisTitle: ReadLayoutTitle(categoryAxis), valueAxisTitle: ReadLayoutTitle(valueAxis), axisTitleFontFamily: axisTitleFont,
-                categoryAxisNumberFormat: categoryAxis is C.ValueAxis ? null : ReadLayoutFormat(categoryAxis),
+                categoryAxisNumberFormat: categoryAxis is C.ValueAxis ? null : ReadLayoutFormat(categoryAxis, IsClearlyTextualCategoryCache(plot)),
                 horizontalAxisNumberFormat: horizontal is C.ValueAxis ? ReadLayoutFormat(horizontal) : null,
                 verticalAxisNumberFormat: ReadLayoutFormat(vertical),
                 horizontalAxisMinimum: ReadLayoutMinimum(horizontal), horizontalAxisMaximum: ReadLayoutMaximum(horizontal),
@@ -126,55 +137,65 @@ namespace OfficeIMO.OpenXml.Internal {
                 verticalAxisMajorTickMark: ReadLayoutTick(vertical?.GetFirstChild<C.MajorTickMark>()?.Val?.Value),
                 verticalAxisMinorTickMark: ReadLayoutTick(vertical?.GetFirstChild<C.MinorTickMark>()?.Val?.Value),
                 reverseCategoryAxis: categoryAxis is not C.ValueAxis && categoryAxis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>()?.Val?.Value == C.OrientationValues.MaxMin,
-                categoryAxisOrientationSpecified: categoryAxis is not C.ValueAxis && categoryAxis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>() != null);
+                categoryAxisOrientationSpecified: categoryAxis is not C.ValueAxis && categoryAxis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>() != null)
+                .WithSecondaryValueAxis(OfficeOpenXmlChartSecondaryAxis.Read(plot));
         }
 
-        private static void QualifySecondaryLayout(C.PlotArea? plot, OpenXmlCompositeElement? primaryValueAxis) {
+        private static void QualifySecondaryLayout(C.PlotArea? plot) {
             if (plot == null) return;
             var groups = OfficeOpenXmlChartAxisGroups.Create(plot);
             var secondaryLayers = plot.ChildElements.OfType<OpenXmlCompositeElement>().Where(element =>
                 element.LocalName.EndsWith("Chart", StringComparison.Ordinal) && groups.Read(element) == OfficeChartAxisGroup.Secondary).ToArray();
             if (secondaryLayers.Length == 0) return;
-            // The shared secondary renderer currently uses automatic scales and the primary
-            // value-label treatment. Reject native settings it cannot represent independently.
+            // Numeric scales and formats are independent; appearance still uses shared roles.
             foreach (var axis in secondaryLayers.SelectMany(layer => layer.Elements<C.AxisId>())
                 .Select(reference => groups.Resolve(reference.Val?.Value)).Distinct()) {
                 if (axis == null) throw new NotSupportedException("The secondary chart axes cannot be resolved.");
                 if (axis is C.CategoryAxis or C.DateAxis && !IsDeletedAxis(axis))
                     throw new NotSupportedException("Visible secondary category axes cannot be projected.");
-                if (axis.GetFirstChild<C.Title>() != null || axis.GetFirstChild<C.ChartShapeProperties>() != null ||
+                if (axis.GetFirstChild<C.ChartShapeProperties>() != null ||
                     axis.GetFirstChild<C.MajorGridlines>() != null || axis.GetFirstChild<C.MinorGridlines>() != null)
                     throw new NotSupportedException("The secondary axis appearance cannot be projected independently.");
+                OfficeOpenXmlChartSecondaryAxis.QualifyTitle(axis.GetFirstChild<C.Title>());
+                if (axis.GetFirstChild<C.Title>()?.Descendants().Any(child =>
+                        child is A.EastAsianFont or A.ComplexScriptFont) == true)
+                    throw new NotSupportedException("Script-specific secondary axis title fonts cannot be projected.");
                 if (axis is C.ValueAxis && (IsDeletedAxis(axis) || axis.GetFirstChild<C.TickLabelPosition>()?.Val?.Value is C.TickLabelPositionValues tickPosition && tickPosition != C.TickLabelPositionValues.NextTo))
                     throw new NotSupportedException("Secondary value-axis visibility cannot be projected independently.");
                 if (axis is C.ValueAxis) {
-                    if (ReadLayoutTick(axis.GetFirstChild<C.MajorTickMark>()?.Val?.Value) !=
-                            ReadLayoutTick(primaryValueAxis?.GetFirstChild<C.MajorTickMark>()?.Val?.Value) ||
-                        ReadLayoutTick(axis.GetFirstChild<C.MinorTickMark>()?.Val?.Value) != OfficeChartAxisTickMark.None)
-                        throw new NotSupportedException("Independent secondary-axis tick marks cannot be projected.");
-                    QualifyAutomaticSecondaryScale(axis);
+                    var scaling = axis.GetFirstChild<C.Scaling>();
+                    if (scaling?.GetFirstChild<C.LogBase>() != null ||
+                        scaling?.GetFirstChild<C.Orientation>()?.Val?.Value == C.OrientationValues.MaxMin ||
+                        axis.GetFirstChild<C.CrossesAt>() != null || axis.GetFirstChild<C.DisplayUnits>() != null ||
+                        HasUnsupportedSharedAxisNumberFormat(axis))
+                        throw new NotSupportedException("The secondary numeric axis presentation cannot be projected.");
                 }
             }
-            if (primaryValueAxis != null) QualifyAutomaticSecondaryScale(primaryValueAxis);
-        }
-
-        private static void QualifyAutomaticSecondaryScale(OpenXmlCompositeElement axis) {
-            var scaling = axis.GetFirstChild<C.Scaling>();
-            if (scaling?.GetFirstChild<C.MinAxisValue>() != null || scaling?.GetFirstChild<C.MaxAxisValue>() != null ||
-                scaling?.GetFirstChild<C.LogBase>() != null || scaling?.GetFirstChild<C.Orientation>()?.Val?.Value == C.OrientationValues.MaxMin ||
-                axis.GetFirstChild<C.MajorUnit>() != null || axis.GetFirstChild<C.MinorUnit>() != null ||
-                axis.GetFirstChild<C.NumberingFormat>()?.FormatCode?.Value is string format && !string.Equals(format, "General", StringComparison.OrdinalIgnoreCase))
-                throw new NotSupportedException("Independent secondary-axis scales and formats cannot be projected.");
         }
 
         private static string? ReadLayoutTitle(OpenXmlCompositeElement? axis) {
             var text = axis?.GetFirstChild<C.Title>()?.GetFirstChild<C.ChartText>();
             return text?.GetFirstChild<C.RichText>()?.InnerText ?? text?.GetFirstChild<C.StringReference>()?.StringCache?.InnerText;
         }
-        private static string? ReadLayoutFormat(OpenXmlCompositeElement? axis) {
-            if (axis != null && HasUnsupportedSharedAxisNumberFormat(axis))
+        private static string? ReadLayoutFormat(OpenXmlCompositeElement? axis, bool textualCategories = false) {
+            if (axis != null && HasUnsupportedSharedAxisNumberFormat(axis)) {
+                // A string cache with nonnumeric labels has already materialized its display text;
+                // a number format on its category axis cannot change those labels.
+                if (textualCategories && axis is C.CategoryAxis) return null;
                 throw new NotSupportedException("The native axis format cannot be projected.");
+            }
             return axis?.GetFirstChild<C.NumberingFormat>()?.FormatCode?.Value;
+        }
+
+        private static bool IsClearlyTextualCategoryCache(C.PlotArea? plot) {
+            C.CategoryAxisData[] caches = plot?.Descendants<C.CategoryAxisData>().ToArray() ?? Array.Empty<C.CategoryAxisData>();
+            return caches.Length > 0 && caches.All(category => {
+                C.StringPoint[] points = category.GetFirstChild<C.StringReference>()?.StringCache?.Elements<C.StringPoint>().ToArray()
+                    ?? Array.Empty<C.StringPoint>();
+                return points.Length > 0 && points.All(point =>
+                    !double.TryParse(point.NumericValue?.Text, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out _));
+            });
         }
         private static double? ReadLayoutMinimum(OpenXmlCompositeElement? axis) => axis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.MinAxisValue>()?.Val?.Value;
         private static double? ReadLayoutMaximum(OpenXmlCompositeElement? axis) => axis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.MaxAxisValue>()?.Val?.Value;

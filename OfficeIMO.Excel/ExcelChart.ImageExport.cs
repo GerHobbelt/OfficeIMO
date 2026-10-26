@@ -173,6 +173,7 @@ namespace OfficeIMO.Excel {
             C.DataLabels? dataLabels = plotArea.Descendants<C.DataLabels>().FirstOrDefault(HasAnyVisibleDataLabelPart);
             C.Legend? legend = chart.GetFirstChild<C.Legend>();
             C.Title? title = chart.GetFirstChild<C.Title>();
+            OfficeChartValueAxisLayout? secondaryValueAxis = ReadImageExportSecondaryValueAxis(plotArea);
             OpenXmlCompositeElement? categoryAxis = ResolveImageExportCategoryAxis(plotArea);
             OpenXmlCompositeElement? valueAxis = ResolveImageExportValueAxis(plotArea);
             string? categoryAxisTitle = GetAxisTitleText(categoryAxis?.GetFirstChild<C.Title>());
@@ -252,6 +253,7 @@ namespace OfficeIMO.Excel {
                 axisTextFontStyle != null ||
                 axisTitleFontStyle != null;
             bool hasLayout =
+                secondaryValueAxis != null ||
                 dataLabels != null ||
                 hasLegendLayout ||
                 title?.GetFirstChild<C.Overlay>() != null ||
@@ -338,7 +340,20 @@ namespace OfficeIMO.Excel {
                 showCategoryAxisLabels: showCategoryAxisLabels,
                 showValueAxisLabels: showValueAxisLabels,
                 connectScatterPoints: connectScatterPoints,
-                overlayTitle: IsEnabled(title?.GetFirstChild<C.Overlay>()));
+                overlayTitle: IsEnabled(title?.GetFirstChild<C.Overlay>()))
+                .WithSecondaryValueAxis(secondaryValueAxis);
+        }
+
+        private OfficeChartValueAxisLayout? ReadImageExportSecondaryValueAxis(C.PlotArea plotArea) {
+            var axis = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.Resolve(plotArea);
+            OfficeChartValueAxisLayout? native = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.Read(plotArea);
+            if (axis == null || native == null) return null;
+            string? numberFormat = GetImageExportAxisNumberFormat(axis);
+            if (numberFormat != null && !IsSimpleSupportedImageExportAxisNumberFormat(numberFormat))
+                throw new NotSupportedException("The secondary axis number format cannot be rendered.");
+            return new OfficeChartValueAxisLayout(native.Minimum, native.Maximum, native.MajorUnit,
+                native.MinorUnit, numberFormat, native.MajorTickMark,
+                native.MinorTickMark).WithTitle(native.Title);
         }
 
         private static ExcelChartData ApplyImageExportSeriesStyles(ChartPart chartPart, ExcelChartData data, WorkbookPart workbookPart) {
@@ -1366,7 +1381,11 @@ namespace OfficeIMO.Excel {
             }
 
             C.ChartShapeProperties? properties = marker.GetFirstChild<C.ChartShapeProperties>();
-            return properties == null || IsSimpleSupportedMarkerShapeProperties(properties, workbookPart);
+            if (properties == null) return true;
+            return marker.Parent is C.DataPoint
+                ? OfficeOpenXmlChartPointStyles.IsSupported(properties,
+                    workbookPart.ThemePart?.Theme?.ThemeElements?.ColorScheme)
+                : IsSimpleSupportedMarkerShapeProperties(properties, workbookPart);
         }
 
         private static bool IsSimpleSupportedMarkerShapeProperties(C.ChartShapeProperties properties, WorkbookPart workbookPart) {

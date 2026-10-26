@@ -5,11 +5,120 @@ using System.Linq;
 using OfficeIMO.Drawing;
 using OfficeIMO.Word;
 using Xunit;
+using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeIMO.Tests;
 
 public sealed class WordChartOfficeSnapshotTests {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OfficeSnapshot_RejectsScriptSpecificSecondaryTitleTypeface(bool eastAsian) {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered,
+            new OfficeChartData(new[] { "A" }, new[] {
+                new OfficeChartSeries("Count", new[] { 100D }),
+                new OfficeChartSeries("Ratio", new[] { 1D }, null, null, null, true,
+                    renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary)
+            }));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout().WithTitle("Ratio"));
+        Assert.True(chart.TryGetOfficeSnapshot(out _));
+        var title = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>()
+            .Single(axis => axis.AxisPosition!.Val!.Value == C.AxisPositionValues.Right).GetFirstChild<C.Title>()!;
+        var run = title.Descendants<A.Run>().First();
+        var properties = run.RunProperties ?? new A.RunProperties();
+        if (properties.Parent == null) run.PrependChild(properties);
+        if (eastAsian) properties.Append(new A.EastAsianFont { Typeface = "SimSun" });
+        else properties.Append(new A.ComplexScriptFont { Typeface = "Arial" });
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void OfficeSnapshot_RejectsVisibleSecondaryAxisWithDeletedPrimaryAxis() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered, new OfficeChartData(new[] { "A" }, new[] {
+            new OfficeChartSeries("Count", new[] { 100d }),
+            new OfficeChartSeries("Ratio", new[] { 1d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary)
+        }));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout().WithTitle("Ratio"));
+        var primary = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>()
+            .Single(axis => axis.AxisPosition!.Val!.Value == C.AxisPositionValues.Left);
+        primary.AddChild(new C.Delete { Val = true }, true);
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void OfficeSnapshot_RejectsUnresolvedSecondaryAxisTitleReference() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered, new OfficeChartData(new[] { "A" }, new[] {
+            new OfficeChartSeries("Count", new[] { 100d }),
+            new OfficeChartSeries("Ratio", new[] { 1d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary)
+        }));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout().WithTitle("Ratio"));
+        var secondary = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>()
+            .Single(axis => axis.AxisPosition!.Val!.Value == C.AxisPositionValues.Right);
+        var text = secondary.GetFirstChild<C.Title>()!.GetFirstChild<C.ChartText>()!;
+        text.RemoveAllChildren();
+        text.Append(new C.StringReference(new C.Formula("Sheet1!$A$1")));
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void OfficeSnapshot_RejectsMultiPointSecondaryTitleCache() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered, new OfficeChartData(new[] { "A" }, new[] {
+            new OfficeChartSeries("Count", new[] { 100d }),
+            new OfficeChartSeries("Ratio", new[] { 1d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary)
+        }));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout().WithTitle("Ratio"));
+        var secondary = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>()
+            .Single(axis => axis.AxisPosition!.Val!.Value == C.AxisPositionValues.Right);
+        var title = secondary.GetFirstChild<C.Title>()!;
+        title.RemoveAllChildren<C.ChartText>();
+        title.AddChild(new C.ChartText(new C.StringReference(new C.Formula("Sheet1!$A$1:$A$2"),
+            new C.StringCache(new C.PointCount { Val = 2 },
+                new C.StringPoint(new C.NumericValue("Revenue")) { Index = 0 },
+                new C.StringPoint(new C.NumericValue("Percent")) { Index = 1 }))), true);
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void SecondaryAxisScaleUpdatePreservesTitleUntilExplicitlyCleared() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered, new OfficeChartData(new[] { "A" }, new[] {
+            new OfficeChartSeries("Count", new[] { 100d }),
+            new OfficeChartSeries("Ratio", new[] { 1d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary)
+        }));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout().WithTitle("Ratio"));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout(minimum: 0, maximum: 2));
+        Assert.True(chart.TryGetOfficeSnapshot(out var preserved));
+        Assert.Equal("Ratio", preserved.Layout.SecondaryValueAxis!.Title);
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout().WithTitle(null));
+        Assert.True(chart.TryGetOfficeSnapshot(out var cleared));
+        Assert.Null(cleared.Layout.SecondaryValueAxis!.Title);
+    }
+
+    [Fact]
+    public void OfficeSnapshot_RejectsManualSecondaryAxisTitleLayout() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered, new OfficeChartData(new[] { "A" }, new[] {
+            new OfficeChartSeries("Count", new[] { 100d }),
+            new OfficeChartSeries("Ratio", new[] { 1d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary)
+        }));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout().WithTitle("Ratio"));
+        var secondary = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>()
+            .Single(axis => axis.AxisPosition!.Val!.Value == C.AxisPositionValues.Right);
+        secondary.GetFirstChild<C.Title>()!.GetFirstChild<C.Layout>()!
+            .Append(new C.ManualLayout(new C.Left { Val = .3 }));
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
     [Fact]
     public void OfficeSnapshot_PreservesFormulaBasedAxisTitleTypeface() {
         using var document = WordDocument.Create();
@@ -29,15 +138,73 @@ public sealed class WordChartOfficeSnapshotTests {
         Assert.Equal("Georgia", snapshot.Layout.AxisTitleFontFamily);
     }
     [Fact]
-    public void OfficeSnapshot_RejectsUnrepresentedSecondaryAxisLimits() {
+    public void OfficeSnapshot_PreservesIndependentSecondaryTickPresentation() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered, new OfficeChartData(new[] { "A" }, new[] {
+            new OfficeChartSeries("Volume", new[] { 100d }),
+            new OfficeChartSeries("Ratio", new[] { 1d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary) }));
+        var secondary = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>()
+            .Single(axis => axis.AxisPosition!.Val!.Value == C.AxisPositionValues.Right);
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout(
+            majorTickMark: OfficeChartAxisTickMark.Cross,
+            minorTickMark: OfficeChartAxisTickMark.Outside));
+        Assert.Single(secondary.Elements<C.MajorTickMark>());
+        Assert.Single(secondary.Elements<C.MinorTickMark>());
+        Assert.True(chart.TryGetOfficeSnapshot(out var snapshot));
+        Assert.Equal(OfficeChartAxisTickMark.Cross, snapshot.Layout.SecondaryValueAxis!.MajorTickMark);
+        Assert.Equal(OfficeChartAxisTickMark.Outside, snapshot.Layout.SecondaryValueAxis.MinorTickMark);
+    }
+
+    [Fact]
+    public void OfficeSnapshot_PreservesIndependentSecondaryAxisLimitsAndFormat() {
         using var document = WordDocument.Create();
         var chart = document.AddChart(OfficeChartKind.ColumnClustered, new OfficeChartData(new[] { "A" }, new[] {
             new OfficeChartSeries("Volume", new[] { 100d }),
             new OfficeChartSeries("Ratio", new[] { 1d }, null, null, null, true, renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary) }));
         Assert.True(chart.TryGetOfficeSnapshot(out _));
         var secondary = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>().Single(axis => axis.AxisPosition!.Val!.Value == C.AxisPositionValues.Right);
-        secondary.Scaling!.AddChild(new C.MaxAxisValue { Val = 2 }, true);
-        Assert.False(chart.TryGetOfficeSnapshot(out _));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout(minimum: 0, maximum: 2,
+            majorUnit: 0.5, minorUnit: 0.25, numberFormat: "0%",
+            majorTickMark: OfficeChartAxisTickMark.Cross, minorTickMark: OfficeChartAxisTickMark.Outside)
+            .WithTitle("Secondary percentage"));
+        Assert.True(chart.TryGetOfficeSnapshot(out var snapshot));
+        Assert.Equal(2, snapshot.Layout.SecondaryValueAxis!.Maximum);
+        Assert.Equal(0.5, snapshot.Layout.SecondaryValueAxis.MajorUnit);
+        Assert.Equal("0%", snapshot.Layout.SecondaryValueAxis.NumberFormat);
+        Assert.Equal("Secondary percentage", snapshot.Layout.SecondaryValueAxis.Title);
+        var drawing = OfficeChartDrawingRenderer.Render(snapshot);
+        Assert.Contains(drawing.Elements.OfType<OfficeDrawingText>(), text =>
+            text.Text == "Secondary percentage" && text.Alignment == OfficeTextAlignment.Right);
+        Assert.Null(snapshot.Layout.VerticalAxisMaximum);
+        Assert.Equal(2, secondary.Scaling!.GetFirstChild<C.MaxAxisValue>()!.Val!.Value);
+        chart.SetData(snapshot.ChartKind, snapshot.Data);
+        using var bytes = new MemoryStream();
+        document.Save(bytes); bytes.Position = 0;
+        using var reopened = WordDocument.Load(bytes);
+        Assert.Empty(reopened.ValidateDocument());
+        Assert.True(reopened.Charts.Single().TryGetOfficeSnapshot(out var imported));
+        Assert.Equal(2, imported.Layout.SecondaryValueAxis!.Maximum);
+        Assert.Equal("0%", imported.Layout.SecondaryValueAxis.NumberFormat);
+        Assert.Equal("Secondary percentage", imported.Layout.SecondaryValueAxis.Title);
+        Assert.Equal(0.25, imported.Layout.SecondaryValueAxis.MinorUnit);
+        Assert.Equal(OfficeChartAxisTickMark.Cross, imported.Layout.SecondaryValueAxis.MajorTickMark);
+        Assert.Equal(OfficeChartAxisTickMark.Outside, imported.Layout.SecondaryValueAxis.MinorTickMark);
+    }
+
+    [Fact]
+    public void OfficeSnapshot_ClipsSecondaryLineOutsideExplicitBounds() {
+        using var document = WordDocument.Create();
+        var chart = document.AddChart(OfficeChartKind.ColumnClustered,
+            new OfficeChartData(new[] { "A", "B" }, new[] {
+                new OfficeChartSeries("Count", new[] { 100d, 200d }),
+                new OfficeChartSeries("Ratio", new[] { 1d, 3d }, null, null, null, true,
+                    renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary) }));
+        chart.SetSecondaryValueAxis(new OfficeChartValueAxisLayout(minimum: 0, maximum: 2));
+        Assert.True(chart.TryGetOfficeSnapshot(out OfficeChartSnapshot snapshot));
+        Assert.Equal(2d, snapshot.Layout.SecondaryValueAxis!.Maximum);
+        Assert.Contains(OfficeChartDrawingRenderer.Render(snapshot).Elements,
+            element => element is OfficeDrawingGroup);
     }
     [Fact]
     public void OfficeSnapshot_PreservesInheritedTextFontsAndRejectsConflictingBodyFonts() {

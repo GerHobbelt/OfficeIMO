@@ -420,6 +420,15 @@ public sealed record ImmutableRow(string Name, string Status);
 
 ### Charts and dashboard recipes
 
+Combination-chart snapshots retain secondary value-axis bounds, tick units and number formats
+independently of the primary axis. Configure them with `SetValueAxisScale(...,
+axisGroup: OfficeChartAxisGroup.Secondary)` and `SetValueAxisNumberFormat("0%", false,
+OfficeChartAxisGroup.Secondary)`; managed chart images use the same independent scale.
+`SetSecondaryValueAxis(new OfficeChartValueAxisLayout(...).WithTitle("Margin"))` configures
+these settings together, including optional `majorTickMark` and `minorTickMark` appearance.
+Snapshots reject malformed secondary numeric settings and secondary logarithmic or reversed
+scales, display units, and explicit numeric crossing values.
+
 Managed chart images resolve source-linked axis formats from the referenced worksheet
 cells when those cells share one number format. For example, percentage cells formatted
 as `0%` produce percentage axis labels with no decimal places. An explicitly unlinked
@@ -484,7 +493,7 @@ modernChart.SetTitle("Current pipeline")
 
 Shared chart authoring accepts `OfficeChartSeries.WithPointStyles`; existing native charts
 can be edited with `chart.SetDataPointStyle(seriesIndex, pointIndex, style)`. Solid fills,
-explicit no-fill, outlines, and six hatch patterns remain editable in Excel and survive
+explicit no-fill, outlines, and seven hatch patterns remain editable in Excel and survive
 save/reopen. A null style clears the point's fill and outline overrides.
 
 Snapshots, managed image export, and PDF export carry these styles through the shared

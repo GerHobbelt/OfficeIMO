@@ -147,6 +147,8 @@ namespace OfficeIMO.OpenXml.Internal {
                 throw new InvalidDataException("The native chart marker size is outside the supported DrawingML bound.");
             OfficeChartMarkerShape? markerShape = Enum.TryParse(marker?.Symbol?.Val?.InnerText,
                 ignoreCase: true, out OfficeChartMarkerShape parsedShape) ? parsedShape : null;
+            if (!markerSize.HasValue && markerShape.HasValue && markerShape != OfficeChartMarkerShape.None)
+                markerSize = 5;
             A.Outline? markerOutline = marker?.ChartShapeProperties?.GetFirstChild<A.Outline>();
             OfficeColor? markerOutlineColor = OfficeOpenXmlThemeColorResolver.ResolveColor(markerOutline?.GetFirstChild<A.SolidFill>(), scheme);
             double? markerOutlineWidth = markerOutline?.Width?.Value is int markerEmus && markerEmus > 0 ? markerEmus / 12700d : null;
@@ -165,6 +167,7 @@ namespace OfficeIMO.OpenXml.Internal {
             }
             OfficeColor?[]? pointColors = null;
             var pointOverrides = OfficeOpenXmlChartPointStyles.GetBoundedPoints(element, maximumPointOverrides);
+            if (forDataUpdate) pointOverrides = Array.Empty<C.DataPoint>();
             foreach (C.DataPoint point in pointOverrides) {
                 uint? index = point.Index?.Val?.Value;
                 if (!index.HasValue || index.Value >= values.Count) continue;
@@ -188,7 +191,6 @@ namespace OfficeIMO.OpenXml.Internal {
             bool area = kind == OfficeChartKind.Area || kind == OfficeChartKind.AreaStacked || kind == OfficeChartKind.AreaStacked100;
             bool flatThreeDimensional = element.Parent?.LocalName.EndsWith("3DChart", StringComparison.Ordinal) == true;
             unsupported |= !IsSupportedSeriesShape(properties, scheme, filled, area, connectLine, flatThreeDimensional);
-            unsupported |= area && outline?.GetFirstChild<A.NoFill>() != null;
             unsupported |= showMarkers && !IsSupportedSeriesShape(marker?.ChartShapeProperties, scheme, true);
             // The shared model has one series colour and straight connecting lines.
             // Reject appearance that would otherwise be silently flattened in an export.

@@ -268,7 +268,7 @@ namespace OfficeIMO.Word.Html {
                     }
                     if ((includeAll || artifactElement is DocumentFormat.OpenXml.Wordprocessing.Drawing) &&
                         (artifactElement is DocumentFormat.OpenXml.Wordprocessing.Drawing chartDrawing &&
-                            chartDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Charts.ChartReference>().Any()
+                            WordParagraph.DrawingOwnsChart(chartDrawing)
                             ? new WordChart(run._document, run, chartDrawing) : includeAll ? run.Chart : null) is WordChart chart) {
                         IElement? chartImage = CreateChartImage(htmlDoc, chart, options, ref embeddedImageBytes);
                         if (chartImage != null) target.Add(chartImage);
@@ -391,7 +391,8 @@ namespace OfficeIMO.Word.Html {
                 List<INode> CreateExpandedEquationContainerNodes(
                     DocumentFormat.OpenXml.OpenXmlElement container,
                     IReadOnlyList<WordEquationOccurrence> coveringEquations,
-                    WordParagraph fallbackRun) {
+                    WordParagraph fallbackRun,
+                    IReadOnlyList<DocumentFormat.OpenXml.OpenXmlElement>? visibleRunChildren = null) {
                     var expandedNodes = new List<INode>();
                     IElement? hyperlinkNode = container is Hyperlink hyperlink
                         ? CreateEquationHyperlinkNode(
@@ -399,7 +400,15 @@ namespace OfficeIMO.Word.Html {
                             new WordHyperLink(para._document, para._paragraph, hyperlink))
                         : null;
 
-                    foreach (WordEquationContentSegment segment in WordEquation.GetVisibleContentSegments(container, coveringEquations)) {
+                    bool IncludeVisibleRunElement(DocumentFormat.OpenXml.OpenXmlElement element) {
+                        if (visibleRunChildren == null || ReferenceEquals(element, container)) return true;
+                        DocumentFormat.OpenXml.OpenXmlElement directChild = element;
+                        while (directChild.Parent != null && !ReferenceEquals(directChild.Parent, container))
+                            directChild = directChild.Parent;
+                        return visibleRunChildren.Contains(directChild);
+                    }
+                    foreach (WordEquationContentSegment segment in WordEquation.GetVisibleContentSegments(
+                        container, coveringEquations, IncludeVisibleRunElement)) {
                         WordParagraph sourceRun = segment.CreateSourceParagraph(
                             para._document,
                             para._paragraph,
@@ -541,10 +550,14 @@ namespace OfficeIMO.Word.Html {
                             AppendNode(expandedNode);
                         continue;
                     }
-                    bool multipleReferences = run._run?.ChildElements.Count(child =>
+                    Run? selectedRun = run._run;
+                    bool multipleReferences = (run._visibleRunSourceChildren ?? selectedRun?.ChildElements)
+                        ?.Count(child =>
                         child is FootnoteReference or EndnoteReference or CommentReference) > 1;
-                    if ((run.IsChart || HasExtendedChart(run._run) || multipleReferences) && run._run != null) {
-                        foreach (INode expandedNode in CreateExpandedEquationContainerNodes(run._run, Array.Empty<WordEquationOccurrence>(), run)) {
+                    if ((run.IsChart || HasExtendedChart(selectedRun) ||
+                        selectedRun?.Descendants<DocumentFormat.OpenXml.Drawing.Charts.ChartReference>().Any() == true || multipleReferences) && selectedRun != null) {
+                        foreach (INode expandedNode in CreateExpandedEquationContainerNodes(selectedRun,
+                            Array.Empty<WordEquationOccurrence>(), run, run._visibleRunSourceChildren)) {
                             AppendNode(expandedNode);
                         }
                         continue;
@@ -759,8 +772,10 @@ namespace OfficeIMO.Word.Html {
             bool IsCodeParagraph(WordParagraph para) {
                 // A text-only code block cannot carry rendered inline artifacts.
                 if (para.GetRuns().Any(run => run.IsChart || HasExtendedChart(run._run) || run.IsImage ||
-                    run.IsStructuredDocumentTag || run.IsEquation || run.FootNote != null || run.EndNote != null ||
-                    run._run?.Elements<CommentReference>().Any() == true)) return false;
+                    run.IsStructuredDocumentTag || run.IsEquation ||
+                    (options.ExportFootnotes && run.FootNote != null) ||
+                    (options.ExportEndnotes && run.EndNote != null) ||
+                    (options.ExportComments && run._run?.Elements<CommentReference>().Any() == true))) return false;
                 if (string.Equals(para.StyleId, "Code", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(para.StyleId, "HTMLPreformatted", StringComparison.OrdinalIgnoreCase)) {
                     return true;
@@ -1538,6 +1553,7 @@ namespace OfficeIMO.Word.Html {
 
             CloseLists();
 
+            DiscoverTransitiveNotes(footnotes, footnoteMap, endnotes, endnoteMap, options, cancellationToken);
             AppendFootnotes(htmlDoc, body, footnotes, options, cancellationToken, (parent, paragraph) => AppendParagraph(parent, paragraph), CloseLists);
             AppendEndnotes(htmlDoc, body, endnotes, options, cancellationToken, (parent, paragraph) => AppendParagraph(parent, paragraph), CloseLists);
             AppendComments(htmlDoc, body, comments, options, cancellationToken);
