@@ -28,13 +28,17 @@ internal static partial class PdfStamper {
     }
 
     internal static IReadOnlyList<PdfWatermarkOptions> ReadWatermarks(byte[] pdf, PdfLoadOptions? readOptions) {
-        var (objects, _) = PdfSyntax.ParseObjects(pdf, readOptions);
         var document = PdfReadDocument.Open(pdf, readOptions);
-        int maximumDecodedStreamBytes = PdfLoadOptions.Resolve(readOptions).Limits.MaxDecodedStreamBytes;
+        document.DemandContentExtraction("watermark settings");
+        var objects = document.Objects;
+        int maximumDecodedStreamBytes = document.ReadOptions.Limits.MaxDecodedStreamBytes;
         var found = new Dictionary<string, (PdfWatermarkOptions Settings, List<int> Pages)>(StringComparer.Ordinal);
         for (int index = 0; index < document.Pages.Count; index++) {
             var page = (PdfDictionary)objects[document.Pages[index].ObjectNumber].Value;
-            foreach (var stream in GetPageContentStreams(objects, page)) {
+            foreach (var stream in GetPageContentStreams(
+                         objects,
+                         page,
+                         document.ReadOptions.Limits.MaxObjectNestingDepth)) {
                 string? id = stream.Dictionary.Get<PdfStringObj>("OfficeIMOWatermarkId")?.Value;
                 if (id is null) continue;
                 if (!stream.Dictionary.Items.TryGetValue("OfficeIMOWatermarkSettings", out var settingsObject)
@@ -54,8 +58,8 @@ internal static partial class PdfStamper {
                     if (settings.Items.TryGetValue("Image", out var imageObject)) {
                         if (PdfObjectLookup.Resolve(objects, imageObject) is not PdfStream image || image.DecodingFailed)
                             throw new InvalidDataException("Watermark image settings cannot be read.");
-                        options.ImageBytes = (byte[])Filters.StreamDecoder.DecodeRequired(
-                            image.Dictionary, image.Data, objects, maximumDecodedStreamBytes).Clone();
+                        options.ImageBytes = document.DecodedStreamBudget.DecodeRetainedRequired(
+                            image, objects, maximumDecodedStreamBytes);
                     }
                     options.Validate();
                     found.Add(id, item = (options, new List<int>()));

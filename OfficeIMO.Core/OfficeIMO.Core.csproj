@@ -25,7 +25,6 @@
     <LangVersion>Latest</LangVersion>
     <Nullable>enable</Nullable>
     <EnableTrimmingPolyfills>true</EnableTrimmingPolyfills>
-    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -53,6 +52,9 @@
     <InternalsVisibleTo Include="OfficeIMO.IWork" />
     <InternalsVisibleTo Include="OfficeIMO.IWork.Tests" />
     <InternalsVisibleTo Include="OfficeIMO.Opml" />
+    <InternalsVisibleTo Include="OfficeIMO.Project" />
+    <InternalsVisibleTo Include="OfficeIMO.Project.Verification" />
+    <InternalsVisibleTo Include="OfficeIMO.Project.Tests" />
     <InternalsVisibleTo Include="OfficeIMO.DocBook" />
     <InternalsVisibleTo Include="OfficeIMO.Reader.Opml" />
     <Compile Include="..\OfficeIMO.SharedSource\Compound\*.cs" Link="Internal\Compound\%(Filename)%(Extension)" />

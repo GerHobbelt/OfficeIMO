@@ -236,9 +236,11 @@ totals. Unsupported source data is reported before rewriting. The core has no
 external runtime dependencies.
 
 [OfficeIMO.Invoicing.Validation](OfficeIMO.Invoicing.Validation/README.md) adds
-hash-pinned XSD and Schematron releases for EN 16931, XRechnung and UBL Peppol BIS.
+hash-pinned XSD and Schematron releases for all five Factur-X 1.09.2 profiles,
+EN 16931, XRechnung and UBL Peppol BIS, plus pinned independent corpus evidence.
 Business-rule execution uses an explicitly configured local Java/Saxon runtime.
-[`OfficeIMO.Invoicing.Pdf`](OfficeIMO.Invoicing.Pdf/README.md) renders and attaches one captured invoice through `PdfInvoiceDocument`.
+[`OfficeIMO.Invoicing.Pdf`](OfficeIMO.Invoicing.Pdf/README.md) renders localized or
+multilingual layouts and attaches the exact captured XML through `PdfInvoiceDocument`.
 
 #### [OfficeIMO.Pdf](OfficeIMO.Pdf/README.md)
 
@@ -269,6 +271,8 @@ _Dependency footprint:_ only `OfficeIMO.Core`; no third-party PDF parser, writer
 - [x] Capture a typed invoice once for visible PDF content and its embedded CII XML
 - [x] Render invoices and credit notes with line items, VAT breakdowns, payment details, identifiers, and totals
 - [x] Keep later model edits separate from an existing snapshot
+- [x] Localize generated labels in English, German, Polish, French, or custom multilingual packs
+- [x] Preserve long mixed-script descriptions through embedded font fallbacks and exact XML/PDF agreement checks
 
 _Dependency footprint:_ `OfficeIMO.Invoicing` and `OfficeIMO.Pdf`. Install this optional adapter only when combining the XML invoice engine with PDF generation.
 
@@ -436,6 +440,19 @@ _Dependency footprint:_ `System.Text.Json` and `System.Text.Encoding.CodePages` 
 - [x] Explicit size, character, depth, outline, and attribute limits with DTD processing disabled
 
 _Dependency footprint:_ only `OfficeIMO.Core`; no external parser or runtime dependency.
+
+#### [OfficeIMO.Project](OfficeIMO.Project/README.md)
+
+- [x] Microsoft Project XML create, read, edit, validate, and source-preserving save
+- [x] Qualified MPP/MPT 8, 9, 12, and 14 authoring and editing, document templates, MPX 4 exchange, and assessed format conversion
+- [x] Typed tasks, calendars, resources, assignments, baselines, custom fields, and thin fluent builders
+- [x] Explicit assignment/progress/cost calculation, resource leveling, earned value, bounded formulas/lookups, and caller-resolved external schedules
+- [x] Portable project views and mapped tables; optional PDF/HTML/image and editable Office reports through `OfficeIMO.Workflows`
+- [x] Explicit input limits, cancellation, stable identities, and loss assessment
+
+Native producer profiles, opaque-record preservation, scheduling, legacy formats, and rendering have separate [operation boundaries](OfficeIMO.Project/SUPPORT.md).
+
+_Dependency footprint:_ only the matching coordinated `OfficeIMO.Core` release; no COM, external parser, or network dependency in file operations.
 
 #### [OfficeIMO.DocBook](OfficeIMO.DocBook/README.md)
 

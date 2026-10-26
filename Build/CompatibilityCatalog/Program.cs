@@ -7,9 +7,12 @@ using OfficeIMO.Excel;
 using OfficeIMO.PowerPoint;
 using OfficeIMO.Security;
 using OfficeIMO.Word;
+using OfficeIMO.Workflows;
 
 string outputDirectory = GetOption(args, "--output")
     ?? Path.Combine(Directory.GetCurrentDirectory(), "Docs", "Compatibility", "generated");
+string repositoryRoot = GetOption(args, "--repository")
+    ?? Directory.GetCurrentDirectory();
 string websiteDataPath = GetOption(args, "--website-data")
     ?? Path.Combine(Directory.GetCurrentDirectory(), "Website", "data", "office_conversion_routes.json");
 bool verify = args.Contains("--verify", StringComparer.OrdinalIgnoreCase);
@@ -27,11 +30,18 @@ var capabilityCatalogs = new (string Name, OfficeCapabilityCatalog Catalog)[] {
 var outputs = new SortedDictionary<string, string>(StringComparer.Ordinal) {
     ["conversion-routes.json"] = EnsureFinalNewline(OfficeConversionCapabilityCatalog.ToJson()),
     ["conversion-routes.md"] = EnsureFinalNewline(OfficeConversionCapabilityCatalog.ToMarkdown()),
+    ["package-operations.json"] = EnsureFinalNewline(OfficeOperationCapabilityCatalog.ToJson()),
+    ["package-operations.md"] = EnsureFinalNewline(OfficeOperationCapabilityCatalog.ToMarkdown()),
     ["office-formats.json"] = SerializeFormats(),
+    ["provenance.json"] = EnsureFinalNewline(OfficeProvenanceWorkflowCatalog.ToJson()),
+    ["provenance.md"] = EnsureFinalNewline(OfficeProvenanceWorkflowCatalog.ToMarkdown()),
     ["protected-content.json"] = EnsureFinalNewline(OfficeProtectionCapabilityCatalog.Current.ToJson()),
     ["protected-content.md"] = EnsureFinalNewline(OfficeProtectionCapabilityCatalog.Current.ToMarkdown()),
     ["README.md"] = CreateReadme(capabilityCatalogs)
 };
+IReadOnlyDictionary<string, string> packageReadmes = PackageReadmeOperationProjection.Create(
+    repositoryRoot,
+    OfficeOperationCapabilityCatalog.All);
 foreach ((string name, OfficeCapabilityCatalog catalog) in capabilityCatalogs) {
     outputs[name + ".json"] = EnsureFinalNewline(catalog.ToJson());
     outputs[name + ".md"] = EnsureFinalNewline(catalog.ToMarkdown());
@@ -59,7 +69,16 @@ if (verify) {
         Environment.ExitCode = 1;
         return;
     }
-    Console.WriteLine($"Verified {outputs.Count} compatibility catalog artifacts, website route data, and the converter proof sample.");
+    var staleReadmes = packageReadmes
+        .Where(pair => !File.Exists(pair.Key) || PackageReadmeOperationProjection.Read(repositoryRoot, pair.Key) != Normalize(pair.Value))
+        .Select(pair => Path.GetRelativePath(repositoryRoot, pair.Key))
+        .ToArray();
+    if (staleReadmes.Length != 0) {
+        Console.Error.WriteLine("Package README operation sections are missing or stale: " + string.Join(", ", staleReadmes));
+        Environment.ExitCode = 1;
+        return;
+    }
+    Console.WriteLine($"Verified {outputs.Count} compatibility catalog artifacts, {packageReadmes.Count} package README projections, website route data, and the converter proof sample.");
     return;
 }
 
@@ -70,8 +89,13 @@ foreach ((string fileName, string content) in outputs) {
 string? websiteDataDirectory = Path.GetDirectoryName(websiteDataPath);
 if (!string.IsNullOrEmpty(websiteDataDirectory)) Directory.CreateDirectory(websiteDataDirectory);
 File.WriteAllText(websiteDataPath, Normalize(outputs["conversion-routes.json"]), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-GenerateConverterPowerPointSample(converterSamplePath);
-Console.WriteLine($"Generated {outputs.Count} compatibility catalog artifacts in {Path.GetFullPath(outputDirectory)}.");
+foreach ((string path, string content) in packageReadmes) {
+    PackageReadmeOperationProjection.Write(repositoryRoot, path, content);
+}
+if (!VerifyConverterPowerPointSample(converterSamplePath, out _)) {
+    GenerateConverterPowerPointSample(converterSamplePath);
+}
+Console.WriteLine($"Generated {outputs.Count} compatibility catalog artifacts and {packageReadmes.Count} package README projections in {Path.GetFullPath(outputDirectory)}.");
 
 static string SerializeFormats() {
     var model = new FormatCatalogModel(
@@ -108,6 +132,7 @@ static string CreateReadme(IEnumerable<(string Name, OfficeCapabilityCatalog Cat
     markdown.AppendLine("```");
     markdown.AppendLine();
     markdown.AppendLine("Use the [conversion route catalog](conversion-routes.md) to find the focused package, output model, proven support level, known limits, browser availability, and result type for each route.");
+    markdown.AppendLine("Use the [package-neutral operation catalog](package-operations.md) to compare create, read, edit, preserve, inspect, validate, remove, convert, and export outcomes without losing the detailed owning contract.");
     markdown.AppendLine();
     markdown.AppendLine("Verify:");
     markdown.AppendLine();
@@ -125,6 +150,16 @@ static string CreateReadme(IEnumerable<(string Name, OfficeCapabilityCatalog Cat
             .Append(" | [Markdown](").Append(name).AppendLine(".md) |");
     }
     OfficeProtectionCapabilityCatalog protection = OfficeProtectionCapabilityCatalog.Current;
+    markdown.Append("| ").Append(OfficeOperationCapabilityCatalog.Id)
+        .Append(" | ").Append(OfficeOperationCapabilityCatalog.SchemaVersion)
+        .Append(" | ").Append(OfficeOperationCapabilityCatalog.All.Count)
+        .Append(" | [JSON](package-operations.json)")
+        .AppendLine(" | [Markdown](package-operations.md) |");
+    markdown.Append("| ").Append(OfficeProvenanceWorkflowCatalog.Id)
+        .Append(" | ").Append(OfficeProvenanceWorkflowCatalog.SchemaVersion)
+        .Append(" | ").Append(OfficeProvenanceWorkflowCatalog.All.Count)
+        .Append(" | [JSON](provenance.json)")
+        .AppendLine(" | [Markdown](provenance.md) |");
     markdown.Append("| ").Append(protection.Id)
         .Append(" | ").Append(protection.SchemaVersion)
         .Append(" | ").Append(protection.Capabilities.Count)

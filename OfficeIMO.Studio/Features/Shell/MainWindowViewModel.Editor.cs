@@ -242,6 +242,7 @@ public sealed partial class MainWindowViewModel {
         _localizer.GetOrDefault($"Editor.Tool.{tool}.{property}", fallback);
 
     private async void OnPageEditorGestureCompleted(PdfEditorGesture gesture) {
+        using var notifications = BeginNotificationScope();
         bool acceptsEditorGesture = DocumentMode is StudioDocumentMode.Annotate or StudioDocumentMode.Edit ||
                                     DocumentMode == StudioDocumentMode.Protect && ActiveEditorTool == PdfEditorTool.Redact;
         if (_workspace is null ||
@@ -410,8 +411,8 @@ public sealed partial class MainWindowViewModel {
         _pendingRedactionPlan = null;
         _pendingRedactionWorkspace = null;
         _pendingRedactionRevision = 0;
-        PendingRedactionSummary = null;
         UpdateRedactionOverlays();
+        PendingRedactionSummary = null;
         OnPropertyChanged(nameof(CanReviewRedactions));
         OnPropertyChanged(nameof(CanApplyReviewedRedactions));
     }

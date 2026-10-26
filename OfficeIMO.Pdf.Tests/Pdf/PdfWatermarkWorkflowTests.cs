@@ -50,6 +50,42 @@ public sealed class PdfWatermarkWorkflowTests {
         Assert.True(outputForms.Items.Count >= xObjects.Items.Count);
     }
 
+    [Fact]
+    public void RevisionStopsOptionalResourcePruningAtAggregateDecodeLimit() {
+        var settings = Options(false);
+        byte[] first = PdfDocument.Load(Source()).Stamp.Watermark(settings).ToBytes();
+        var (objects, trailer) = PdfSyntax.ParseObjects(first, null);
+        var read = PdfReadDocument.Open(first);
+        int nextNumber = objects.Keys.Max() + 1;
+        for (int index = 0; index < 3; index++) {
+            var form = new PdfDictionary();
+            form.Items["Type"] = new PdfName("XObject");
+            form.Items["Subtype"] = new PdfName("Form");
+            form.Items["Filter"] = new PdfName("FlateDecode");
+            objects[nextNumber] = new PdfIndirectObject(nextNumber, 0, new PdfStream(
+                form, Deflate(System.Text.Encoding.ASCII.GetBytes(new string(' ', 256)))));
+            nextNumber++;
+        }
+        byte[] source = PdfPageExtractor.ExtractPages(
+            objects,
+            read.UncheckedMetadata,
+            read.Pages.Select(item => item.ObjectNumber).ToArray(),
+            catalogState: PdfPageExtractor.ExtractCatalogRewriteState(objects, trailer));
+
+        settings.Text = "UPDATED";
+        byte[] revised = PdfDocument.Load(source).Stamp.Watermark(settings, new PdfLoadOptions {
+            Limits = new PdfReadLimits {
+                MaxDecodedStreamBytes = 512,
+                MaxTotalDecodedStreamBytes = 512
+            }
+        }).ToBytes();
+
+        Assert.Contains("UPDATED", PdfDocument.Load(revised).Read().Text);
+        var (revisedObjects, _) = PdfSyntax.ParseObjects(revised, null);
+        Assert.True(revisedObjects.Values.Count(item =>
+            ResourceDictionary(item.Value)?.Get<PdfStringObj>("OfficeIMOWatermarkResource") is not null) > 2);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("Do")]
@@ -170,6 +206,91 @@ public sealed class PdfWatermarkWorkflowTests {
         var revisedSettings = Assert.Single(revised.Stamp.ReadWatermarks());
         Assert.Equal(image, revisedSettings.ImageBytes);
         Assert.Equal(135, revisedSettings.X);
+    }
+
+    [Fact]
+    public void ReadingImageWatermarksHonorsAggregateDecodedStreamLimit() {
+        byte[] image = CreateSolidBmp(64, 64);
+        var first = Options(false);
+        first.ImageBytes = image;
+        var second = Options(false);
+        second.ImageBytes = image;
+        byte[] watermarked = PdfDocument.Load(Source()).Stamp.Watermark(first).Stamp.Watermark(second).ToBytes();
+
+        var exception = Assert.Throws<PdfReadLimitException>(() => PdfDocument.Load(watermarked).Stamp.ReadWatermarks(
+            new PdfLoadOptions {
+                Limits = new PdfReadLimits {
+                    MaxDecodedStreamBytes = image.Length + 1024,
+                    MaxTotalDecodedStreamBytes = image.Length + 1024
+                }
+            }));
+
+        Assert.Equal(PdfReadLimitKind.TotalDecodedStreamBytes, exception.Kind);
+    }
+
+    [Fact]
+    public void ReadingWatermarksHonorsEncryptedDocumentCopyPermission() {
+        var settings = Options(true);
+        byte[] watermarked = PdfDocument.Load(Source()).Stamp.Watermark(settings).ToBytes();
+        var encryption = new PdfStandardEncryptionOptions("watermark-user") {
+            OwnerPassword = "watermark-owner",
+            AllowedPermissions = PdfStandardPermissions.None
+        };
+        byte[] encrypted = PdfSecurityEditor.Encrypt(watermarked, encryption).Pdf;
+
+        var exception = Assert.Throws<PdfPermissionDeniedException>(() =>
+            PdfDocument.Load(encrypted, new PdfLoadOptions { Password = "watermark-user" })
+                .Stamp.ReadWatermarks());
+        Assert.Equal(PdfStandardPermissions.CopyContents, exception.Permission);
+
+        var ignored = PdfDocument.Load(encrypted, new PdfLoadOptions {
+            Password = "watermark-user",
+            PermissionPolicy = PdfPermissionPolicy.IgnoreRestrictions
+        }).Stamp.ReadWatermarks();
+        var ownerAuthorized = PdfDocument.Load(encrypted, new PdfLoadOptions {
+            Password = "watermark-owner"
+        }).Stamp.ReadWatermarks();
+
+        Assert.Equal(settings.Id, Assert.Single(ignored).Id);
+        Assert.Equal(settings.ImageBytes, Assert.Single(ownerAuthorized).ImageBytes);
+    }
+
+    [Fact]
+    public void ReadingWatermarksRejectsCyclicContentsArrays() {
+        const string content = "BT (SAFE) Tj ET";
+        byte[] source = System.Text.Encoding.ASCII.GetBytes(string.Join("\n", new[] {
+            "%PDF-1.7", "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+            "2 0 obj << /Type /Pages /Count 1 /Kids [3 0 R] >> endobj",
+            "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Contents 4 0 R >> endobj",
+            "4 0 obj [5 0 R 4 0 R] endobj",
+            $"5 0 obj << /Length {content.Length} >> stream", content, "endstream endobj",
+            "trailer << /Root 1 0 R /Size 6 >>", "%%EOF"
+        }));
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            PdfDocument.Load(source).Stamp.ReadWatermarks());
+
+        Assert.Contains("cyclic", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ReadingWatermarksHonorsContentsArrayNestingLimit() {
+        const string content = "BT (SAFE) Tj ET";
+        byte[] source = System.Text.Encoding.ASCII.GetBytes(string.Join("\n", new[] {
+            "%PDF-1.7", "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+            "2 0 obj << /Type /Pages /Count 1 /Kids [3 0 R] >> endobj",
+            "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Contents 4 0 R >> endobj",
+            "4 0 obj [5 0 R] endobj", "5 0 obj [6 0 R] endobj",
+            $"6 0 obj << /Length {content.Length} >> stream", content, "endstream endobj",
+            "trailer << /Root 1 0 R /Size 7 >>", "%%EOF"
+        }));
+
+        var exception = Assert.Throws<PdfReadLimitException>(() =>
+            PdfDocument.Load(source).Stamp.ReadWatermarks(new PdfLoadOptions {
+                Limits = new PdfReadLimits { MaxObjectNestingDepth = 2 }
+            }));
+
+        Assert.Equal(PdfReadLimitKind.ObjectNestingDepth, exception.Kind);
     }
 
     [Fact]
@@ -314,6 +435,21 @@ public sealed class PdfWatermarkWorkflowTests {
         bytes[offset + 1] = (byte)(value >> 8);
         bytes[offset + 2] = (byte)(value >> 16);
         bytes[offset + 3] = (byte)(value >> 24);
+    }
+
+    private static PdfDictionary? ResourceDictionary(PdfObject? value) => value switch {
+        PdfStream stream => stream.Dictionary,
+        PdfDictionary dictionary => dictionary,
+        _ => null
+    };
+
+    private static byte[] Deflate(byte[] bytes) {
+        using var output = new MemoryStream();
+        using (var stream = new System.IO.Compression.DeflateStream(
+                   output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true)) {
+            stream.Write(bytes, 0, bytes.Length);
+        }
+        return output.ToArray();
     }
 
     private static byte[] Render(byte[] source, int page) {
