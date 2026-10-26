@@ -29,7 +29,7 @@ document.Save("summary.odt");
 Create a sparse ODS workbook:
 
 ```csharp
-using OdsDocument workbook = OdsDocument.Create();
+OdsDocument workbook = OdsDocument.Create();
 OdsSheet sheet = workbook.AddSheet("Metrics");
 sheet.Cell(0, 0).SetString("Name");
 sheet.Cell(0, 1).SetString("Value");
@@ -55,6 +55,10 @@ if (calculation.FailedCells > 0) {
 workbook.Save("metrics.ods");
 ```
 
+For a formula-based validation, use `OdsValidationConditionSyntax.CreateFormula("[.B2]>0")` and set `OdsValidation.BaseCellAddress` to an absolute sheet-qualified address such as `$'Metrics'.$B$2`. The typed formula condition accepts a local cell compared with a number, text value, or another local cell, plus `ISBLANK`, `ISNUMBER`, or `ISTEXT` on one local cell. These predicates can be combined with `AND`, `OR`, and unary `NOT`; numbers in comparisons may have a leading sign. Other OpenFormula expressions can be stored in the raw `Condition` property. The base cell determines how relative formula references apply to the validated cells.
+
+ODS conditional cell styles can be authored and edited through `OdfStyle.AddConditionalMap`. Create a common named table-cell style for the desired appearance, add a mapping to a base style, and assign the base style to cells. For example, `baseStyle.AddConditionalMap("cell-content()>0", highlightStyle.Name, "$'Metrics'.$B$2")` applies the highlight style when the condition is true. The applied style must be a common named style in the same family as the base style; `Validate()` reports a missing, automatic, or different-family target. The map and its relative-reference base survive save and reopen. OfficeIMO preserves these native rules; its renderer does not evaluate them.
+
 Create an ODP presentation:
 
 ```csharp
@@ -65,6 +69,28 @@ slide.AddRectangle(OdfRect.FromCentimeters(2, 5, 8, 3)).FillColor = OdfColor.Par
 slide.GetOrCreateSpeakerNotes().AddParagraph("Explain the result.");
 presentation.Save("summary.odp");
 ```
+
+Nest text styles and links when their formatting changes within a sentence:
+
+```csharp
+using OfficeIMO.OpenDocument;
+
+using OdtDocument document = OdtDocument.Create();
+OdtParagraph paragraph = document.AddParagraph();
+OdtSpan emphasis = paragraph.AddSpan("Read ");
+emphasis.Bold = true;
+emphasis.AddHyperlink("the guide", "https://example.com/guide").Italic = true;
+
+using OdpPresentation presentation = OdpPresentation.Create();
+OdpSlide slide = presentation.AddSlide("Links");
+OdpParagraph slideText = slide.AddTextBox(
+    OdfRect.FromCentimeters(2, 9, 18, 2)).AddParagraph();
+OdpRun label = slideText.AddRun("Open ");
+label.Bold = true;
+label.AddHyperlink("the guide", "https://example.com/guide").Underline = true;
+```
+
+`InlineNodes` exposes nested `Children` in document order. A nested run inherits text properties from its containing span or link until its own style overrides them.
 
 Convert explicitly between OpenDocument and OfficeIMO Word, Excel, or PowerPoint models by installing the corresponding adapter package. Every conversion returns an `OdfConversionReport` that identifies mapped, approximated, skipped, and unsupported features.
 
@@ -138,7 +164,7 @@ Unknown XML, vendor extensions, scripts, embedded content, and unsupported drawi
 
 - Formula evaluation covers arithmetic, comparisons, concatenation, cell/range references, and common aggregate/math functions. External data, volatile functions, matrix formulas, and the complete OpenFormula language are not included.
 - Typed validation syntax covers explicit lists and scalar whole-number, decimal, and text-length comparisons. Other valid ODF conditions remain preserved text and are reported by conversions that cannot map them exactly.
-- Ordered ODT/ODP inline syntax types direct text, spans/runs, hyperlinks, images, and bookmark markers. Nested inline markup remains preserved in the package and is surfaced as an untyped node so conversion loss is explicit.
+- Ordered ODT/ODP inline syntax types text, nested spans/runs, and hyperlinks. ODT also types inline images and bookmark markers. Unsupported inline elements remain `Other` nodes and conversion reports their approximation.
 - Tracked-change editing covers paragraph insertions and deletions. Arbitrary inline merges and conflict resolution remain preservation-oriented.
 - Animation editing covers basic shape-attribute effects and fade-in timing. Advanced timing trees are preserved when untouched.
 - Password-encrypted packages using the documented AES-256-CBC profile can be opened and written. Legacy Blowfish and other unsupported profiles fail before content is exposed.
