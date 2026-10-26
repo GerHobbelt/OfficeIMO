@@ -1,10 +1,18 @@
 using OfficeIMO.Drawing;
 
 namespace OfficeIMO.Word {
+    internal enum WordImageCancellationCheckpoint {
+        PlainTextWrapping,
+        NestedTableMeasurement
+    }
+
     /// <summary>
     /// Options controlling dependency-free Word document image export.
     /// </summary>
     public sealed class WordImageExportOptions : OfficeImageExportOptions {
+        /// <inheritdoc />
+        public override double LogicalUnitsPerInch => 72D;
+
         /// <summary>
         /// Gets or sets a value indicating whether document body content should be rendered when supported.
         /// </summary>
@@ -21,13 +29,22 @@ namespace OfficeIMO.Word {
         /// </summary>
         public int? PageCount { get; set; }
 
-        internal WordImageExportOptions Clone() => new WordImageExportOptions {
-            Scale = Scale,
-            BackgroundColor = BackgroundColor,
-            RasterEncoding = RasterEncoding?.Clone() ?? new OfficeRasterEncodingOptions(),
-            IncludeDocumentContent = IncludeDocumentContent,
-            PageIndex = PageIndex,
-            PageCount = PageCount
-        };
+        internal Action<WordImageCancellationCheckpoint>? CancellationCheckpoint { get; set; }
+
+        /// <summary>Creates an independent options snapshot.</summary>
+        public WordImageExportOptions Clone() {
+            WordImageExportOptions clone = CopyImageExportOptionsTo(new WordImageExportOptions());
+            clone.IncludeDocumentContent = IncludeDocumentContent;
+            clone.PageIndex = PageIndex;
+            clone.PageCount = PageCount;
+            clone.CancellationCheckpoint = CancellationCheckpoint;
+            return clone;
+        }
+
+        internal void Validate() {
+            ValidateImageExportOptions();
+            if (PageIndex < 0) throw new ArgumentOutOfRangeException(nameof(PageIndex));
+            if (PageCount.HasValue && PageCount.Value < 1) throw new ArgumentOutOfRangeException(nameof(PageCount));
+        }
     }
 }

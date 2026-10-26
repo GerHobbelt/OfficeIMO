@@ -346,7 +346,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 if (!options.IncludeHidden && IsHiddenAnchorInRange(drawing.Row, drawing.Column, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions)) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.DrawingShapeAnchorHidden,
                         "Worksheet drawing object is anchored to a hidden row or column and was omitted from the image export.",
@@ -436,6 +436,7 @@ namespace OfficeIMO.Excel {
                 Italic = format.FontItalic ?? style.Italic,
                 Underline = format.FontUnderline ?? style.Underline,
                 FontName = string.IsNullOrWhiteSpace(format.FontName) ? style.FontName : format.FontName,
+                IsFontFamilyExplicit = !string.IsNullOrWhiteSpace(format.FontName) || style.IsFontFamilyExplicit,
                 FontSize = format.FontSize ?? style.FontSize,
                 TextRotation = style.TextRotation,
                 FontColorArgb = string.IsNullOrWhiteSpace(format.FontColorArgb) ? style.FontColorArgb : format.FontColorArgb,
@@ -498,7 +499,7 @@ namespace OfficeIMO.Excel {
             foreach (ExcelImage image in sheet.Images) {
                 bool absoluteAnchor = image.TryGetAbsoluteAnchorBounds(out int absoluteX, out int absoluteY, out int absoluteWidth, out int absoluteHeight);
                 if (!absoluteAnchor && !options.IncludeHidden && IsHiddenAnchorInRange(image.RowIndex, image.ColumnIndex, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions)) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.ImageAnchorHidden,
                         "Worksheet image is anchored to a hidden row or column and was omitted from the image export.",
@@ -535,7 +536,7 @@ namespace OfficeIMO.Excel {
                 byte[] bytes = image.ToBytes();
                 string source = GetImageDiagnosticSource(sheet, image);
                 if (bytes.Length == 0) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(OfficeImageExportDiagnosticSeverity.Warning, ExcelImageExportDiagnosticCodes.ImageBytesMissing, "Worksheet image bytes could not be read.", source));
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(OfficeImageExportDiagnosticSeverity.Warning, ExcelImageExportDiagnosticCodes.ImageBytesMissing, "Worksheet image bytes could not be read.", source));
                     continue;
                 }
 
@@ -544,10 +545,10 @@ namespace OfficeIMO.Excel {
                     ? info.Format
                     : OfficeImageFormat.Unknown;
                 if (detectedFormat == OfficeImageFormat.Unknown) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.ImageFormatUnknown,
-                        "Worksheet image bytes do not contain a recognized image header. Declared content type: '" + image.ContentType + "'. Exporters may skip or approximate this image.",
+                        "Worksheet image bytes do not contain a recognized image header. Declared content type: '" + image.ContentType + "'. Export uses the caller codec when available and otherwise renders a visible fallback.",
                         source));
                 }
 
@@ -596,7 +597,7 @@ namespace OfficeIMO.Excel {
 
             foreach (ExcelChart chart in sheet.Charts) {
                 if (!chart.TryGetSnapshot(out ExcelChartSnapshot chartSnapshot)) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(OfficeImageExportDiagnosticSeverity.Warning, ExcelImageExportDiagnosticCodes.ChartSnapshotUnavailable, "Worksheet chart data could not be converted to a renderable snapshot.", sheet.Name + "!" + chart.Name));
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(OfficeImageExportDiagnosticSeverity.Warning, ExcelImageExportDiagnosticCodes.ChartSnapshotUnavailable, "Worksheet chart data could not be converted to a renderable snapshot.", sheet.Name + "!" + chart.Name));
                     continue;
                 }
 
@@ -606,7 +607,7 @@ namespace OfficeIMO.Excel {
 
                 bool absoluteAnchor = chart.TryGetAbsoluteAnchorBounds(out int absoluteX, out int absoluteY, out int absoluteWidth, out int absoluteHeight);
                 if (!absoluteAnchor && !options.IncludeHidden && IsHiddenAnchorInRange(chartSnapshot.RowIndex, chartSnapshot.ColumnIndex, firstRow, firstColumn, lastRow, lastColumn, rowDefinitions, defaultRowsHidden, columnDefinitions)) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.ChartAnchorHidden,
                         "Worksheet chart is anchored to a hidden row or column and was omitted from the image export.",
@@ -741,7 +742,7 @@ namespace OfficeIMO.Excel {
                     }
                 }
 
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     options.ShowCommentBodies
                         ? ExcelImageExportDiagnosticCodes.CellCommentBodyApproximation
@@ -783,7 +784,7 @@ namespace OfficeIMO.Excel {
                     }
                 }
 
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     options.ShowCommentBodies
                         ? ExcelImageExportDiagnosticCodes.ThreadedCommentBodyApproximation
@@ -1024,7 +1025,7 @@ namespace OfficeIMO.Excel {
 
                 string source = sheet.Name + "!" + sourceCell;
                 if (!IsSupportedSparklineKind(sparkline.Kind)) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.SparklineKindUnsupported,
                         "Worksheet sparkline kind '" + sparkline.Kind + "' is not rendered by the dependency-free image exporter yet.",
@@ -1033,7 +1034,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 if (!resolvedSparkline.HasResolvedRange) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         resolvedSparkline.ExternalRange ? ExcelImageExportDiagnosticCodes.SparklineExternalRangeUnsupported : ExcelImageExportDiagnosticCodes.SparklineRangeUnsupported,
                         resolvedSparkline.ExternalRange
@@ -1044,7 +1045,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 if (resolvedSparkline.Values.Count == 0) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Warning,
                         ExcelImageExportDiagnosticCodes.SparklineDataMissing,
                         "Worksheet sparkline has no numeric values available for image rendering.",
@@ -1052,7 +1053,7 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.SparklineRenderingApproximation,
                     "Worksheet sparkline is rendered as a dependency-free approximation; Excel-specific date axis, hidden-data, and empty-cell behavior may differ.",
@@ -1261,7 +1262,7 @@ namespace OfficeIMO.Excel {
             string source = sourceCell == null
                 ? sheet.Name + "!" + drawing.Name
                 : sheet.Name + "!" + sourceCell;
-            diagnostics.Add(new OfficeImageExportDiagnostic(
+            diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.DrawingShapeUnsupported,
                 "Worksheet drawing object '" + drawing.Name + "' (" + drawing.Kind + ") is " + reason + ".",
@@ -1490,7 +1491,7 @@ namespace OfficeIMO.Excel {
             int hiddenColumns = CountHiddenColumns(firstColumn, lastColumn, columnDefinitions);
             string source = sheet.Name + "!" + range;
             if (hiddenRows > 0) {
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.HiddenRowsOmitted,
                     hiddenRows.ToString(CultureInfo.InvariantCulture) + " hidden row(s) were omitted from the Excel image export.",
@@ -1498,7 +1499,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (hiddenColumns > 0) {
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.HiddenColumnsOmitted,
                     hiddenColumns.ToString(CultureInfo.InvariantCulture) + " hidden column(s) were omitted from the Excel image export.",

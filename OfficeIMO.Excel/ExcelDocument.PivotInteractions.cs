@@ -91,16 +91,12 @@ namespace OfficeIMO.Excel {
         }
 
         private bool IsDateOnlyPivotSourceField(ExcelPivotTableInfo pivot, string sourceField) {
-            bool? currentSourceResult = TryIsDateOnlyPivotSourceFieldFromCurrentSource(pivot, sourceField);
+            PivotTablePart? pivotPart = FindPivotTablePart(pivot);
+            bool? currentSourceResult = TryIsDateOnlyPivotSourceFieldFromCurrentSource(pivot, sourceField, pivotPart);
             if (currentSourceResult.HasValue) {
                 return currentSourceResult.Value;
             }
 
-            PivotTablePart? pivotPart = WorkbookPartRoot.WorksheetParts
-                .SelectMany(part => part.PivotTableParts)
-                .FirstOrDefault(part =>
-                    part.PivotTableDefinition?.CacheId?.Value == pivot.CacheId
-                    && string.Equals(part.PivotTableDefinition?.Name?.Value, pivot.Name, StringComparison.OrdinalIgnoreCase));
             CacheField? cacheField = pivotPart?
                 .PivotTableCacheDefinitionPart?
                 .PivotCacheDefinition?
@@ -122,7 +118,18 @@ namespace OfficeIMO.Excel {
             return false;
         }
 
-        private bool? TryIsDateOnlyPivotSourceFieldFromCurrentSource(ExcelPivotTableInfo pivot, string sourceField) {
+        private PivotTablePart? FindPivotTablePart(ExcelPivotTableInfo pivot) {
+            return WorkbookPartRoot.WorksheetParts
+                .SelectMany(part => part.PivotTableParts)
+                .FirstOrDefault(part =>
+                    part.PivotTableDefinition?.CacheId?.Value == pivot.CacheId
+                    && string.Equals(part.PivotTableDefinition?.Name?.Value, pivot.Name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private bool? TryIsDateOnlyPivotSourceFieldFromCurrentSource(
+            ExcelPivotTableInfo pivot,
+            string sourceField,
+            PivotTablePart? pivotPart) {
             if (string.IsNullOrWhiteSpace(pivot.SourceSheet)
                 || string.IsNullOrWhiteSpace(pivot.SourceRange)
                 || !A1.TryParseRange(pivot.SourceRange!.Replace("$", string.Empty), out int firstRow, out int firstColumn, out int lastRow, out int lastColumn)) {
@@ -136,9 +143,20 @@ namespace OfficeIMO.Excel {
             }
 
             List<string> normalizedHeaders = sourceSheet.BuildPivotHeaders(firstRow, firstColumn, lastColumn);
-            int sourceFieldIndex = normalizedHeaders.FindIndex(header =>
-                string.Equals(header, sourceField, StringComparison.OrdinalIgnoreCase));
+            List<CacheField> databaseFields = pivotPart?
+                .PivotTableCacheDefinitionPart?
+                .PivotCacheDefinition?
+                .CacheFields?
+                .Elements<CacheField>()
+                .Where(field => field.DatabaseField?.Value != false)
+                .ToList() ?? new List<CacheField>();
+            int sourceFieldIndex = databaseFields.FindIndex(field =>
+                string.Equals(field.Name?.Value, sourceField, StringComparison.OrdinalIgnoreCase));
             if (sourceFieldIndex < 0) {
+                sourceFieldIndex = normalizedHeaders.FindIndex(header =>
+                    string.Equals(header, sourceField, StringComparison.OrdinalIgnoreCase));
+            }
+            if (sourceFieldIndex < 0 || sourceFieldIndex >= normalizedHeaders.Count) {
                 return false;
             }
 
@@ -149,7 +167,11 @@ namespace OfficeIMO.Excel {
                 if (!sourceSheet.TryGetCellValueSnapshot(row, sourceColumn, out ExcelCellValueSnapshot? value)) {
                     continue;
                 }
-                if (value!.Kind != ExcelCellValueKind.DateTime) {
+                if (value!.Kind == ExcelCellValueKind.Text && value.Text.Length == 0) {
+                    continue;
+                }
+                if (value!.Kind != ExcelCellValueKind.DateTime
+                    && !sourceSheet.IsPivotDateSourceValue(row, sourceColumn)) {
                     return false;
                 }
 
@@ -160,17 +182,11 @@ namespace OfficeIMO.Excel {
         }
 
         private IReadOnlyList<ExcelPivotInteractionCacheInfo> GetWorkbookPivotInteractionCaches(ExcelPivotInteractionCacheKind kind) {
-            string contentType = kind == ExcelPivotInteractionCacheKind.Slicer
-                ? WorkbookSlicerCacheContentType
-                : WorkbookTimelineCacheContentType;
-            string relationshipType = kind == ExcelPivotInteractionCacheKind.Slicer
-                ? WorkbookSlicerCacheRelationshipType
-                : WorkbookTimelineCacheRelationshipType;
             var caches = new List<ExcelPivotInteractionCacheInfo>();
             foreach (IdPartPair pair in WorkbookPartRoot.Parts) {
                 OpenXmlPart part = pair.OpenXmlPart;
-                if (!string.Equals(part.ContentType, contentType, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(part.RelationshipType, relationshipType, StringComparison.Ordinal)) {
+                if (!IsCurrentPivotInteractionMetadataPart(part, kind)
+                    && !IsLegacyOfficeImoPivotInteractionMetadataPart(part, kind)) {
                     continue;
                 }
 
@@ -196,6 +212,53 @@ namespace OfficeIMO.Excel {
                 .OrderBy(cache => cache.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(cache => cache.RelationshipId, StringComparer.Ordinal)
                 .ToList();
+        }
+
+        private static bool IsCurrentPivotInteractionMetadataPart(OpenXmlPart part, ExcelPivotInteractionCacheKind kind) {
+            string contentType = kind == ExcelPivotInteractionCacheKind.Slicer
+                ? WorkbookSlicerCacheContentType
+                : WorkbookTimelineCacheContentType;
+            string relationshipType = kind == ExcelPivotInteractionCacheKind.Slicer
+                ? WorkbookSlicerCacheRelationshipType
+                : WorkbookTimelineCacheRelationshipType;
+            return string.Equals(part.ContentType, contentType, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(part.RelationshipType, relationshipType, StringComparison.Ordinal);
+        }
+
+        private static bool IsLegacyOfficeImoPivotInteractionMetadataPart(OpenXmlPart part, ExcelPivotInteractionCacheKind kind) {
+            string contentType = kind == ExcelPivotInteractionCacheKind.Slicer
+                ? MicrosoftWorkbookSlicerCacheContentType
+                : MicrosoftWorkbookTimelineCacheContentType;
+            string relationshipType = kind == ExcelPivotInteractionCacheKind.Slicer
+                ? MicrosoftWorkbookSlicerCacheRelationshipType
+                : MicrosoftWorkbookTimelineCacheRelationshipType;
+            if (!string.Equals(part.ContentType, contentType, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(part.RelationshipType, relationshipType, StringComparison.Ordinal)) {
+                return false;
+            }
+
+            try {
+                XDocument xml = XDocument.Parse(ReadPivotInteractionPartText(part));
+                XElement? root = xml.Root;
+                string expectedRootName = kind == ExcelPivotInteractionCacheKind.Slicer
+                    ? "slicerCacheDefinition"
+                    : "timelineCacheDefinition";
+                string expectedNamespace = kind == ExcelPivotInteractionCacheKind.Slicer
+                    ? MicrosoftWorkbookSlicerCacheNamespace
+                    : MicrosoftWorkbookTimelineCacheNamespace;
+
+                // The legacy writer used native root names with flat name/sourceName metadata and no native payload children.
+                // PivotTableName was optional, so preserve both legacy shapes without classifying populated native caches as metadata.
+                string? pivotTableName = (string?)root?.Attribute("pivotTableName");
+                string? sourceName = (string?)root?.Attribute("sourceName");
+                return root != null
+                    && string.Equals(root.Name.NamespaceName, expectedNamespace, StringComparison.Ordinal)
+                    && string.Equals(root.Name.LocalName, expectedRootName, StringComparison.Ordinal)
+                    && (!string.IsNullOrWhiteSpace(pivotTableName)
+                        || !string.IsNullOrWhiteSpace(sourceName) && !root.Elements().Any());
+            } catch (System.Xml.XmlException) {
+                return false;
+            }
         }
 
         private static string ReadPivotInteractionPartText(OpenXmlPart part) {

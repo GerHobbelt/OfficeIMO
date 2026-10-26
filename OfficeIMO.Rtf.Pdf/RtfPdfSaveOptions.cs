@@ -6,12 +6,19 @@ namespace OfficeIMO.Rtf.Pdf;
 /// Controls conversion from an RTF document model to a first-party PDF document.
 /// </summary>
 public sealed class RtfPdfSaveOptions {
+    private PdfCore.PdfResourcePolicy _resourcePolicy = PdfCore.PdfResourcePolicy.CreateDefault();
     /// <summary>Creates RTF to PDF save options.</summary>
     public RtfPdfSaveOptions() {
     }
 
     /// <summary>Optional PDF engine options. The converter clones the instance before applying RTF page setup.</summary>
     public PdfCore.PdfOptions? PdfOptions { get; set; }
+
+    /// <summary>Host-resource policy. Defaults to balanced conversion: system fonts and bounded in-source resources are allowed, while local and remote reads are denied.</summary>
+    public PdfCore.PdfResourcePolicy ResourcePolicy {
+        get => _resourcePolicy;
+        set => _resourcePolicy = value ?? throw new ArgumentNullException(nameof(value));
+    }
 
     internal PdfCore.PdfConversionReport Report { get; } = new PdfCore.PdfConversionReport();
 
@@ -23,7 +30,7 @@ public sealed class RtfPdfSaveOptions {
 
     /// <summary>
     /// Optional converter for image formats that the managed drawing layer cannot rasterize, such as WMF and EMF.
-    /// The callback must return structurally valid PNG or JPEG bytes, or null when it cannot convert the image.
+    /// The callback must return a raster payload supported by the shared Drawing-to-PDF pipeline, or null when it cannot convert the image.
     /// </summary>
     public Func<RtfImage, byte[]?>? ImageConverter { get; set; }
 
@@ -57,6 +64,7 @@ public sealed class RtfPdfSaveOptions {
 
         return new RtfPdfSaveOptions {
             PdfOptions = PdfOptions?.Clone(),
+            ResourcePolicy = ResourcePolicy.Clone(),
             IncludeHiddenText = IncludeHiddenText,
             IncludeImages = IncludeImages,
             ImageConverter = ImageConverter,

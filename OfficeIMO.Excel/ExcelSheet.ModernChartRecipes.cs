@@ -40,7 +40,8 @@ namespace OfficeIMO.Excel {
                 effectiveBinWidth = 1D;
             } else if (binWidth.HasValue) {
                 effectiveBinWidth = binWidth.Value;
-                double requestedBinCount = Math.Max(1D, Math.Ceiling(range / effectiveBinWidth));
+                double binCountQuotient = SnapHistogramBinCountQuotient(range / effectiveBinWidth);
+                double requestedBinCount = Math.Max(1D, Math.Ceiling(binCountQuotient));
                 if (double.IsNaN(requestedBinCount) || double.IsInfinity(requestedBinCount) || requestedBinCount > 10000D) {
                     throw new ArgumentOutOfRangeException(nameof(binWidth), "A histogram cannot exceed 10,000 bins.");
                 }
@@ -57,6 +58,20 @@ namespace OfficeIMO.Excel {
                 throw new ArgumentException("Histogram values and bin settings produce an unrepresentable bin width.", nameof(values));
             }
 
+            var boundaries = new double[effectiveBinCount + 1];
+            boundaries[0] = minimum;
+            for (int index = 1; index <= effectiveBinCount; index++) {
+                double boundary = index == effectiveBinCount
+                    ? maximum
+                    : minimum + (index * effectiveBinWidth);
+                if (double.IsInfinity(boundary)
+                    || minimum != maximum && !(boundary > boundaries[index - 1])) {
+                    throw new ArgumentException("Histogram values and bin settings produce an unrepresentable bin boundary.", nameof(values));
+                }
+
+                boundaries[index] = boundary;
+            }
+
             var counts = new double[effectiveBinCount];
             foreach (double observation in observations) {
                 int index = minimum == maximum || observation == maximum
@@ -67,14 +82,7 @@ namespace OfficeIMO.Excel {
 
             var categories = new string[effectiveBinCount];
             for (int index = 0; index < effectiveBinCount; index++) {
-                double lower = minimum + (index * effectiveBinWidth);
-                double upper = minimum == maximum || index == effectiveBinCount - 1
-                    ? maximum
-                    : lower + effectiveBinWidth;
-                if (double.IsInfinity(lower) || double.IsInfinity(upper)) {
-                    throw new ArgumentException("Histogram values and bin settings produce an unrepresentable bin boundary.", nameof(values));
-                }
-                categories[index] = FormatChartRange(lower, upper);
+                categories[index] = FormatChartRange(boundaries[index], boundaries[index + 1]);
             }
 
             var data = new ExcelChartData(categories, new[] { new ExcelChartSeries("Frequency", counts, seriesColorArgb: "4F46E5") });
@@ -84,6 +92,19 @@ namespace OfficeIMO.Excel {
                 .SetValueAxisTitle("Frequency")
                 .SetValueAxisNumberFormat("0", sourceLinked: false)
                 .SetValueAxisGridlines(showMajor: true, showMinor: false, lineColor: "E5E7EB", lineWidthPoints: 0.5);
+        }
+
+        private static double SnapHistogramBinCountQuotient(double quotient) {
+            if (double.IsNaN(quotient) || double.IsInfinity(quotient)) {
+                return quotient;
+            }
+
+            double nearestInteger = Math.Round(quotient);
+            const double MachineEpsilon = 2.2204460492503131E-16;
+            double tolerance = Math.Max(1D, Math.Abs(quotient)) * MachineEpsilon * 8D;
+            return Math.Abs(quotient - nearestInteger) <= tolerance
+                ? nearestInteger
+                : quotient;
         }
 
         /// <summary>
@@ -166,7 +187,7 @@ namespace OfficeIMO.Excel {
             chart.ApplyAuthoredSeriesStyles(data.Series, new[] { false, true, false });
             return chart.SetSeriesNoFill(0)
                 .SetSeriesNoFill(2)
-                .SetSeriesDataLabels(1, showValue: true, position: C.DataLabelPositionValues.Center, numberFormat: "#,##0")
+                .SetSeriesDataLabels(1, showValue: true, position: C.DataLabelPositionValues.Center, numberFormat: "#,##0.###############")
                 .SetCategoryAxisReverseOrder()
                 .SetValueAxisGridlines(showMajor: false, showMinor: false);
         }
@@ -200,7 +221,7 @@ namespace OfficeIMO.Excel {
                 }
 
                 double roundingTolerance = 3.552713678800501E-15D
-                    * Math.Max(1D, Math.Max(Math.Abs(running), Math.Abs(change)));
+                    * Math.Max(1D, Math.Abs(next));
                 if (next < 0 && next >= -roundingTolerance) {
                     next = 0;
                 }
@@ -238,24 +259,25 @@ namespace OfficeIMO.Excel {
 
             var data = new ExcelChartData(chartCategories, series);
             ExcelChart chart = AddChart(data, row, column, widthPixels, heightPixels, ExcelChartType.ColumnStacked, title);
+            const string waterfallNumberFormat = "#,##0.###############";
             chart.ApplyAuthoredSeriesStyles(data.Series, visibleSeriesStyles);
             chart.SetSeriesNoFill(0)
                 .SetValueAxisGridlines(showMajor: true, showMinor: false, lineColor: "E5E7EB", lineWidthPoints: 0.5)
-                .SetValueAxisNumberFormat("#,##0", sourceLinked: false);
+                .SetValueAxisNumberFormat(waterfallNumberFormat, sourceLinked: false);
 
             for (int index = 0; index < points.Count; index++) {
                 if (points[index].Value > 0) {
                     chart.SetSeriesDataLabelForPoint(1, index, showValue: true,
-                        position: C.DataLabelPositionValues.OutsideEnd, numberFormat: "+#,##0");
+                        position: C.DataLabelPositionValues.OutsideEnd, numberFormat: "+" + waterfallNumberFormat);
                 } else if (points[index].Value < 0) {
                     chart.SetSeriesDataLabelForPoint(2, index, showValue: true,
-                        position: C.DataLabelPositionValues.OutsideEnd, numberFormat: "-#,##0");
+                        position: C.DataLabelPositionValues.OutsideEnd, numberFormat: "-" + waterfallNumberFormat);
                 }
             }
 
             if (includeTotal) {
                 chart.SetSeriesDataLabelForPoint(3, count - 1, showValue: true,
-                    position: C.DataLabelPositionValues.OutsideEnd, numberFormat: "#,##0");
+                    position: C.DataLabelPositionValues.OutsideEnd, numberFormat: waterfallNumberFormat);
             }
 
             return chart;

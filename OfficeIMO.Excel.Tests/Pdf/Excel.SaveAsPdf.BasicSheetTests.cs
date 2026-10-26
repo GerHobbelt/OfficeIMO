@@ -15,7 +15,7 @@ namespace OfficeIMO.Tests;
 public partial class Excel {
 
     [Fact]
-    public void SaveAsPdf_ExcelWorkbook_Exports_Worksheet_UsedRange_To_Table() {
+    public void SaveAsPdf_ExcelWorkbook_ExportsUsedRangeWithoutInjectingSheetHeading() {
         string workbookPath = Path.Combine(_directoryWithFiles, "ExcelPdfWorkbook.xlsx");
         string pdfPath = Path.Combine(_directoryWithFiles, "ExcelPdfWorkbook.pdf");
 
@@ -35,7 +35,7 @@ public partial class Excel {
         Assert.True(File.Exists(pdfPath));
         using PdfPigDocument pdf = PdfPigDocument.Open(pdfPath);
         string text = pdf.GetPage(1).Text;
-        Assert.Contains("Sales", text);
+        Assert.DoesNotContain("Sales", text);
         Assert.Contains("Product", text);
         Assert.Contains("Licenses", text);
         Assert.Contains("1250.5", text);
@@ -90,6 +90,7 @@ public partial class Excel {
             pdfDocument = document.ToPdfDocument(new ExcelPdfSaveOptions {
                 IncludeSheetHeadings = false,
                 HeaderRowCount = 1,
+                WorksheetLayout = ExcelPdfWorksheetLayoutMode.FlowTable,
                 PdfOptions = new PdfCore.PdfOptions {
                     DefaultTableStyle = configuredStyle
                 }
@@ -132,6 +133,7 @@ public partial class Excel {
             pdfDocument = document.ToPdfDocument(new ExcelPdfSaveOptions {
                 IncludeSheetHeadings = false,
                 HeaderRowCount = 1,
+                WorksheetLayout = ExcelPdfWorksheetLayoutMode.FlowTable,
                 PdfOptions = new PdfCore.PdfOptions {
                     DefaultFontSize = 9D
                 }

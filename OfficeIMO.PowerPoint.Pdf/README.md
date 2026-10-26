@@ -94,7 +94,7 @@ var options = new PowerPointPdfSaveOptions {
 }.UseProfile(PdfExportProfile.Faithful);
 
 options.TextFallbacks = PdfTextFallbackFeatures.Default;
-options.AllowSystemFontEmbedding = true;
+options.ResourcePolicy = PdfResourcePolicy.CreateTrustedHost();
 
 var result = presentation.TrySaveAsPdf("complex-deck.pdf", options);
 if (!result.Succeeded) {
@@ -116,31 +116,36 @@ result.Report.RequireNoErrorWarnings();
 - Slide backgrounds, text boxes, supported pictures, supported tables, supported charts, and basic auto-shapes.
 - Text box fill, outline, margins, font defaults, alignment, vertical anchoring, rich runs, and hyperlinks.
 - Supported JPEG/PNG pictures through the shared PDF image pipeline.
-- Faithful and print-ready profiles consume the same shared visual snapshot as PNG/SVG and visual-review HTML. Selective profiles retain the per-shape path.
-- Profile presets through `PowerPointPdfSaveOptions.UseProfile(...)`, plus shared `TextFallbacks` and `AllowSystemFontEmbedding` controls for Unicode, symbols, and emoji.
+- Full-slide PDF output always uses the native per-shape PDF renderer, including hyperlinks and rich text. Conversion no longer chooses a different renderer from document content or an option toggle.
+- PNG, SVG, visual-review HTML, and notes/handout thumbnails use the shared visual snapshot; those surfaces have a different scene/raster contract and do not select the PDF engine at runtime.
+- Profile presets through `PowerPointPdfSaveOptions.UseProfile(...)`, plus shared `TextFallbacks` and `ResourcePolicy` controls. The balanced default uses installed fonts while denying arbitrary local and remote reads; portable deterministic mode is explicit.
 - Per-operation conversion warnings through `PdfDocumentConversionResult.Report` or `PdfSaveResult.Report`.
 
 ## PDF table import
 
-`SaveAsPowerPoint(...)` extracts logical tables from a PDF and writes editable PowerPoint table slides. This is useful for review decks and migration workflows where the source PDF has table-like content that should become editable again.
+`SaveTablesAsPowerPoint(...)` extracts logical tables from a PDF and writes editable PowerPoint table slides. It does not claim to convert unrelated page text, source vector graphics, images, links, forms, annotations, or actions.
 
 ```csharp
 using OfficeIMO.PowerPoint.Pdf;
 using OfficeIMO.Pdf;
 
-var imported = PowerPointPdfConverterExtensions.SaveAsPowerPoint(
+PdfLogicalDocument source = PdfLogicalDocument.LoadPageRanges(
     "financial-statement.pdf",
+    PdfPageRange.From(2, 5));
+
+PdfPowerPointTableImportReport report = source.SaveTablesAsPowerPoint(
     "financial-statement-tables.pptx",
     new PdfPowerPointTableImportOptions {
-        PageRanges = new[] { PdfPageRange.From(2, 5) },
         MaxRows = 400,
         MaxRowsPerSlide = 18,
         MaxColumnsPerSlide = 6
     });
 
-foreach (var table in imported) {
+foreach (var table in report.Entries) {
     Console.WriteLine($"Page {table.PageNumber}, slide {table.SlideIndex + 1}");
 }
+
+Console.WriteLine($"Non-table page content detected: {report.HasOmittedPageContent}");
 ```
 
 ## Boundaries
@@ -148,6 +153,7 @@ foreach (var table in imported) {
 - Presentation modeling stays in `OfficeIMO.PowerPoint`.
 - PDF layout and writing stay in `OfficeIMO.Pdf`.
 - This package should remain a thin adapter over shared PDF primitives.
+- PDF import is intentionally table-only. `SourceScope` and `HasOmittedPageContent` make the omitted page surface explicit.
 - Complex slide fidelity gaps should be reported through warnings and deeper docs rather than broad README claims.
 
 ## Related packages

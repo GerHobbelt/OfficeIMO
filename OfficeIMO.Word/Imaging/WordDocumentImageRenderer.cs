@@ -4,6 +4,7 @@ using System.Globalization;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Drawing;
+using System.Threading;
 
 namespace OfficeIMO.Word {
     internal static partial class WordDocumentImageRenderer {
@@ -15,7 +16,11 @@ namespace OfficeIMO.Word {
         private const double DefaultCellMarginPoints = 5.4D;
         private const double MinimumTableRowHeightPoints = 22D;
 
-        internal static OfficeImageExportResult Render(WordDocument document, OfficeImageExportFormat format, WordImageExportOptions options) {
+        internal static OfficeImageExportResult Render(
+            WordDocument document,
+            OfficeImageExportFormat format,
+            WordImageExportOptions options,
+            CancellationToken cancellationToken = default) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
@@ -24,33 +29,59 @@ namespace OfficeIMO.Word {
                 throw new ArgumentNullException(nameof(options));
             }
 
-            WordDocumentVisualSnapshot snapshot = CreateSnapshot(document, options);
-            return RenderSnapshot(snapshot, format, options);
+            cancellationToken.ThrowIfCancellationRequested();
+            WordDocumentVisualSnapshot snapshot = CreateSnapshot(document, options, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            return RenderSnapshot(snapshot, format, options, cancellationToken);
         }
 
         private static OfficeImageExportResult RenderSnapshot(WordDocumentVisualSnapshot snapshot,
-            OfficeImageExportFormat format, WordImageExportOptions options) {
+            OfficeImageExportFormat format, WordImageExportOptions options, CancellationToken cancellationToken = default) {
             OfficeDrawing drawing = snapshot.Drawing;
 
             if (format == OfficeImageExportFormat.Svg) {
                 List<OfficeImageExportDiagnostic> diagnostics = new List<OfficeImageExportDiagnostic>(snapshot.Diagnostics);
-                AddSvgImageDiagnostics(drawing, diagnostics);
-                byte[] svg = OfficeDrawingSvgExporter.ToSvgBytes(drawing, options.Scale);
-                return new OfficeImageExportResult(format, ScaledWidth(drawing, options), ScaledHeight(drawing, options), svg, "Page " + (options.PageIndex + 1), "Word document", diagnostics);
+                var fallbackCodec = new OfficeRasterImageFallbackCodec(options.ImageCodec, diagnostics, "Word document");
+                byte[] svg = OfficeDrawingSvgExporter.ToSvgBytes(drawing, options.Scale, OfficeSvgSizeUnit.Pixel, fallbackCodec);
+                return options.EnsureAccepted(new OfficeImageExportResult(format, ScaledWidth(drawing, options), ScaledHeight(drawing, options), svg, "Page " + (options.PageIndex + 1), "Word document", diagnostics));
             }
 
             if (format.IsRaster()) {
                 List<OfficeImageExportDiagnostic> diagnostics = new List<OfficeImageExportDiagnostic>(snapshot.Diagnostics);
-                AddRasterImageDiagnostics(drawing, diagnostics);
-                OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing, options.Scale);
-                byte[] bytes = OfficeRasterImageEncoder.Encode(image, format, options.RasterEncoding);
-                return new OfficeImageExportResult(format, image.Width, image.Height, bytes, "Page " + (options.PageIndex + 1), "Word document", diagnostics);
+                const string source = "Word document";
+                OfficeRasterExportPlan plan = OfficeRasterExportPlanner.Resolve(
+                    drawing.Width,
+                    drawing.Height,
+                    format,
+                    options,
+                    source);
+                if (plan.Diagnostic != null) diagnostics.Add(plan.Diagnostic);
+                var fallbackCodec = new OfficeRasterImageFallbackCodec(options.ImageCodec, diagnostics, source);
+                OfficeRasterImage image = OfficeDrawingRasterRenderer.Render(drawing, new OfficeDrawingRasterRenderOptions {
+                    Scale = plan.Limit.Scale,
+                    Background = options.BackgroundColor,
+                    ImageCodec = fallbackCodec,
+                    TextShapingProvider = options.TextShapingProvider,
+                    TextShapingLanguage = options.TextShapingLanguage,
+                    DiagnosticSink = diagnostics,
+                    DiagnosticSource = source,
+                    CancellationToken = cancellationToken
+                });
+                byte[] bytes = OfficeRasterImageEncoder.Encode(
+                    image,
+                    format,
+                    plan.CreateEncodingOptions());
+                cancellationToken.ThrowIfCancellationRequested();
+                return options.EnsureAccepted(new OfficeImageExportResult(format, image.Width, image.Height, bytes, "Page " + (options.PageIndex + 1), source, diagnostics));
             }
 
             throw new ArgumentOutOfRangeException(nameof(format), format, "Unsupported image export format.");
         }
 
-        internal static WordDocumentVisualSnapshot CreateSnapshot(WordDocument document, WordImageExportOptions options) {
+        internal static WordDocumentVisualSnapshot CreateSnapshot(
+            WordDocument document,
+            WordImageExportOptions options,
+            CancellationToken cancellationToken = default) {
             if (document == null) {
                 throw new ArgumentNullException(nameof(document));
             }
@@ -59,25 +90,54 @@ namespace OfficeIMO.Word {
                 throw new ArgumentNullException(nameof(options));
             }
 
-            return CreateSnapshot(document, options, EstimateSectionPageCounts(document));
+            cancellationToken.ThrowIfCancellationRequested();
+            return CreateSnapshot(
+                document,
+                options,
+                EstimateSectionPageCounts(
+                    document,
+                    cancellationToken,
+                    options.CancellationCheckpoint),
+                cancellationToken);
         }
 
         private static WordDocumentVisualSnapshot CreateSnapshot(WordDocument document,
-            WordImageExportOptions options, IReadOnlyList<int> sectionPageCounts) {
+            WordImageExportOptions options,
+            IReadOnlyList<int> sectionPageCounts,
+            CancellationToken cancellationToken = default) {
+            cancellationToken.ThrowIfCancellationRequested();
             List<OfficeImageExportDiagnostic> diagnostics = new List<OfficeImageExportDiagnostic>();
-            OfficeDrawing drawing = CreateDrawing(document, options, diagnostics, sectionPageCounts);
-            return new WordDocumentVisualSnapshot(drawing, options.PageIndex, diagnostics.AsReadOnly());
+            List<WordDocumentVisualFragment> fragments = new List<WordDocumentVisualFragment>();
+            OfficeDrawing drawing = CreateDrawing(
+                document,
+                options,
+                diagnostics,
+                fragments,
+                sectionPageCounts,
+                cancellationToken);
+            drawing.AppendFontDiagnostics(diagnostics, "Word document");
+            return new WordDocumentVisualSnapshot(
+                drawing,
+                options.PageIndex,
+                diagnostics.AsReadOnly(),
+                fragments.AsReadOnly());
         }
 
         private static OfficeDrawing CreateDrawing(WordDocument document, WordImageExportOptions options,
-            List<OfficeImageExportDiagnostic> diagnostics, IReadOnlyList<int> sectionPageCounts) {
+            List<OfficeImageExportDiagnostic> diagnostics,
+            List<WordDocumentVisualFragment> fragments,
+            IReadOnlyList<int> sectionPageCounts,
+            CancellationToken cancellationToken) {
+            cancellationToken.ThrowIfCancellationRequested();
             IReadOnlyList<int> sectionPageNumberStarts = ResolveSectionPageNumberStarts(document, sectionPageCounts);
             WordImagePageContext pageContext = ResolvePageContext(document, options.PageIndex, sectionPageCounts);
             (double width, double height) = GetPageSizePoints(pageContext.Section);
-            OfficeDrawing drawing = new OfficeDrawing(width, height);
+            OfficeDrawing drawing = new OfficeDrawing(width, height).ApplyImageExportOptions(options);
             AddBackgroundRectangle(drawing, options.BackgroundColor);
 
             if (options.IncludeDocumentContent) {
+                IReadOnlyDictionary<OpenXmlElement, WordImageSourceBlock> sourceBlocks =
+                    BuildImageSourceBlocks(document, cancellationToken);
                 int totalPageCount = Math.Max(1, sectionPageCounts.Sum());
                 int sectionPageCount = pageContext.SectionIndex < sectionPageCounts.Count
                     ? sectionPageCounts[pageContext.SectionIndex]
@@ -110,7 +170,11 @@ namespace OfficeIMO.Word {
                     sectionPageCounts: sectionPageCounts,
                     bodyFrameProvider: pageContext.Section != null
                         ? CreateBodyFrameProvider(pageContext.Section, drawing, pageContext.SectionIndex, sectionPageNumberStart, totalPageCount, sectionPageCount, pageContext.SectionPageIndex, headerFooterFrame)
-                        : null);
+                        : null,
+                    sourceBlocks: sourceBlocks,
+                    fragments: fragments,
+                    cancellationToken: cancellationToken,
+                    cancellationCheckpoint: options.CancellationCheckpoint);
             }
 
             return drawing;
@@ -148,7 +212,12 @@ namespace OfficeIMO.Word {
             double? contentTop = null,
             double? contentBottom = null,
             IReadOnlyList<int>? sectionPageCounts = null,
-            Func<int, WordImageBodyFrame>? bodyFrameProvider = null) {
+            Func<int, WordImageBodyFrame>? bodyFrameProvider = null,
+            IReadOnlyDictionary<OpenXmlElement, WordImageSourceBlock>? sourceBlocks = null,
+            List<WordDocumentVisualFragment>? fragments = null,
+            CancellationToken cancellationToken = default,
+            Action<WordImageCancellationCheckpoint>? cancellationCheckpoint = null) {
+            cancellationToken.ThrowIfCancellationRequested();
             int targetPageIndex = Math.Max(0, sectionPageIndex);
             WordImageFlowContext context = CreateFlowContext(
                 pageSection,
@@ -159,14 +228,22 @@ namespace OfficeIMO.Word {
                 sectionNumber,
                 sectionPageCount,
                 pageNumberValue,
-                pageNumberText,
-                contentTop,
-                contentBottom,
-                bodyFrameProvider);
+                    pageNumberText,
+                    contentTop,
+                    contentBottom,
+                    bodyFrameProvider,
+                    sourceBlocks,
+                    fragments,
+                    cancellationToken,
+                    cancellationCheckpoint);
             IReadOnlyDictionary<WordParagraph, (int Level, string Marker)> listMarkers = DocumentTraversal.BuildListMarkers(document);
-            IReadOnlyList<WordSectionBodyElement> bodyEntries = GetSectionBodyElementEntries(document, sectionIndex);
+            IReadOnlyList<WordSectionBodyElement> bodyEntries = GetSectionBodyElementEntries(
+                document,
+                sectionIndex,
+                cancellationToken);
             IReadOnlyList<OpenXmlElement> bodyChildren = bodyEntries.Select(entry => entry.Element).ToList();
             for (int index = 0; index < bodyChildren.Count; index++) {
+                cancellationToken.ThrowIfCancellationRequested();
                 WordSectionBodyElement entry = bodyEntries[index];
                 OpenXmlElement element = entry.Element;
                 if (entry.SectionIndex != sectionIndex) {
@@ -237,7 +314,11 @@ namespace OfficeIMO.Word {
             string? pageNumberText = null,
             double? contentTop = null,
             double? contentBottom = null,
-            Func<int, WordImageBodyFrame>? bodyFrameProvider = null) {
+            Func<int, WordImageBodyFrame>? bodyFrameProvider = null,
+            IReadOnlyDictionary<OpenXmlElement, WordImageSourceBlock>? sourceBlocks = null,
+            List<WordDocumentVisualFragment>? fragments = null,
+            CancellationToken cancellationToken = default,
+            Action<WordImageCancellationCheckpoint>? cancellationCheckpoint = null) {
             WordMargins? margins = section?.Margins;
             double left = ToPoints(margins?.Left?.Value, DefaultMarginPoints);
             double right = ToPoints(margins?.Right?.Value, DefaultMarginPoints);
@@ -263,7 +344,11 @@ namespace OfficeIMO.Word {
                 sectionPageCount: sectionPageCount,
                 pageNumberValue: pageNumberValue,
                 pageNumberText: pageNumberText,
-                bodyFrameProvider: bodyFrameProvider);
+                bodyFrameProvider: bodyFrameProvider,
+                sourceBlocks: sourceBlocks,
+                fragments: fragments,
+                cancellationToken: cancellationToken,
+                cancellationCheckpoint: cancellationCheckpoint);
         }
 
         private static WordImageFlowContext CreateFlowContext(
@@ -281,7 +366,8 @@ namespace OfficeIMO.Word {
             int sectionNumber = 1,
             int sectionPageCount = 1,
             int pageNumberValue = 0,
-            string? pageNumberText = null) =>
+            string? pageNumberText = null,
+            CancellationToken cancellationToken = default) =>
             new WordImageFlowContext(
                 drawing,
                 left,
@@ -299,7 +385,8 @@ namespace OfficeIMO.Word {
                 sectionNumber,
                 sectionPageCount,
                 pageNumberValue,
-                pageNumberText);
+                pageNumberText,
+                cancellationToken: cancellationToken);
 
         private static bool AddParagraphContent(
             WordDocument document,
@@ -307,6 +394,7 @@ namespace OfficeIMO.Word {
             WordImageFlowContext context,
             List<OfficeImageExportDiagnostic> diagnostics,
             IReadOnlyDictionary<WordParagraph, (int Level, string Marker)> listMarkers) {
+            context.ThrowIfCancellationRequested();
             bool added = false;
             var colorScheme = GetDocumentColorScheme(document);
             WordImageListMarker? listMarker = CreateListMarker(document, paragraph, listMarkers);
@@ -314,6 +402,7 @@ namespace OfficeIMO.Word {
             var textRuns = new List<WordParagraph>();
 
             bool FlushTextRuns() {
+                context.ThrowIfCancellationRequested();
                 if (textRuns.Count == 0) {
                     textRuns.Clear();
                     return false;
@@ -331,7 +420,12 @@ namespace OfficeIMO.Word {
                 return runAdded;
             }
 
-            foreach (WordParagraph run in WordSection.ConvertParagraphToWordParagraphs(document, paragraph, splitPaginationMarkers: true)) {
+            foreach (WordParagraph run in WordSection.ConvertParagraphToWordParagraphs(
+                         document,
+                         paragraph,
+                         splitPaginationMarkers: true,
+                         context.CancellationToken)) {
+                context.ThrowIfCancellationRequested();
                 if (run.IsPageBreak) {
                     added |= FlushTextRuns();
                     context.AdvancePage();
@@ -413,7 +507,13 @@ namespace OfficeIMO.Word {
 
             double lineHeight = Math.Max(maxFontSize * 1.25D, 12D);
             WordImageTextLayout textLayout = ResolveTextLayout(context, listMarker, paragraphs[0]);
-            double height = EstimateRichTextHeight(richRuns, maxFontSize, textLayout.ContentWidth, lineHeight, textLayout.ParagraphIndent);
+            double height = EstimateRichTextHeight(
+                richRuns,
+                maxFontSize,
+                textLayout.ContentWidth,
+                lineHeight,
+                textLayout.ParagraphIndent,
+                context.CancellationToken);
             int estimatedLineCount = Math.Max(1, (int)Math.Ceiling(height / lineHeight));
             WordParagraphSpacing spacing = ResolveParagraphSpacing(paragraphs[0], maxFontSize, lineHeight, context, out WordParagraphSpacingState spacingState);
             bool keepLinesTogether = ResolveKeepLinesTogether(paragraphs[0]);
@@ -471,7 +571,12 @@ namespace OfficeIMO.Word {
             double lineHeight = Math.Max(font.Size * 1.25D, 12D);
             WordImageTextLayout textLayout = ResolveTextLayout(context, listMarker, paragraph);
             string text = ResolveImageExportText(paragraph, context);
-            List<string> lines = WrapTextIntoMeasuredLines(text, font, textLayout.LayoutWidth);
+            List<string> lines = WrapTextIntoMeasuredLines(
+                text,
+                font,
+                textLayout.LayoutWidth,
+                context.CancellationToken,
+                context.CancellationCheckpoint);
             double height = Math.Max(lineHeight, lines.Count * lineHeight);
             WordParagraphSpacing spacing = ResolveParagraphSpacing(paragraph, font.Size, lineHeight, context, out WordParagraphSpacingState spacingState);
             bool keepLinesTogether = ResolveKeepLinesTogether(paragraph);
@@ -490,6 +595,7 @@ namespace OfficeIMO.Word {
         private static List<OfficeRichTextRun> CreateRichTextRuns(IReadOnlyList<WordParagraph> paragraphs, DocumentFormat.OpenXml.Drawing.ColorScheme? colorScheme, WordImageFlowContext? context = null) {
             var richRuns = new List<OfficeRichTextRun>(paragraphs.Count);
             for (int i = 0; i < paragraphs.Count; i++) {
+                context?.ThrowIfCancellationRequested();
                 WordParagraph paragraph = paragraphs[i];
                 string text = ResolveImageExportText(paragraph, context);
                 if (string.IsNullOrEmpty(text)) {
@@ -558,32 +664,47 @@ namespace OfficeIMO.Word {
             return OfficeTextAlignment.Left;
         }
 
-        private static double EstimateTextHeight(string text, double fontSize, double contentWidth, double lineHeight) {
+        private static double EstimateTextHeight(
+            string text,
+            double fontSize,
+            double contentWidth,
+            double lineHeight,
+            CancellationToken cancellationToken = default) {
+            cancellationToken.ThrowIfCancellationRequested();
             double averageCharacterWidth = Math.Max(1D, fontSize * 0.52D);
             int charactersPerLine = Math.Max(1, (int)Math.Floor(contentWidth / averageCharacterWidth));
             string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+            cancellationToken.ThrowIfCancellationRequested();
             string[] explicitLines = normalized.Split('\n');
             int lineCount = 0;
             foreach (string line in explicitLines) {
+                cancellationToken.ThrowIfCancellationRequested();
                 lineCount += Math.Max(1, (int)Math.Ceiling(line.Length / (double)charactersPerLine));
             }
 
             return Math.Max(lineHeight, lineCount * lineHeight);
         }
 
-        private static double EstimateRichTextHeight(IReadOnlyList<OfficeRichTextRun> runs, double maxFontSize, double contentWidth, double lineHeight, OfficeTextParagraphIndent paragraphIndent) {
+        private static double EstimateRichTextHeight(
+            IReadOnlyList<OfficeRichTextRun> runs,
+            double maxFontSize,
+            double contentWidth,
+            double lineHeight,
+            OfficeTextParagraphIndent paragraphIndent,
+            CancellationToken cancellationToken) {
             double lineHeightFactor = Math.Max(1D, lineHeight / Math.Max(1D, maxFontSize));
             OfficeRichTextBlockLayout layout = OfficeTextLayoutEngine.LayoutRichTextBlock(
                 runs,
                 contentWidth,
                 double.MaxValue,
                 lineHeightFactor,
-                CreateRichTextMeasure(),
+                CreateRichTextMeasure(cancellationToken),
                 wrap: true,
                 shrinkToFit: false,
                 minimumFontSize: Math.Min(6D, maxFontSize),
                 overflowBehavior: OfficeTextOverflowBehavior.Clip,
-                paragraphIndent: paragraphIndent);
+                paragraphIndent: paragraphIndent,
+                cancellationToken: cancellationToken);
             return Math.Max(lineHeight, layout.Height);
         }
 
@@ -593,9 +714,11 @@ namespace OfficeIMO.Word {
             context.Y > context.Top &&
             context.Y + height > context.ContentBottom;
 
-        private static Func<string?, double, string?, double> CreateRichTextMeasure() {
+        private static Func<string?, double, string?, double> CreateRichTextMeasure(
+            CancellationToken cancellationToken = default) {
             OfficeTextMeasurer measurer = OfficeTextMeasurer.Create();
             return (value, size, family) => {
+                    cancellationToken.ThrowIfCancellationRequested();
                     OfficeTextMeasurementStyle measuredStyle = measurer.CreateStyle(new OfficeFontInfo(family, size));
                     return measurer.MeasureWidth(value, measuredStyle);
                 };
@@ -742,7 +865,7 @@ namespace OfficeIMO.Word {
             Math.Max(1, (int)Math.Ceiling(drawing.Height));
 
         private static void AddDiagnostic(List<OfficeImageExportDiagnostic> diagnostics, string code, string message, string? source = null) {
-            diagnostics.Add(new OfficeImageExportDiagnostic(
+            diagnostics.Add(WordImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 code,
                 message,
@@ -782,7 +905,11 @@ namespace OfficeIMO.Word {
                 int sectionPageCount = 1,
                 int pageNumberValue = 0,
                 string? pageNumberText = null,
-                Func<int, WordImageBodyFrame>? bodyFrameProvider = null) {
+                Func<int, WordImageBodyFrame>? bodyFrameProvider = null,
+                IReadOnlyDictionary<OpenXmlElement, WordImageSourceBlock>? sourceBlocks = null,
+                List<WordDocumentVisualFragment>? fragments = null,
+                CancellationToken cancellationToken = default,
+                Action<WordImageCancellationCheckpoint>? cancellationCheckpoint = null) {
                 Drawing = drawing;
                 Left = left;
                 Top = top;
@@ -802,6 +929,10 @@ namespace OfficeIMO.Word {
                 PageNumberValue = pageNumberValue > 0 ? pageNumberValue : PageIndex + 1;
                 PageNumberText = pageNumberText ?? PageNumberValue.ToString(CultureInfo.InvariantCulture);
                 BodyFrameProvider = bodyFrameProvider;
+                SourceBlocks = sourceBlocks;
+                Fragments = fragments;
+                CancellationToken = cancellationToken;
+                CancellationCheckpoint = cancellationCheckpoint;
                 ApplyBodyFrame(PageIndex);
                 ApplyColumn(0);
             }
@@ -846,6 +977,13 @@ namespace OfficeIMO.Word {
 
             internal string PageNumberText { get; }
 
+            internal CancellationToken CancellationToken { get; }
+
+            internal Action<WordImageCancellationCheckpoint>? CancellationCheckpoint { get; }
+
+            internal void ThrowIfCancellationRequested() =>
+                CancellationToken.ThrowIfCancellationRequested();
+
             internal void UpdateSectionContext(int sectionNumber, int sectionPageCount) {
                 SectionNumber = Math.Max(1, sectionNumber);
                 SectionPageCount = Math.Max(1, sectionPageCount);
@@ -859,6 +997,10 @@ namespace OfficeIMO.Word {
 
             private Func<int, WordImageBodyFrame>? BodyFrameProvider { get; }
 
+            private IReadOnlyDictionary<OpenXmlElement, WordImageSourceBlock>? SourceBlocks { get; }
+
+            private List<WordDocumentVisualFragment>? Fragments { get; }
+
             internal string OverflowDiagnosticCode { get; }
 
             internal string OverflowDiagnosticMessage { get; }
@@ -866,6 +1008,19 @@ namespace OfficeIMO.Word {
             internal WordParagraphSpacingState? PreviousParagraphSpacingState { get; private set; }
 
             private List<WordTextExclusion>? TextExclusions { get; set; }
+
+            internal bool TryGetSourceBlock(OpenXmlElement element, out WordImageSourceBlock sourceBlock) {
+                if (SourceBlocks != null && SourceBlocks.TryGetValue(element, out sourceBlock)) {
+                    return true;
+                }
+
+                sourceBlock = default;
+                return false;
+            }
+
+            internal void AddFragment(WordDocumentVisualFragment fragment) {
+                Fragments?.Add(fragment);
+            }
 
             internal void AdvancePage() {
                 PageIndex++;

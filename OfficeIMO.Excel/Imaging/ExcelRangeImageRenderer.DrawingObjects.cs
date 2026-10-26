@@ -1,29 +1,46 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using OfficeIMO.Drawing;
 
 namespace OfficeIMO.Excel {
     internal static partial class ExcelRangeImageRenderer {
-        private static void RenderRasterDrawingObjects(OfficeRasterCanvas canvas, ExcelRangeVisualSnapshot snapshot, ExcelImageExportOptions options) {
-            foreach (ExcelVisualDrawingObject drawingObject in snapshot.DrawingObjects) {
-                RenderRasterDrawingObject(canvas, drawingObject, options, diagnostics: null);
-            }
-        }
-
-        private static void AppendSvgDrawingObjects(StringBuilder builder, ExcelRangeVisualSnapshot snapshot, ExcelImageExportOptions options) {
-            foreach (ExcelVisualDrawingObject drawingObject in snapshot.DrawingObjects) {
-                AppendSvgDrawingObject(builder, drawingObject, options, diagnostics: null);
-            }
-        }
-
-        private static void RenderRasterDrawingObject(OfficeRasterCanvas canvas, ExcelVisualDrawingObject drawingObject, ExcelImageExportOptions options, List<OfficeImageExportDiagnostic>? diagnostics) {
+        private static void RenderRasterDrawingObject(
+            OfficeRasterCanvas canvas,
+            ExcelVisualDrawingObject drawingObject,
+            ExcelImageExportOptions options,
+            List<OfficeImageExportDiagnostic>? diagnostics,
+            CancellationToken cancellationToken) {
+            cancellationToken.ThrowIfCancellationRequested();
             AddRotatedTextApproximationDiagnostic(drawingObject, diagnostics);
             AddTextAutoFitUnsupportedDiagnostic(drawingObject, diagnostics);
             AddTextVerticalOrientationUnsupportedDiagnostic(drawingObject, diagnostics);
             double scale = options.Scale;
             DrawingObjectScene scene = CreateOfficeDrawing(drawingObject, scale);
-            OfficeRasterImage drawingImage = OfficeDrawingRasterRenderer.Render(scene.Drawing);
+            ExcelImageExportOptions nestedOptions = options.Clone();
+            nestedOptions.Scale = 1D;
+            OfficeRasterExportPlan plan = OfficeRasterExportPlanner.Resolve(
+                scene.Drawing.Width,
+                scene.Drawing.Height,
+                OfficeImageExportFormat.Png,
+                nestedOptions,
+                drawingObject.Source);
+            if (plan.Diagnostic != null) diagnostics?.Add(plan.Diagnostic);
+            scene.Drawing.Fonts.AddRange(options.Fonts);
+            scene.Drawing.AppendFontDiagnostics(
+                diagnostics ?? new List<OfficeImageExportDiagnostic>(),
+                drawingObject.Source);
+            OfficeRasterImage drawingImage = OfficeDrawingRasterRenderer.Render(
+                scene.Drawing,
+                new OfficeDrawingRasterRenderOptions {
+                    Scale = plan.Limit.Scale,
+                    TextShapingProvider = options.TextShapingProvider,
+                    TextShapingLanguage = options.TextShapingLanguage,
+                    DiagnosticSink = diagnostics,
+                    DiagnosticSource = drawingObject.Source,
+                    CancellationToken = cancellationToken
+                });
             canvas.DrawImage(
                 drawingImage,
                 (drawingObject.X * scale) - scene.OffsetX,
@@ -127,7 +144,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            diagnostics.Add(new OfficeImageExportDiagnostic(
+            diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.DrawingShapeTextRotationApproximation,
                 "Worksheet drawing object text is rendered through shared Drawing rotation without Excel-exact text-box metrics.",
@@ -139,7 +156,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            diagnostics.Add(new OfficeImageExportDiagnostic(
+            diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.DrawingShapeTextVerticalOrientationUnsupported,
                 "Worksheet drawing object text requested a non-horizontal orientation; image export renders it as horizontal text inside the authored shape bounds.",
@@ -214,7 +231,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            diagnostics.Add(new OfficeImageExportDiagnostic(
+            diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.DrawingShapeTextAutoFitUnsupported,
                 "Worksheet drawing object text requested resizing the shape to fit text; image export keeps the authored shape bounds and renders text inside them.",

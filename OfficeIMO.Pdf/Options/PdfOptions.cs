@@ -1,3 +1,5 @@
+using OfficeIMO.Drawing;
+
 namespace OfficeIMO.Pdf;
 
 /// <summary>
@@ -45,6 +47,11 @@ public sealed partial class PdfOptions {
     private PdfStandardFont _defaultFont = PdfStandardFont.Helvetica;
     private PdfStandardFont _headerFont = PdfStandardFont.Helvetica;
     private PdfStandardFont _footerFont = PdfStandardFont.Helvetica;
+    private string? _headerFontFamily;
+    private string? _footerFontFamily;
+    private bool _hasExplicitDefaultFont;
+    private bool _hasExplicitHeaderFont;
+    private bool _hasExplicitFooterFont;
     private int _pageNumberStart = 1;
     private bool _hasExplicitPageNumberStart;
     private PdfPageNumberStyle _pageNumberStyle = PdfPageNumberStyle.Arabic;
@@ -92,15 +99,19 @@ public sealed partial class PdfOptions {
     private System.Collections.Generic.Dictionary<PdfStandardFont, PdfEmbeddedFont>? _embeddedFonts;
     private System.Collections.Generic.Dictionary<PdfStandardFont, PdfTrueTypeFontProgram>? _embeddedFontPrograms;
     private System.Collections.Generic.Dictionary<PdfStandardFont, PdfOpenTypeCffFontProgram>? _embeddedOpenTypeCffFontPrograms;
+    private System.Collections.Generic.Dictionary<string, PdfEmbeddedFontFamily>? _namedFontFamilies;
+    private System.Collections.Generic.Dictionary<PdfNamedFontFace, PdfTrueTypeFontProgram>? _namedFontPrograms;
+    private System.Collections.Generic.Dictionary<PdfNamedFontFace, PdfOpenTypeCffFontProgram>? _namedOpenTypeCffFontPrograms;
+    private System.Collections.Generic.HashSet<PdfNamedFontFace>? _namedFontProgramFailures;
     private System.Collections.Generic.HashSet<PdfStandardFont>? _usedEmbeddedFallbackFontSlots;
     private System.Collections.Generic.HashSet<PdfStandardFont>? _embeddedFontProgramFailures;
     private System.Collections.Generic.HashSet<string>? _reportedEmbeddedFontProgramFailures;
     private System.Collections.Generic.HashSet<string>? _reportedTextShapingDiagnostics;
     private System.Collections.Generic.HashSet<string>? _providerShapedTextRuns;
-    private PdfTextLineBreakCallback? _textLineBreakCallback;
+    private Func<string, IReadOnlyList<int>>? _textLineBreakCallback;
     private PdfTextHyphenationCallback? _textHyphenationCallback;
     private PdfTextShapingMode _textShapingMode;
-    private IPdfTextShapingProvider? _textShapingProvider;
+    private IOfficeTextShapingProvider? _textShapingProvider;
     private PdfConversionReport? _diagnosticsReport;
     private string _diagnosticsConverter = "OfficeIMO.Pdf";
     private System.Collections.Generic.List<PdfEmbeddedFile>? _embeddedFiles;

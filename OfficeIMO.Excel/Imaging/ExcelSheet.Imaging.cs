@@ -13,32 +13,50 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public ExcelRangeVisualSnapshot CreateVisualSnapshot(ExcelWorksheetImageExportOptions? options = null) {
             ExcelWorksheetImageExportOptions resolved = NormalizeWorksheetOptions(options);
-            WorksheetImageRangeResolution range = ResolveWorksheetImageRanges(resolved, allowMultipleResults: false, format: null)[0];
+            WorksheetImageRangeResolution range = ResolveWorksheetImageRanges(resolved, allowMultipleResults: false)[0];
             return ExcelRangeVisualSnapshotBuilder.Build(this, range.Range, resolved, range.Diagnostics);
         }
 
         /// <summary>
         /// Exports a worksheet range or used range as a supported raster format or SVG.
         /// </summary>
-        public OfficeImageExportResult ExportImage(OfficeImageExportFormat format, ExcelWorksheetImageExportOptions? options = null) {
+        public OfficeImageExportResult ExportImage(
+            OfficeImageExportFormat format,
+            ExcelWorksheetImageExportOptions? options = null,
+            CancellationToken cancellationToken = default) {
             ExcelWorksheetImageExportOptions resolved = NormalizeWorksheetOptions(options);
-            WorksheetImageRangeResolution range = ResolveWorksheetImageRanges(resolved, allowMultipleResults: false, format)[0];
+            WorksheetImageRangeResolution range = ResolveWorksheetImageRanges(resolved, allowMultipleResults: false)[0];
             ExcelRangeVisualSnapshot snapshot = ExcelRangeVisualSnapshotBuilder.Build(this, range.Range, resolved, range.Diagnostics);
-            return ExcelRangeImageRenderer.Render(snapshot, format, resolved);
+            return ExcelRangeImageRenderer.Render(snapshot, format, resolved, cancellationToken);
         }
 
         /// <summary>
         /// Exports one or more worksheet image results. Multi-area print areas and manual page-break splits are returned as separate images when requested.
         /// </summary>
         public IReadOnlyList<OfficeImageExportResult> ExportImages(OfficeImageExportFormat format, ExcelWorksheetImageExportOptions? options = null) {
-            ExcelWorksheetImageExportOptions resolved = NormalizeWorksheetOptions(options);
-            IReadOnlyList<WorksheetImageRangeResolution> ranges = ResolveWorksheetImageRanges(resolved, allowMultipleResults: true, format);
-            var results = new List<OfficeImageExportResult>(ranges.Count);
-            for (int index = 0; index < ranges.Count; index++) {
-                results.Add(RenderWorksheetImageResult(format, ranges[index], resolved, index + 1, ranges.Count));
-            }
-
+            var results = new List<OfficeImageExportResult>();
+            ExportImages(format, results.Add, options);
             return results.AsReadOnly();
+        }
+
+        /// <summary>Streams worksheet image parts to a consumer without retaining earlier payloads.</summary>
+        public void ExportImages(
+            OfficeImageExportFormat format,
+            OfficeImageExportConsumer consumer,
+            ExcelWorksheetImageExportOptions? options = null,
+            CancellationToken cancellationToken = default) {
+            if (consumer == null) throw new ArgumentNullException(nameof(consumer));
+            ExcelWorksheetImageExportOptions resolved = NormalizeWorksheetOptions(options);
+            IReadOnlyList<WorksheetImageRangeResolution> ranges = ResolveWorksheetImageRanges(resolved, allowMultipleResults: true);
+            OfficeImageExportConsumer accept =
+                OfficeImageExportBatchProcessor.CreateGuardedConsumer(
+                    resolved,
+                    consumer,
+                    cancellationToken);
+            for (int index = 0; index < ranges.Count; index++) {
+                cancellationToken.ThrowIfCancellationRequested();
+                accept(RenderWorksheetImageResult(format, ranges[index], resolved, index + 1, ranges.Count, cancellationToken));
+            }
         }
 
         /// <summary>
@@ -106,34 +124,15 @@ namespace OfficeIMO.Excel {
             new ExcelWorksheetImageExportBuilder(this, options).AsSvg().SaveAsync(stream, cancellationToken);
 
         private static ExcelWorksheetImageExportOptions NormalizeWorksheetOptions(ExcelWorksheetImageExportOptions? options) {
-            ExcelWorksheetImageExportOptions source = options ?? new ExcelWorksheetImageExportOptions();
-            ExcelWorksheetImageExportOptions resolved = new ExcelWorksheetImageExportOptions {
-                Scale = source.Scale,
-                BackgroundColor = source.BackgroundColor,
-                RasterEncoding = source.RasterEncoding?.Clone() ?? new OfficeRasterEncodingOptions(),
-                GridlineColor = source.GridlineColor,
-                ShowGridlines = source.ShowGridlines,
-                IncludeHidden = source.IncludeHidden,
-                IncludeImages = source.IncludeImages,
-                IncludeCharts = source.IncludeCharts,
-                IncludeDrawingObjects = source.IncludeDrawingObjects,
-                IncludeConditionalFormatting = source.IncludeConditionalFormatting,
-                ConditionalFormattingDate = source.ConditionalFormattingDate ?? DateTime.Today,
-                ShowHyperlinkHints = source.ShowHyperlinkHints,
-                ShowCommentBodies = source.ShowCommentBodies,
-                DefaultColumnWidthPixels = source.DefaultColumnWidthPixels,
-                DefaultRowHeightPixels = source.DefaultRowHeightPixels,
-                Range = source.Range,
-                HeaderFooterDateTime = source.HeaderFooterDateTime ?? DateTime.Now,
-                UsePrintArea = source.UsePrintArea,
-                SplitByManualPageBreaks = source.SplitByManualPageBreaks
-            };
-            OfficeImageExportOptions.ValidateScale(resolved.Scale, nameof(options));
+            ExcelWorksheetImageExportOptions resolved = options?.CloneWorksheet() ?? new ExcelWorksheetImageExportOptions();
+            resolved.ConditionalFormattingDate ??= DateTime.Today;
+            resolved.HeaderFooterDateTime ??= DateTime.Now;
+            resolved.Validate();
 
             return resolved;
         }
 
-        private IReadOnlyList<WorksheetImageRangeResolution> ResolveWorksheetImageRanges(ExcelWorksheetImageExportOptions options, bool allowMultipleResults, OfficeImageExportFormat? format) {
+        private IReadOnlyList<WorksheetImageRangeResolution> ResolveWorksheetImageRanges(ExcelWorksheetImageExportOptions options, bool allowMultipleResults) {
             if (!string.IsNullOrWhiteSpace(options.Range)) {
                 if (TryNormalizeWorksheetImageRange(options.Range!, out string? normalizedRange)) {
                     return ApplyManualPageBreakSplits(
@@ -150,7 +149,7 @@ namespace OfficeIMO.Excel {
                 string? printArea = GetPrintArea();
                 string source = Name + "!_xlnm.Print_Area";
                 if (string.IsNullOrWhiteSpace(printArea)) {
-                    diagnostics.Add(new OfficeImageExportDiagnostic(
+                    diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                         OfficeImageExportDiagnosticSeverity.Info,
                         ExcelImageExportDiagnosticCodes.PrintAreaMissing,
                         "Worksheet image export requested the print area, but no worksheet print area is configured; exporting the worksheet used range instead.",
@@ -164,7 +163,7 @@ namespace OfficeIMO.Excel {
                                 .Select(range => new WorksheetImageRangeResolution(
                                     range,
                                     new[] {
-                                        new OfficeImageExportDiagnostic(
+                                        ExcelImageExportDiagnosticClassifier.Create(
                                             OfficeImageExportDiagnosticSeverity.Info,
                                             ExcelImageExportDiagnosticCodes.PrintAreaMultipleAreasSplit,
                                             "Multi-area worksheet print area was exported as separate image results.",
@@ -176,7 +175,7 @@ namespace OfficeIMO.Excel {
                                 allowMultipleResults);
                         }
 
-                        diagnostics.Add(new OfficeImageExportDiagnostic(
+                        diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                             OfficeImageExportDiagnosticSeverity.Warning,
                             ExcelImageExportDiagnosticCodes.PrintAreaMultipleAreasUnsupported,
                             "Multi-area worksheet print areas are not supported by single-image export; exporting the worksheet used range instead.",
@@ -184,7 +183,7 @@ namespace OfficeIMO.Excel {
                     } else if (TryNormalizeWorksheetImageRange(printArea!, out string? normalizedPrintArea)) {
                         return ApplyManualPageBreakSplits(SingleImageRange(normalizedPrintArea!, diagnostics), options, allowMultipleResults);
                     } else {
-                        diagnostics.Add(new OfficeImageExportDiagnostic(
+                        diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                             OfficeImageExportDiagnosticSeverity.Warning,
                             ExcelImageExportDiagnosticCodes.PrintAreaUnsupported,
                             "Worksheet print area could not be parsed as a supported A1 range; exporting the worksheet used range instead.",
@@ -193,7 +192,7 @@ namespace OfficeIMO.Excel {
                 }
             }
 
-            return ApplyManualPageBreakSplits(SingleImageRange(ResolveWorksheetUsedImageRange(options, format), diagnostics), options, allowMultipleResults);
+            return ApplyManualPageBreakSplits(SingleImageRange(ResolveWorksheetUsedImageRange(options), diagnostics), options, allowMultipleResults);
         }
 
         private static IReadOnlyList<WorksheetImageRangeResolution> SingleImageRange(string range, IReadOnlyList<OfficeImageExportDiagnostic> diagnostics) =>
@@ -214,7 +213,7 @@ namespace OfficeIMO.Excel {
                 return ranges
                     .Select(range => range
                         .WithDiagnostics(pageDiagnostics)
-                        .WithDiagnostic(new OfficeImageExportDiagnostic(
+                        .WithDiagnostic(ExcelImageExportDiagnosticClassifier.Create(
                             OfficeImageExportDiagnosticSeverity.Warning,
                             ExcelImageExportDiagnosticCodes.ManualPageBreaksSingleImageUnsupported,
                             "Manual worksheet page-break splitting was requested through a single-image export path; exporting one image for the resolved range instead.",
@@ -236,7 +235,7 @@ namespace OfficeIMO.Excel {
                         .WithDiagnostics(pageDiagnostics)
                         .WithRangeAndDiagnostic(
                             pageRange,
-                            new OfficeImageExportDiagnostic(
+                            ExcelImageExportDiagnosticClassifier.Create(
                                 OfficeImageExportDiagnosticSeverity.Info,
                                 ExcelImageExportDiagnosticCodes.ManualPageBreaksSplit,
                                 "Manual worksheet page breaks were used to split the image export into separate results.",
@@ -251,7 +250,7 @@ namespace OfficeIMO.Excel {
             var diagnostics = new List<OfficeImageExportDiagnostic>();
             ExcelPrintTitles printTitles = GetPrintTitles();
             if (includePrintTitlesUnsupported && (printTitles.HasRows || printTitles.HasColumns)) {
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.PrintTitlesUnsupported,
                     "Worksheet print title rows or columns are configured, but image page output does not repeat them yet.",
@@ -260,7 +259,7 @@ namespace OfficeIMO.Excel {
 
             ExcelSheetPageSetup pageSetup = GetPageSetup();
             if (ExcelPageSetupGeometry.HasUnsupportedFitToPageScale(pageSetup)) {
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.PageSetupUnsupported,
                     "Worksheet fit-to-width or fit-to-height page setup requests more than one page in a dimension, but image page output does not calculate automatic multi-page fit pagination yet.",
@@ -268,7 +267,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (includeHeaderFooterUnsupported && HasHeaderFooterContent()) {
-                diagnostics.Add(new OfficeImageExportDiagnostic(
+                diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.HeaderFooterUnsupported,
                     "Worksheet headers or footers are configured, but image page output does not render page header/footer chrome yet.",
@@ -354,7 +353,7 @@ namespace OfficeIMO.Excel {
             return normalized.Count > 0;
         }
 
-        private string ResolveWorksheetUsedImageRange(ExcelWorksheetImageExportOptions options, OfficeImageExportFormat? format) {
+        private string ResolveWorksheetUsedImageRange(ExcelWorksheetImageExportOptions options) {
             string range = GetUsedRangeA1();
             if (!A1.TryParseRange(range, out int firstRow, out int firstColumn, out int lastRow, out int lastColumn)) {
                 return range;
@@ -365,10 +364,6 @@ namespace OfficeIMO.Excel {
             bool defaultRowsHidden = DefaultRowsHidden;
             if (options.IncludeImages) {
                 foreach (ExcelImage image in Images) {
-                    if (!CanExpandWorksheetImageRange(format, image)) {
-                        continue;
-                    }
-
                     if (image.TryGetAbsoluteAnchorBounds(out int absoluteX, out int absoluteY, out int absoluteWidth, out int absoluteHeight)) {
                         ExpandAbsoluteVisualAnchor(absoluteX, absoluteY, absoluteWidth, absoluteHeight, columns, rows, options, ref firstRow, ref firstColumn, ref lastRow, ref lastColumn);
                     } else if (options.IncludeHidden || !IsHiddenAnchor(image.RowIndex, image.ColumnIndex, rows, defaultRowsHidden, columns)) {
@@ -434,21 +429,6 @@ namespace OfficeIMO.Excel {
             }
 
             return A1.CellReference(firstRow, firstColumn) + ":" + A1.CellReference(lastRow, lastColumn);
-        }
-
-        private static bool CanExpandWorksheetImageRange(OfficeImageExportFormat? format, ExcelImage image) {
-            if (format != OfficeImageExportFormat.Png && format != OfficeImageExportFormat.Jpeg &&
-                format != OfficeImageExportFormat.Tiff && format != OfficeImageExportFormat.Webp) {
-                return true;
-            }
-
-            byte[] bytes = image.ToBytes();
-            if (OfficeRasterImageDecoder.TryDecode(bytes, out _)) {
-                return true;
-            }
-
-            return OfficeImageReader.TryIdentify(bytes, image.Name, out OfficeImageInfo info)
-                && info.Format == OfficeImageFormat.Png;
         }
 
         private static bool TryNormalizeWorksheetImageRange(string range, out string? normalizedRange) {

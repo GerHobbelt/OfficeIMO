@@ -86,7 +86,7 @@ namespace OfficeIMO.Excel.Pdf {
                     continue;
                 }
 
-                if (!TryValidatePdfImageBytes(bytes, image.ContentType, out string? unsupportedReason)) {
+                if (!TryPreparePdfImageBytes(bytes, image.ContentType, out byte[] preparedBytes, out string? unsupportedReason)) {
                     AddWarning(
                         options,
                         sheetName,
@@ -95,7 +95,22 @@ namespace OfficeIMO.Excel.Pdf {
                     continue;
                 }
 
-                images.Add(new WorksheetImageExportData(bytes, PixelsToPoints(image.WidthPixels), PixelsToPoints(image.HeightPixels), A1.CellReference(image.RowIndex, image.ColumnIndex), image.RotationDegrees));
+                string? alternativeText = string.IsNullOrWhiteSpace(image.Description)
+                    ? string.IsNullOrWhiteSpace(image.Title) ? null : image.Title
+                    : image.Description;
+                images.Add(new WorksheetImageExportData(
+                    preparedBytes,
+                    PixelsToPoints(image.WidthPixels),
+                    PixelsToPoints(image.HeightPixels),
+                    A1.CellReference(image.RowIndex, image.ColumnIndex),
+                    image.RowIndex,
+                    image.ColumnIndex,
+                    PixelsToPoints(image.OffsetXPixels),
+                    PixelsToPoints(image.OffsetYPixels),
+                    image.RotationDegrees,
+                    image.FlipHorizontal,
+                    image.FlipVertical,
+                    alternativeText));
             }
 
             return images;
@@ -172,25 +187,23 @@ namespace OfficeIMO.Excel.Pdf {
             return OfficeImagePdfCompatibility.IsSupportedContentType(contentType);
         }
 
-        private static bool TryValidatePdfImageBytes(byte[] bytes, string contentType, out string? unsupportedReason) {
+        private static bool TryPreparePdfImageBytes(
+            byte[] bytes,
+            string contentType,
+            out byte[] preparedBytes,
+            out string? unsupportedReason) {
+            preparedBytes = Array.Empty<byte>();
             unsupportedReason = null;
             if (!OfficeImagePdfCompatibility.TryValidateDeclaredContentType(bytes, contentType, out _, out unsupportedReason)) {
                 return false;
             }
 
-            try {
-                _ = new PdfCore.PdfTableCellImage(bytes, 1D, 1D);
-                return true;
-            } catch (ArgumentException ex) {
-                unsupportedReason = ex.Message;
-                return false;
-            } catch (InvalidDataException ex) {
-                unsupportedReason = ex.Message;
-                return false;
-            } catch (NotSupportedException ex) {
-                unsupportedReason = ex.Message;
-                return false;
-            }
+            return PdfCore.PdfDocument.TryPrepareImageBytes(
+                bytes,
+                out preparedBytes,
+                out _,
+                out _,
+                out unsupportedReason);
         }
 
         private static double PixelsToPoints(int pixels) {

@@ -1,7 +1,7 @@
 namespace OfficeIMO.Pdf;
 
 /// <summary>Compares signature coverage, revision state, and structural permissions before and after a PDF mutation.</summary>
-public static class PdfSignatureMutationAnalyzer {
+internal static class PdfSignatureMutationAnalyzer {
     /// <summary>Builds a before/after signature preservation report for a requested mutation.</summary>
     public static PdfSignatureMutationReport Analyze(
         byte[] before,
@@ -15,7 +15,8 @@ public static class PdfSignatureMutationAnalyzer {
 
         PdfMutationPlan plan = PdfMutationPlanner.Plan(before, operation, readOptions, fieldNames, executionPreference);
         PdfSignatureValidationReport beforeValidation = PdfSignatureValidator.Validate(before, readOptions);
-        PdfSignatureValidationReport afterValidation = PdfSignatureValidator.Validate(after, readOptions);
+        PdfReadOptions afterReadOptions = PdfReadOptions.WithMinimumInputBytes(readOptions, after.LongLength);
+        PdfSignatureValidationReport afterValidation = PdfSignatureValidator.Validate(after, afterReadOptions);
         bool prefixPreserved = HasExactPrefix(after, before);
         bool revisionChainExtended = HasExtendedRevisionChain(beforeValidation.Security, afterValidation.Security);
         int[] beforeRevisionEnds = FindRevisionEnds(before);

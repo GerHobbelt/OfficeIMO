@@ -114,7 +114,8 @@ namespace OfficeIMO.PowerPoint {
         /// </summary>
         public void Save(Stream destination) {
             if (destination == null) throw new ArgumentNullException(nameof(destination));
-            OfficeStreamWriter.WriteAllBytes(destination, CreatePackageBytesForSave());
+            OfficeStreamWriter.WriteAllBytes(destination,
+                CreatePackageBytesForStreamSave());
             _discardChangesOnDispose = false;
         }
 
@@ -207,7 +208,7 @@ namespace OfficeIMO.PowerPoint {
         public async Task SaveAsync(Stream destination, CancellationToken cancellationToken = default) {
             if (destination == null) throw new ArgumentNullException(nameof(destination));
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] packageBytes = CreatePackageBytesForSave();
+            byte[] packageBytes = CreatePackageBytesForStreamSave();
             await OfficeStreamWriter.WriteAllBytesAsync(destination, packageBytes, cancellationToken)
                 .ConfigureAwait(false);
             _discardChangesOnDispose = false;
@@ -225,7 +226,7 @@ namespace OfficeIMO.PowerPoint {
 
         private byte[] CreatePackageBytesForSave(
             bool preserveVbaProject = false,
-            bool macroEnabledDestination = false) {
+            PresentationDocumentType? destinationType = null) {
             ThrowIfDisposed();
             if (AccessMode == DocumentAccessMode.ReadOnly) {
                 throw new InvalidOperationException("The presentation is read-only and cannot be saved.");
@@ -241,6 +242,13 @@ namespace OfficeIMO.PowerPoint {
             using var packageStream = new MemoryStream();
             using (PresentationDocument clone = _document.Clone(
                        packageStream)) {
+                PresentationDocumentType resolvedDestinationType =
+                    destinationType
+                    ?? (preserveVbaProject
+                        && clone.PresentationPart?.VbaProjectPart != null
+                            ? PresentationDocumentType
+                                .MacroEnabledPresentation
+                            : PresentationDocumentType.Presentation);
                 if (!preserveVbaProject) {
                     PresentationPart? presentationPart = clone
                         .PresentationPart;
@@ -248,24 +256,27 @@ namespace OfficeIMO.PowerPoint {
                         presentationPart.DeletePart(
                             presentationPart.VbaProjectPart);
                     }
-                    if (clone.DocumentType
-                        != PresentationDocumentType.Presentation) {
-                        clone.ChangeDocumentType(
-                            PresentationDocumentType.Presentation);
-                    }
-                    clone.Save();
-                } else if (macroEnabledDestination
-                           || clone.PresentationPart?.VbaProjectPart != null) {
-                    if (clone.DocumentType
-                        != PresentationDocumentType.MacroEnabledPresentation) {
-                        clone.ChangeDocumentType(
-                            PresentationDocumentType.MacroEnabledPresentation);
-                    }
-                    clone.Save();
                 }
+                if (clone.DocumentType != resolvedDestinationType) {
+                    clone.ChangeDocumentType(resolvedDestinationType);
+                }
+                clone.Save();
                 // Dispose finalizes the cloned package before its bytes are committed.
             }
             return packageStream.ToArray();
+        }
+
+        private byte[] CreatePackageBytesForStreamSave() {
+            ThrowIfDisposed();
+            if (IsLegacyBinaryFormat(SourceFormat)) {
+                return CreatePackageBytesForSave();
+            }
+            PresentationDocumentType destinationType =
+                _document!.DocumentType;
+            return CreatePackageBytesForSave(
+                preserveVbaProject:
+                    IsMacroEnabledDocumentType(destinationType),
+                destinationType: destinationType);
         }
 
         private byte[] CreateBytesForPath(string filePath, PowerPointSaveOptions? options) {
@@ -273,13 +284,54 @@ namespace OfficeIMO.PowerPoint {
             if (IsLegacyBinaryFormat(format)) {
                 return CreateLegacyPptBytesForSave(options);
             }
-            bool macroEnabledDestination = string.Equals(
-                Path.GetExtension(filePath), ".pptm",
-                StringComparison.OrdinalIgnoreCase);
+            PresentationDocumentType destinationType =
+                GetPresentationDocumentType(filePath);
             return CreatePackageBytesForSave(
-                preserveVbaProject: macroEnabledDestination,
-                macroEnabledDestination: macroEnabledDestination);
+                preserveVbaProject:
+                    IsMacroEnabledDocumentType(destinationType),
+                destinationType: destinationType);
         }
+
+        private static PresentationDocumentType
+            GetPresentationDocumentType(string filePath) {
+            string extension = Path.GetExtension(filePath);
+            if (string.Equals(extension, ".potx",
+                    StringComparison.OrdinalIgnoreCase)) {
+                return PresentationDocumentType.Template;
+            }
+            if (string.Equals(extension, ".ppsx",
+                    StringComparison.OrdinalIgnoreCase)) {
+                return PresentationDocumentType.Slideshow;
+            }
+            if (string.Equals(extension, ".pptm",
+                    StringComparison.OrdinalIgnoreCase)) {
+                return PresentationDocumentType
+                    .MacroEnabledPresentation;
+            }
+            if (string.Equals(extension, ".potm",
+                    StringComparison.OrdinalIgnoreCase)) {
+                return PresentationDocumentType.MacroEnabledTemplate;
+            }
+            if (string.Equals(extension, ".ppsm",
+                    StringComparison.OrdinalIgnoreCase)) {
+                return PresentationDocumentType.MacroEnabledSlideshow;
+            }
+            if (string.Equals(extension, ".ppam",
+                    StringComparison.OrdinalIgnoreCase)) {
+                return PresentationDocumentType.AddIn;
+            }
+            return PresentationDocumentType.Presentation;
+        }
+
+        private static bool IsMacroEnabledDocumentType(
+            PresentationDocumentType documentType) =>
+            documentType == PresentationDocumentType
+                .MacroEnabledPresentation
+            || documentType == PresentationDocumentType
+                .MacroEnabledTemplate
+            || documentType == PresentationDocumentType
+                .MacroEnabledSlideshow
+            || documentType == PresentationDocumentType.AddIn;
 
         private byte[] CreateLegacyPptBytesForSave(
             PowerPointSaveOptions? options) {
@@ -410,8 +462,8 @@ namespace OfficeIMO.PowerPoint {
 
             byte[] encryptedBytes = IsLegacyBinaryFormat(SourceFormat)
                 ? CreateEncryptedLegacyPptBytes(password, options: null)
-                : OfficeEncryption.EncryptPackage(CreatePackageBytesForSave(),
-                    password);
+                : OfficeEncryption.EncryptPackage(
+                    CreatePackageBytesForStreamSave(), password);
             OfficeStreamWriter.WriteAllBytes(destination, encryptedBytes);
         }
 

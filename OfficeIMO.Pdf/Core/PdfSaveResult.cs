@@ -4,7 +4,14 @@ namespace OfficeIMO.Pdf;
 /// Result returned by file and stream output operations.
 /// </summary>
 public sealed class PdfSaveResult {
-    private PdfSaveResult(string? outputPath, long bytesWritten, IReadOnlyList<string> diagnostics, Exception? exception, PdfConversionReport? report = null) {
+    private PdfSaveResult(
+        string? outputPath,
+        long bytesWritten,
+        IReadOnlyList<string> diagnostics,
+        Exception? exception,
+        PdfConversionReport? report = null,
+        PdfPipelineReport? pipeline = null,
+        PdfSerializationReport? serialization = null) {
         OutputPath = outputPath;
         BytesWritten = bytesWritten;
         Diagnostics = diagnostics;
@@ -12,6 +19,8 @@ public sealed class PdfSaveResult {
         TextEncodingDiagnostics = PdfOutputDiagnostics.ExtractTextEncodingDiagnostics(exception);
         Report = Snapshot(report);
         Report.AddRange(PdfOutputDiagnostics.ToConversionWarnings(TextEncodingDiagnostics));
+        Pipeline = pipeline ?? PdfPipelineReport.Empty();
+        Serialization = serialization;
     }
 
     /// <summary>True when the save operation completed.</summary>
@@ -34,6 +43,12 @@ public sealed class PdfSaveResult {
 
     /// <summary>Snapshot of source-conversion and structured output warnings for this save attempt.</summary>
     public PdfConversionReport Report { get; }
+
+    /// <summary>End-to-end create/open, mutation, and output evidence for this save attempt.</summary>
+    public PdfPipelineReport Pipeline { get; }
+
+    /// <summary>Bounded serialization evidence for a successful save, when available.</summary>
+    public PdfSerializationReport? Serialization { get; }
 
     /// <summary>Source-conversion and structured output warnings for this save attempt.</summary>
     public IReadOnlyList<PdfConversionWarning> Warnings => Report.Warnings;
@@ -62,19 +77,33 @@ public sealed class PdfSaveResult {
     public static PdfSaveResult FromFailure(string? outputPath, Exception exception) {
         Guard.NotNull(exception, nameof(exception));
         IReadOnlyList<string> diagnostics = PdfOutputDiagnostics.BuildExceptionDiagnostics(exception);
-        return new PdfSaveResult(outputPath, 0, diagnostics, exception);
+        return new PdfSaveResult(
+            outputPath,
+            0,
+            diagnostics,
+            exception,
+            pipeline: PdfPipelineReport.FailedOutput("Save", exception));
     }
 
-    internal static PdfSaveResult Success(string? outputPath, long bytesWritten) {
-        return FromSuccess(outputPath, bytesWritten);
+    internal static PdfSaveResult Success(
+        string? outputPath,
+        long bytesWritten,
+        PdfPipelineReport? pipeline = null,
+        PdfSerializationReport? serialization = null) {
+        return new PdfSaveResult(outputPath, bytesWritten, Array.Empty<string>(), null, pipeline: pipeline, serialization: serialization);
     }
 
-    internal static PdfSaveResult Failed(string? outputPath, Exception exception) {
-        return FromFailure(outputPath, exception);
+    internal static PdfSaveResult Failed(
+        string? outputPath,
+        Exception exception,
+        PdfPipelineReport? pipeline = null) {
+        Guard.NotNull(exception, nameof(exception));
+        IReadOnlyList<string> diagnostics = PdfOutputDiagnostics.BuildExceptionDiagnostics(exception);
+        return new PdfSaveResult(outputPath, 0, diagnostics, exception, pipeline: pipeline);
     }
 
     internal PdfSaveResult WithReport(PdfConversionReport report) {
-        return new PdfSaveResult(OutputPath, BytesWritten, Diagnostics, Exception, report);
+        return new PdfSaveResult(OutputPath, BytesWritten, Diagnostics, Exception, report, Pipeline, Serialization);
     }
 
     private static PdfConversionReport Snapshot(PdfConversionReport? report) {

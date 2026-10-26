@@ -6,13 +6,13 @@ namespace OfficeIMO.Pdf;
 /// <summary>
 /// Extracts image XObjects from PDFs that can be parsed by OfficeIMO.Pdf.
 /// </summary>
-public static class PdfImageExtractor {
+internal static class PdfImageExtractor {
     /// <summary>
     /// Extracts image XObjects from all pages in page order.
     /// </summary>
     public static IReadOnlyList<PdfExtractedImage> ExtractImages(byte[] pdf) {
         Guard.NotNull(pdf, nameof(pdf));
-        return ExtractImages(PdfReadDocument.Load(pdf));
+        return ExtractImages(PdfReadDocument.Open(pdf));
     }
 
     /// <summary>
@@ -20,7 +20,7 @@ public static class PdfImageExtractor {
     /// </summary>
     public static IReadOnlyList<PdfImagePlacement> ExtractImagePlacements(byte[] pdf) {
         Guard.NotNull(pdf, nameof(pdf));
-        return ExtractImagePlacements(PdfReadDocument.Load(pdf));
+        return ExtractImagePlacements(PdfReadDocument.Open(pdf));
     }
 
     /// <summary>
@@ -36,7 +36,7 @@ public static class PdfImageExtractor {
     /// </summary>
     public static IReadOnlyList<PdfImagePlacement> ExtractImagePlacements(string path) {
         Guard.NotNullOrWhiteSpace(path, nameof(path));
-        return ExtractImagePlacements(PdfReadDocument.Load(path));
+        return ExtractImagePlacements(PdfReadDocument.Open(path));
     }
 
     /// <summary>
@@ -44,7 +44,7 @@ public static class PdfImageExtractor {
     /// </summary>
     public static IReadOnlyList<PdfExtractedImage> ExtractImagesByPageRanges(string path, params PdfPageRange[] pageRanges) {
         Guard.NotNullOrWhiteSpace(path, nameof(path));
-        return ExtractImagesByPageRanges(PdfReadDocument.Load(path), pageRanges);
+        return ExtractImagesByPageRanges(PdfReadDocument.Open(path), pageRanges);
     }
 
     /// <summary>
@@ -52,7 +52,7 @@ public static class PdfImageExtractor {
     /// </summary>
     public static IReadOnlyList<PdfImagePlacement> ExtractImagePlacementsByPageRanges(string path, params PdfPageRange[] pageRanges) {
         Guard.NotNullOrWhiteSpace(path, nameof(path));
-        return ExtractImagePlacementsByPageRanges(PdfReadDocument.Load(path), pageRanges);
+        return ExtractImagePlacementsByPageRanges(PdfReadDocument.Open(path), pageRanges);
     }
 
     /// <summary>
@@ -194,6 +194,14 @@ public static class PdfImageExtractor {
         return paths;
     }
 
+    internal static IReadOnlyList<string> WriteImages(
+        IReadOnlyList<PdfExtractedImage> images,
+        string outputDirectory,
+        string baseName) {
+        Guard.NotNull(images, nameof(images));
+        return WriteImageFiles(images, ValidateOutputDirectory(outputDirectory), baseName);
+    }
+
     private static string GetSafeBaseName(string? baseName, string fallback) {
         string safeBaseName = Path.GetFileNameWithoutExtension(baseName ?? string.Empty) ?? string.Empty;
         return string.IsNullOrWhiteSpace(safeBaseName) ? fallback : safeBaseName;
@@ -253,7 +261,7 @@ public static class PdfImageExtractor {
     /// </summary>
     public static IReadOnlyList<PdfExtractedImage> ExtractImagesByPageRanges(byte[] pdf, params PdfPageRange[] pageRanges) {
         Guard.NotNull(pdf, nameof(pdf));
-        return ExtractImagesByPageRanges(PdfReadDocument.Load(pdf), pageRanges);
+        return ExtractImagesByPageRanges(PdfReadDocument.Open(pdf), pageRanges);
     }
 
     /// <summary>
@@ -261,7 +269,7 @@ public static class PdfImageExtractor {
     /// </summary>
     public static IReadOnlyList<PdfImagePlacement> ExtractImagePlacementsByPageRanges(byte[] pdf, params PdfPageRange[] pageRanges) {
         Guard.NotNull(pdf, nameof(pdf));
-        return ExtractImagePlacementsByPageRanges(PdfReadDocument.Load(pdf), pageRanges);
+        return ExtractImagePlacementsByPageRanges(PdfReadDocument.Open(pdf), pageRanges);
     }
 
     /// <summary>

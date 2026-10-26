@@ -3,6 +3,7 @@ using OfficeIMO.Drawing;
 using OfficeIMO.Html;
 using OfficeIMO.Html.Pdf;
 using OfficeIMO.Tests.Pdf;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using PdfCore = OfficeIMO.Pdf;
@@ -252,7 +253,9 @@ public sealed partial class HtmlRenderingTests {
     public async Task HtmlPdf_DirectRendererAsync_ResolvesExternalImageAndWritesSearchablePdf() {
         const string html = "<h1>AsyncPdfMarker</h1><img src='https://assets.example.test/async.png' width='40' height='25' alt='async image'>";
         byte[] imageBytes = PdfPngTestImages.CreateRgbPng(8, 5);
-        HtmlPdfSaveOptions options = new HtmlPdfSaveOptions();
+        HtmlPdfSaveOptions options = new HtmlPdfSaveOptions {
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateTrustedHost()
+        };
         options.PageSize = new OfficePageSize(4D, 3D);
         options.Margins = HtmlRenderMargins.All(16D);
         options.ResourceResolver = (request, cancellationToken) =>
@@ -261,7 +264,7 @@ public sealed partial class HtmlRenderingTests {
         PdfCore.PdfDocumentConversionResult result = await OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfDocumentResultAsync(options);
         byte[] pdf = result.ToBytes();
 
-        Assert.Contains("AsyncPdfMarker", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("AsyncPdfMarker", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
         Assert.Contains(PdfCore.PdfImageExtractor.ExtractImages(pdf), image => image.IsImageFile && image.MimeType == "image/png");
         Assert.DoesNotContain(result.Report.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ExternalImagePending);
     }
@@ -269,7 +272,9 @@ public sealed partial class HtmlRenderingTests {
     [Fact]
     public async Task HtmlPdf_DirectRendererAsync_AppliesExternalStylesheetPageRules() {
         const string html = "<link rel='stylesheet' href='https://assets.example.test/print.css'><p>ExternalCssPdfMarker</p>";
-        HtmlPdfSaveOptions options = new HtmlPdfSaveOptions();
+        HtmlPdfSaveOptions options = new HtmlPdfSaveOptions {
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateTrustedHost()
+        };
         options.ResourceResolver = (request, cancellationToken) =>
             Task.FromResult<HtmlResolvedResource?>(new HtmlResolvedResource(
                 System.Text.Encoding.UTF8.GetBytes("@page { size:4in 3in; margin:12px; } p { color:#123456; }"),
@@ -277,7 +282,7 @@ public sealed partial class HtmlRenderingTests {
 
         PdfCore.PdfDocumentConversionResult result = await OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfDocumentResultAsync(options);
         byte[] pdf = result.ToBytes();
-        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Load(pdf);
+        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Open(pdf);
         (double width, double height) = read.Pages[0].GetPageSize();
 
         Assert.Equal(288D, width, 2);
@@ -300,12 +305,306 @@ public sealed partial class HtmlRenderingTests {
         HtmlPdfResourcePolicySummary summary = options.GetResourcePolicySummary();
 
         Assert.True(summary.HasResourceResolver);
+        Assert.True(summary.AllowSystemFontEmbedding);
+        Assert.False(summary.AllowLocalFileAccess);
+        Assert.False(summary.AllowRemoteResourceResolution);
+        Assert.True(summary.AllowDataUris);
+        Assert.True(summary.AllowEmbeddedPackageResources);
         Assert.Equal(TimeSpan.FromSeconds(5D), summary.ResourceTimeout);
         Assert.Equal(1024L, summary.MaxResourceBytes);
         Assert.Equal(4096L, summary.MaxTotalResourceBytes);
         Assert.Equal(12, summary.MaxResourceCount);
         Assert.Equal(4, summary.MaxStylesheetImportDepth);
         Assert.Contains("https", summary.AllowedUrlSchemes);
+    }
+
+    [Fact]
+    public void HtmlPdf_TrustedResourcePolicyDoesNotRelaxCallerHyperlinkPolicy() {
+        const string webUri = "https://example.test/report";
+        const string fileUri = "file:///secret/report.pdf";
+        const string dataUri = "data:text/plain,private";
+        var options = new HtmlPdfSaveOptions {
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateTrustedHost(),
+            UrlPolicy = HtmlUrlPolicy.CreateHyperlinkProfile()
+        };
+
+        byte[] pdf = HtmlConversionDocument.Parse($"""
+            <p><a href="{webUri}">Web report</a></p>
+            <p><a href="{fileUri}">Local report</a></p>
+            <p><a href="{dataUri}">Inline report</a></p>
+            """).ToPdf(options);
+        PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
+
+        Assert.Contains(webUri, info.LinkUris);
+        Assert.DoesNotContain(fileUri, info.LinkUris);
+        Assert.DoesNotContain(dataUri, info.LinkUris);
+    }
+
+    [Fact]
+    public void HtmlPdf_DefaultHyperlinkPolicyEmitsOnlyCommonWebAndMailSchemes() {
+        const string webUri = "https://example.test/report";
+        const string mailUri = "mailto:reports@example.test";
+        const string ftpUri = "ftp://example.test/report";
+        const string cidUri = "cid:report";
+        const string customUri = "officeimo:report";
+
+        byte[] pdf = HtmlConversionDocument.Parse($"""
+            <a href="{webUri}">Web</a>
+            <a href="{mailUri}">Mail</a>
+            <a href="{ftpUri}">FTP</a>
+            <a href="{cidUri}">CID</a>
+            <a href="{customUri}">Custom</a>
+            """).ToPdf();
+        PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
+
+        Assert.Contains(webUri, info.LinkUris);
+        Assert.Contains(mailUri, info.LinkUris);
+        Assert.DoesNotContain(ftpUri, info.LinkUris);
+        Assert.DoesNotContain(cidUri, info.LinkUris);
+        Assert.DoesNotContain(customUri, info.LinkUris);
+    }
+
+    [Fact]
+    public void HtmlPdf_GenericRenderOptionsAdoptPdfHyperlinkDefaults() {
+        const string webUri = "https://example.test/report";
+        const string ftpUri = "ftp://example.test/report";
+        const string customUri = "officeimo:report";
+        var sharedOptions = new HtmlRenderOptions {
+            ViewportWidth = 720D
+        };
+        var pdfOptions = new HtmlPdfSaveOptions(sharedOptions);
+
+        byte[] pdf = HtmlConversionDocument.Parse($"""
+            <a href="{webUri}">Web</a>
+            <a href="{ftpUri}">FTP</a>
+            <a href="{customUri}">Custom</a>
+            """).ToPdf(pdfOptions);
+        PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
+
+        Assert.Equal(720D, pdfOptions.ViewportWidth);
+        Assert.Contains(webUri, info.LinkUris);
+        Assert.DoesNotContain(ftpUri, info.LinkUris);
+        Assert.DoesNotContain(customUri, info.LinkUris);
+    }
+
+    [Fact]
+    public async Task HtmlPdf_WebOnlyResourcePolicyExpandsOnlyPermittedDataAndFileSchemes() {
+        byte[] dataImage = PdfPngTestImages.CreateRgbPng(8, 5);
+        byte[] fileImage = PdfPngTestImages.CreateRgbPng(5, 8);
+        string dataUri = "data:image/png;base64," + Convert.ToBase64String(dataImage);
+        string fileUri = new Uri(Path.Combine(Path.GetTempPath(), "officeimo-web-only-resource.png")).AbsoluteUri;
+        int fileResolverCalls = 0;
+        var options = new HtmlPdfSaveOptions {
+            UrlPolicy = HtmlUrlPolicy.CreateWebOnlyProfile(),
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateTrustedHost(),
+            ResourceResolver = (request, cancellationToken) => {
+                if (!request.Uri.IsFile) return Task.FromResult<HtmlResolvedResource?>(null);
+                fileResolverCalls++;
+                return Task.FromResult<HtmlResolvedResource?>(new HtmlResolvedResource(fileImage, "image/png"));
+            }
+        };
+
+        PdfCore.PdfDocumentConversionResult result = await HtmlConversionDocument.Parse($"""
+            <a href="{dataUri}">Blocked data link</a>
+            <a href="{fileUri}">Blocked file link</a>
+            <img src="{dataUri}" width="40" height="25" alt="data image">
+            <img src="{fileUri}" width="25" height="40" alt="file image">
+            """).ToPdfDocumentResultAsync(options);
+        byte[] pdf = result.ToBytes();
+        PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
+
+        Assert.Equal(1, fileResolverCalls);
+        Assert.Equal(2, PdfCore.PdfImageExtractor.ExtractImages(pdf).Count(image => image.IsImageFile && image.MimeType == "image/png"));
+        Assert.DoesNotContain(dataUri, info.LinkUris);
+        Assert.DoesNotContain(fileUri, info.LinkUris);
+        Assert.DoesNotContain(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+    }
+
+    [Fact]
+    public async Task HtmlPdf_PortableResourcePolicyDoesNotInvokeRemoteResolver() {
+        int calls = 0;
+        var options = new HtmlPdfSaveOptions {
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreatePortableDeterministic(),
+            ResourceResolver = (request, cancellationToken) => {
+                calls++;
+                return Task.FromResult<HtmlResolvedResource?>(new HtmlResolvedResource(
+                    Encoding.UTF8.GetBytes("p { color: red; }"),
+                    "text/css"));
+            }
+        };
+
+        PdfCore.PdfDocumentConversionResult result = await HtmlConversionDocument.Parse(
+            "<link rel='stylesheet' href='https://assets.example.test/site.css'><p>Portable</p>")
+            .ToPdfDocumentResultAsync(options);
+
+        Assert.Equal(0, calls);
+        Assert.Contains(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+    }
+
+    [Fact]
+    public async Task HtmlPdf_TrustedHostResourcePolicyInvokesRemoteResolver() {
+        int calls = 0;
+        var options = new HtmlPdfSaveOptions {
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateTrustedHost(),
+            ResourceResolver = (request, cancellationToken) => {
+                calls++;
+                return Task.FromResult<HtmlResolvedResource?>(new HtmlResolvedResource(
+                    Encoding.UTF8.GetBytes("p { color: red; }"),
+                    "text/css"));
+            }
+        };
+
+        PdfCore.PdfDocumentConversionResult result = await HtmlConversionDocument.Parse(
+            "<link rel='stylesheet' href='https://assets.example.test/site.css'><p>Trusted</p>")
+            .ToPdfDocumentResultAsync(options);
+
+        Assert.Equal(1, calls);
+        Assert.DoesNotContain(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ExternalStylesheetPending);
+    }
+
+    [Fact]
+    public async Task MhtmlPdf_DefaultPolicyResolvesEmbeddedCidImageThroughDirectLifecycle() {
+        byte[] imageBytes = PdfPngTestImages.CreateRgbPng(8, 5);
+        var archive = new MhtmlDocument(
+            "<h1>MhtmlPdfMarker</h1><img src='cid:logo@example.test' width='40' height='25' alt='embedded logo'>",
+            new[] { new MhtmlResource(imageBytes, "image/png", contentId: "logo@example.test", fileName: "logo.png") });
+
+        PdfCore.PdfDocumentConversionResult result = await archive.ToPdfDocumentResultAsync();
+        byte[] pdf = result.ToBytes();
+
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        Assert.Contains("MhtmlPdfMarker", text, StringComparison.Ordinal);
+        Assert.Contains(PdfCore.PdfImageExtractor.ExtractImages(pdf), image => image.IsImageFile && image.MimeType == "image/png");
+        Assert.DoesNotContain(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+    }
+
+    [Fact]
+    public void MhtmlPdf_SynchronousLifecycleResolvesEmbeddedCidAndContentLocationImages() {
+        byte[] cidImage = PdfPngTestImages.CreateRgbPng(8, 5);
+        byte[] locationImage = PdfPngTestImages.CreateRgbPng(5, 8);
+        var archive = new MhtmlDocument(
+            """
+            <h1>Synchronous MHTML</h1>
+            <a href='cid:logo@example.test'>blocked package link</a>
+            <img src='cid:logo@example.test' width='40' height='25' alt='CID logo'>
+            <img src='images/chart.png' width='25' height='40' alt='location chart'>
+            """,
+            new[] {
+                new MhtmlResource(cidImage, "image/png", contentId: "logo@example.test", fileName: "logo.png"),
+                new MhtmlResource(locationImage, "image/png", contentLocation: "images/chart.png", fileName: "chart.png")
+            },
+            contentLocation: "https://snapshot.example.test/archive/page.html");
+
+        var options = new HtmlPdfSaveOptions {
+            UrlPolicy = HtmlUrlPolicy.CreateWebOnlyProfile()
+        };
+        PdfCore.PdfDocumentConversionResult result = archive.ToPdfDocumentResult(options);
+        byte[] pdf = result.ToBytes();
+
+        Assert.Equal(2, PdfCore.PdfImageExtractor.ExtractImages(pdf).Count(image => image.IsImageFile && image.MimeType == "image/png"));
+        Assert.DoesNotContain(PdfCore.PdfInspector.Inspect(pdf).LinkUris, link => link.StartsWith("cid:", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("cid", options.UrlPolicy.AllowedUrlSchemes);
+        Assert.DoesNotContain(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+    }
+
+    [Fact]
+    public async Task MhtmlPdf_DefaultPolicyResolvesEmbeddedContentLocationIndependentlyOfUriScheme() {
+        byte[] imageBytes = PdfPngTestImages.CreateRgbPng(8, 5);
+        var archive = new MhtmlDocument(
+            "<h1>MhtmlLocationMarker</h1><img src='images/logo.png' width='40' height='25' alt='embedded location logo'>",
+            new[] { new MhtmlResource(imageBytes, "image/png", contentLocation: "images/logo.png", fileName: "logo.png") },
+            contentLocation: "https://snapshot.example.test/archive/page.html");
+
+        PdfCore.PdfDocumentConversionResult result = await archive.ToPdfDocumentResultAsync();
+        byte[] pdf = result.ToBytes();
+
+        Assert.Contains(PdfCore.PdfImageExtractor.ExtractImages(pdf), image => image.IsImageFile && image.MimeType == "image/png");
+        Assert.DoesNotContain(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+    }
+
+    [Fact]
+    public async Task MhtmlPdf_DefaultPolicyResolvesEmbeddedContentLocationFromFileBackedArchive() {
+        byte[] imageBytes = PdfPngTestImages.CreateRgbPng(8, 5);
+        var source = new MhtmlDocument(
+            "<a href='local-review.pdf'>blocked local link</a><img src='images/logo.png' width='40' height='25' alt='file-backed embedded logo'>",
+            new[] { new MhtmlResource(imageBytes, "image/png", contentLocation: "images/logo.png", fileName: "logo.png") });
+        string path = Path.Combine(Path.GetTempPath(), "officeimo-mhtml-pdf-" + Guid.NewGuid().ToString("N") + ".mht");
+        try {
+            source.Save(path);
+            MhtmlDocument archive = MhtmlDocument.Load(path);
+            Assert.True(archive.BaseUri.IsFile);
+
+            PdfCore.PdfDocumentConversionResult result = await archive.ToPdfDocumentResultAsync();
+            byte[] pdf = result.ToBytes();
+
+            Assert.Contains(PdfCore.PdfImageExtractor.ExtractImages(pdf), image => image.IsImageFile && image.MimeType == "image/png");
+            Assert.DoesNotContain(PdfCore.PdfInspector.Inspect(pdf).LinkUris, link => link.StartsWith("file:", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task MhtmlPdf_EmbeddedPolicyCannotBeBypassedByTrustedHostUriSchemes() {
+        byte[] imageBytes = PdfPngTestImages.CreateRgbPng(8, 5);
+        var archive = new MhtmlDocument(
+            "<img src='https://snapshot.example.test/assets/logo.png' width='40' height='25' alt='blocked embedded logo'>",
+            new[] { new MhtmlResource(imageBytes, "image/png", contentLocation: "https://snapshot.example.test/assets/logo.png", fileName: "logo.png") },
+            contentLocation: "https://snapshot.example.test/archive/page.html");
+        PdfCore.PdfResourcePolicy policy = PdfCore.PdfResourcePolicy.CreateTrustedHost();
+        policy.AllowEmbeddedPackageResources = false;
+
+        PdfCore.PdfDocumentConversionResult result = await archive.ToPdfDocumentResultAsync(new HtmlPdfSaveOptions {
+            ResourcePolicy = policy
+        });
+        byte[] pdf = result.ToBytes();
+
+        Assert.DoesNotContain(PdfCore.PdfImageExtractor.ExtractImages(pdf), image => image.IsImageFile && image.MimeType == "image/png");
+        Assert.Contains(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+    }
+
+    [Fact]
+    public async Task MhtmlPdf_PackageSchemeExpansionDoesNotReachTrustedHostResolver() {
+        int hostResolverCalls = 0;
+        byte[] imageBytes = PdfPngTestImages.CreateRgbPng(8, 5);
+        var archive = new MhtmlDocument(
+            "<img src='cid:logo' width='40' height='25' alt='embedded logo'><img src='ftp://snapshot.example.test/missing.png' alt='missing'>",
+            new[] { new MhtmlResource(imageBytes, "image/png", contentId: "logo", fileName: "logo.png") },
+            contentLocation: "ftp://snapshot.example.test/archive/page.html");
+
+        PdfCore.PdfDocumentConversionResult result = await archive.ToPdfDocumentResultAsync(new HtmlPdfSaveOptions {
+            UrlPolicy = HtmlUrlPolicy.CreateWebOnlyProfile(),
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateTrustedHost(),
+            ResourceResolver = (request, cancellationToken) => {
+                hostResolverCalls++;
+                return Task.FromResult<HtmlResolvedResource?>(new HtmlResolvedResource(imageBytes, "image/png"));
+            }
+        });
+        byte[] pdf = result.ToBytes();
+
+        Assert.Single(PdfCore.PdfImageExtractor.ExtractImages(pdf), image => image.IsImageFile && image.MimeType == "image/png");
+        Assert.Equal(0, hostResolverCalls);
+        Assert.Contains(result.Warnings, warning => warning.Code == HtmlRenderDiagnosticCodes.ResourceUnavailable);
+    }
+
+    [Fact]
+    public void MhtmlPdf_ExposesCompleteDirectLifecycle() {
+        MethodInfo[] methods = typeof(HtmlPdfConverterExtensions)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(method => method.GetParameters().FirstOrDefault()?.ParameterType == typeof(MhtmlDocument))
+            .ToArray();
+
+        Assert.Single(methods, method => method.Name == "ToPdf");
+        Assert.Single(methods, method => method.Name == "ToPdfAsync");
+        Assert.Single(methods, method => method.Name == "ToPdfDocument");
+        Assert.Single(methods, method => method.Name == "ToPdfDocumentAsync");
+        Assert.Single(methods, method => method.Name == "ToPdfDocumentResult");
+        Assert.Single(methods, method => method.Name == "ToPdfDocumentResultAsync");
+        Assert.Equal(2, methods.Count(method => method.Name == "SaveAsPdf"));
+        Assert.Equal(2, methods.Count(method => method.Name == "SaveAsPdfAsync"));
+        Assert.Equal(2, methods.Count(method => method.Name == "TrySaveAsPdf"));
+        Assert.Equal(2, methods.Count(method => method.Name == "TrySaveAsPdfAsync"));
     }
 
     [Fact]
@@ -476,7 +775,7 @@ public sealed partial class HtmlRenderingTests {
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(renderOptions);
         byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
-        string pdfText = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
         Assert.Contains("word089", pdfText, StringComparison.Ordinal);
         Assert.Contains("Row17", pdfText, StringComparison.Ordinal);
         Assert.Equal(rendered.Pages.Count, PdfCore.PdfInspector.Inspect(pdf).PageCount);
@@ -532,7 +831,7 @@ public sealed partial class HtmlRenderingTests {
 
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(renderOptions);
-        string pdfText = PdfCore.PdfReadDocument.Load(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
         int repeatedHeaderCount = pdfText.Split(new[] { "HeaderMarker" }, StringSplitOptions.None).Length - 1;
         Assert.Equal(rendered.Pages.Count, repeatedHeaderCount);
     }
@@ -568,7 +867,7 @@ public sealed partial class HtmlRenderingTests {
 
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(renderOptions);
-        string pdfText = PdfCore.PdfReadDocument.Load(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
         int repeatedFooterCount = pdfText.Split(new[] { "FooterMarker" }, StringSplitOptions.None).Length - 1;
         Assert.Equal(rendered.Pages.Count, repeatedFooterCount);
 
@@ -612,7 +911,7 @@ public sealed partial class HtmlRenderingTests {
 
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(options);
-        string pdfText = PdfCore.PdfReadDocument.Load(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
         Assert.Contains("Group00", pdfText, StringComparison.Ordinal);
         Assert.Contains("Group09", pdfText, StringComparison.Ordinal);
         Assert.Contains("ZeroMarker", pdfText, StringComparison.Ordinal);
@@ -660,7 +959,7 @@ public sealed partial class HtmlRenderingTests {
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(options);
         byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
-        string pdfText = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
         Assert.Equal(rendered.Pages.Count, PdfCore.PdfInspector.Inspect(pdf).PageCount);
         Assert.Contains("FirstPage", pdfText, StringComparison.Ordinal);
         Assert.Contains("Page 2 of " + rendered.Pages.Count, pdfText, StringComparison.Ordinal);
@@ -735,7 +1034,7 @@ public sealed partial class HtmlRenderingTests {
 
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(options);
-        string pdfText = PdfCore.PdfReadDocument.Load(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
         Assert.Contains("Invoice", pdfText, StringComparison.Ordinal);
         Assert.Contains("IL", pdfText, StringComparison.Ordinal);
         Assert.Contains("Report", pdfText, StringComparison.Ordinal);
@@ -781,7 +1080,7 @@ public sealed partial class HtmlRenderingTests {
 
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(options);
-        string pdfText = PdfCore.PdfReadDocument.Load(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions)).ExtractText();
         foreach (string marker in markers) Assert.Contains(marker, pdfText, StringComparison.Ordinal);
     }
 
@@ -814,7 +1113,7 @@ public sealed partial class HtmlRenderingTests {
         HtmlPdfSaveOptions pdfOptions = new HtmlPdfSaveOptions();
         pdfOptions = new HtmlPdfSaveOptions(options);
         byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdf(pdfOptions);
-        string pdfText = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string pdfText = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
         Assert.Equal(3, PdfCore.PdfInspector.Inspect(pdf).PageCount);
         Assert.Contains("FirstBody", pdfText, StringComparison.Ordinal);
         Assert.Contains("L2", pdfText, StringComparison.Ordinal);
@@ -880,7 +1179,7 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal(firstPng, secondPng);
         Assert.Equal(firstSvg, secondSvg);
         Assert.Equal(firstPdf, secondPdf);
-        Assert.Contains("StableMarker", PdfCore.PdfReadDocument.Load(firstPdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("StableMarker", PdfCore.PdfReadDocument.Open(firstPdf).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -945,7 +1244,7 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal("Semantic heading", outline.Title);
         Assert.Equal(1, outline.Level);
         Assert.Equal("Nested detail", Assert.Single(outline.Children).Title);
-        Assert.Contains("Semantic heading", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("Semantic heading", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -964,7 +1263,7 @@ public sealed partial class HtmlRenderingTests {
         PdfCore.PdfDocumentConversionResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToPdfDocumentResult(options);
         byte[] pdf = result.ToBytes();
         PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Equal(2, info.PageCount);
         Assert.Contains("RenderedPdfMarker", text, StringComparison.Ordinal);
@@ -981,7 +1280,7 @@ public sealed partial class HtmlRenderingTests {
         HtmlPdfSaveOptions options = new HtmlPdfSaveOptions();
 
         byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse("<p>" + marker + "</p>").ToPdf(options);
-        string extracted = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string extracted = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Equal(PdfCore.PdfTextFallbackFeatures.Default, options.TextFallbacks);
         Assert.Equal(PdfCore.PdfTextShapingMode.LatinLigatures, options.TextShapingMode);
@@ -998,7 +1297,7 @@ public sealed partial class HtmlRenderingTests {
 
         byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse("<h1>" + marker + "</h1>").ToPdf(new HtmlPdfSaveOptions());
 
-        Assert.Contains(marker, PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains(marker, PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1011,7 +1310,7 @@ public sealed partial class HtmlRenderingTests {
         byte[] pdf = OfficeIMO.Html.HtmlConversionDocument.Parse("<h1>" + marker + "</h1>").ToPdf(options);
         PdfCore.PdfDiagnosticReport report = PdfCore.PdfDiagnostics.Analyze(pdf);
 
-        Assert.Contains(marker, PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains(marker, PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
         Assert.Contains(report.Fonts, font => font.BaseFont?.Contains("CallerUnicode", StringComparison.Ordinal) == true);
     }
 
@@ -1169,8 +1468,8 @@ public sealed partial class HtmlRenderingTests {
         Assert.Equal(2, tagged.StructureElements.Count(element => element.StructureType == "Lbl"));
         Assert.Equal(2, tagged.StructureElements.Count(element => element.StructureType == "LBody"));
         Assert.All(pdfItems, item => Assert.Contains(item.ObjectNumber, list.ChildElementObjectNumbers));
-        Assert.Contains("1. First item", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
-        Assert.Contains("2. Second item", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("1. First item", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("2. Second item", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1198,7 +1497,7 @@ public sealed partial class HtmlRenderingTests {
         Assert.Contains("/Scope /Row", raw, StringComparison.Ordinal);
         Assert.Contains("/ColSpan 2", raw, StringComparison.Ordinal);
         Assert.Contains("/RowSpan 2", raw, StringComparison.Ordinal);
-        Assert.Contains("Quarterly status", PdfCore.PdfReadDocument.Load(pdf).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("Quarterly status", PdfCore.PdfReadDocument.Open(pdf).ExtractText(), StringComparison.Ordinal);
     }
 
     [Fact]

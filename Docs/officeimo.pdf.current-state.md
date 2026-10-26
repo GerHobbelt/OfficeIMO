@@ -22,10 +22,56 @@ explicit:
 - `OfficeIMO.Pdf` should not gain a runtime dependency on another PDF engine,
   browser, JavaScript runtime, or native renderer.
 
-Word, Excel, PowerPoint, Markdown, HTML, RTF, and Reader packages remain thin
-adapters. Shared PDF parsing, writing, layout, rendering, security, signatures,
-forms, annotations, and manipulation belong in `OfficeIMO.Pdf`. Reusable vector
-and raster primitives belong in `OfficeIMO.Drawing`.
+Word, Excel, PowerPoint, OpenDocument, Markdown, HTML, RTF, OneNote, AsciiDoc, and LaTeX
+packages remain thin adapters. AsciiDoc and LaTeX reuse their existing
+loss-aware Markdown projections and the Markdown PDF renderer; they do not add
+format-specific layout engines. Shared PDF parsing, writing, layout, rendering,
+security, signatures, forms, annotations, resource trust, and manipulation belong in `OfficeIMO.Pdf`.
+Reusable vector and raster primitives belong in `OfficeIMO.Drawing`. The
+machine-readable direct-adapter and composition-route inventory is
+[`pdf-conversion-scenarios.json`](pdf-conversion-scenarios.json); it is the
+source of truth for supported routes and visual proof ownership. The checked-in
+[`PDF conversion support matrix`](officeimo.pdf-conversion-support-matrix.md) is
+generated from that manifest and verified for drift in CI.
+
+OpenDocument text, spreadsheet, and presentation callers use one direct
+loss-aware façade over the existing semantic and PDF adapters. It combines
+projection-stage and PDF-stage diagnostics without adding another layout or
+rendering engine.
+
+Direct conversion uses one balanced resource default: installed fonts plus
+bounded data URI and embedded-package resources are available for Unicode and
+self-contained-document fidelity, while arbitrary local-file reads and remote
+resolver calls remain disabled. Reproducible or untrusted pipelines can choose
+`PdfResourcePolicy.CreatePortableDeterministic()`; applications that intentionally
+resolve local or remote resources can choose `CreateTrustedHost()`. Profiles
+control fidelity and content selection; they do not silently change trust. Zero-options and faithful Word or
+Excel output also do not inject page numbers or worksheet-name headings that
+were absent from the source.
+
+Generated PDF text can use any number of registered named TrueType or
+OpenType/CFF families without consuming the three standard-font compatibility
+slots. Word, Excel, PowerPoint, HTML, headings, tables, lists, headers, and
+footers preserve named-family selection when an embeddable font is available.
+Unavailable or non-embeddable source fonts fall back to a mapped PDF font and
+retain an explicit conversion warning rather than a silent alias.
+
+Word, Excel, and PowerPoint fidelity is measured against pinned PDFs exported
+by Microsoft 365 for Mac 16.109 from the same checked-in source fixtures. The
+gate verifies source and reference hashes, producer/version provenance, page
+count and geometry, then compares 72-DPI rasters within recorded distance
+budgets. These adapters remain `candidate`: an `exact` capability claim is
+scoped to the named semantic invariant and does not mean whole-document pixel
+equivalence. Static HTML uses a standards-oriented market corpus and approved
+OfficeIMO regression baselines instead of pretending that one browser snapshot
+defines HTML/CSS correctness.
+
+OneNote conversion is deliberately named as a semantic-document projection.
+It preserves hierarchy and reading-order content, reports canvas flattening and
+asset placeholders, and does not claim to reproduce the free-form OneNote
+canvas. PowerPoint has one stable native PDF shape renderer for full-slide
+output; the shared visual snapshot remains the owner for PNG, SVG, HTML review,
+and slide thumbnails, where its raster/vector scene contract is appropriate.
 
 ## Workflow Coverage
 
@@ -34,9 +80,9 @@ PDF primitive exists somewhere in the codebase.
 
 | Workflow | Status | Current contract | Work still needed |
 | --- | --- | --- | --- |
-| Create PDFs | Ready for common business documents | Fluent flow and canvas APIs cover text, links, lists, tables, images, drawings, headers, footers, watermarks, metadata, sections, generated TOCs, conditional/replayable flow, position capture, styled one-page containers, block-aware multi-column flow, generated optional-content layers, portfolios, form fields, tagging groundwork, and viewer settings. | Complex-script shaping, mixed inline boxes/images, line-level column balancing, widow/orphan and keep-with-next rules, multipage decorated containers, richer forms/annotations, and validator-backed compliance. |
-| Read and inspect | Ready for common born-digital PDFs | Text, geometry, images, attachments, portfolio metadata, outlines, links, annotations, forms, actions, metadata, XMP, tagged content, layers, output intents, security, revisions, signature structure, and a bounded immutable raw-syntax projection are exposed. `PdfReadOptions.Limits` bounds input bytes, indirect objects, object characters/tokens/nesting, raw and decoded streams, content operations, page counts, and page-tree depth/nodes. Strict mode rejects structural defects; lenient mode records recovered versus detection-only findings for xref pointers, stream lengths, object boundaries/duplicates, page-tree counts/parents/kids, name trees, destinations, and unreachable semantic objects. | Continue adding producer-specific repair fixtures; never auto-repair a defect whose semantic intent is ambiguous. |
-| Merge PDFs | Ready for rewrite-safe inputs | `PdfMerger` and `PdfDocument.MergeWith(...)` merge files, streams, or bytes; pages can be normalized and supported visual annotations flattened. | Explicit collision policies for forms, named destinations, page labels, outlines, attachments, metadata, and catalog state; broader complex-file proof. |
+| Create PDFs | Ready for common business documents | Fluent flow and canvas APIs cover text, links, lists, tables, mixed inline text/images/boxes, drawings, grouped header/footer text and images, watermarks, metadata, sections, generated TOCs, conditional/replayable flow, position capture, styled multipage containers, line-balanced multi-column flow, paragraph splitting with configurable widow/orphan counts, keep-with-next across block types, table tail-row control, generated optional-content layers, portfolios, form fields, tagging groundwork, and viewer settings. Tested report, invoice, label-sheet, and ticket components remain recipes over that same flow engine. `IPdfContextComponent` routes page-aware composition through the existing deferred replay path. Shared Drawing contracts provide Unicode-safe line breaking, Latin ligatures, text direction, a bounded managed Arabic provider, and the host-provider seam for broader shaping. | Full GSUB/GPOS complex-script shaping and deeper forms/annotations remain; continue unusual pagination and producer-specific visual fixtures as real failures are found. |
+| Read and inspect | Ready for common born-digital PDFs | `PdfDocument.Open(...)` provides one bounded byte/path/stream source and reuses one canonical parse for text, geometry, images, attachments, portfolio metadata, outlines, links, annotations, forms, actions, metadata, XMP, tagged content, layers, output intents, security, revisions, signatures, diagnostics, and optional compliance readback. `PdfDocument.Preflight(...)` provides non-throwing text/security readiness for path, byte, and stream inputs before a full workflow is selected. `Analyze(...)` returns the consolidated health and capability report. `PdfReadOptions.Limits` bounds input bytes before buffering plus indirect objects, object characters/tokens/nesting, raw and decoded streams, content operations/operands/nesting, page counts, and page-tree depth/nodes. Strict mode rejects structural defects; lenient mode records explicit repairs. | Continue adding producer-specific repair fixtures; never auto-repair a defect whose semantic intent is ambiguous. |
+| Merge PDFs | Ready for rewrite-safe inputs | `PdfDocument.MergeWith(...)` merges files, streams, bytes, or another opened document through the shared import/rewrite engine. `PdfDocument.Merge(...)` accepts a prepared document sequence and performs one shared merge pass for thin consumers. Pages can be normalized and supported visual annotations flattened. | Broader complex-file and producer interoperability proof. |
 | Split and extract pages | Ready for rewrite-safe inputs | Single pages, page ranges, range expressions, fixed-size groups, and bookmark-derived ranges are supported. | Better preservation policy reporting for structures whose targets fall outside the selected pages. |
 | Remove, duplicate, move, reorder, and rotate pages | Ready for rewrite-safe inputs | Fluent and static APIs cover the standard page-editing operations. `ComposePages`/`ComposePageRanges` allow selected subsets and repetitions through the shared extraction engine; convenience APIs reverse documents, repeat selections, and round-robin interleave even or uneven ranges. | Broader object-stream, tagged, layered, form-heavy, attachment-heavy, and incremental-file proof. |
 | Copy pages from another PDF | Ready for rewrite-safe inputs | Pages can be appended, prepended, or inserted from another PDF, with optional annotation flattening. | The same collision and catalog policies needed by merge, plus a concise import report. |
@@ -44,30 +90,100 @@ PDF primitive exists somewhere in the codebase.
 | Crop pages | Partial | Any production boundary box can be set, including `/CropBox`, `/TrimBox`, `/BleedBox`, `/ArtBox`, and `/MediaBox`. | Add named crop APIs, crop-and-translate, and an explicitly destructive crop mode that removes or clips content outside the retained area. Setting `/CropBox` alone must not be described as content removal. |
 | Stamp and watermark | Ready for the supported rewrite subset | Text and image stamps/watermarks can target selected pages through fluent or static APIs. Complete source PDF pages can be imported as vector-preserving Form XObjects above or below selected target content with fit, alignment, rectangle, and opacity controls. | Rich text, reusable appearance templates, optional append-only stamping when signature permissions allow it, and wider resource-preservation proof. |
 | Bookmarks and outlines | Partial | Generated documents can create nested outlines and named destinations; existing outlines can be read, preserved when supported, and used to split a document. | Add an existing-document outline editor: add, remove, rename, move, nest, retarget, rebuild from headings, and validate broken destinations. |
-| Annotations | Partial | Generated PDFs can create text, free-text, highlight, and link annotations. Existing annotations can be read, filtered, flattened for supported appearances, updated in a small metadata/style subset, or removed. Updates and removals can use append-only revisions for unsigned/approval-signed inputs and certification signatures with DocMDP `/P 3`; `/P 1` and `/P 2` are blocked, and widget edits remain routed through the FieldMDP-aware form engine. Results expose the mutation plan plus rewrite-preservation or signature/revision proof. | Add annotations to existing pages; move/resize them; edit subtype-specific geometry and appearance; reply/thread support; selective flattening; broader markup, ink, stamp, file-attachment, and redaction annotation behavior. |
-| Password protection | Ready for supported Standard-security workflows | Generated and rewritten PDFs default to AES-256 revision 6, with AES-128 interoperability and explicit legacy RC4 modes, typed permissions, Unicode password handling, revision 2-6 reading, authenticated user/owner roles, and owner-authorized encrypt/decrypt/re-encrypt workflows with preservation reports. | Expand encrypted mutation coverage beyond the dedicated security rewrite and keep signed/security-sensitive inputs fail-closed. Certificate signing and validation stay in the optional first-party cryptography package. |
+| Annotations | Partial | Generated PDFs can create text, free-text, highlight, and link annotations. Existing annotations can be read, filtered, flattened for supported appearances, updated in a small metadata/style subset, or removed. Page-to-image projection renders authored normal appearances and synthesizes a bounded appearance for supported free-text, text-markup, shape, line, ink, path, stamp, and caret annotations when `/AP` is missing; the synthesized case remains an explicit approximation diagnostic. Updates and removals can use append-only revisions for unsigned/approval-signed inputs and certification signatures with DocMDP `/P 3`; `/P 1` and `/P 2` are blocked, and widget edits remain routed through the FieldMDP-aware form engine. Results expose the mutation plan plus rewrite-preservation or signature/revision proof. | Add annotations to existing pages; move/resize them; edit subtype-specific geometry and appearance; reply/thread support; selective flattening; broader file-attachment and redaction annotation behavior. |
+| Password protection | Ready for supported Standard-security workflows | Generated and rewritten PDFs default to AES-256 revision 6, with AES-128 interoperability and explicit legacy RC4 modes, typed permissions, Unicode password handling, revision 2-6 reading, authenticated user/owner roles, and owner-authorized encrypt/decrypt/re-encrypt workflows with preservation reports. | Expand encrypted mutation coverage beyond the dedicated security rewrite and keep signed/security-sensitive inputs fail-closed. Certificate signing and validation use the shared `OfficeIMO.Security` owner. |
 | Metadata | Partial | Info-dictionary title, author, subject, and keywords can be replaced or updated by full rewrite or append-only revision. Generated PDFs can emit XMP and profile metadata; existing XMP is readable. | Edit and synchronize Info plus XMP, preserve custom schemas, manage dates/producer/creator deliberately, and report conflicts instead of silently choosing one source. |
 | Forms | Broad | Generated and existing-document AcroForms support field creation, rename, remove, move, defaults, flags, calculation and tab order, appearance regeneration, exact-field flattening, typed/XFDF data interchange, append-only value updates, and empty signature-field placement. XFA is detected and explicitly rejected by the AcroForm editor rather than executed or silently changed. | Expand field kinds and appearance fidelity only when backed by interoperable fixtures; keep XFA outside the dependency-light core. |
 | Incremental updates | Partial but real | A shared incremental object writer appends metadata, supported form values/appearances, external-signature preparation, and DSS/VRI validation material without replacing prior bytes. It preserves object generations and trailer state and emits classic or xref-stream revisions. Mutation plans and before/after reports prove byte-prefix, revision-chain, signature-range, and DocMDP/FieldMDP state. | Add encrypted incremental serialization, supported annotation/stamp/catalog operations, and broader interoperability fixtures. |
-| Digital signatures | Partial | Approval, certification/DocMDP, and document-timestamp profiles can prepare external signatures; approval/certification fields can have visible widget appearances. A signer callback accepts CMS/CAdES/RFC 3161 bytes from cloud, HSM, smart-card, or local implementations without moving key storage into the PDF core. The optional first-party `OfficeIMO.Pdf.Cryptography.Pkcs` package has no outside runtime package and provides RSA/SHA-256 detached CMS signing plus managed CMS/RFC 3161 parsing, signature/digest validation, X.509 chains, caller trust callbacks, and revocation policy on every supported target. After signature math and digest verification, `PdfLongTermValidationEnricher` can append DER certificate, OCSP, and CRL streams in an ETSI DSS/VRI revision while retaining all earlier bytes and evidence. Reports keep structure, math, digest, trust, revocation, time, permissions, and later revisions separate. | Add non-RSA signing algorithms, deeper timestamp/revocation fixtures, managed rendering proof for signature widgets, and external interoperability proof for B-LT/B-LTA workflows without claiming conformance prematurely. |
+| Digital signatures | Partial | Approval, certification/DocMDP, and document-timestamp profiles can prepare external signatures; approval/certification fields can have visible widget appearances. `PdfCmsExternalSigner` and `PdfCmsSignatureCryptographyProvider` are thin adapters over the shared `OfficeIMO.Security` engine, which provides bounded CMS/RFC 3161 processing, RSA and ECDSA verification, platform X.509 chain/revocation policy, and one Bouncy Castle dependency across PDF and Email. Platform RSA signing does not export the private key. After signature math and digest verification, `PdfLongTermValidationEnricher` can append DER certificate, OCSP, and CRL streams in an ETSI DSS/VRI revision while retaining all earlier bytes and evidence. Reports keep structure, math, digest, trust, revocation, time, permissions, and later revisions separate. | Add deeper timestamp/revocation and external interoperability fixtures for B-LT/B-LTA workflows without claiming conformance prematurely. |
 | Attachments and portfolios | Broad | Generated associated/embedded files and collection dictionaries are supported, including portfolio fields, sort order, initial document, and view. Existing attachments can be listed, selectively extracted, added, replaced, renamed, removed, and edited through the attachment engine; portfolio metadata is readable and supported rewrites retain it when preservation proof passes. | Add a focused existing-portfolio metadata editor and broaden viewer/interoperability fixtures for collection presentation. |
 | Optimization | Broad | Deterministic Balanced, MaximumCompression, Web, Archival, and Custom profiles support lossless stream compression, unreachable-object removal, exact-stream and decoded-image deduplication, font/resource dictionary deduplication, classic or xref-stream output, object-stream packing, keep-original-if-larger behavior, per-action reporting, and post-save preservation proof. The Web profile emits standards-compliant Fast Web View output with two cross-reference sections plus page-offset and shared-object hint tables; linearization deliberately requires classic cross-reference tables without object streams. | Expand semantic deduplication and linearization corpus coverage only with bounded decoders and interoperable fixtures; optimization remains an explicit full rewrite and never claims signature preservation. |
 | Redaction | Secure workflow available | Reviewable geometry/search plans remove intersecting text, vector paths, annotations, form fields, and image pixels. Built-in image normalization covers transformed placements, indexed/color-key/explicit/soft masks, and clone-on-write reuse; JPEG and other codecs use an optional bounded decoder contract or an explicit fail-closed/whole-placement policy. Cleanup policies cover metadata, attachments, structure/alternate text, and optional content. Proof combines extraction, raw/decoded residue checks, managed rendering, and pluggable independent validators. | Expand the hostile/corpus fixture set as new producer-specific encodings are found. |
-| Render PDF pages | Broad managed subset with explicit diagnostics | Static pages project to shared Drawing primitives with paths/clipping, forms, images, axial/radial shadings, colored and basic uncolored vector tiling fills, supported annotation/form appearances, alpha, standard blend modes, Form-XObject alpha/luminosity soft masks, exact embedded TrueType outlines, and managed CMYK/Lab plus simplified calibrated-gray/RGB conversion through `OfficeIMO.Drawing`. The shared Drawing raster and SVG paths own reusable tiling, blending, and masking. PNG/SVG batches provide ranges, DPI/scale/background, thumbnails, cancellation, budgets, and per-page reports. A generated manifest reports simplified/unsupported operators and resources, and optional image codecs plug into shared Drawing rasterization without becoming core dependencies. | Extend fidelity from corpus failures while keeping CFF/Type 3 gaps, resource-specific calibrated parameters, unsupported ICC spaces, stroked/text tiling patterns and other broader pattern edge cases, and incomplete layer projection explicit in page reports. |
-| Serialize generated PDFs | Bounded payload streaming | `PdfOptions.PageContentMemoryLimitBytes` bounds completed page/effect content retained during layout, and `PdfOptions.ObjectBufferMemoryLimitBytes` bounds completed indirect-object bytes during serialization. Both stores spill excess payloads to indexed temporary files; large stream objects are spooled without a duplicate combined buffer, and final stream assembly copies spilled objects in bounded chunks for plain and encrypted saves. Spill files are removed on disposal. | Per-page metadata and the authored block model remain proportional to document size, the active page is materialized while it is processed, and `ToBytes()` necessarily buffers the final artifact. Fully forward-only layout/output needs a deeper writer contract and representative memory gates. |
+| Render PDF pages | Broad managed subset with explicit diagnostics | Static pages project to shared Drawing primitives with paths/clipping, forms, images, axial/radial shadings, colored and basic uncolored vector tiling fills, supported annotation/form appearances, alpha, standard blend modes, Form-XObject alpha/luminosity soft masks, exact embedded TrueType outlines, and managed CMYK/Lab plus simplified calibrated-gray/RGB conversion through `OfficeIMO.Drawing`. The shared Drawing raster and SVG paths own reusable tiling, blending, and masking. PNG/SVG batches provide ranges, DPI/scale/background, thumbnails, cancellation, budgets, and per-page reports. `AssessRenderCompatibility()` exposes document/page producer-compatibility evidence from the same generated capability manifest used by export. Optional image codecs plug into shared Drawing rasterization without becoming core dependencies. | Extend fidelity from corpus failures while keeping CFF/Type 3 gaps, resource-specific calibrated parameters, unsupported ICC spaces, stroked/text tiling patterns and other broader pattern edge cases, and incomplete layer projection explicit in page reports. |
+| Serialize generated PDFs | Bounded payload streaming with runtime evidence | `PdfOptions.PageContentMemoryLimitBytes` bounds completed page/effect content retained during layout, and `PdfOptions.ObjectBufferMemoryLimitBytes` bounds completed indirect-object bytes during serialization. Both stores spill excess payloads to indexed temporary files; large stream objects are spooled without a duplicate combined buffer, and final stream assembly copies spilled objects in bounded chunks for plain and encrypted saves. `PdfSaveResult.Serialization` records configured limits, peak retained bytes, spill decisions, final-artifact buffering, and source passthrough. Spill files are removed on disposal. | Per-page metadata and the authored block model remain proportional to document size, the active page is materialized while it is processed, and `ToBytes()` necessarily buffers the final artifact. The report deliberately keeps `IsForwardOnlyLayout == false`; genuinely forward-only layout/output still needs a deeper writer contract and representative memory gates. |
 | Text and layout extraction | Broad, strategy-driven | The fast heuristic remains the default. A pluggable six-stage understanding pipeline provides confidence/evidence and stable JSON, Markdown, ALTO, hOCR, and PAGE XML. The built-in advanced profile adds rotation/arbitrary-baseline grouping, spatial and non-rectangular regions, multi-column/spanning-band order, tables, captions, headers/footers, and footnotes. | Refine advanced heuristics from real mixed-layout corpora and use provider stages for domain-specific reconstruction rather than hard-coding every document family. |
 | PDF to Office/HTML/data | Partial by design | PDF-to-HTML review output, table export, Reader chunks, and limited PowerPoint table import use the shared logical model. | Improve the logical model and confidence/proof first. Do not promise general editable reconstruction from a presentation format. |
-| Office/HTML/Markdown/RTF to PDF | Broad but evolving | Thin adapters use the shared PDF and Drawing engines. HTML uses the shared render scene introduced by the HTML/PDF/image work. | Continue converter-specific fidelity only when the missing primitive is truly source-specific; otherwise improve the shared PDF, Drawing, or HTML owner. |
-| PDF/A, PDF/UA, and e-invoices | Groundwork only | Output intents, tagging, XMP identification, associated files, Factur-X/ZUGFeRD groundwork, and compliance proof reports exist. | Pass an external validator for one narrow profile before making a conformance claim, then expand profile by profile. |
+| Office/OpenDocument/HTML/Markdown/RTF/OneNote/AsciiDoc/LaTeX to PDF | Broad but evolving | Thin adapters use the shared PDF and Drawing engines. Word and PowerPoint preserve source font families and richer table/list/header/footer geometry; Excel uses a worksheet scene with authored row/column geometry, print areas, titles, breaks, charts, images, and conditional formatting; OpenDocument text, spreadsheet, and presentation formats expose one direct loss-aware façade over their existing semantic and PDF engines; static HTML uses the shared paged render scene with market-corpus raster gates, tables, forms, word breaking, and searchable text. OneNote, AsciiDoc, and LaTeX use explicit loss-aware semantic projections with combined diagnostics. Any normalized `OfficeDocumentReadResult`, including Email, EPUB, or Visio output from its owning Reader adapter, can now project through one source-neutral PDF policy and merged evidence contract. | Browser-executed HTML is outside the current scope. Direct Email, EPUB, and Visio converter façades still need route-specific fixtures before promotion. Continue converter-specific fidelity only when the missing primitive is truly source-specific; otherwise improve the shared PDF, Drawing, HTML, Reader, or semantic-projection owner. |
+| PDF/A, PDF/UA, and e-invoices | Exact-artifact proof available for declared profiles | PDF/A-2b, PDF/A-3b, PDF/UA-1, Factur-X, and ZUGFeRD generation gates combine internal readiness with external validator evidence bound to validator name/version/profile, SHA-256, byte length, result, and validation time. A report cannot be claimable while an effective requirement remains missing or unsupported. | Keep validator versions and profile fixtures current; do not broaden claims beyond exact artifacts that pass both internal and external proof. |
+
+## Conversion Direction And Fidelity Assessment
+
+| Direction | Assessment | Quality contract |
+| --- | --- | --- |
+| Office, OpenDocument, HTML, Markdown, RTF, OneNote, AsciiDoc, and LaTeX to PDF | Broad, with source-specific approximations | Every direct adapter uses the shared PDF/Drawing owners and returns stable conversion evidence. The generated support matrix distinguishes regression-proven, candidate, externally verified, and accepted-degradation routes instead of treating every feature as exact. |
+| Normalized Reader document to PDF | Source-neutral and explicitly loss-aware | `OfficeDocumentReadResult.ToPdfDocumentResult(...)` maps normalized pages, blocks, tables, assets, links, and current form values through one policy surface. Source diagnostics and save-time PDF diagnostics share the existing conversion report; Email attachments, EPUB resources/pagination, and Visio preview/semantic fallback decisions are recorded explicitly. This is a reusable projection foundation, not a claim that every format has a promoted direct converter. |
+| PDF to editable Word | Useful semantic recovery, not fixed-layout reconstruction | Metadata, page breaks, headings, paragraphs, lists, logical tables, links, supported images, and form placeholders are recovered when represented by the logical model. Unsupported image streams and interactive or unresolved navigation remain diagnostic-driven. |
+| PDF to editable Excel or PowerPoint | Intentionally narrow | Logical tables can be recovered into worksheets or table slides with page/range limits and loss reports. Unrelated page text, drawings, images, and fixed layout are not advertised as editable reconstruction. |
+| PDF to HTML | Good for semantic access and positioned visual review | Semantic and positioned-review profiles share the PDF logical/read model. Output is a review projection, not a browser-based reverse authoring guarantee. |
+| Authored/loaded PDF to PNG, JPEG, TIFF, WebP, or SVG | Broad managed rendering with explicit gaps | One page-to-Drawing projection serves authored documents, loaded pages, batches, and source-conversion results with budgets, cancellation, selection, and diagnostics. Unsupported Type 3/CFF, ICC, pattern, and layer cases remain visible in page reports. |
+| JPEG, PNG, GIF, BMP, TIFF, or supported WebP into authored/stamped PDF | Consistent shared ingestion | JPEG and writer-safe PNG embed directly. Other Drawing-decoded raster payloads normalize once to density-preserving PNG before all flow, table, inline, header/footer, background, watermark, canvas, and stamp paths. GIF callers can select a composited frame or reject animated input; typed decode evidence records frame count, selected frame, success, and discarded animation. Malformed PNGs retain precise fail-closed diagnostics. |
+
+## Roadmap Foundation Status And Remaining Engine Work, Easiest To Most Complex
+
+The core is already broad enough for common business-document authoring,
+inspection, conversion, rendering, and controlled mutation. Premium claims
+remain capability-scoped and evidence-backed. The first foundation batch now
+touches all eight areas without inventing parallel engines. Remaining depth is
+ordered by expected implementation and proof complexity:
+
+1. **Recipe foundation delivered.** Tested report, invoice, label-sheet, and
+   ticket `IPdfComponent` implementations use the normal flow/table/panel APIs.
+   Next, grow only the data/styling contracts proven by repeated business use;
+   do not introduce a template subsystem.
+2. **Raster policy foundation delivered.** Drawing owns selected-frame GIF
+   composition, animation rejection, and typed loss evidence, and PDF continues
+   to consume Drawing's normalized payload. Next, add animated WebP or
+   multipage TIFF only with bounded real fixtures and the same policy contract.
+3. **Source-neutral projection foundation delivered.** Normalized Reader
+   documents project to PDF with explicit asset, link, form, and pagination
+   policy plus merged source/PDF evidence. Next, promote direct Email, EPUB,
+   and Visio façades only after route-specific artifact and degradation gates.
+4. **Interactive assessment foundation delivered.** `AssessMutations(...)`
+   evaluates annotations, navigation/catalog changes, form changes, and related
+   operations against one preflight snapshot and the existing mutation planner.
+   Next, deepen the actual field kinds, appearances, navigation, and append-only
+   executions through those same owners.
+5. **Managed shaping foundation delivered.** Drawing provides a dependency-light
+   positioned-glyph provider for its proven core-Arabic/TrueType subset and
+   declines unsupported fonts/scripts so fallback diagnostics remain truthful.
+   Next, add broader GSUB/GPOS shaping without splitting the Drawing contract or
+   weakening font fallback/subsetting proof.
+6. **Page-aware component foundation delivered.** `IPdfContextComponent`
+   composes through the existing deferred replay path, so page-dependent content
+   does not create a second measurement language. Next, prove richer stateful
+   workflows while retaining deterministic replay rules.
+7. **Producer-assessment foundation delivered.** `AssessRenderCompatibility()`
+   exposes per-page Type 3/CFF, color, pattern, appearance, blend, mask, and
+   resource diagnostics from the same registry used by managed export. Next,
+   close high-value corpus failures in that registry and renderer rather than
+   adding producer-specific compatibility tables.
+8. **Serialization-evidence foundation delivered.** Every successful stream or
+   file save reports configured bounds, peak retained completed payloads, spill
+   decisions, final buffering, and passthrough. It deliberately does not claim
+   forward-only layout. Next, redesign layout/replay and deterministic object
+   allocation for genuinely forward-only output with representative memory and
+   exact-artifact gates; asynchronous save alone is not that guarantee.
 
 ## Current Architecture To Keep
 
 - `PdfDocument.Create(...)` is the normal document-authoring entry point.
 - `PdfDocument.Open(...)` is the normal fluent read and processing entry point.
-- Static manipulation types remain useful for direct byte, stream, and path
-  workflows, but should feed the same engines and reports as the fluent API.
-- `PdfReadDocument` and the logical models are the parser/read source of truth.
-- `OfficeIMO.Drawing` is the shared managed scene, SVG, and raster owner.
+- `PdfDocument.Read`, `Pages`, `Forms`, `Attachments`, `Bookmarks`,
+  `Annotations`, and `Stamp` are the public workflow surfaces. The static
+  parsing, inspection, manipulation, rendering, diagnostics, compliance, and
+  signature engines are implementation owners rather than a second public API.
+- `PdfReadDocument` is the canonical parser/read model. One opened
+  `PdfDocument` snapshots its source once and reuses that parse across
+  operations.
+- `PdfDocument.Analyze(...)` is the consolidated health, capability,
+  diagnostics, optimization, signature, repair, mutation, and optional
+  compliance report.
+- `PdfDocument.CreateComplianceArtifact(...)` captures exact output bytes and
+  the matching writer/readback readiness in one immutable snapshot. External
+  validators consume those bytes, and the snapshot reconciles their results
+  without rerendering or accepting evidence for another artifact.
+- `OfficeIMO.Drawing` is the shared managed scene, SVG, raster, Unicode
+  line-breaking, Latin-ligature, text-direction, and host-shaping-contract owner.
 - `OfficeIMO.Html` owns HTML/CSS parsing, resource policy, layout, pagination,
   and its backend-neutral render scene.
 - `OfficeIMO.Html.Pdf` only maps that render scene to PDF primitives.
@@ -92,7 +208,10 @@ security proof.
   xref streams, object streams, hybrid references, incremental revisions,
   unusual generations, linearized files, signed/certified files, encrypted
   files, tagged PDFs, optional-content layers, attachments, name trees,
-  output intents, active content, and complex forms.
+  output intents, active content, and complex forms. Keep a small authoritative
+  external gate hash-pinned to exact Open Preservation Foundation and veraPDF
+  commits, with source paths, licenses, byte lengths, and focused expected
+  behavior.
 - [x] Run every rewrite scenario through `PdfRewritePreservationMatrix` and
   retain the original blocker or preservation report. Expected blockers must be
   distinguishable from regressions.
@@ -136,11 +255,10 @@ valid revision chain, and retains the expected signature/permission state.
   password processing and metadata-encryption behavior.
 - [x] Add encrypt, change-password/permissions, and owner-authorized decrypt
   workflows for existing PDFs, with full preservation reports.
-- [x] Put CMS signature verification behind a small cryptography seam so the
-  dependency-free PDF parser owns byte ranges and signed attributes while the
-  optional first-party cryptography package owns bounded DER/CMS parsing,
-  signature math, certificate-chain, timestamp, OCSP, and CRL policy without an
-  external runtime package.
+- [x] Keep PDF byte ranges, signature fields, revisions, and result mapping in
+  `OfficeIMO.Pdf`, while the neutral `OfficeIMO.Security` owner provides bounded
+  DER/CMS, signature math, certificate-chain, revocation, and RFC 3161 behavior
+  through one Bouncy Castle dependency shared with Email.
 - [x] Add signing profiles for approval signatures, certification signatures,
   document timestamps, visible signature appearances, and external/cloud/HSM
   signers without placing key-storage logic in `OfficeIMO.Pdf`.
@@ -278,20 +396,46 @@ any repair is explicit, reproducible, and validated before save.
 
 ### P3 - Deepen Creation And Conversion
 
-- [ ] Complete OpenType/CFF charstring subsetting and provider-backed shaping,
-  bidirectional layout, mark positioning, font fallback, Unicode line breaking,
-  and dictionary-driven hyphenation behind the existing glyph-run seam.
+- [x] Complete dependency-free OpenType/CFF charstring subsetting for generated
+  and supported appearance-font output.
+- [x] Move text direction, shaped-run models, and the
+  `IOfficeTextShapingProvider` seam into `OfficeIMO.Drawing` so PDF and future
+  renderers share one host-integration contract. The dependency-free PDF engine
+  continues to provide Unicode-scalar and Latin-ligature modes with explicit
+  diagnostics; a host can adapt its chosen shaping engine without adding a
+  dependency to the core packages.
+- [x] Add a dependency-light Drawing provider for the bounded core-Arabic and
+  TrueType-outline subset. It emits positioned glyphs with logical Unicode
+  mappings and declines broader GSUB/GPOS scripts and CFF fonts so the existing
+  fallback and diagnostics remain authoritative.
 - [x] Add shared block-aware multi-column flow, styled one-page containers,
   conditional/replayable flow constraints, position capture, semantic sections,
   generated TOCs, and optional-content layers before adapter-specific variants.
-- [ ] Continue with line-level column balancing, mixed inline boxes/images,
-  keep-with-next, widow/orphan, absolute-layout, multipage decorated containers,
-  drawing, and deeper pagination behavior.
+- [x] Add line-balanced columns, configurable paragraph widow/orphan counts,
+  keep-with-next across block types, table tail-row control, and multipage
+  decorated containers through the shared block-flow engine.
+- [x] Add a machine-readable cross-format fidelity corpus and generated support
+  matrix with source artifacts, hashes, text/logical proof, strict Poppler
+  baselines, and explicit accepted-degradation policies.
+- [x] Remove the three-family ceiling for embeddable generated text by adding
+  shared named-font resources and carrying family selection through Word,
+  Excel, PowerPoint, HTML, headings, tables, lists, headers, and footers.
+- [x] Move Excel PDF fidelity to an authored worksheet scene and expand the
+  static HTML renderer with a reusable market corpus, paged visual baselines,
+  form controls, table layout, and word-breaking coverage.
+- [x] Pin Microsoft Word, Excel, and PowerPoint 16.109 reference exports with
+  source/reference hashes, producer provenance, page geometry, recorded visual
+  distance results, and runtime-independent comparison gates.
 - [ ] Keep HTML/CSS fidelity work in the canonical HTML/PDF/image plan. The PDF
   package should only add missing PDF-native primitives or writer support.
-- [ ] Add reusable typed report components and recipes only after repeated real
-  examples identify a stable abstraction. Do not introduce a second template
-  language or dependency-injection requirement into the PDF core speculatively.
+- [x] Add a reusable typed component contract that composes through the
+  canonical flow engine, including existing layout constraints and position
+  capture, without introducing another layout language.
+- [x] Add small report, invoice, label-sheet, and ticket recipes as tested typed
+  components over the canonical flow/table/panel APIs. They do not introduce a
+  second template language or dependency-injection requirement.
+- [x] Add page-aware typed components through the existing deterministic
+  deferred-flow replay path rather than a second measurement or layout engine.
 - [ ] If real invoice, label, ticket, or logistics workflows require barcodes or
   QR codes, implement the encoding and drawing once in the smallest reusable
   `OfficeIMO.Drawing` owner (or a narrow optional adapter). PDF, Word, Excel,
@@ -299,34 +443,47 @@ any repair is explicit, reproducible, and validated before save.
 - [ ] Expand generated annotations, form fields, signature appearances,
   attachments, layers, navigation, tagged structure, and accessible names
   through the same primitives used by existing-document editing.
-- [ ] Continue Word, Excel, PowerPoint, Markdown, HTML, RTF, and Reader fidelity
-  through shared primitives first, with conversion warnings and proof snapshots
-  preserved through post-processing.
+- [ ] Continue Word, Excel, PowerPoint, Markdown, HTML, RTF, OneNote, AsciiDoc,
+  and LaTeX fidelity through shared primitives or their established semantic
+  projections first, with conversion warnings and proof snapshots preserved
+  through post-processing.
+- [x] Promote AsciiDoc and LaTeX compositions to direct adapters whose native
+  parser and semantic-projection diagnostics flow automatically into the final
+  `PdfDocumentConversionResult` while reusing `OfficeIMO.Markdown.Pdf`.
+- [x] Promote OpenDocument text, spreadsheet, and presentation compositions to
+  one direct adapter whose existing `OdfConversionResult` diagnostics flow
+  automatically into the final PDF result without duplicating the Word, Excel,
+  or PowerPoint PDF engines. Email, EPUB, and Visio remain planned until their
+  body/asset/book/vector-page policies are explicit and visually proven.
 
 Exit criterion: new fidelity work improves the shared engine or has a documented
 source-format reason to remain in a thin adapter.
 
 ### P3 - Earn Narrow Compliance Claims
 
-- [ ] Choose one small PDF/A target, wire its external validator into proof, and
-  fix every requirement without hiding warnings.
-- [ ] Add PDF/UA only when structure ownership, reading order, alternate text,
-  annotations, forms, links, language, fonts, and Unicode mapping can be proven.
-- [ ] Validate Factur-X/ZUGFeRD attachment, XMP, output-intent, and profile rules
-  as a complete artifact rather than independent dictionary checks.
-- [ ] Store validator version, profile, result, and artifact hash in the proof
-  report so CI evidence is reproducible.
+- [x] Gate PDF/A-2b and PDF/A-3b claims on exact-artifact veraPDF evidence
+  without hiding internal readiness warnings.
+- [x] Gate PDF/UA-1 on structure, reading order, alternate text, annotations,
+  forms, links, language, fonts, Unicode mapping, and external validation.
+- [x] Validate Factur-X/ZUGFeRD attachment, XMP, output-intent, invoice rules,
+  and external PDF/invoice validator results as one artifact proof.
+- [x] Store validator name, version, profile, result, validation time, artifact
+  SHA-256, and byte length; reconcile externally satisfied requirements so a
+  claimable export cannot also report missing or unsupported requirements.
 
 Exit criterion: a profile is advertised only when internal readiness and the
 external validator both pass the exact generated artifact.
 
 ### P4 - Productize The Library Surface
 
-- [ ] Make byte, stream, path, sync, async, and fluent overloads consistent for
-  every supported operation without multiplying independent implementations.
-- [ ] Preserve input/output diagnostics through chained operations and expose a
-  final pipeline report with mutation decisions, warnings, preservation proof,
-  hashes, page counts, and timings.
+- [x] Route byte, stream, path, sync, async, and fluent opening through one
+  bounded immutable source and one canonical parser without multiplying
+  independent implementations.
+- [x] Preserve source/output warnings through chained operations and expose
+  exact artifact hashes, byte and page counts, operation names, observed
+  mutation execution modes, timings, and failures. `Save(...)`,
+  `SaveAsync(...)`, `TrySave(...)`, and typed adapter `SaveAsPdf(...)` routes
+  return the same `PdfSaveResult` shape with a shared immutable pipeline report.
 - [x] Bound completed page/effect content and serialized-object retention for
   stream saves with independent memory thresholds, indexed temporary-file
   spillover, direct large-stream spooling, and chunked final assembly, including
@@ -334,13 +491,17 @@ external validator both pass the exact generated artifact.
 - [ ] Add fully forward-only layout and serialization before describing async
   APIs as fully streaming. Per-page metadata and the authored block model remain
   proportional to document size, while `ToBytes()` buffers the final artifact.
-- [ ] Generate the public support matrix and README examples from tested
-  capability records so documentation cannot drift from the implementation.
-- [ ] Keep NativeAOT, trimming, deterministic-output, cross-platform, memory,
-  and performance gates for representative small, large, hostile, and
-  incrementally updated PDFs.
-- [ ] Isolate optional dependencies in narrow adapter packages. The core should
-  expose provider contracts for cryptography, OCR, advanced shaping, or codecs
+- [x] Generate and CI-check the public PDF conversion support matrix from the
+  tested capability manifest so route and diagnostic claims cannot drift.
+- [ ] Generate README examples from tested capability records where doing so
+  improves user guidance without making prose less readable.
+- [x] Keep a public-surface/dependency contract plus dependency-free mixed
+  60-page cold/cached analysis, SVG, and PNG performance budgets in CI; verify
+  output integrity as well as time and allocation ceilings, and keep bounded
+  hostile-input, cross-platform, deterministic-output, and visual contracts in
+  the focused suites.
+- [x] Isolate optional dependencies in narrow adapter packages. The core
+  exposes provider contracts for cryptography, OCR, advanced shaping, or codecs
   only where the BCL and current OfficeIMO projects cannot supply the behavior.
 
 Exit criterion: normal workflows are discoverable from `PdfDocument`, advanced

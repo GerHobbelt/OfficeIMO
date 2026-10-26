@@ -29,7 +29,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
         try {
             using (WordDocument document = WordDocument.Create(docPath)) {
                 document.AddHeadersAndFooters();
-                WordParagraph headerLogo = document.Sections[0].Header.Default!.AddParagraph();
+                WordParagraph headerLogo = document.Sections[0].Header.Default!.AddParagraph("OfficeIMO");
                 headerLogo.ParagraphAlignment = W.JustificationValues.Right;
                 headerLogo.AddImage(logoPath, 48, 24);
 
@@ -96,12 +96,11 @@ public partial class PdfDocumentRasterVisualBaselineTests {
 
                 document.Save();
                 document.SaveAsPdf(pdfPath, new PdfSaveOptions {
-                    IncludePageNumbers = false,
-                    PageSize = new OfficeIMO.Pdf.PageSize(612, 792),
-                    Margins = OfficeIMO.Pdf.PageMargins.Uniform(36)
+                    IncludePageNumbers = false
                 });
             }
 
+            WriteReviewArtifact("native-word-report.docx", File.ReadAllBytes(docPath));
             return File.ReadAllBytes(pdfPath);
         } finally {
             TryDeleteDirectory(workDir);
@@ -208,6 +207,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
                 });
             }
 
+            WriteReviewArtifact("native-word-daily-layout.docx", File.ReadAllBytes(docPath));
             return File.ReadAllBytes(pdfPath);
         } finally {
             TryDeleteDirectory(workDir);
@@ -243,6 +243,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
                 });
             }
 
+            WriteReviewArtifact("native-word-table-cell-picture-control.docx", File.ReadAllBytes(docPath));
             return File.ReadAllBytes(pdfPath);
         } finally {
             TryDeleteDirectory(workDir);
@@ -334,6 +335,7 @@ public partial class PdfDocumentRasterVisualBaselineTests {
                 });
             }
 
+            WriteReviewArtifact("native-excel-daily-workbook.xlsx", File.ReadAllBytes(workbookPath));
             return File.ReadAllBytes(pdfPath);
         } finally {
             TryDeleteDirectory(workDir);
@@ -391,7 +393,7 @@ OfficeIMO.Markdown.MarkdownDoc.Load("README.md").SaveAsPdf("README.pdf");
             var options = new MarkdownPdfSaveOptions {
                 DefaultImageWidth = 104,
                 DefaultImageHeight = 36,
-                IncludeLocalImages = true,
+                ResourcePolicy = OfficeIMO.Pdf.PdfResourcePolicy.CreateTrustedHost(),
                 BaseDirectory = workDir
             };
 

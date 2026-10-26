@@ -1,19 +1,26 @@
 using OfficeIMO.Drawing.Internal;
 namespace OfficeIMO.Pdf;
 
-public static partial class PdfIncrementalUpdater {
+internal static partial class PdfIncrementalUpdater {
     /// <summary>Prepares byte ranges, calls caller-owned key infrastructure, and applies its signature container.</summary>
     public static PdfExternalSignatureCompletion SignExternal(
         byte[] pdf,
         IPdfExternalSigner signer,
-        PdfExternalSignatureOptions? options = null) {
+        PdfExternalSignatureOptions? options = null) =>
+        SignExternal(pdf, signer, options, readOptions: null);
+
+    internal static PdfExternalSignatureCompletion SignExternal(
+        byte[] pdf,
+        IPdfExternalSigner signer,
+        PdfExternalSignatureOptions? options,
+        PdfReadOptions? readOptions) {
         Guard.NotNull(pdf, nameof(pdf));
         Guard.NotNull(signer, nameof(signer));
         if (string.IsNullOrWhiteSpace(signer.Name)) {
             throw new ArgumentException("External signer name cannot be empty.", nameof(signer));
         }
 
-        PdfExternalSignaturePreparation preparation = PrepareExternalSignature(pdf, options);
+        PdfExternalSignaturePreparation preparation = PrepareExternalSignature(pdf, options, readOptions);
         byte[] signatureContents = signer.Sign(new PdfExternalSignatureRequest(preparation));
         if (signatureContents is null || signatureContents.Length == 0) {
             throw new InvalidOperationException(signer.Name + " returned empty signature contents.");
@@ -24,7 +31,8 @@ public static partial class PdfIncrementalUpdater {
             completedPdf,
             preparation,
             signer.Name,
-            signatureContents.Length);
+            signatureContents.Length,
+            preparation.GetCompletionReadOptions(completedPdf.LongLength));
     }
 
     /// <summary>Signs a PDF from a readable stream through caller-owned key infrastructure.</summary>

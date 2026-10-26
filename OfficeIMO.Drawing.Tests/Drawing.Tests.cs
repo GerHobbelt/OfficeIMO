@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using OfficeIMO.Drawing;
 using Xunit;
 
@@ -34,7 +35,7 @@ public partial class DrawingTests {
         Assert.Equal(OfficeColor.White, options.BackgroundColor);
 
         OfficeImageExportResult customized = builder
-            .ForHighResolution()
+            .ForPrint(192D)
             .AsSvg()
             .WithScale(1.5D)
             .WithBackground(OfficeColor.Transparent)
@@ -77,7 +78,7 @@ public partial class DrawingTests {
         var builder = new TestImageExportBatchBuilder(options);
 
         IReadOnlyList<OfficeImageExportResult> results = builder
-            .ForHighResolution()
+            .ForPrint(192D)
             .AsSvg()
             .WithBackground(OfficeColor.White)
             .Export();
@@ -85,7 +86,8 @@ public partial class DrawingTests {
         OfficeImageExportResult result = Assert.Single(results);
         Assert.Equal(OfficeImageExportFormat.Svg, result.Format);
         Assert.Equal(200, result.Width);
-        Assert.Equal(2D, options.Scale);
+        Assert.Equal(1D, options.Scale);
+        Assert.Equal(192D, options.TargetDpi);
         Assert.Equal(OfficeColor.White, options.BackgroundColor);
     }
 
@@ -3324,6 +3326,38 @@ public partial class DrawingTests {
     }
 
     [Fact]
+    public void ImageExportFontDiagnosticsMirrorScopedFallbackAndNestedDrawingResolution() {
+        string emoji = char.ConvertFromUtf32(0x1F600);
+        var fonts = new OfficeFontFaceCollection()
+            .Add("Emoji Demo", CreateMinimalTrueTypeFont(CreateFormat12Cmap(0x1F600)));
+
+        Assert.Null(fonts.CreateSubstitutionDiagnostic(emoji, "Emoji Demo"));
+        OfficeImageExportDiagnostic diagnostic = Assert.IsType<OfficeImageExportDiagnostic>(
+            fonts.CreateSubstitutionDiagnostic(emoji, "Missing Demo, Emoji Demo", source: "test"));
+        Assert.Equal(OfficeImageExportDiagnosticCodes.FontSubstituted, diagnostic.Code);
+        Assert.Equal(OfficeImageExportLossKind.Approximation, diagnostic.LossKind);
+        Assert.Equal("test", diagnostic.Source);
+        Assert.Contains("Emoji Demo", diagnostic.Message, StringComparison.Ordinal);
+
+        var nested = new OfficeDrawing(30D, 20D);
+        nested.Fonts.AddRange(fonts);
+        nested.AddText(
+            emoji,
+            0D,
+            0D,
+            30D,
+            20D,
+            new OfficeFontInfo("Missing Demo, Emoji Demo", 12D));
+        var drawing = new OfficeDrawing(40D, 30D).AddDrawing(nested, 0D, 0D);
+        var diagnostics = new List<OfficeImageExportDiagnostic>();
+
+        drawing.AppendFontDiagnostics(diagnostics, "nested");
+
+        OfficeImageExportDiagnostic nestedDiagnostic = Assert.Single(diagnostics);
+        Assert.Equal("nested", nestedDiagnostic.Source);
+    }
+
+    [Fact]
     public void OfficeDrawingCarriesScopedFontsAcrossNestedDrawings() {
         byte[] fontData = CreateMinimalTrueTypeFont(CreateFormat12Cmap(0x1F600));
         var nested = new OfficeDrawing(20D, 20D).AddFont("Nested Demo", fontData, OfficeFontStyle.Bold);
@@ -3454,7 +3488,10 @@ public partial class DrawingTests {
     [InlineData("image/png", OfficeImageFormat.Png, true)]
     [InlineData("image/jpg", OfficeImageFormat.Jpeg, true)]
     [InlineData("image/jpeg; charset=binary", OfficeImageFormat.Jpeg, true)]
-    [InlineData("image/webp", OfficeImageFormat.Webp, false)]
+    [InlineData("image/gif", OfficeImageFormat.Gif, true)]
+    [InlineData("image/bmp", OfficeImageFormat.Bmp, true)]
+    [InlineData("image/tiff", OfficeImageFormat.Tiff, true)]
+    [InlineData("image/webp", OfficeImageFormat.Webp, true)]
     [InlineData("application/octet-stream", OfficeImageFormat.Unknown, false)]
     public void OfficeImagePdfCompatibilityMapsSupportedContentTypes(string contentType, OfficeImageFormat expectedFormat, bool expectedSupported) {
         bool supported = OfficeImagePdfCompatibility.TryGetSupportedContentTypeFormat(contentType, out OfficeImageFormat format);
@@ -3462,6 +3499,24 @@ public partial class DrawingTests {
         Assert.Equal(expectedSupported, supported);
         Assert.Equal(expectedFormat, format);
         Assert.Equal(expectedSupported, OfficeImagePdfCompatibility.IsSupportedContentType(contentType));
+    }
+
+    [Theory]
+    [InlineData(OfficeImageExportFormat.Tiff, OfficeImageFormat.Tiff)]
+    [InlineData(OfficeImageExportFormat.Webp, OfficeImageFormat.Webp)]
+    public void OfficeImagePdfCompatibilityAcceptsDrawingNormalizedRaster(
+        OfficeImageExportFormat format,
+        OfficeImageFormat expectedFormat) {
+        byte[] source = OfficeRasterImageEncoder.Encode(
+            new OfficeRasterImage(2, 1, OfficeColor.Red),
+            format);
+
+        Assert.True(OfficeImagePdfCompatibility.TryValidate(
+            source,
+            out OfficeImageInfo? imageInfo,
+            out string? unsupportedReason), unsupportedReason);
+        Assert.NotNull(imageInfo);
+        Assert.Equal(expectedFormat, imageInfo!.Format);
     }
 
     [Fact]
@@ -3983,38 +4038,86 @@ public partial class DrawingTests {
 
     private sealed class TestImageExportBuilder : OfficeImageExportBuilder<TestImageExportBuilder, TestImageExportOptions> {
         internal TestImageExportBuilder(TestImageExportOptions options)
-            : base(options, (format, current) => new OfficeImageExportResult(
-                format,
-                (int)Math.Ceiling(100D * current.Scale),
-                (int)Math.Ceiling(50D * current.Scale),
-                CreateTestImageBytes(format),
-                "test",
-                current.BackgroundColor.ToString())) {
+            : base(
+                options,
+                CreateTestImageExportResult,
+                (format, current, cancellationToken) => {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return Task.FromResult(CreateTestImageExportResult(format, current));
+                }) {
         }
     }
 
     private sealed class TestImageExportBatchBuilder : OfficeImageExportBatchBuilder<TestImageExportBatchBuilder, TestImageExportOptions> {
-        internal TestImageExportBatchBuilder(TestImageExportOptions options)
-            : base(options, (format, current) => new[] {
-                new OfficeImageExportResult(
-                    format,
-                    (int)Math.Ceiling(100D * current.Scale),
-                    (int)Math.Ceiling(50D * current.Scale),
-                    CreateTestImageBytes(format),
-                    "batch",
-                    current.BackgroundColor.ToString())
-            }) {
+        internal TestImageExportBatchBuilder(TestImageExportOptions options, params string[] names)
+            : this(options, null, names) {
+        }
+
+        internal TestImageExportBatchBuilder(
+            TestImageExportOptions options,
+            Action? onProduced,
+            params string[] names)
+            : base(
+                options,
+                (format, current) => CreateTestBatchResults(format, current, names),
+                (format, current, consumer, cancellationToken) => {
+                    foreach (OfficeImageExportResult result in CreateTestBatchResults(format, current, names)) {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        onProduced?.Invoke();
+                        consumer(result);
+                    }
+                }) {
         }
     }
 
-    private static byte[] CreateTestImageBytes(OfficeImageExportFormat format) {
+    private static IReadOnlyList<OfficeImageExportResult> CreateTestBatchResults(
+        OfficeImageExportFormat format,
+        TestImageExportOptions current,
+        string[] names) =>
+        (names.Length == 0 ? new[] { "batch" } : names)
+            .Select(name => new OfficeImageExportResult(
+                format,
+                (int)Math.Ceiling(100D * current.Scale),
+                (int)Math.Ceiling(50D * current.Scale),
+                CreateTestImageBytes(
+                    format,
+                    (int)Math.Ceiling(100D * current.Scale),
+                    (int)Math.Ceiling(50D * current.Scale),
+                    current.RasterEncoding),
+                name,
+                current.BackgroundColor.ToString()))
+            .ToArray();
+
+    private static OfficeImageExportResult CreateTestImageExportResult(
+        OfficeImageExportFormat format,
+        TestImageExportOptions current) =>
+        new OfficeImageExportResult(
+            format,
+            (int)Math.Ceiling(100D * current.Scale),
+            (int)Math.Ceiling(50D * current.Scale),
+            CreateTestImageBytes(
+                format,
+                (int)Math.Ceiling(100D * current.Scale),
+                (int)Math.Ceiling(50D * current.Scale),
+                current.RasterEncoding),
+            "test",
+            current.BackgroundColor.ToString());
+
+    private static byte[] CreateTestImageBytes(
+        OfficeImageExportFormat format,
+        int width,
+        int height,
+        OfficeRasterEncodingOptions encodingOptions) {
         if (format == OfficeImageExportFormat.Svg) {
-            return Encoding.UTF8.GetBytes("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>");
+            return Encoding.UTF8.GetBytes(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + width +
+                "\" height=\"" + height + "\"></svg>");
         }
 
         return OfficeRasterImageEncoder.Encode(
-            new OfficeRasterImage(1, 1, OfficeColor.CornflowerBlue),
-            format);
+            new OfficeRasterImage(width, height, OfficeColor.CornflowerBlue),
+            format,
+            encodingOptions);
     }
 
     [Fact]

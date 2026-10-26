@@ -1,6 +1,6 @@
 namespace OfficeIMO.Pdf;
 
-public static partial class PdfAnnotationEditor {
+internal static partial class PdfAnnotationEditor {
     /// <summary>Adds a visual Stamp annotation to an existing page using the shared full-rewrite or append-only planner.</summary>
     public static PdfAnnotationEditResult AddStampAnnotation(byte[] pdf, PdfStampAnnotationOptions? options = null) =>
         AddStampAnnotation(pdf, options, readOptions: null);
@@ -66,12 +66,12 @@ public static partial class PdfAnnotationEditor {
                 changedObjectNumbers,
                 encryptionHandler: GetAppendEncryptionHandler(objects, trailerRaw, readOptions, mutationPlan.Preflight.Probe.Security));
             PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, appended, mutationPlan, readOptions);
-            return new PdfAnnotationEditResult(appended, 1, mutationPlan, proof);
+            return new PdfAnnotationEditResult(appended, 1, mutationPlan, proof, readOptions: readOptions);
         }
 
         PdfObjectGraphPruner.PruneUnreachableObjects(objects, catalogObjectNumber);
-        byte[] rewritten = RewriteAllObjects(objects, catalogObjectNumber, PdfReadDocument.Load(pdf, readOptions).Metadata, pdf);
-        return CreateFullRewriteResult(pdf, rewritten, 1, mutationPlan, annotationsChanged: true);
+        byte[] rewritten = RewriteAllObjects(objects, catalogObjectNumber, PdfReadDocument.Open(pdf, readOptions).Metadata, pdf);
+        return CreateFullRewriteResult(pdf, rewritten, 1, mutationPlan, annotationsChanged: true, readOptions: readOptions);
     }
 
     private static int AddAnnotationReference(

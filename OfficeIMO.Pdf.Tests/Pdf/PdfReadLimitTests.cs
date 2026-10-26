@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Threading.Tasks;
 using OfficeIMO.Pdf;
 using OfficeIMO.Pdf.Filters;
 using Xunit;
@@ -8,13 +9,156 @@ namespace OfficeIMO.Tests.Pdf;
 
 public class PdfReadLimitTests {
     [Fact]
+    public void DefaultReadLimitsAreIndependentAcrossOptionInstances() {
+        var first = new PdfReadOptions();
+        var second = new PdfReadOptions();
+        var setter = typeof(PdfReadLimits).GetProperty(nameof(PdfReadLimits.MaxInputBytes))!;
+
+        setter.SetValue(first.Limits, 1L);
+
+        Assert.Equal(1L, first.Limits.MaxInputBytes);
+        Assert.Equal(512L * 1024L * 1024L, second.Limits.MaxInputBytes);
+        Assert.Equal(512L * 1024L * 1024L, PdfReadOptions.Default.Limits.MaxInputBytes);
+        Assert.NotSame(PdfReadOptions.Default, PdfReadOptions.Default);
+        Assert.NotSame(PdfReadLimits.Default, PdfReadLimits.Default);
+    }
+
+    [Fact]
+    public void ExternalSignatureCompletionAllowsItsOwnPreparedRevisionBeyondTheSourceBudget() {
+        byte[] pdf = BuildPdf();
+        var readOptions = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = pdf.Length }
+        };
+
+        PdfDocument source = PdfDocument.Open(pdf, readOptions);
+        PdfExternalSignaturePreparation preparation = source.PrepareExternalSignature(
+            new PdfExternalSignatureOptions {
+                FieldName = "BudgetedSignature",
+                ReservedSignatureContentsBytes = 512
+            });
+
+        Assert.True(preparation.PreparedPdf.LongLength > readOptions.Limits.MaxInputBytes);
+        PdfDocument completed = preparation.Complete(new byte[] { 0x30, 0x01, 0x00 });
+
+        Assert.True(completed.ToBytes().LongLength > readOptions.Limits.MaxInputBytes);
+        Assert.Single(completed.Inspect().FormFields);
+    }
+
+    [Fact]
+    public void OneShotExternalSignatureEnforcesStoredPageLimitBeforeCallingSigner() {
+        byte[] twoPages = PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("First page"))
+            .PageBreak()
+            .Paragraph(paragraph => paragraph.Text("Second page"))
+            .ToBytes();
+        var readOptions = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxPages = 1 }
+        };
+        var signer = new RecordingExternalSigner();
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(
+            () => PdfDocument.Open(twoPages, readOptions).SignExternal(signer));
+
+        Assert.Equal(PdfReadLimitKind.Pages, exception.Kind);
+        Assert.False(signer.WasCalled);
+    }
+
+    [Fact]
+    public void OneShotExternalSignatureCompletionRetainsPolicyForItsOwnedOutput() {
+        byte[] pdf = BuildPdf();
+        var readOptions = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = pdf.Length }
+        };
+
+        PdfExternalSignatureCompletion completion = PdfDocument.Open(pdf, readOptions)
+            .SignExternal(new RecordingExternalSigner());
+
+        Assert.True(completion.Pdf.LongLength > readOptions.Limits.MaxInputBytes);
+        Assert.Single(completion.ToDocument().Inspect().FormFields);
+    }
+
+    [Fact]
+    public void AnnotationResultAllowsItsOwnRevisionBeyondTheSourceBudget() {
+        byte[] pdf = BuildPdf();
+        var readOptions = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = pdf.Length }
+        };
+
+        PdfAnnotationEditResult result = PdfAnnotationEditor.AddAnnotation(
+            pdf,
+            new PdfAnnotationCreateOptions {
+                Subtype = "Text",
+                Contents = "Budgeted annotation"
+            },
+            readOptions);
+
+        Assert.True(result.Bytes.LongLength > readOptions.Limits.MaxInputBytes);
+        Assert.Single(result.ToDocument().Inspect().GetAnnotationsBySubtype("Text"));
+    }
+
+    [Fact]
+    public void MergeAllowsItsOwnedOutputBeyondThePrimarySourceBudget() {
+        byte[] first = BuildPdf();
+        byte[] second = PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("Second merge source"))
+            .ToBytes();
+        var readOptions = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = first.Length }
+        };
+
+        PdfDocument merged = PdfDocument.Merge(
+            PdfDocument.Open(first, readOptions),
+            PdfDocument.Open(second));
+
+        Assert.True(merged.ToBytes().LongLength > readOptions.Limits.MaxInputBytes);
+        Assert.Equal(2, merged.Inspect().PageCount);
+    }
+
+    [Fact]
+    public void WebOptimizationAllowsItsOwnedCandidateBeyondTheSourceBudget() {
+        byte[] pdf = BuildPdf();
+        var readOptions = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = pdf.Length }
+        };
+
+        PdfOptimizationActionResult result = PdfDocument.Open(pdf, readOptions)
+            .Optimize(PdfOptimizationProfile.Web);
+
+        Assert.True(result.Bytes.LongLength > readOptions.Limits.MaxInputBytes);
+        Assert.Single(result.ToDocument().Inspect().Pages);
+    }
+
+    [Fact]
+    public void PersistedExternalSignatureCompletionEnforcesStoredPageLimitsBeforeMutation() {
+        byte[] twoPages = PdfDocument.Create()
+            .Paragraph(paragraph => paragraph.Text("First page"))
+            .PageBreak()
+            .Paragraph(paragraph => paragraph.Text("Second page"))
+            .ToBytes();
+        PdfExternalSignaturePreparation preparation = PdfDocument.Open(twoPages)
+            .PrepareExternalSignature(new PdfExternalSignatureOptions {
+                FieldName = "PersistedSignature",
+                ReservedSignatureContentsBytes = 512
+            });
+        var readOptions = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxPages = 1 }
+        };
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(
+            () => PdfDocument.Open(preparation.PreparedPdf, readOptions)
+                .CompleteExternalSignature(new byte[] { 0x30, 0x01, 0x00 }));
+
+        Assert.Equal(PdfReadLimitKind.Pages, exception.Kind);
+    }
+
+    [Fact]
     public void InputByteBudgetStopsBeforeObjectScanning() {
         byte[] pdf = BuildPdf();
         var options = new PdfReadOptions {
             Limits = new PdfReadLimits { MaxInputBytes = 16 }
         };
 
-        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(pdf, options));
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(pdf, options));
 
         Assert.Equal(PdfReadLimitKind.InputBytes, exception.Kind);
         Assert.Equal(16, exception.Limit);
@@ -29,10 +173,124 @@ public class PdfReadLimitTests {
             Limits = new PdfReadLimits { MaxInputBytes = 16 }
         };
 
-        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(stream, options));
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(stream, options));
 
         Assert.Equal(PdfReadLimitKind.InputBytes, exception.Kind);
         Assert.Equal(0, stream.Position);
+    }
+
+    [Fact]
+    public void PdfDocumentOpenAppliesTheSameInputBudgetToBytesPathAndStream() {
+        byte[] pdf = BuildPdf();
+        string path = Path.Combine(Path.GetTempPath(), "officeimo-pdf-limit-" + Guid.NewGuid().ToString("N") + ".pdf");
+        var options = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = 16 }
+        };
+
+        try {
+            File.WriteAllBytes(path, pdf);
+            using var stream = new MemoryStream(pdf);
+            stream.Position = stream.Length;
+            long originalPosition = stream.Position;
+
+            PdfReadLimitException byteException = Assert.Throws<PdfReadLimitException>(
+                () => PdfDocument.Open(pdf, options));
+            PdfReadLimitException pathException = Assert.Throws<PdfReadLimitException>(
+                () => PdfDocument.Open(path, options));
+            PdfReadLimitException streamException = Assert.Throws<PdfReadLimitException>(
+                () => PdfDocument.Open(stream, options));
+
+            Assert.Equal(PdfReadLimitKind.InputBytes, byteException.Kind);
+            Assert.Equal(PdfReadLimitKind.InputBytes, pathException.Kind);
+            Assert.Equal(PdfReadLimitKind.InputBytes, streamException.Kind);
+            Assert.Equal(originalPosition, stream.Position);
+        } finally {
+            if (File.Exists(path)) {
+                File.Delete(path);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PdfDocumentOpenAsyncAppliesTheInputBudgetAndRestoresSeekableStreams() {
+        byte[] pdf = BuildPdf();
+        using var stream = new MemoryStream(pdf);
+        stream.Position = stream.Length;
+        long originalPosition = stream.Position;
+        var options = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = 16 }
+        };
+
+        PdfReadLimitException exception = await Assert.ThrowsAsync<PdfReadLimitException>(
+            () => PdfDocument.OpenAsync(stream, options));
+
+        Assert.Equal(PdfReadLimitKind.InputBytes, exception.Kind);
+        Assert.Equal(originalPosition, stream.Position);
+    }
+
+    [Fact]
+    public void PdfDocumentOpenBoundsNonSeekableStreamsWithoutReadingUnboundedInput() {
+        byte[] pdf = BuildPdf();
+        using var stream = new ChunkedNonSeekableStream(pdf, maximumChunkSize: 3);
+        var options = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = 16 }
+        };
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(
+            () => PdfDocument.Open(stream, options));
+
+        Assert.Equal(PdfReadLimitKind.InputBytes, exception.Kind);
+        Assert.InRange(stream.BytesRead, 17, 19);
+    }
+
+    [Fact]
+    public void PdfDocumentPreflightBoundsPathsAndStreamsBeforeUnboundedBuffering() {
+        byte[] pdf = BuildPdf();
+        string path = Path.Combine(Path.GetTempPath(), "officeimo-pdf-preflight-limit-" + Guid.NewGuid().ToString("N") + ".pdf");
+        var restrictive = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = 16 }
+        };
+
+        try {
+            File.WriteAllBytes(path, pdf);
+            PdfReadLimitException pathException = Assert.Throws<PdfReadLimitException>(
+                () => PdfDocument.Preflight(path, restrictive));
+
+            using var seekable = new MemoryStream(pdf);
+            PdfReadLimitException streamException = Assert.Throws<PdfReadLimitException>(
+                () => PdfDocument.Preflight(seekable, restrictive));
+
+            using var nonSeekable = new ChunkedNonSeekableStream(pdf, maximumChunkSize: 3);
+            PdfReadLimitException nonSeekableException = Assert.Throws<PdfReadLimitException>(
+                () => PdfDocument.Preflight(nonSeekable, restrictive));
+
+            Assert.Equal(PdfReadLimitKind.InputBytes, pathException.Kind);
+            Assert.Equal(PdfReadLimitKind.InputBytes, streamException.Kind);
+            Assert.Equal(0, seekable.Position);
+            Assert.Equal(PdfReadLimitKind.InputBytes, nonSeekableException.Kind);
+            Assert.InRange(nonSeekable.BytesRead, 17, 19);
+        } finally {
+            if (File.Exists(path)) {
+                File.Delete(path);
+            }
+        }
+    }
+
+    [Fact]
+    public void PdfDocumentPreflightConsumesSeekableStreamsFromTheirCurrentPosition() {
+        byte[] pdf = BuildPdf();
+        byte[] prefixed = new byte[pdf.Length + 7];
+        Buffer.BlockCopy(pdf, 0, prefixed, 7, pdf.Length);
+        using var stream = new MemoryStream(prefixed);
+        stream.Position = 7;
+        var options = new PdfReadOptions {
+            Limits = new PdfReadLimits { MaxInputBytes = pdf.Length }
+        };
+
+        PdfDocumentPreflight preflight = PdfDocument.Preflight(stream, options);
+
+        Assert.True(preflight.CanRead);
+        Assert.Equal(stream.Length, stream.Position);
     }
 
     [Fact]
@@ -42,7 +300,7 @@ public class PdfReadLimitTests {
             Limits = new PdfReadLimits { MaxIndirectObjects = 1 }
         };
 
-        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(pdf, options));
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(pdf, options));
 
         Assert.Equal(PdfReadLimitKind.IndirectObjects, exception.Kind);
         Assert.True(exception.Actual > exception.Limit);
@@ -55,7 +313,7 @@ public class PdfReadLimitTests {
             Limits = new PdfReadLimits { MaxRawStreamBytes = 4 }
         };
 
-        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(pdf, options));
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(pdf, options));
 
         Assert.Equal(PdfReadLimitKind.RawStreamBytes, exception.Kind);
         Assert.True(exception.Actual > exception.Limit);
@@ -167,7 +425,7 @@ public class PdfReadLimitTests {
         var options = new PdfReadOptions {
             Limits = new PdfReadLimits { MaxDecodedStreamBytes = 8 }
         };
-        PdfReadDocument document = PdfReadDocument.Load(pdf, options);
+        PdfReadDocument document = PdfReadDocument.Open(pdf, options);
 
         PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => document.Pages[0].ExtractText());
 
@@ -182,7 +440,7 @@ public class PdfReadLimitTests {
             Limits = new PdfReadLimits { MaxIndirectObjects = 0 }
         };
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => PdfReadDocument.Load(pdf, options));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PdfReadDocument.Open(pdf, options));
     }
 
     [Fact]
@@ -226,7 +484,7 @@ public class PdfReadLimitTests {
             Limits = new PdfReadLimits { MaxRevisions = 1 }
         };
 
-        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(pdf, options));
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(pdf, options));
 
         Assert.Equal(PdfReadLimitKind.Revisions, exception.Kind);
         Assert.Equal(1, exception.Limit);
@@ -242,13 +500,13 @@ public class PdfReadLimitTests {
             .ToBytes();
         byte[] nestedTree = BuildNestedPageTreePdf();
 
-        PdfReadLimitException pageException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(
+        PdfReadLimitException pageException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(
             twoPages,
             new PdfReadOptions { Limits = new PdfReadLimits { MaxPages = 1 } }));
-        PdfReadLimitException nodeException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(
+        PdfReadLimitException nodeException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(
             nestedTree,
             new PdfReadOptions { Limits = new PdfReadLimits { MaxPageTreeNodes = 1 } }));
-        PdfReadLimitException depthException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(
+        PdfReadLimitException depthException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(
             nestedTree,
             new PdfReadOptions { Limits = new PdfReadLimits { MaxPageTreeDepth = 1 } }));
 
@@ -265,10 +523,10 @@ public class PdfReadLimitTests {
             .ToBytes();
         byte[] nestedFields = BuildNestedFormFieldPdf();
 
-        PdfReadLimitException countException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(
+        PdfReadLimitException countException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(
             twoFields,
             new PdfReadOptions { Limits = new PdfReadLimits { MaxFormFields = 1 } }));
-        PdfReadLimitException depthException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Load(
+        PdfReadLimitException depthException = Assert.Throws<PdfReadLimitException>(() => PdfReadDocument.Open(
             nestedFields,
             new PdfReadOptions { Limits = new PdfReadLimits { MaxFormFieldDepth = 1 } }));
 
@@ -280,25 +538,34 @@ public class PdfReadLimitTests {
     public void AnnotationAndContentOperationBudgetsStopPageParsing() {
         byte[] annotations = BuildAnnotatedPagePdf();
         byte[] content = BuildPdf();
-        PdfReadDocument annotationDocument = PdfReadDocument.Load(
+        PdfReadDocument annotationDocument = PdfReadDocument.Open(
             annotations,
             new PdfReadOptions { Limits = new PdfReadLimits { MaxAnnotationsPerPage = 1 } });
-        PdfReadDocument contentDocument = PdfReadDocument.Load(
+        PdfReadDocument contentDocument = PdfReadDocument.Open(
             content,
             new PdfReadOptions { Limits = new PdfReadLimits { MaxContentOperations = 1 } });
+        PdfReadDocument operandDocument = PdfReadDocument.Open(
+            content,
+            new PdfReadOptions { Limits = new PdfReadLimits { MaxContentOperands = 1 } });
 
         PdfReadLimitException annotationException = Assert.Throws<PdfReadLimitException>(() => annotationDocument.Pages[0].GetAnnotations());
+        PdfReadLimitException annotationDrawingException = Assert.Throws<PdfReadLimitException>(() => annotationDocument.Pages[0].ToDrawing());
         PdfReadLimitException contentException = Assert.Throws<PdfReadLimitException>(() => contentDocument.Pages[0].ExtractText());
         PdfReadLimitException drawingException = Assert.Throws<PdfReadLimitException>(() => contentDocument.Pages[0].ToDrawing());
+        PdfReadLimitException operandException = Assert.Throws<PdfReadLimitException>(() => operandDocument.Pages[0].ExtractText());
+        PdfReadLimitException drawingOperandException = Assert.Throws<PdfReadLimitException>(() => operandDocument.Pages[0].ToDrawing());
 
         Assert.Equal(PdfReadLimitKind.AnnotationsPerPage, annotationException.Kind);
+        Assert.Equal(PdfReadLimitKind.AnnotationsPerPage, annotationDrawingException.Kind);
         Assert.Equal(PdfReadLimitKind.ContentOperations, contentException.Kind);
         Assert.Equal(PdfReadLimitKind.ContentOperations, drawingException.Kind);
+        Assert.Equal(PdfReadLimitKind.ContentOperands, operandException.Kind);
+        Assert.Equal(PdfReadLimitKind.ContentOperands, drawingOperandException.Kind);
     }
 
     [Fact]
     public void ContentNestingBudgetStopsDeepFormXObjects() {
-        PdfReadDocument document = PdfReadDocument.Load(
+        PdfReadDocument document = PdfReadDocument.Open(
             BuildNestedFormXObjectPdf(),
             new PdfReadOptions { Limits = new PdfReadLimits { MaxContentNestingDepth = 1 } });
 
@@ -339,6 +606,7 @@ public class PdfReadLimitTests {
                 MaxFormFieldDepth = 32,
                 MaxAnnotationsPerPage = 128,
                 MaxContentOperations = 2_000,
+                MaxContentOperands = 4_000,
                 MaxContentNestingDepth = 16
             }
         };
@@ -394,7 +662,7 @@ public class PdfReadLimitTests {
             }
 
             try {
-                _ = PdfReadDocument.Load(candidate, options);
+                _ = PdfReadDocument.Open(candidate, options);
             } catch (Exception exception) when (
                 exception is ArgumentException ||
                 exception is FormatException ||
@@ -487,7 +755,7 @@ public class PdfReadLimitTests {
     private static void ExerciseCandidate(byte[] candidate, PdfReadOptions options) {
         try {
             _ = PdfSyntax.ParseObjects(candidate, options);
-            PdfReadDocument document = PdfReadDocument.Load(candidate, options);
+            PdfReadDocument document = PdfReadDocument.Open(candidate, options);
             for (int pageIndex = 0; pageIndex < document.Pages.Count; pageIndex++) {
                 PdfReadPage page = document.Pages[pageIndex];
                 _ = page.GetTextSpans();
@@ -532,5 +800,54 @@ public class PdfReadLimitTests {
         }
 
         return bytes;
+    }
+
+    private sealed class ChunkedNonSeekableStream : Stream {
+        private readonly byte[] _bytes;
+        private readonly int _maximumChunkSize;
+        private int _position;
+
+        internal ChunkedNonSeekableStream(byte[] bytes, int maximumChunkSize) {
+            _bytes = bytes;
+            _maximumChunkSize = maximumChunkSize;
+        }
+
+        internal int BytesRead => _position;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position {
+            get => _position;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) {
+            int available = _bytes.Length - _position;
+            if (available <= 0) {
+                return 0;
+            }
+
+            int read = Math.Min(Math.Min(count, _maximumChunkSize), available);
+            Buffer.BlockCopy(_bytes, _position, buffer, offset, read);
+            _position += read;
+            return read;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class RecordingExternalSigner : IPdfExternalSigner {
+        public string Name => "Recording test signer";
+
+        internal bool WasCalled { get; private set; }
+
+        public byte[] Sign(PdfExternalSignatureRequest request) {
+            WasCalled = true;
+            return new byte[] { 0x30, 0x01, 0x00 };
+        }
     }
 }

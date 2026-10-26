@@ -1,6 +1,6 @@
 namespace OfficeIMO.Pdf;
 
-public static partial class PdfAnnotationEditor {
+internal static partial class PdfAnnotationEditor {
     /// <summary>Flattens selected supported visual annotations through a proven full rewrite.</summary>
     public static PdfAnnotationEditResult FlattenAnnotations(byte[] pdf, PdfAnnotationFlattenOptions? options = null) =>
         FlattenAnnotations(pdf, options, readOptions: null);
@@ -11,9 +11,11 @@ public static partial class PdfAnnotationEditor {
         PdfMutationPlan plan = PdfMutationPlanner.RequireFullRewrite(pdf, PdfMutationOperation.ModifyAnnotations, readOptions);
         int before = CountSelectedAnnotations(PdfInspector.Inspect(pdf, readOptions), options);
         byte[] output = PdfAnnotationFlattener.FlattenVisualAnnotations(pdf, options, readOptions);
-        int after = CountSelectedAnnotations(PdfInspector.Inspect(output), options);
+        int after = CountSelectedAnnotations(
+            PdfInspector.Inspect(output, PdfReadOptions.WithMinimumInputBytes(readOptions, output.LongLength)),
+            options);
         int affected = Math.Max(0, before - after);
-        return CreateFullRewriteResult(pdf, output, affected, plan, annotationsChanged: affected > 0);
+        return CreateFullRewriteResult(pdf, output, affected, plan, annotationsChanged: affected > 0, readOptions: readOptions);
     }
 
     private static int CountSelectedAnnotations(PdfDocumentInfo info, PdfAnnotationFlattenOptions? options) {

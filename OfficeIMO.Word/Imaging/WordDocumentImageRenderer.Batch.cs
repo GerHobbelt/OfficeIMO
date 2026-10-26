@@ -1,31 +1,66 @@
 using OfficeIMO.Drawing;
+using System.Threading;
 
 namespace OfficeIMO.Word {
     internal static partial class WordDocumentImageRenderer {
         internal static IReadOnlyList<OfficeImageExportResult> RenderPages(WordDocument document,
             OfficeImageExportFormat format, WordImageExportOptions options) {
-            IReadOnlyList<int> sectionPageCounts = EstimateSectionPageCounts(document);
-            (int firstPage, int count) = ResolveBatchPageRange(options, sectionPageCounts);
-            var results = new List<OfficeImageExportResult>(count);
-            for (int index = 0; index < count; index++) {
-                WordImageExportOptions pageOptions = options.Clone();
-                pageOptions.PageIndex = firstPage + index;
-                WordDocumentVisualSnapshot snapshot = CreateSnapshot(document, pageOptions, sectionPageCounts);
-                results.Add(RenderSnapshot(snapshot, format, pageOptions));
-            }
-
+            var results = new List<OfficeImageExportResult>();
+            RenderPages(document, format, options, results.Add);
             return results.AsReadOnly();
         }
 
+        internal static void RenderPages(
+            WordDocument document,
+            OfficeImageExportFormat format,
+            WordImageExportOptions options,
+            OfficeImageExportConsumer consumer,
+            CancellationToken cancellationToken = default) {
+            if (consumer == null) throw new ArgumentNullException(nameof(consumer));
+            IReadOnlyList<int> sectionPageCounts = EstimateSectionPageCounts(
+                document,
+                cancellationToken,
+                options.CancellationCheckpoint);
+            (int firstPage, int count) = ResolveBatchPageRange(options, sectionPageCounts);
+            int[] pages = Enumerable.Range(firstPage, count).ToArray();
+            OfficeImageExportBatchProcessor.ForEachOrdered(
+                pages,
+                options.MaximumDegreeOfParallelism,
+                (pageIndex, _, token) => {
+                    WordImageExportOptions pageOptions = options.Clone();
+                    pageOptions.PageIndex = pageIndex;
+                    WordDocumentVisualSnapshot snapshot = CreateSnapshot(
+                        document,
+                        pageOptions,
+                        sectionPageCounts,
+                        token);
+                    token.ThrowIfCancellationRequested();
+                    return RenderSnapshot(snapshot, format, pageOptions, token);
+                },
+                consumer,
+                cancellationToken,
+                options);
+        }
+
         internal static IReadOnlyList<WordDocumentVisualSnapshot> CreateSnapshots(WordDocument document,
-            WordImageExportOptions options) {
-            IReadOnlyList<int> sectionPageCounts = EstimateSectionPageCounts(document);
+            WordImageExportOptions options,
+            CancellationToken cancellationToken = default) {
+            cancellationToken.ThrowIfCancellationRequested();
+            IReadOnlyList<int> sectionPageCounts = EstimateSectionPageCounts(
+                document,
+                cancellationToken,
+                options.CancellationCheckpoint);
             (int firstPage, int count) = ResolveBatchPageRange(options, sectionPageCounts);
             var snapshots = new List<WordDocumentVisualSnapshot>(count);
             for (int index = 0; index < count; index++) {
+                cancellationToken.ThrowIfCancellationRequested();
                 WordImageExportOptions pageOptions = options.Clone();
                 pageOptions.PageIndex = firstPage + index;
-                snapshots.Add(CreateSnapshot(document, pageOptions, sectionPageCounts));
+                snapshots.Add(CreateSnapshot(
+                    document,
+                    pageOptions,
+                    sectionPageCounts,
+                    cancellationToken));
             }
 
             return snapshots.AsReadOnly();

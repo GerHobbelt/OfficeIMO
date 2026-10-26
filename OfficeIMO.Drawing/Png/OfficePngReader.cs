@@ -12,6 +12,54 @@ public static class OfficePngReader {
     private static readonly byte[] Signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
     /// <summary>
+    /// Inspects a PNG container without decoding pixels and reports its declared APNG frame count.
+    /// Static PNG files report one frame.
+    /// </summary>
+    public static bool TryGetFrameCount(byte[]? bytes, out int frameCount) {
+        frameCount = 0;
+        try {
+            if (bytes == null || !HasSignature(bytes)) return false;
+            OfficeRasterGuards.EnsurePayloadWithinLimits(bytes.Length, "PNG payload exceeds size limits.");
+
+            bool hasHeader = false;
+            bool hasEnd = false;
+            int declaredFrameCount = 1;
+            int offset = Signature.Length;
+            while (offset + 12 <= bytes.Length) {
+                int length = ReadBigEndianInt32(bytes, offset);
+                long chunkEnd = (long)offset + 12L + length;
+                if (length < 0 || chunkEnd > bytes.Length) return false;
+
+                string type = Encoding.ASCII.GetString(bytes, offset + 4, 4);
+                int dataOffset = offset + 8;
+                if (type == "IHDR") {
+                    if (hasHeader || length != 13) return false;
+                    hasHeader = true;
+                } else if (type == "acTL") {
+                    if (!hasHeader || length != 8) return false;
+                    int candidate = ReadBigEndianInt32(bytes, dataOffset);
+                    if (candidate <= 0) return false;
+                    declaredFrameCount = candidate;
+                } else if (type == "IEND") {
+                    if (length != 0) return false;
+                    hasEnd = true;
+                    offset = (int)chunkEnd;
+                    break;
+                }
+
+                offset = (int)chunkEnd;
+            }
+
+            if (!hasHeader || !hasEnd || offset != bytes.Length) return false;
+            frameCount = declaredFrameCount;
+            return true;
+        } catch {
+            frameCount = 0;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Attempts to decode a PNG image into an RGBA raster buffer.
     /// </summary>
     public static bool TryDecode(byte[] bytes, out OfficeRasterImage? image) {
@@ -20,6 +68,7 @@ public static class OfficePngReader {
             if (bytes == null || !HasSignature(bytes)) {
                 return false;
             }
+            OfficeRasterGuards.EnsurePayloadWithinLimits(bytes.Length, "PNG payload exceeds size limits.");
 
             int width = 0;
             int height = 0;
@@ -34,7 +83,8 @@ public static class OfficePngReader {
             int offset = Signature.Length;
             while (offset + 12 <= bytes.Length) {
                 int length = ReadBigEndianInt32(bytes, offset);
-                if (length < 0 || offset + 12 + length > bytes.Length) {
+                long chunkEnd = (long)offset + 12L + length;
+                if (length < 0 || chunkEnd > bytes.Length) {
                     return false;
                 }
 
@@ -49,10 +99,10 @@ public static class OfficePngReader {
                     filterMethod = bytes[dataOffset + 11];
                     interlaceMethod = bytes[dataOffset + 12];
                 } else if (type == "PLTE") {
-                    palette = new byte[length];
+                    palette = new byte[OfficeRasterGuards.EnsureByteCount(length, "PNG palette exceeds size limits.")];
                     Buffer.BlockCopy(bytes, dataOffset, palette, 0, length);
                 } else if (type == "tRNS") {
-                    transparency = new byte[length];
+                    transparency = new byte[OfficeRasterGuards.EnsureByteCount(length, "PNG transparency data exceeds size limits.")];
                     Buffer.BlockCopy(bytes, dataOffset, transparency, 0, length);
                 } else if (type == "IDAT") {
                     idat.Write(bytes, dataOffset, length);
@@ -60,13 +110,14 @@ public static class OfficePngReader {
                     break;
                 }
 
-                offset = dataOffset + length + 4;
+                offset = (int)chunkEnd;
             }
 
             if (width <= 0 || height <= 0 || compressionMethod != 0 || filterMethod != 0 || interlaceMethod != 0 ||
                 !IsSupportedColorLayout(colorType, bitDepth, palette)) {
                 return false;
             }
+            if (!OfficeRasterGuards.TryEnsurePixelCount(width, height, out _)) return false;
 
             int bitsPerPixel = GetBitsPerPixel(colorType, bitDepth);
             int bytesPerPixel = Math.Max(1, (bitsPerPixel + 7) / 8);
@@ -77,10 +128,22 @@ public static class OfficePngReader {
 
             using MemoryStream source = new MemoryStream(compressed, 2, compressed.Length - 6);
             using DeflateStream deflate = new DeflateStream(source, CompressionMode.Decompress);
-            using MemoryStream inflated = new MemoryStream();
-            deflate.CopyTo(inflated);
-            byte[] scanlines = inflated.ToArray();
-            int stride = ((width * bitsPerPixel) + 7) / 8;
+            int stride = OfficeRasterGuards.EnsureByteCount(
+                (((long)width * bitsPerPixel) + 7L) / 8L,
+                "PNG scanline dimensions exceed size limits.");
+            int expectedScanlineBytes = OfficeRasterGuards.EnsureByteCount(
+                (long)(stride + 1) * height,
+                "PNG decompressed data exceeds size limits.");
+            byte[] scanlines = new byte[expectedScanlineBytes];
+            int inflatedOffset = 0;
+            while (inflatedOffset < scanlines.Length) {
+                int read = deflate.Read(scanlines, inflatedOffset, scanlines.Length - inflatedOffset);
+                if (read <= 0) return false;
+                inflatedOffset += read;
+            }
+            // A valid non-interlaced PNG has exactly one filter byte plus one row payload per row.
+            // Reject trailing decompressed data rather than allowing compressed input to inflate without bound.
+            if (deflate.ReadByte() != -1) return false;
             byte[] previous = new byte[stride];
             byte[] current = new byte[stride];
             OfficeRasterImage result = new OfficeRasterImage(width, height);

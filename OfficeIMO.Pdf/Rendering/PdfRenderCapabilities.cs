@@ -125,6 +125,7 @@ public static class PdfRenderCapabilities {
     internal const string UnsupportedBlendModeId = "render.resource.blend-mode-unsupported";
     internal const string UnsupportedSoftMaskId = "render.resource.soft-mask-unsupported";
     internal const string XObjectId = "render.resource.xobject-unsupported";
+    internal const string SynthesizedAnnotationAppearanceId = "render.annotation.appearance-synthesized";
     internal const string AnnotationAppearanceId = "render.resource.annotation-appearance-missing";
     internal const string OptionalImageCodecId = "render.resource.image-codec-optional";
 
@@ -140,11 +141,13 @@ public static class PdfRenderCapabilities {
     private static System.Collections.ObjectModel.ReadOnlyCollection<PdfRenderCapability> BuildRegistry() {
         var entries = new[] {
             Entry("render.annotation.appearance", "annotation", "Annotation appearance streams", PdfRenderSupportLevel.Supported, "Annotation appearance streams are projected when present."),
+            Entry(SynthesizedAnnotationAppearanceId, "annotation", "Synthesized annotation appearances", PdfRenderSupportLevel.Simplified, "A bounded appearance was synthesized from supported annotation geometry and style because the annotation did not provide a usable appearance stream."),
             Entry(AnnotationAppearanceId, "annotation", "Annotations without appearance streams", PdfRenderSupportLevel.Unsupported, "The annotation is skipped because it has no usable appearance stream."),
             Entry("render.colorspace.device", "color", "DeviceGray, DeviceRGB, and DeviceCMYK", PdfRenderSupportLevel.Supported, "Device color spaces are projected to shared Drawing colors."),
             Entry("render.colorspace.calibrated", "color", "CalGray, CalRGB, and Lab color spaces", PdfRenderSupportLevel.Simplified, "Calibrated colors are projected through managed device-color approximations."),
             Entry("render.colorspace.icc", "color", "ICCBased color spaces", PdfRenderSupportLevel.Simplified, "ICCBased colors are projected through their declared component count without applying the embedded profile."),
-            Entry(ColorSpaceId, "color", "Indexed, Separation, DeviceN, and NChannel color spaces", PdfRenderSupportLevel.Unsupported, "The color-space resource is not projected by the managed renderer."),
+            Entry("render.colorspace.indexed-image", "color", "Indexed image color spaces", PdfRenderSupportLevel.Supported, "Indexed image palettes are decoded and projected through shared Drawing images."),
+            Entry(ColorSpaceId, "color", "Indexed content painting, Separation, DeviceN, and NChannel color spaces", PdfRenderSupportLevel.Unsupported, "The selected content-paint color space is not projected by the managed renderer."),
             Entry("render.content.path", "operator", "Path construction, painting, clipping, and graphics-state operators", PdfRenderSupportLevel.Supported, "Core path and graphics-state operators are projected."),
             Entry(FlatnessId, "operator", "i flatness operator", PdfRenderSupportLevel.Simplified, "The flatness value is accepted but the shared Drawing renderer selects its own curve tolerance."),
             Entry(MarkedPointId, "operator", "MP and DP marked-point operators", PdfRenderSupportLevel.Simplified, "Marked-point metadata has no visual projection and is ignored."),

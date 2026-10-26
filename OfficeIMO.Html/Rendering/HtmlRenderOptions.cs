@@ -55,8 +55,17 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
     /// <summary>URL policy applied before links or resources enter the rendered result.</summary>
     public HtmlUrlPolicy UrlPolicy { get; set; } = HtmlUrlPolicy.CreateOfficeIMOProfile();
 
+    // Package-backed adapters can authorize an archive resource origin without authorizing the
+    // same URI scheme for hyperlinks emitted by the rendered document.
+    internal HtmlUrlPolicy? ResourceUrlPolicy { get; set; }
+
     /// <summary>Optional application-supplied asynchronous resolver for policy-approved external resources.</summary>
     public HtmlRenderResourceResolver? ResourceResolver { get; set; }
+
+    // Package-backed adapters use this path for resources that are already retained locally.
+    // External application resolvers remain asynchronous and are intentionally not blocked on
+    // by the synchronous rendering API.
+    internal HtmlRenderSynchronousResourceResolver? SynchronousResourceResolver { get; set; }
 
     /// <summary>Maximum time allowed for one resolver invocation.</summary>
     public TimeSpan ResourceTimeout { get; set; } = TimeSpan.FromSeconds(30D);
@@ -126,8 +135,7 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
 
     /// <summary>Copies shared layout and resource settings into a target-specific options instance.</summary>
     protected internal T CopyTo<T>(T target) where T : HtmlRenderOptions {
-        target.Scale = Scale;
-        target.BackgroundColor = BackgroundColor;
+        CopyImageExportOptionsTo(target);
         target.Mode = Mode;
         target.ViewportWidth = ViewportWidth;
         target.ViewportHeight = ViewportHeight;
@@ -139,7 +147,9 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
         target.DefaultLineHeight = DefaultLineHeight;
         target.BaseUri = BaseUri;
         target.UrlPolicy = (UrlPolicy ?? HtmlUrlPolicy.CreateOfficeIMOProfile()).Clone();
+        target.ResourceUrlPolicy = ResourceUrlPolicy?.Clone();
         target.ResourceResolver = ResourceResolver;
+        target.SynchronousResourceResolver = SynchronousResourceResolver;
         target.ResourceTimeout = ResourceTimeout;
         target.MaxResourceBytes = MaxResourceBytes;
         target.MaxTotalResourceBytes = MaxTotalResourceBytes;
@@ -160,8 +170,11 @@ public class HtmlRenderOptions : OfficeImageExportOptions {
         return target;
     }
 
+    internal HtmlUrlPolicy GetResourceUrlPolicy() =>
+        ResourceUrlPolicy ?? UrlPolicy ?? HtmlUrlPolicy.CreateOfficeIMOProfile();
+
     internal void Validate() {
-        OfficeImageExportOptions.ValidateScale(Scale, nameof(Scale));
+        ValidateImageExportOptions();
         ValidatePositive(ViewportWidth, nameof(ViewportWidth));
         if (ViewportHeight.HasValue) {
             ValidatePositive(ViewportHeight.Value, nameof(ViewportHeight));

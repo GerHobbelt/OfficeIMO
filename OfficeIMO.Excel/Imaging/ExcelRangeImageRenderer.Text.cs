@@ -76,7 +76,7 @@ namespace OfficeIMO.Excel {
             using (canvas.PushClipRectangle(x, y, w, h)) {
                 if (cell.RichTextRuns.Count > 0) {
                     if (richTextSupported && TryDrawRasterRichText(canvas, cell, options, scale, x, y, w, h, textInsets.Left, paddingY, availableWidth, availableHeight, rotationDegrees, stacked, out OfficeRichTextBlockLayout richLayout)) {
-                        AddRichTextFontFamilyFallbackDiagnostics(snapshot, cell, diagnostics);
+                        AddRichTextFontFamilyFallbackDiagnostics(snapshot, cell, options.Fonts, diagnostics);
                         AddTextClippingDiagnosticIfNeeded(richLayout, snapshot, cell, diagnostics);
                         if (rotated || stacked) {
                             AddRotatedTextApproximationDiagnostic(snapshot, cell, diagnostics);
@@ -88,7 +88,7 @@ namespace OfficeIMO.Excel {
                     AddRichTextLayoutApproximationDiagnostic(snapshot, cell, diagnostics);
                 }
 
-                AddCellFontFamilyFallbackDiagnosticIfNeeded(snapshot, cell, cell.Style.FontName, diagnostics);
+                AddCellFontFamilyFallbackDiagnosticIfNeeded(snapshot, cell, options.Fonts, diagnostics);
                 AddTextClippingDiagnosticIfNeeded(layout, snapshot, cell, diagnostics);
                 if (stacked) {
                     AddRotatedTextApproximationDiagnostic(snapshot, cell, diagnostics);
@@ -214,7 +214,7 @@ namespace OfficeIMO.Excel {
 
             if (cell.RichTextRuns.Count > 0) {
                 if (richTextSupported && TryAppendSvgRichText(builder, cell, options, x, y, w, h, textInsets.Left, paddingY, availableWidth, availableHeight, rotationDegrees, stacked, (text, size, family) => MeasureSvgText(textMeasurer, text, size, family), out OfficeRichTextBlockLayout richLayout)) {
-                    AddRichTextFontFamilyFallbackDiagnostics(snapshot, cell, diagnostics);
+                    AddRichTextFontFamilyFallbackDiagnostics(snapshot, cell, options.Fonts, diagnostics);
                     AddTextClippingDiagnosticIfNeeded(richLayout, snapshot, cell, diagnostics);
                     if (rotated || stacked) {
                         AddRotatedTextApproximationDiagnostic(snapshot, cell, diagnostics);
@@ -226,7 +226,7 @@ namespace OfficeIMO.Excel {
                 AddRichTextLayoutApproximationDiagnostic(snapshot, cell, diagnostics);
             }
 
-            AddCellFontFamilyFallbackDiagnosticIfNeeded(snapshot, cell, cell.Style.FontName, diagnostics);
+            AddCellFontFamilyFallbackDiagnosticIfNeeded(snapshot, cell, options.Fonts, diagnostics);
             AddTextClippingDiagnosticIfNeeded(layout, snapshot, cell, diagnostics);
             OfficeColor color = ResolveCellTextColor(cell, options);
             string clipId = "xl-text-" + cell.Row.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + cell.Column.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -838,7 +838,11 @@ namespace OfficeIMO.Excel {
         private static string ResolveCellFontFamily(ExcelCellStyleSnapshot style) =>
             string.IsNullOrWhiteSpace(style.FontName) ? "Arial, sans-serif" : style.FontName! + ", Arial, sans-serif";
 
-        private static void AddRichTextFontFamilyFallbackDiagnostics(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, List<OfficeImageExportDiagnostic>? diagnostics) {
+        private static void AddRichTextFontFamilyFallbackDiagnostics(
+            ExcelRangeVisualSnapshot snapshot,
+            ExcelVisualCell cell,
+            OfficeFontFaceCollection fonts,
+            List<OfficeImageExportDiagnostic>? diagnostics) {
             if (diagnostics == null || cell.RichTextRuns.Count == 0) {
                 return;
             }
@@ -851,24 +855,33 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                AddCellFontFamilyFallbackDiagnosticIfNeeded(snapshot, cell, fontName, diagnostics);
+                OfficeFontStyle style =
+                    (run.Bold ? OfficeFontStyle.Bold : OfficeFontStyle.Regular) |
+                    (run.Italic ? OfficeFontStyle.Italic : OfficeFontStyle.Regular);
+                OfficeImageExportDiagnostic? diagnostic = fonts.CreateSubstitutionDiagnostic(
+                    run.Text,
+                    fontName,
+                    style,
+                    GetCellDiagnosticSource(snapshot, cell));
+                if (diagnostic != null) diagnostics.Add(diagnostic);
             }
         }
 
         private static void AddCellFontFamilyFallbackDiagnosticIfNeeded(
             ExcelRangeVisualSnapshot snapshot,
             ExcelVisualCell cell,
-            string? fontName,
+            OfficeFontFaceCollection fonts,
             List<OfficeImageExportDiagnostic>? diagnostics) {
-            if (diagnostics == null || string.IsNullOrWhiteSpace(fontName) || OfficeTrueTypeFont.TryLoadFontFamily(fontName, out _) != null) {
-                return;
-            }
-
-            diagnostics.Add(new OfficeImageExportDiagnostic(
-                OfficeImageExportDiagnosticSeverity.Warning,
-                ExcelImageExportDiagnosticCodes.CellFontFamilyFallback,
-                "Cell font family '" + fontName + "' could not be loaded exactly by the dependency-free image exporter; raster text metrics and image output used the shared fallback font path.",
-                GetCellDiagnosticSource(snapshot, cell)));
+            if (diagnostics == null || string.IsNullOrWhiteSpace(cell.Style.FontName)) return;
+            OfficeFontStyle style =
+                (cell.Style.Bold ? OfficeFontStyle.Bold : OfficeFontStyle.Regular) |
+                (cell.Style.Italic ? OfficeFontStyle.Italic : OfficeFontStyle.Regular);
+            OfficeImageExportDiagnostic? diagnostic = fonts.CreateSubstitutionDiagnostic(
+                cell.Text,
+                cell.Style.FontName,
+                style,
+                GetCellDiagnosticSource(snapshot, cell));
+            if (diagnostic != null) diagnostics.Add(diagnostic);
         }
 
         private static OfficeColor ResolveCellTextColor(ExcelVisualCell cell, ExcelImageExportOptions options) {
@@ -901,7 +914,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (value < 0 || value > 180) {
-                diagnostics?.Add(new OfficeImageExportDiagnostic(
+                diagnostics?.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.CellTextRotationUnsupported,
                     "The cell uses an unsupported text rotation value and is rendered without rotation.",
@@ -913,7 +926,7 @@ namespace OfficeIMO.Excel {
         }
 
         private static void AddRotatedTextApproximationDiagnostic(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, List<OfficeImageExportDiagnostic>? diagnostics) {
-            diagnostics?.Add(new OfficeImageExportDiagnostic(
+            diagnostics?.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.CellTextRotationApproximation,
                 "Cell text rotation was rendered using the shared drawing engine, but Excel baseline, anchoring, and stacked text behavior are still approximate.",
@@ -927,7 +940,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            diagnostics?.Add(new OfficeImageExportDiagnostic(
+            diagnostics?.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.CellTextClipped,
                 "Cell text was clipped or ellipsized during image export because it does not fit the rendered cell bounds.",
@@ -939,7 +952,7 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            diagnostics?.Add(new OfficeImageExportDiagnostic(
+            diagnostics?.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.CellTextClipped,
                 "Cell rich text was clipped or ellipsized during image export because it does not fit the rendered cell bounds.",
@@ -947,7 +960,7 @@ namespace OfficeIMO.Excel {
         }
 
         private static void AddCellTextOccludedByDrawingDiagnostic(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, List<OfficeImageExportDiagnostic>? diagnostics) {
-            diagnostics?.Add(new OfficeImageExportDiagnostic(
+            diagnostics?.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.CellTextOccludedByDrawing,
                 "Cell text was suppressed because its text anchor is covered by a later drawing layer in the exported range.",
@@ -955,7 +968,7 @@ namespace OfficeIMO.Excel {
         }
 
         private static void AddRichTextLayoutApproximationDiagnostic(ExcelRangeVisualSnapshot snapshot, ExcelVisualCell cell, List<OfficeImageExportDiagnostic>? diagnostics) {
-            diagnostics?.Add(new OfficeImageExportDiagnostic(
+            diagnostics?.Add(ExcelImageExportDiagnosticClassifier.Create(
                 OfficeImageExportDiagnosticSeverity.Warning,
                 ExcelImageExportDiagnosticCodes.CellRichTextLayoutApproximation,
                 "Cell rich text runs were detected, but this layout path cannot render the runs exactly yet; the cell was rendered as plain styled text.",

@@ -74,7 +74,7 @@ var options = new ExcelPdfSaveOptions {
 }.UseProfile(PdfExportProfile.Faithful);
 
 options.TextFallbacks = PdfTextFallbackFeatures.Default;
-options.AllowSystemFontEmbedding = true;
+options.ResourcePolicy = PdfResourcePolicy.CreateTrustedHost();
 
 var result = workbook.TrySaveAsPdf("dashboard.pdf", options);
 if (!result.Succeeded) {
@@ -94,14 +94,17 @@ result.Report.RequireNoErrorWarnings();
 
 ```csharp
 using OfficeIMO.Excel.Pdf;
+using OfficeIMO.Pdf;
 
-var results = PdfExcelTableConverterExtensions.SaveAsExcel(
-    "statement.pdf",
+PdfLogicalDocument source = PdfLogicalDocument.Load("statement.pdf");
+PdfExcelTableImportReport report = source.SaveTablesAsExcel(
     "statement-tables.xlsx");
 
-foreach (var table in results) {
+foreach (var table in report.Entries) {
     Console.WriteLine($"{table.SheetName}: page {table.PageNumber}");
 }
+
+Console.WriteLine($"Non-table page content detected: {report.HasOmittedPageContent}");
 ```
 
 ### Import only selected PDF pages
@@ -110,15 +113,18 @@ foreach (var table in results) {
 using OfficeIMO.Excel.Pdf;
 using OfficeIMO.Pdf;
 
-var results = PdfExcelTableConverterExtensions.SaveAsExcel(
+PdfLogicalDocument source = PdfLogicalDocument.LoadPageRanges(
     "bank-statement.pdf",
+    PdfPageRange.From(1, 3));
+
+PdfExcelTableImportReport report = source.SaveTablesAsExcel(
     "bank-statement-q1.xlsx",
     new PdfExcelTableImportOptions {
-        PageRanges = new[] { new PdfPageRange(1, 3) },
         MaxRows = 250
     });
 
-Console.WriteLine($"Imported {results.Count} table(s).");
+Console.WriteLine($"Imported {report.Entries.Count} table(s).");
+report.RequireNoLoss(); // checks table-row truncation, not unrelated page content
 ```
 
 ## What it maps
@@ -127,7 +133,9 @@ Console.WriteLine($"Imported {results.Count} table(s).");
 - Repeated print-title rows, headers, footers, page/date/time/sheet/workbook tokens, and supported header/footer images.
 - Cell display values, common number formats, fills, font emphasis, alignment, borders, merged cells, links, row heights, column widths, conditional fills/data bars/icons, and table layout primitives.
 - Supported worksheet images and common chart snapshots through shared OfficeIMO drawing primitives.
-- Profile presets through `ExcelPdfSaveOptions.UseProfile(...)`, plus shared `TextFallbacks` and `AllowSystemFontEmbedding` controls for Unicode, symbols, and emoji.
+- Deterministic profile presets through `ExcelPdfSaveOptions.UseProfile(...)`. Applying a profile always resets the complete profile-owned option set, so reusing an options instance is history-independent.
+- Shared `TextFallbacks` and `ResourcePolicy` controls for Unicode, symbols, emoji, and host-resource trust. The balanced default uses installed fonts while denying arbitrary local and remote reads; portable deterministic mode is explicit.
+- Source-faithful zero-options output: worksheet-name headings are opt-in through `IncludeSheetHeadings`.
 - Per-operation conversion warnings through `PdfDocumentConversionResult.Report` or `PdfSaveResult.Report`.
 
 ## Boundaries
@@ -135,6 +143,7 @@ Console.WriteLine($"Imported {results.Count} table(s).");
 - Workbook reading stays in `OfficeIMO.Excel`.
 - PDF layout and writing stay in `OfficeIMO.Pdf`.
 - This package should remain a translation adapter, not a second PDF engine.
+- PDF import is intentionally table-only. `SourceScope` and `HasOmittedPageContent` report text, source vector graphics, images, links, forms, annotations, or actions that are not imported as page content.
 - Fidelity gaps should be documented as warnings or deeper current-state notes, not hidden in marketing text.
 
 ## Related packages

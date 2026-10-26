@@ -1,22 +1,65 @@
 namespace OfficeIMO.Drawing;
 
 public static partial class OfficeDrawingRasterRenderer {
-    private static void RenderEffectGroup(OfficeRasterCanvas canvas, OfficeDrawingEffectGroup effectGroup, double scale, IOfficeRasterImageCodec? imageCodec) {
+    private static void RenderEffectGroup(
+        OfficeRasterCanvas canvas,
+        OfficeDrawingEffectGroup effectGroup,
+        double scale,
+        IOfficeRasterImageCodec? imageCodec,
+        System.Threading.CancellationToken cancellationToken) {
         if (effectGroup.Opacity <= 0D) return;
-        OfficeRasterImage layer = Render(effectGroup.InnerDrawing, new OfficeDrawingRasterRenderOptions { Scale = scale, ImageCodec = imageCodec });
-        if (effectGroup.SoftMask != null) layer = ApplySoftMask(layer, effectGroup.SoftMask, scale, imageCodec);
+        cancellationToken.ThrowIfCancellationRequested();
+        OfficeRasterImage layer = Render(effectGroup.InnerDrawing, new OfficeDrawingRasterRenderOptions {
+            Scale = scale,
+            ImageCodec = imageCodec,
+            TextShapingProvider = canvas.TextShapingProvider,
+            TextShapingLanguage = canvas.TextShapingLanguage,
+            DiagnosticSink = canvas.DiagnosticSink,
+            DiagnosticSource = canvas.DiagnosticSource,
+            CancellationToken = cancellationToken
+        });
+        if (effectGroup.SoftMask != null) {
+            layer = ApplySoftMask(
+                layer,
+                effectGroup.SoftMask,
+                scale,
+                imageCodec,
+                canvas.TextShapingProvider,
+                canvas.TextShapingLanguage,
+                canvas.DiagnosticSink,
+                canvas.DiagnosticSource,
+                cancellationToken);
+        }
         OfficeTransform transform = effectGroup.Transform;
         var pixelTransform = new OfficeTransform(transform.M11, transform.M12, transform.M21, transform.M22, transform.OffsetX * scale, transform.OffsetY * scale);
         canvas.DrawAffineImage(layer, pixelTransform, effectGroup.Opacity, effectGroup.BlendMode);
     }
 
-    private static OfficeRasterImage ApplySoftMask(OfficeRasterImage source, OfficeDrawingSoftMask softMask, double scale, IOfficeRasterImageCodec? imageCodec) {
+    private static OfficeRasterImage ApplySoftMask(
+        OfficeRasterImage source,
+        OfficeDrawingSoftMask softMask,
+        double scale,
+        IOfficeRasterImageCodec? imageCodec,
+        IOfficeTextShapingProvider? textShapingProvider,
+        string? textShapingLanguage,
+        System.Collections.Generic.ICollection<OfficeImageExportDiagnostic>? diagnosticSink,
+        string? diagnosticSource,
+        System.Threading.CancellationToken cancellationToken) {
         var maskScene = new OfficeDrawing(source.Width / scale, source.Height / scale);
         maskScene.AddEffectDrawing(softMask.InnerDrawing, softMask.Transform);
-        OfficeRasterImage mask = Render(maskScene, new OfficeDrawingRasterRenderOptions { Scale = scale, ImageCodec = imageCodec });
+        OfficeRasterImage mask = Render(maskScene, new OfficeDrawingRasterRenderOptions {
+            Scale = scale,
+            ImageCodec = imageCodec,
+            TextShapingProvider = textShapingProvider,
+            TextShapingLanguage = textShapingLanguage,
+            DiagnosticSink = diagnosticSink,
+            DiagnosticSource = diagnosticSource,
+            CancellationToken = cancellationToken
+        });
         var result = new OfficeRasterImage(source.Width, source.Height);
         double backdrop = GetMaskFactor(softMask.BackdropColor, softMask.Mode);
         for (int y = 0; y < source.Height; y++) {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int x = 0; x < source.Width; x++) {
                 OfficeColor sourcePixel = source.GetPixel(x, y);
                 OfficeColor maskPixel = mask.GetPixel(x, y);

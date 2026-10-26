@@ -3,7 +3,7 @@
     <Description>HTML and MHTML adapter for OfficeIMO.Reader using OfficeIMO.Html.</Description>
     <AssemblyName>OfficeIMO.Reader.Html</AssemblyName>
     <AssemblyTitle>OfficeIMO.Reader.Html</AssemblyTitle>
-    <VersionPrefix>2.0.1</VersionPrefix>
+    <VersionPrefix>3.0.0</VersionPrefix>
     <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
     <TargetFrameworks Condition=" '$([MSBuild]::IsOsPlatform(`Windows`))' ">$(TargetFrameworks);net472</TargetFrameworks>
     <GeneratePackageOnBuild>False</GeneratePackageOnBuild>
@@ -26,7 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OfficeIMO.Email\OfficeIMO.Email.csproj" />
-    <ProjectReference Include="..\OfficeIMO.Reader\OfficeIMO.Reader.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Reader.Core\OfficeIMO.Reader.Core.csproj" />
     <ProjectReference Include="..\OfficeIMO.Markdown.Html\OfficeIMO.Markdown.Html.csproj" />
     <ProjectReference Include="..\OfficeIMO.Html\OfficeIMO.Html.csproj" />
   </ItemGroup>

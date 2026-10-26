@@ -3,7 +3,7 @@
 [![nuget version](https://img.shields.io/nuget/v/OfficeIMO.Html.Pdf)](https://www.nuget.org/packages/OfficeIMO.Html.Pdf)
 [![nuget downloads](https://img.shields.io/nuget/dt/OfficeIMO.Html.Pdf?label=nuget%20downloads)](https://www.nuget.org/packages/OfficeIMO.Html.Pdf)
 
-`OfficeIMO.Html.Pdf` converts HTML directly to PDF with the same first-party layout scene used by HTML-to-PNG and HTML-to-SVG. It also converts PDF to semantic or positioned-review HTML.
+`OfficeIMO.Html.Pdf` converts HTML directly to PDF with the same first-party layout scene used by HTML-to-PNG/JPEG/TIFF/SVG/WebP. It also converts PDF to semantic or positioned-review HTML.
 
 The HTML-to-PDF path has no browser process, Office automation, Markdown bridge, Word bridge, or new external dependency.
 
@@ -33,6 +33,14 @@ byte[] pdf = source.ToPdf();
 source.SaveAsPdf("quarterly-update.pdf");
 ```
 
+MHTML archives have the same lifecycle. Embedded `cid:` and archive resources are resolved from the bounded source package without enabling local-file or remote-network access:
+
+```csharp
+MhtmlDocument archive = MhtmlDocument.Load("quarterly-update.mhtml");
+var result = await archive.ToPdfDocumentResultAsync();
+await result.SaveAsync("quarterly-update.pdf");
+```
+
 Naming is consistent across the direct output APIs:
 
 - `ToPdf()` returns encoded bytes.
@@ -42,9 +50,9 @@ Naming is consistent across the direct output APIs:
 - `SaveAsPdf(path)` and `SaveAsPdf(stream)` write to a destination.
 - Async counterparts use the same names with `Async` appended.
 
-## One options shape for PDF, PNG, and SVG
+## One options shape for PDF and all image formats
 
-`HtmlPdfSaveOptions` derives from `HtmlRenderOptions`, so one configured instance can drive all three direct outputs.
+`HtmlPdfSaveOptions` derives from `HtmlRenderOptions`, so one configured instance can drive PDF and all five direct image outputs.
 
 ```csharp
 using OfficeIMO.Drawing;
@@ -62,10 +70,13 @@ var options = new HtmlPdfSaveOptions {
 HtmlConversionDocument source = HtmlConversionDocument.Parse(html);
 byte[] pdf = source.ToPdf(options);
 byte[] png = source.ToPng(options);
+byte[] jpeg = source.ToJpeg(options);
+byte[] tiff = source.ToTiff(options);
 string svg = source.ToSvg(options);
+byte[] webp = source.ToWebp(options);
 ```
 
-PDF always uses paged layout. PNG and SVG honor the selected render mode and page index.
+PDF always uses paged layout. Image output honors the selected continuous or paged render mode and page index.
 
 ## Diagnostics and external resources
 
@@ -73,6 +84,7 @@ Options are reusable configuration and are not mutated with operation results. R
 
 ```csharp
 var options = new HtmlPdfSaveOptions {
+    ResourcePolicy = PdfResourcePolicy.CreateTrustedHost(),
     ResourceResolver = (request, cancellationToken) =>
         Task.FromResult<HtmlResolvedResource?>(null)
 };
@@ -96,7 +108,7 @@ foreach (var diagnostic in svgResult.Diagnostics) {
 }
 ```
 
-Resource resolution is opt-in and controlled by `HtmlUrlPolicy`, timeouts, byte limits, count limits, and stylesheet-depth limits inherited from `HtmlRenderOptions`.
+Resource resolution is opt-in. `PdfResourcePolicy` is the host-access gate for local files, remote resolver calls, data URIs, embedded package resources, and installed fonts. `HtmlUrlPolicy` independently validates URL syntax and schemes; timeouts, byte limits, count limits, and stylesheet-depth limits inherited from `HtmlRenderOptions` bound resources after access is granted. The balanced default allows installed fonts plus bounded data URIs and MHTML package parts, but does not call local or remote resolvers. Portable deterministic mode disables installed-font discovery explicitly.
 
 ## Explicit document projections
 

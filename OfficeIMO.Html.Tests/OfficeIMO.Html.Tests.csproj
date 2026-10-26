@@ -29,6 +29,7 @@
   <ItemGroup>
     <ProjectReference Include="..\OfficeIMO.Drawing\OfficeIMO.Drawing.csproj" />
     <ProjectReference Include="..\OfficeIMO.Email\OfficeIMO.Email.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Epub.Image\OfficeIMO.Epub.Image.csproj" />
     <ProjectReference Include="..\OfficeIMO.Excel\OfficeIMO.Excel.csproj" />
     <ProjectReference Include="..\OfficeIMO.Excel.Html\OfficeIMO.Excel.Html.csproj" />
     <ProjectReference Include="..\OfficeIMO.Html\OfficeIMO.Html.csproj" />
@@ -46,7 +47,10 @@
 
   <ItemGroup>
     <Compile Include="..\OfficeIMO.TestAssets\OpenXmlValidationFormatting.cs" Link="Shared\OpenXmlValidationFormatting.cs" />
+    <Compile Include="..\OfficeIMO.TestAssets\HtmlRenderingCorpus.cs" Link="Shared\HtmlRenderingCorpus.cs" />
+    <Compile Include="..\OfficeIMO.TestAssets\VisualBaselineTestSupport.cs" Link="Shared\VisualBaselineTestSupport.cs" />
     <Compile Include="..\OfficeIMO.Pdf.Tests\Pdf\PdfPngTestImages.cs" Link="Pdf\PdfPngTestImages.cs" />
+    <Compile Include="..\OfficeIMO.TestAssets\ManagedTextShapingTestAssets.cs" Link="Shared\ManagedTextShapingTestAssets.cs" />
   </ItemGroup>
 
   <ItemGroup>

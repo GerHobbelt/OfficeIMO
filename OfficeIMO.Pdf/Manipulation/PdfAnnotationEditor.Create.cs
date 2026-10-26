@@ -1,6 +1,6 @@
 namespace OfficeIMO.Pdf;
 
-public static partial class PdfAnnotationEditor {
+internal static partial class PdfAnnotationEditor {
     /// <summary>Adds a standard annotation to an existing page and validates readback.</summary>
     public static PdfAnnotationEditResult AddAnnotation(byte[] pdf, PdfAnnotationCreateOptions options) => AddAnnotation(pdf, options, readOptions: null);
 
@@ -40,10 +40,10 @@ public static partial class PdfAnnotationEditor {
         if (plan.ExecutionMode == PdfMutationExecutionMode.AppendOnly) {
             int[] changed = new[] { owner, annotationObjectNumber }.Concat(popupObjectNumber.HasValue ? new[] { popupObjectNumber.Value } : Array.Empty<int>()).Concat(generatedObjects).Distinct().ToArray();
             output = PdfIncrementalObjectWriter.Append(pdf, objects, plan.Preflight.Probe.Security, trailerRaw, changed, encryptionHandler: GetAppendEncryptionHandler(objects, trailerRaw, readOptions, plan.Preflight.Probe.Security));
-            PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, output, plan, readOptions); ValidateCreatedAnnotation(output, options, annotationObjectNumber, readOptions); return new PdfAnnotationEditResult(output, 1, plan, proof);
+            PdfSignatureMutationReport proof = BuildAppendOnlyProof(pdf, output, plan, readOptions); ValidateCreatedAnnotation(output, options, annotationObjectNumber, PdfReadOptions.WithMinimumInputBytes(readOptions, output.LongLength)); return new PdfAnnotationEditResult(output, 1, plan, proof, readOptions: readOptions);
         }
-        PdfObjectGraphPruner.PruneUnreachableObjects(objects, catalog); output = RewriteAllObjects(objects, catalog, PdfReadDocument.Load(pdf, readOptions).Metadata, pdf);
-        ValidateCreatedAnnotation(output, options, null, readOptions); return CreateFullRewriteResult(pdf, output, 1, plan, annotationsChanged: true);
+        PdfObjectGraphPruner.PruneUnreachableObjects(objects, catalog); output = RewriteAllObjects(objects, catalog, PdfReadDocument.Open(pdf, readOptions).Metadata, pdf);
+        ValidateCreatedAnnotation(output, options, null, PdfReadOptions.WithMinimumInputBytes(readOptions, output.LongLength)); return CreateFullRewriteResult(pdf, output, 1, plan, annotationsChanged: true, readOptions: readOptions);
     }
 
     private static void ValidateCreateOptions(PdfAnnotationCreateOptions options) {

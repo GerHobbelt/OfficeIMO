@@ -94,7 +94,7 @@ public static partial class MarkdownPdfConverterExtensions {
     /// <summary>
     /// Saves a Markdown document model as a PDF file.
     /// </summary>
-    public static PdfCore.PdfDocumentConversionResult SaveAsPdf(this MarkdownDoc document, string path, MarkdownPdfSaveOptions? options = null) =>
+    public static PdfCore.PdfSaveResult SaveAsPdf(this MarkdownDoc document, string path, MarkdownPdfSaveOptions? options = null) =>
         document.ToPdfDocumentResult(options).Save(path);
 
     /// <summary>
@@ -111,7 +111,7 @@ public static partial class MarkdownPdfConverterExtensions {
     /// <summary>
     /// Writes a Markdown document model as PDF to a stream.
     /// </summary>
-    public static PdfCore.PdfDocumentConversionResult SaveAsPdf(this MarkdownDoc document, Stream stream, MarkdownPdfSaveOptions? options = null) =>
+    public static PdfCore.PdfSaveResult SaveAsPdf(this MarkdownDoc document, Stream stream, MarkdownPdfSaveOptions? options = null) =>
         document.ToPdfDocumentResult(options).Save(stream);
 
     /// <summary>
@@ -125,21 +125,25 @@ public static partial class MarkdownPdfConverterExtensions {
         }
     }
 
-    /// <summary>Asynchronously saves a Markdown document model as PDF at the specified path.</summary>
-    public static Task<PdfCore.PdfDocumentConversionResult> SaveAsPdfAsync(
+    /// <summary>Converts synchronously, then asynchronously saves a Markdown PDF at the specified path.</summary>
+    public static Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
         this MarkdownDoc document,
         string path,
         MarkdownPdfSaveOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        document.ToPdfDocumentResult(options).SaveAsync(path, cancellationToken);
+        CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return document.ToPdfDocumentResult(options).SaveAsync(path, cancellationToken);
+    }
 
-    /// <summary>Asynchronously saves a Markdown document model as PDF to a caller-owned stream.</summary>
-    public static Task<PdfCore.PdfDocumentConversionResult> SaveAsPdfAsync(
+    /// <summary>Converts synchronously, then asynchronously saves a Markdown PDF to a caller-owned stream.</summary>
+    public static Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
         this MarkdownDoc document,
         Stream stream,
         MarkdownPdfSaveOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        document.ToPdfDocumentResult(options).SaveAsync(stream, cancellationToken);
+        CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return document.ToPdfDocumentResult(options).SaveAsync(stream, cancellationToken);
+    }
 
     /// <summary>Attempts to asynchronously save a Markdown document model as PDF at the specified path.</summary>
     public static async Task<PdfCore.PdfSaveResult> TrySaveAsPdfAsync(
@@ -147,6 +151,7 @@ public static partial class MarkdownPdfConverterExtensions {
         string path,
         MarkdownPdfSaveOptions? options = null,
         CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
         try {
             return await document.ToPdfDocumentResult(options)
                 .TrySaveAsync(path, cancellationToken)
@@ -164,6 +169,7 @@ public static partial class MarkdownPdfConverterExtensions {
         Stream stream,
         MarkdownPdfSaveOptions? options = null,
         CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
         try {
             return await document.ToPdfDocumentResult(options)
                 .TrySaveAsync(stream, cancellationToken)

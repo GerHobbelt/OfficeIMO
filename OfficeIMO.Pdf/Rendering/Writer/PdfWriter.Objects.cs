@@ -99,6 +99,8 @@ internal static partial class PdfWriter {
         public bool UsedBoldItalic { get; set; }
         public bool HasTableOfContents { get; set; }
         public System.Collections.Generic.List<SectionBlock> SectionDefinitions { get; } = new();
+        public bool PageContentSpilled => _contentStore.IsSpilled;
+        public long PeakRetainedPageContentBytes => _contentStore.PeakRetainedMemoryBytes;
         public sealed class Page {
             public PdfOptions Options { get; set; } = null!;
             public int PageGroupId { get; set; }
@@ -119,6 +121,7 @@ internal static partial class PdfWriter {
             public System.Collections.Generic.List<PageStructElement> StructElements { get; } = new();
             public System.Collections.Generic.List<PdfGeneratedDrawingAccessibilityEvidence> Drawings { get; } = new();
             public System.Collections.Generic.HashSet<PdfStandardFont> UsedFonts { get; } = new();
+            public System.Collections.Generic.HashSet<PdfNamedFontFace> UsedNamedFonts { get; } = new();
             public int? StructParentIndex { get; set; }
             public int NextMarkedContentId { get; set; }
             public bool UsedBold { get; set; }
@@ -350,4 +353,3 @@ internal static partial class PdfWriter {
         public int ObjectId { get; set; }
     }
 }
-

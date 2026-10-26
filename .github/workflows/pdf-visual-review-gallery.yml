@@ -7,24 +7,50 @@ on:
     paths:
       - 'OfficeIMO.Pdf/**'
       - 'OfficeIMO.Drawing/**'
+      - 'OfficeIMO.AsciiDoc/**'
+      - 'OfficeIMO.AsciiDoc.Markdown/**'
+      - 'OfficeIMO.AsciiDoc.Pdf/**'
+      - 'OfficeIMO.AsciiDoc.Markdown.Tests/**'
       - 'OfficeIMO.Word/**'
       - 'OfficeIMO.Word.Pdf/**'
+      - 'OfficeIMO.Word.Tests/Pdf/**'
       - 'OfficeIMO.Excel/**'
       - 'OfficeIMO.Excel.Pdf/**'
+      - 'OfficeIMO.Excel.Tests/Pdf/**'
       - 'OfficeIMO.Markdown/**'
       - 'OfficeIMO.Markdown.Pdf/**'
       - 'OfficeIMO.Markdown.Html/**'
+      - 'OfficeIMO.Html/**'
       - 'OfficeIMO.Html.Pdf/**'
+      - 'OfficeIMO.Html.Tests/**'
+      - 'OfficeIMO.Latex/**'
+      - 'OfficeIMO.Latex.Markdown/**'
+      - 'OfficeIMO.Latex.Pdf/**'
+      - 'OfficeIMO.Latex.Markdown.Tests/**'
       - 'OfficeIMO.PowerPoint/**'
       - 'OfficeIMO.PowerPoint.Pdf/**'
-      - 'OfficeIMO.Reader/**'
+      - 'OfficeIMO.PowerPoint.Html/**'
+      - 'OfficeIMO.PowerPoint.Tests/Pdf/**'
+      - 'OfficeIMO.PowerPoint.Tests/PowerPoint.VisualProof.cs'
+      - 'OfficeIMO.Rtf/**'
+      - 'OfficeIMO.Rtf.Pdf/**'
+      - 'OfficeIMO.Rtf.Tests/Rtf/**'
+      - 'OfficeIMO.OneNote/**'
+      - 'OfficeIMO.OneNote.Markdown/**'
+      - 'OfficeIMO.OneNote.Pdf/**'
+      - 'OfficeIMO.OneNote.Tests/**'
+      - 'OfficeIMO.OpenDocument.Pdf/**'
+      - 'OfficeIMO.OpenDocument.Converters.Tests/**'
+      - 'OfficeIMO.Reader.Core/**'
       - 'OfficeIMO.Reader.Pdf/**'
       - 'OfficeIMO.Pdf.Tests/Pdf/**'
       - 'OfficeIMO.Pdf.Tests/Markdown.Pdf.cs'
       - 'OfficeIMO.Html.Tests/Html.Pdf.cs'
       - 'OfficeIMO.Reader.Tests/Reader.Pdf.Modular.cs'
       - 'Build/Export-PdfVisualReviewGallery.ps1'
+      - 'Build/Export-PdfConversionSupportMatrix.ps1'
       - 'Docs/officeimo.pdf.current-state.md'
+      - 'Docs/officeimo.pdf-conversion-support-matrix.md'
       - 'Docs/pdf-conversion-scenarios.json'
       - '.github/workflows/pdf-visual-review-gallery.yml'
   push:
@@ -33,24 +59,50 @@ on:
     paths:
       - 'OfficeIMO.Pdf/**'
       - 'OfficeIMO.Drawing/**'
+      - 'OfficeIMO.AsciiDoc/**'
+      - 'OfficeIMO.AsciiDoc.Markdown/**'
+      - 'OfficeIMO.AsciiDoc.Pdf/**'
+      - 'OfficeIMO.AsciiDoc.Markdown.Tests/**'
       - 'OfficeIMO.Word/**'
       - 'OfficeIMO.Word.Pdf/**'
+      - 'OfficeIMO.Word.Tests/Pdf/**'
       - 'OfficeIMO.Excel/**'
       - 'OfficeIMO.Excel.Pdf/**'
+      - 'OfficeIMO.Excel.Tests/Pdf/**'
       - 'OfficeIMO.Markdown/**'
       - 'OfficeIMO.Markdown.Pdf/**'
       - 'OfficeIMO.Markdown.Html/**'
+      - 'OfficeIMO.Html/**'
       - 'OfficeIMO.Html.Pdf/**'
+      - 'OfficeIMO.Html.Tests/**'
+      - 'OfficeIMO.Latex/**'
+      - 'OfficeIMO.Latex.Markdown/**'
+      - 'OfficeIMO.Latex.Pdf/**'
+      - 'OfficeIMO.Latex.Markdown.Tests/**'
       - 'OfficeIMO.PowerPoint/**'
       - 'OfficeIMO.PowerPoint.Pdf/**'
-      - 'OfficeIMO.Reader/**'
+      - 'OfficeIMO.PowerPoint.Html/**'
+      - 'OfficeIMO.PowerPoint.Tests/Pdf/**'
+      - 'OfficeIMO.PowerPoint.Tests/PowerPoint.VisualProof.cs'
+      - 'OfficeIMO.Rtf/**'
+      - 'OfficeIMO.Rtf.Pdf/**'
+      - 'OfficeIMO.Rtf.Tests/Rtf/**'
+      - 'OfficeIMO.OneNote/**'
+      - 'OfficeIMO.OneNote.Markdown/**'
+      - 'OfficeIMO.OneNote.Pdf/**'
+      - 'OfficeIMO.OneNote.Tests/**'
+      - 'OfficeIMO.OpenDocument.Pdf/**'
+      - 'OfficeIMO.OpenDocument.Converters.Tests/**'
+      - 'OfficeIMO.Reader.Core/**'
       - 'OfficeIMO.Reader.Pdf/**'
       - 'OfficeIMO.Pdf.Tests/Pdf/**'
       - 'OfficeIMO.Pdf.Tests/Markdown.Pdf.cs'
       - 'OfficeIMO.Html.Tests/Html.Pdf.cs'
       - 'OfficeIMO.Reader.Tests/Reader.Pdf.Modular.cs'
       - 'Build/Export-PdfVisualReviewGallery.ps1'
+      - 'Build/Export-PdfConversionSupportMatrix.ps1'
       - 'Docs/officeimo.pdf.current-state.md'
+      - 'Docs/officeimo.pdf-conversion-support-matrix.md'
       - 'Docs/pdf-conversion-scenarios.json'
       - '.github/workflows/pdf-visual-review-gallery.yml'
   workflow_dispatch:
@@ -84,6 +136,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+
+      - name: Verify generated PDF conversion support matrix
+        shell: pwsh
+        run: ./Build/Export-PdfConversionSupportMatrix.ps1 -Check
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -156,6 +212,7 @@ jobs:
           retention-days: 14
           path: |
             ${{ env.GALLERY_PATH }}/index.md
+            ${{ env.GALLERY_PATH }}/pdf-conversion-support-matrix.md
             ${{ env.GALLERY_PATH }}/*.json
             ${{ env.GALLERY_PATH }}/*.pdf
             ${{ env.GALLERY_PATH }}/*.html

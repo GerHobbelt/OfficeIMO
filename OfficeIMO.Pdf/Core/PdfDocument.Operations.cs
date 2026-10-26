@@ -2,17 +2,79 @@ namespace OfficeIMO.Pdf;
 
 public sealed partial class PdfDocument {
     /// <summary>
+    /// Reports read and rewrite capabilities for a PDF byte array without requiring the document to open successfully.
+    /// This is useful for encrypted, malformed, or otherwise unsupported input that still needs a diagnostic report.
+    /// </summary>
+    public static PdfDocumentPreflight Preflight(byte[] pdf, PdfReadOptions? options = null) =>
+        PdfInspector.Preflight(pdf, options);
+
+    /// <summary>
+    /// Reports read and rewrite capabilities for a PDF file without requiring the document to open successfully.
+    /// This is useful for encrypted, malformed, or otherwise unsupported input that still needs a diagnostic report.
+    /// </summary>
+    public static PdfDocumentPreflight Preflight(string path, PdfReadOptions? options = null) =>
+        PdfInspector.Preflight(path, options);
+
+    /// <summary>
+    /// Reports read and rewrite capabilities for a readable PDF stream without requiring the document to open successfully.
+    /// The stream is consumed from its current position.
+    /// </summary>
+    public static PdfDocumentPreflight Preflight(Stream stream, PdfReadOptions? options = null) =>
+        PdfInspector.Preflight(stream, options);
+
+    /// <summary>
+    /// Produces one consolidated health and capability report.
+    /// Supply a compliance profile to include artifact readback readiness.
+    /// </summary>
+    public PdfAnalysisReport Analyze(PdfComplianceProfile complianceProfile = PdfComplianceProfile.None) {
+        var snapshot = GetReadSnapshot();
+        PdfDocumentInfo info = PdfInspector.Inspect(snapshot.Bytes, snapshot.Document);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(
+            snapshot.Bytes,
+            snapshot.Options,
+            () => snapshot.Document);
+        PdfDiagnosticReport diagnostics = PdfDiagnostics.Analyze(
+            snapshot.Bytes,
+            snapshot.Document,
+            info,
+            preflight);
+        PdfOptimizationReport optimization = PdfDiagnostics.BuildOptimizationReport(diagnostics);
+        PdfSignatureValidationReport signatures = PdfSignatureValidator.Validate(
+            snapshot.Bytes,
+            info.Security);
+        PdfAppendOnlyMutationReport appendOnlyMutation = PdfIncrementalUpdater.AnalyzeAppendOnlyMutation(info.Security);
+        PdfComplianceReadinessReport? compliance = complianceProfile == PdfComplianceProfile.None
+            ? null
+            : PdfComplianceAnalyzer.AssessReadback(complianceProfile, snapshot.Document, info);
+
+        return new PdfAnalysisReport(
+            info,
+            preflight,
+            diagnostics,
+            optimization,
+            signatures,
+            appendOnlyMutation,
+            snapshot.Document.RepairReport,
+            compliance);
+    }
+
+    /// <summary>
     /// Inspects metadata, pages, annotations, fields, and catalog-level state.
     /// </summary>
     public PdfDocumentInfo Inspect(PdfReadOptions? options = null) {
-        return PdfInspector.Inspect(Snapshot(), options ?? ReadOptions);
+        var snapshot = GetReadSnapshot(options);
+        return PdfInspector.Inspect(snapshot.Bytes, snapshot.Document);
     }
 
     /// <summary>
     /// Reports read and rewrite capabilities for this PDF.
     /// </summary>
     public PdfDocumentPreflight Preflight(PdfReadOptions? options = null) {
-        return PdfInspector.Preflight(Snapshot(), options ?? ReadOptions);
+        var snapshot = GetReadSnapshot(options);
+        return PdfInspector.Preflight(
+            snapshot.Bytes,
+            snapshot.Options,
+            () => snapshot.Document);
     }
 
     /// <summary>Chooses a full-rewrite, append-only, or blocked path for an existing-document mutation.</summary>
@@ -25,10 +87,41 @@ public sealed partial class PdfDocument {
     }
 
     /// <summary>
+    /// Assesses several mutation families against one shared preflight snapshot.
+    /// </summary>
+    /// <remarks>
+    /// This is a portfolio view over the existing mutation planner, not a second capability table.
+    /// It is useful for deciding which annotation, navigation, form, appearance, security, and page
+    /// workflows can be offered for one input before any mutation is attempted.
+    /// </remarks>
+    public PdfMutationPortfolioReport AssessMutations(
+        IEnumerable<PdfMutationOperation>? operations = null,
+        IEnumerable<string>? fieldNames = null,
+        PdfReadOptions? options = null,
+        PdfMutationExecutionPreference executionPreference = PdfMutationExecutionPreference.Automatic) {
+        PdfMutationOperation[] requested;
+        if (operations != null) {
+            requested = operations.Distinct().OrderBy(static operation => operation).ToArray();
+        } else {
+#pragma warning disable CA2263 // Generic Enum.GetValues is unavailable on netstandard2.0 and net472.
+            requested = Enum.GetValues(typeof(PdfMutationOperation)).Cast<PdfMutationOperation>().OrderBy(static operation => operation).ToArray();
+#pragma warning restore CA2263
+        }
+        if (requested.Length == 0) throw new ArgumentException("At least one mutation operation is required.", nameof(operations));
+        string[]? requestedFieldNames = fieldNames?.ToArray();
+        PdfDocumentPreflight preflight = Preflight(options);
+        var plans = new PdfMutationPlan[requested.Length];
+        for (int index = 0; index < requested.Length; index++) {
+            plans[index] = PdfMutationPlanner.Plan(preflight, requested[index], requestedFieldNames, executionPreference);
+        }
+        return new PdfMutationPortfolioReport(preflight, Array.AsReadOnly(plans));
+    }
+
+    /// <summary>
     /// Validates signature structure, byte ranges, and preservation markers for this PDF.
     /// </summary>
     public PdfSignatureValidationReport ValidateSignatures(PdfReadOptions? options = null) {
-        return PdfSignatureValidator.Validate(Snapshot(), options ?? ReadOptions);
+        return PdfSignatureValidator.Validate(GetBytesForOperation(), options ?? ReadOptions);
     }
 
     /// <summary>Validates signature structure and delegates CMS, trust, timestamp, and revocation policy to an optional provider.</summary>
@@ -36,7 +129,7 @@ public sealed partial class PdfDocument {
         IPdfSignatureCryptographyProvider cryptographyProvider,
         PdfReadOptions? options = null) {
         Guard.NotNull(cryptographyProvider, nameof(cryptographyProvider));
-        return PdfSignatureValidator.Validate(Snapshot(), cryptographyProvider, options ?? ReadOptions);
+        return PdfSignatureValidator.Validate(GetBytesForOperation(), cryptographyProvider, options ?? ReadOptions);
     }
 
     /// <summary>
@@ -47,49 +140,76 @@ public sealed partial class PdfDocument {
     }
 
     /// <summary>
+    /// Assesses managed page-render fidelity without rasterizing or writing image artifacts.
+    /// </summary>
+    /// <remarks>
+    /// The result uses the same per-page capability diagnostics consumed by PNG/SVG export, keeping
+    /// Type 3/CFF substitution, ICC, pattern, annotation-appearance, blend, mask, and resource gaps
+    /// tied to one registry rather than a duplicate compatibility table.
+    /// </remarks>
+    public PdfRenderCompatibilityReport AssessRenderCompatibility(PdfReadOptions? options = null) {
+        var snapshot = GetReadSnapshot(options);
+        var pages = new PdfRenderCompatibilityPage[snapshot.Document.Pages.Count];
+        for (int index = 0; index < pages.Length; index++) {
+            pages[index] = new PdfRenderCompatibilityPage(
+                index + 1,
+                snapshot.Document.Pages[index].GetRenderCapabilityDiagnostics());
+        }
+        return new PdfRenderCompatibilityReport(Array.AsReadOnly(pages));
+    }
+
+    /// <summary>
     /// Builds a combined PDF diagnostic report for this document.
     /// </summary>
     public PdfDiagnosticReport Diagnostics(PdfReadOptions? options = null) {
-        return PdfDiagnostics.Analyze(Snapshot(), options ?? ReadOptions);
+        var snapshot = GetReadSnapshot(options);
+        PdfDocumentInfo info = PdfInspector.Inspect(snapshot.Bytes, snapshot.Document);
+        PdfDocumentPreflight preflight = PdfInspector.Preflight(
+            snapshot.Bytes,
+            snapshot.Options,
+            () => snapshot.Document);
+        return PdfDiagnostics.Analyze(snapshot.Bytes, snapshot.Document, info, preflight);
     }
 
     /// <summary>Creates a bounded debugger projection of objects, revisions, pages, resources, and content operators.</summary>
     public PdfDebuggerReport Debug(PdfDebuggerOptions? options = null, PdfReadOptions? readOptions = null) {
-        return PdfDebugger.Dump(Snapshot(), options, readOptions ?? ReadOptions);
+        return PdfDebugger.Dump(GetBytesForOperation(), options, readOptions ?? ReadOptions);
     }
 
     /// <summary>
     /// Builds an optimization opportunity report for this document without modifying it.
     /// </summary>
     public PdfOptimizationReport AnalyzeOptimization(PdfReadOptions? options = null) {
-        return PdfDiagnostics.AnalyzeOptimization(Snapshot(), options ?? ReadOptions);
+        return PdfDiagnostics.BuildOptimizationReport(Diagnostics(options));
     }
 
     /// <summary>Applies dependency-free lossless optimization and returns the candidate with action and preservation reports.</summary>
-    public PdfOptimizationActionResult Optimize(PdfOptimizationOptions? options = null) => PdfOptimizer.Optimize(Snapshot(), options);
+    public PdfOptimizationActionResult Optimize(PdfOptimizationOptions? options = null) =>
+        PdfOptimizer.Optimize(GetBytesForOperation(), options, ReadOptions);
 
     /// <summary>Applies a named deterministic lossless optimization profile.</summary>
-    public PdfOptimizationActionResult Optimize(PdfOptimizationProfile profile) => PdfOptimizer.Optimize(Snapshot(), profile);
+    public PdfOptimizationActionResult Optimize(PdfOptimizationProfile profile) =>
+        PdfOptimizer.Optimize(GetBytesForOperation(), profile, ReadOptions);
 
     /// <summary>
     /// Plans rectangle-based redaction impact without modifying the PDF.
     /// </summary>
     public PdfRedactionPlan PlanRedactions(IEnumerable<PdfRedactionArea> areas, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) {
-        return PdfRedactionPlanner.Plan(Snapshot(), areas, layoutOptions, options ?? ReadOptions);
+        return PdfRedactionPlanner.Plan(GetBytesForOperation(), areas, layoutOptions, options ?? ReadOptions);
     }
 
     /// <summary>Derives a reviewable redaction plan from literal text, regex, logical kinds, and form-field names.</summary>
-    public PdfRedactionPlan SearchRedactions(PdfRedactionSearchOptions search, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) => PdfRedactionPlanner.Search(Snapshot(), search, layoutOptions, options ?? ReadOptions);
+    public PdfRedactionPlan SearchRedactions(PdfRedactionSearchOptions search, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) => PdfRedactionPlanner.Search(GetBytesForOperation(), search, layoutOptions, options ?? ReadOptions);
 
     /// <summary>
     /// Creates a new PDF with matching text objects and annotations removed from the supplied redaction areas.
     /// </summary>
     public PdfDocument ApplyRedactions(IEnumerable<PdfRedactionArea> areas, PdfRedactionApplyOptions? applyOptions = null, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) {
-        return FromBytes(PdfRedactionApplier.Apply(Snapshot(), areas, applyOptions, layoutOptions, options ?? ReadOptions));
+        return ApplyMutation(input => PdfRedactionApplier.Apply(input, areas, applyOptions, layoutOptions, options ?? ReadOptions), options);
     }
 
     /// <summary>Applies a reviewed redaction plan, including exact field removal for field-derived areas.</summary>
-    public PdfDocument ApplyRedactions(PdfRedactionPlan plan, PdfRedactionApplyOptions? applyOptions = null, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) => FromBytes(PdfRedactionApplier.Apply(Snapshot(), plan, applyOptions, layoutOptions, options ?? ReadOptions));
+    public PdfDocument ApplyRedactions(PdfRedactionPlan plan, PdfRedactionApplyOptions? applyOptions = null, PdfTextLayoutOptions? layoutOptions = null, PdfReadOptions? options = null) => ApplyMutation(input => PdfRedactionApplier.Apply(input, plan, applyOptions, layoutOptions, options ?? ReadOptions), options);
 
     /// <summary>
     /// Attempts to apply rectangle-based redactions, returning diagnostics when blocked or failed.
@@ -164,12 +284,38 @@ public sealed partial class PdfDocument {
             executionPreference: executionPreference);
     }
 
+    /// <summary>Creates one PDF by merging all supplied documents in order through a single merge pass.</summary>
+    public static PdfDocument Merge(params PdfDocument[] documents) =>
+        Merge((IEnumerable<PdfDocument>)documents);
+
+    /// <summary>Creates one PDF by merging all supplied documents in order through a single merge pass.</summary>
+    public static PdfDocument Merge(IEnumerable<PdfDocument> documents) {
+        Guard.NotNull(documents, nameof(documents));
+        PdfDocument[] sources = documents.ToArray();
+        if (sources.Length == 0) {
+            throw new ArgumentException("At least one PDF document must be supplied.", nameof(documents));
+        }
+
+        if (sources.Any(static document => document is null)) {
+            throw new ArgumentException("PDF documents cannot contain null entries.", nameof(documents));
+        }
+
+        byte[][] bytes = sources.Select(static document => document.GetBytesForOperation()).ToArray();
+        PdfReadOptions[] readOptions = sources.Select(static document => document.ReadOptions).ToArray();
+        byte[] merged = PdfMerger.Merge(bytes, readOptions);
+        return Open(
+            merged,
+            PdfReadOptions.WithMinimumInputBytes(sources[0].ReadOptions, merged.LongLength));
+    }
+
     /// <summary>
     /// Creates a new PDF by merging this PDF with another loaded or generated PDF.
     /// </summary>
     public PdfDocument MergeWith(PdfDocument document) {
         Guard.NotNull(document, nameof(document));
-        return FromBytes(PdfMerger.Merge(Snapshot(), document.Snapshot()));
+        return ApplyMutation(input => PdfMerger.Merge(
+            new[] { input, document.GetBytesForOperation() },
+            new[] { ReadOptions, document.ReadOptions }));
     }
 
     /// <summary>
@@ -185,7 +331,7 @@ public sealed partial class PdfDocument {
     /// </summary>
     public PdfDocument MergeWith(byte[] pdf) {
         Guard.NotNull(pdf, nameof(pdf));
-        return FromBytes(PdfMerger.Merge(Snapshot(), pdf));
+        return ApplyMutation(input => PdfMerger.Merge(input, pdf));
     }
 
     /// <summary>
@@ -238,7 +384,7 @@ public sealed partial class PdfDocument {
     /// Creates a new PDF with visual annotation appearance streams painted into page content where supported.
     /// </summary>
     public PdfDocument FlattenVisualAnnotations() {
-        return FromBytes(PdfAnnotationFlattener.FlattenVisualAnnotations(Snapshot(), options: null, readOptions: ReadOptions));
+        return ApplyMutation(input => PdfAnnotationFlattener.FlattenVisualAnnotations(input, options: null, readOptions: ReadOptions));
     }
 
     /// <summary>
@@ -286,15 +432,31 @@ public sealed partial class PdfDocument {
         string? keywords,
         PdfReadOptions? readOptions,
         bool createXmpMetadata = false) {
-        byte[] updated = PdfIncrementalUpdater.UpdateMetadata(Snapshot(), title, author, subject, keywords, readOptions, createXmpMetadata);
-        return FromBytes(updated, readOptions);
+        return ApplyMutation(
+            input => PdfIncrementalUpdater.UpdateMetadata(
+                input,
+                title,
+                author,
+                subject,
+                keywords,
+                readOptions,
+                createXmpMetadata),
+            readOptions);
     }
 
     /// <summary>
     /// Appends an external-signature placeholder as an incremental revision for a later CMS, CAdES, or timestamp signature.
     /// </summary>
     public PdfExternalSignaturePreparation PrepareExternalSignature(PdfExternalSignatureOptions? signatureOptions = null) {
-        return PdfIncrementalUpdater.PrepareExternalSignature(Snapshot(), signatureOptions);
+        return PdfIncrementalUpdater.PrepareExternalSignature(GetBytesForOperation(), signatureOptions, ReadOptions);
+    }
+
+    /// <summary>Completes a persisted external-signature placeholder with detached CMS or timestamp bytes.</summary>
+    public PdfDocument CompleteExternalSignature(byte[] signatureContents) {
+        Guard.NotNull(signatureContents, nameof(signatureContents));
+        return ApplyMutation(
+            input => PdfIncrementalUpdater.ApplyExternalSignature(input, signatureContents, ReadOptions),
+            operationName: "CompleteExternalSignature");
     }
 
     /// <summary>Prepares, externally signs, and applies a PDF signature without placing key-storage logic in OfficeIMO.Pdf.</summary>
@@ -302,7 +464,7 @@ public sealed partial class PdfDocument {
         IPdfExternalSigner signer,
         PdfExternalSignatureOptions? signatureOptions = null) {
         Guard.NotNull(signer, nameof(signer));
-        return PdfIncrementalUpdater.SignExternal(Snapshot(), signer, signatureOptions);
+        return PdfIncrementalUpdater.SignExternal(GetBytesForOperation(), signer, signatureOptions, ReadOptions);
     }
 
     /// <summary>
@@ -321,7 +483,7 @@ public sealed partial class PdfDocument {
     /// Creates a new PDF with updated metadata. Null values preserve existing fields; empty strings clear fields.
     /// </summary>
     public PdfDocument UpdateMetadata(string? title = null, string? author = null, string? subject = null, string? keywords = null) {
-        return FromBytes(PdfMetadataEditor.UpdateMetadata(Snapshot(), title, author, subject, keywords));
+        return ApplyMutation(input => PdfMetadataEditor.UpdateMetadata(input, title, author, subject, keywords));
     }
 
     /// <summary>
@@ -334,8 +496,8 @@ public sealed partial class PdfDocument {
         string? subject = null,
         string? keywords = null,
         bool createXmpMetadata = true) {
-        return FromBytes(PdfMetadataEditor.SynchronizeMetadata(
-            Snapshot(), title, author, subject, keywords, createXmpMetadata));
+        return ApplyMutation(input => PdfMetadataEditor.SynchronizeMetadata(
+            input, title, author, subject, keywords, createXmpMetadata));
     }
 
     /// <summary>Attempts a full-rewrite Info/XMP synchronization and returns planner diagnostics when blocked.</summary>
@@ -357,7 +519,7 @@ public sealed partial class PdfDocument {
 
     /// <summary>Removes or quarantines active content and embedded payloads through a proven full rewrite.</summary>
     public PdfSanitizationResult Sanitize(PdfSanitizationOptions? options = null) {
-        return PdfSanitizer.Sanitize(Snapshot(), options);
+        return PdfSanitizer.Sanitize(GetBytesForOperation(), options);
     }
 
     /// <summary>
@@ -379,7 +541,7 @@ public sealed partial class PdfDocument {
     /// </summary>
     public PdfDocument ReplaceMetadata(PdfMetadata metadata) {
         Guard.NotNull(metadata, nameof(metadata));
-        return FromBytes(PdfMetadataEditor.ReplaceMetadata(Snapshot(), metadata));
+        return ApplyMutation(input => PdfMetadataEditor.ReplaceMetadata(input, metadata));
     }
 
     /// <summary>

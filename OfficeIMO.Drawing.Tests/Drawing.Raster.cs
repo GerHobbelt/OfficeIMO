@@ -52,6 +52,22 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void OfficeImagePngConverter_RejectsNonzeroFrameForDibFallback() {
+            byte[] bmp = CreateBmp24(1, 1, new[] { OfficeColor.Red });
+            byte[] dib = bmp.Skip(14).ToArray();
+            var options = new OfficeRasterDecodeOptions { FrameIndex = 1 };
+
+            Assert.False(OfficeImagePngConverter.TryConvertToPng(
+                dib,
+                options,
+                out byte[] png,
+                out OfficeRasterDecodeInfo decodeInfo));
+            Assert.Empty(png);
+            Assert.False(decodeInfo.Succeeded);
+            Assert.Equal(1, decodeInfo.SelectedFrameIndex);
+        }
+
+        [Fact]
         public void OfficeRasterImageDecoder_DecodesTopDownBmp24RowsThroughSharedRasterPath() {
             byte[] bmp = CreateBmp24(
                 2,
@@ -159,6 +175,61 @@ namespace OfficeIMO.Tests {
             Assert.InRange(blended.G, 124, 130);
             Assert.InRange(blended.B, 124, 130);
             Assert.Equal(255, blended.A);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_RasterizesSupportedSvgImagesAtDestinationResolution() {
+            byte[] svg = System.Text.Encoding.UTF8.GetBytes(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\">" +
+                "<rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" fill=\"#D7263D\"/>" +
+                "</svg>");
+            var diagnostics = new List<OfficeImageExportDiagnostic>();
+            var fallback = new OfficeRasterImageFallbackCodec(
+                diagnostics: diagnostics,
+                source: "SVG media");
+            var drawing = new OfficeDrawing(80, 60);
+            drawing.AddImage(
+                svg,
+                "image/svg+xml",
+                new OfficeImageProjection(new OfficeImagePlacement(10, 10, 40, 30)),
+                "SVG marker");
+
+            OfficeRasterImage rendered = OfficeDrawingRasterRenderer.Render(
+                drawing,
+                new OfficeDrawingRasterRenderOptions {
+                    ImageCodec = fallback
+                });
+
+            Assert.Equal(OfficeColor.FromRgb(0xD7, 0x26, 0x3D), rendered.GetPixel(30, 25));
+            Assert.Empty(diagnostics);
+        }
+
+        [Fact]
+        public void OfficeDrawingRasterRenderer_KeepsUnsupportedSvgMediaOnTheVisibleFallbackPath() {
+            byte[] svg = System.Text.Encoding.UTF8.GetBytes(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\">" +
+                "<foreignObject x=\"0\" y=\"0\" width=\"10\" height=\"10\"/>" +
+                "</svg>");
+            var diagnostics = new List<OfficeImageExportDiagnostic>();
+            var fallback = new OfficeRasterImageFallbackCodec(
+                diagnostics: diagnostics,
+                source: "SVG media");
+            var drawing = new OfficeDrawing(40, 40);
+            drawing.AddImage(
+                svg,
+                "image/svg+xml",
+                new OfficeImageProjection(new OfficeImagePlacement(4, 4, 32, 32)),
+                "Unsupported SVG marker");
+
+            OfficeDrawingRasterRenderer.Render(
+                drawing,
+                new OfficeDrawingRasterRenderOptions {
+                    ImageCodec = fallback
+                });
+
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(OfficeImageExportDiagnosticCodes.SourceImageDecodeFallback, diagnostic.Code);
+            Assert.Equal(OfficeImageExportLossKind.Omission, diagnostic.LossKind);
         }
 
         [Fact]
@@ -1067,6 +1138,28 @@ namespace OfficeIMO.Tests {
             Assert.Equal(10D, layout.Lines[1].LineHeight);
             Assert.Equal(34D, layout.Height);
             Assert.Equal(new[] { "Big", "small" }, layout.Lines.Select(line => string.Concat(line.Segments.Select(segment => segment.Text))).ToArray());
+        }
+
+        [Fact]
+        public void OfficeTextLayoutEngine_RichTextHonorsCancellation() {
+            using var cancellation = new System.Threading.CancellationTokenSource();
+            cancellation.Cancel();
+
+            Assert.Throws<OperationCanceledException>(() =>
+                OfficeTextLayoutEngine.LayoutRichTextBlock(
+                    new[] {
+                        new OfficeRichTextRun("Large rich text", 12D, OfficeColor.Black)
+                    },
+                    100D,
+                    100D,
+                    lineHeightFactor: 1.2D,
+                    (value, size, _) => (value?.Length ?? 0) * size,
+                    wrap: true,
+                    shrinkToFit: false,
+                    minimumFontSize: 1D,
+                    overflowBehavior: OfficeTextOverflowBehavior.Clip,
+                    paragraphIndent: null,
+                    cancellationToken: cancellation.Token));
         }
 
         [Fact]

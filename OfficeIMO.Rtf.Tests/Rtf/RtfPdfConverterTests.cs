@@ -9,6 +9,104 @@ namespace OfficeIMO.Tests.Rtf;
 
 public class RtfPdfConverterTests {
     [Fact]
+    public void RtfDocument_ToPdfDocument_ResourcePolicyControlsSystemFontEmbedding() {
+        string? installedFamily = new[] { "Arial", "Calibri", "Liberation Sans", "DejaVu Sans" }
+            .FirstOrDefault(candidate => PdfCore.PdfEmbeddedFontFamily.TryFromSystem(candidate, out _));
+        if (installedFamily == null) return;
+
+        RtfDocument document = RtfDocument.Create();
+        int fontId = document.AddFont(installedFamily);
+        document.Settings.SetDefaultFont(fontId);
+        RtfRun run = document.AddParagraph().AddText("RTF font policy marker");
+        run.FontId = fontId;
+
+        PdfCore.PdfDocument portable = document.ToPdfDocument(new RtfPdfSaveOptions {
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreatePortableDeterministic()
+        });
+        PdfCore.PdfDocument balanced = document.ToPdfDocument();
+
+        Assert.Empty(portable.Options.EmbeddedFonts);
+        Assert.NotEmpty(balanced.Options.EmbeddedFonts);
+        Assert.Contains("RTF font policy marker", PdfCore.PdfReadDocument.Open(portable.ToBytes()).ExtractText(), StringComparison.Ordinal);
+        Assert.Contains("RTF font policy marker", PdfCore.PdfReadDocument.Open(balanced.ToBytes()).ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RtfDocument_ToPdfDocument_UnrelatedPdfOptionsPreserveRtfDefaultFont() {
+        string? installedFamily = new[] { "Arial", "Calibri", "Liberation Sans", "DejaVu Sans" }
+            .FirstOrDefault(candidate => PdfCore.PdfEmbeddedFontFamily.TryFromSystem(candidate, out _));
+        if (installedFamily == null) return;
+
+        RtfDocument document = RtfDocument.Create();
+        int fontId = document.AddFont(installedFamily);
+        document.Settings.SetDefaultFont(fontId);
+        document.AddParagraph("RTF configured default marker");
+        var callerPdfOptions = new PdfCore.PdfOptions {
+            CompressContentStreams = false
+        };
+
+        PdfCore.PdfDocumentConversionResult result = document.ToPdfDocumentResult(new RtfPdfSaveOptions {
+            PdfOptions = callerPdfOptions
+        });
+
+        Assert.False(callerPdfOptions.HasExplicitDefaultFont);
+        Assert.Empty(callerPdfOptions.EmbeddedFonts);
+        Assert.True(result.Value.Options.EmbeddedFontFamilySlotMatches(result.Value.Options.DefaultFont, installedFamily));
+        Assert.Equal(result.Value.Options.DefaultFont, result.Value.Options.HeaderFont);
+        Assert.Equal(result.Value.Options.DefaultFont, result.Value.Options.FooterFont);
+        Assert.False(result.Value.Options.HasExplicitDefaultFont);
+        Assert.False(result.Value.Options.HasExplicitHeaderFont);
+        Assert.False(result.Value.Options.HasExplicitFooterFont);
+    }
+
+    [Fact]
+    public void RtfDocument_ToPdfDocument_ExplicitPdfDefaultFontOverridesRtfDefaultFont() {
+        RtfDocument document = RtfDocument.Create();
+        document.Settings.SetDefaultFont(0);
+        document.AddParagraph("RTF explicit PDF default marker");
+        var callerPdfOptions = new PdfCore.PdfOptions {
+            DefaultFont = PdfCore.PdfStandardFont.Courier,
+            HeaderFont = PdfCore.PdfStandardFont.TimesRoman
+        };
+
+        PdfCore.PdfDocumentConversionResult result = document.ToPdfDocumentResult(new RtfPdfSaveOptions {
+            PdfOptions = callerPdfOptions,
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreatePortableDeterministic()
+        });
+
+        Assert.True(callerPdfOptions.HasExplicitDefaultFont);
+        Assert.Equal(PdfCore.PdfStandardFont.Courier, result.Value.Options.DefaultFont);
+        Assert.Equal(PdfCore.PdfStandardFont.TimesRoman, result.Value.Options.HeaderFont);
+        Assert.Equal(PdfCore.PdfStandardFont.Courier, result.Value.Options.FooterFont);
+        Assert.True(result.Value.Options.HasExplicitHeaderFont);
+        Assert.False(result.Value.Options.HasExplicitFooterFont);
+    }
+
+    [Fact]
+    public void RtfDocument_ToPdfDocument_ReportsFontSlotExhaustionAndUsesDefaultRunSlot() {
+        var pdfOptions = new PdfCore.PdfOptions();
+        pdfOptions.RegisterFontFamily(PdfCore.PdfStandardFont.Helvetica, new PdfCore.PdfEmbeddedFontFamily("Caller Sans", new byte[] { 1 }));
+        pdfOptions.RegisterFontFamily(PdfCore.PdfStandardFont.TimesRoman, new PdfCore.PdfEmbeddedFontFamily("Caller Serif", new byte[] { 2 }));
+        pdfOptions.RegisterFontFamily(PdfCore.PdfStandardFont.Courier, new PdfCore.PdfEmbeddedFontFamily("Caller Mono", new byte[] { 3 }));
+
+        RtfDocument document = RtfDocument.Create();
+        document.Settings.SetDefaultFont(0);
+        int runFontId = document.AddFont("Arial");
+        RtfRun run = document.AddParagraph().AddText("RTF exhausted font marker");
+        run.FontId = runFontId;
+
+        PdfCore.PdfDocumentConversionResult result = document.ToPdfDocumentResult(new RtfPdfSaveOptions {
+            PdfOptions = pdfOptions,
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreateTrustedHost()
+        });
+
+        PdfCore.PdfConversionWarning warning = Assert.Single(result.Warnings, item => item.Code == "FontFamilySlotExhausted");
+        Assert.Equal("Arial", warning.Details["fontFamily"]);
+        PdfCore.RichParagraphBlock paragraph = Assert.IsType<PdfCore.RichParagraphBlock>(Assert.Single(result.Value.Blocks));
+        Assert.Null(Assert.Single(paragraph.Runs).Font);
+    }
+
+    [Fact]
     public void RtfDocument_ToPdfDocument_Renders_Paragraphs_Runs_And_PageSetup() {
         RtfDocument document = RtfDocument.Create();
         document.Info.Title = "RTF PDF";
@@ -27,7 +125,7 @@ public class RtfPdfConverterTests {
         monoRun.FontId = mono;
 
         byte[] pdf = document.ToPdf();
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.StartsWith("%PDF-", Encoding.ASCII.GetString(pdf, 0, 5), StringComparison.Ordinal);
         Assert.Contains("Hello", text, StringComparison.Ordinal);
@@ -40,7 +138,7 @@ public class RtfPdfConverterTests {
         const string rtf = @"{\rtf1\ansi Parsed {\field{\*\fldinst HYPERLINK ""https://evotec.xyz/rtf"" \\o ""Screen tip""}{\fldrslt link}} text\par}";
 
         byte[] pdf = ParseRtf(rtf).ToPdf();
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("Parsed", text, StringComparison.Ordinal);
         Assert.Contains("link", text, StringComparison.Ordinal);
@@ -74,8 +172,8 @@ public class RtfPdfConverterTests {
         paragraph.AddText("Visible ");
         paragraph.AddText("Hidden").SetHidden();
 
-        string defaultText = PdfCore.PdfReadDocument.Load(document.ToPdf()).ExtractText();
-        string includedText = PdfCore.PdfReadDocument.Load(document.ToPdf(new RtfPdfSaveOptions {
+        string defaultText = PdfCore.PdfReadDocument.Open(document.ToPdf()).ExtractText();
+        string includedText = PdfCore.PdfReadDocument.Open(document.ToPdf(new RtfPdfSaveOptions {
             IncludeHiddenText = true
         })).ExtractText();
 
@@ -113,7 +211,7 @@ public class RtfPdfConverterTests {
         Assert.Equal("Emf", imageWarning.Details["Format"]);
         Assert.Equal("Processed RTF PDF", processed.Inspect().Metadata.Title);
 
-        string text = PdfCore.PdfReadDocument.Load(result.ToBytes()).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(result.ToBytes()).ExtractText();
         Assert.Contains("Visible", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Hidden", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Skipped note", text, StringComparison.Ordinal);
@@ -163,6 +261,24 @@ public class RtfPdfConverterTests {
     }
 
     [Fact]
+    public void RtfDocument_ToPdfDocument_Normalizes_Configured_Gif_Through_Shared_Drawing() {
+        RtfDocument document = RtfDocument.Create();
+        document.AddImage(RtfImageFormat.Emf, new byte[] { 1, 2, 3 });
+        var options = new RtfPdfSaveOptions {
+            ImageConverter = _ => Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
+        };
+
+        PdfCore.PdfDocumentConversionResult result = document.ToPdfDocumentResult(options);
+        byte[] pdf = result.ToBytes();
+
+        Assert.NotEmpty(pdf);
+        Assert.Contains(result.Warnings, warning =>
+            warning.Code == "ImageConverted" &&
+            warning.Details["TargetFormat"] == "PDF raster");
+        Assert.DoesNotContain(result.Warnings, warning => warning.Code == "ImageConversionFailed");
+    }
+
+    [Fact]
     public void RtfDocument_ToPdfDocument_Renders_Tables() {
         RtfDocument document = RtfDocument.Create();
         RtfTable table = document.AddTable(2, 2);
@@ -172,7 +288,7 @@ public class RtfPdfConverterTests {
         table.Rows[1].Cells[1].AddParagraph("B2");
 
         byte[] pdf = document.ToPdf();
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("A1", text, StringComparison.Ordinal);
         Assert.Contains("B1", text, StringComparison.Ordinal);
@@ -209,7 +325,7 @@ public class RtfPdfConverterTests {
         Assert.Equal("TopRight", pdfTable.Cells[0][1].Text);
         Assert.Equal("Body", pdfTable.Cells[1][0].Text);
 
-        string text = PdfCore.PdfReadDocument.Load(pdfDocument.ToBytes()).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdfDocument.ToBytes()).ExtractText();
         Assert.Contains("Merged", text, StringComparison.Ordinal);
         Assert.Contains("TopRight", text, StringComparison.Ordinal);
         Assert.Contains("Body", text, StringComparison.Ordinal);
@@ -295,7 +411,7 @@ public class RtfPdfConverterTests {
         Assert.Equal(1, rowBorder.TopBorder!.Width);
         Assert.Equal(PdfCore.PdfColor.FromRgb(68, 114, 196), rowBorder.TopBorder.Color);
 
-        string text = PdfCore.PdfReadDocument.Load(pdfDocument.ToBytes()).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdfDocument.ToBytes()).ExtractText();
         Assert.Contains("Styled", text, StringComparison.Ordinal);
         Assert.Contains("RowFill", text, StringComparison.Ordinal);
         Assert.Contains("Bottom", text, StringComparison.Ordinal);
@@ -313,7 +429,7 @@ public class RtfPdfConverterTests {
         continuous.AddParagraph("Continuous section");
 
         byte[] pdf = document.ToPdf();
-        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Load(pdf);
+        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Open(pdf);
 
         Assert.Equal(2, read.Pages.Count);
         Assert.Contains("First section", read.Pages[0].ExtractText(), StringComparison.Ordinal);
@@ -327,7 +443,7 @@ public class RtfPdfConverterTests {
         const string rtf = @"{\rtf1\ansi\sectd\sbkpage\pard Parsed first\par\sect\sectd\sbkpage\pard Parsed second\par}";
 
         byte[] pdf = ParseRtf(rtf).ToPdf();
-        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Load(pdf);
+        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Open(pdf);
 
         Assert.Equal(2, read.Pages.Count);
         Assert.Contains("Parsed first", read.Pages[0].ExtractText(), StringComparison.Ordinal);
@@ -356,7 +472,7 @@ public class RtfPdfConverterTests {
 
         byte[] pdf = document.ToPdf();
         PdfCore.PdfDocumentInfo info = PdfCore.PdfInspector.Inspect(pdf);
-        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Load(pdf);
+        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Open(pdf);
 
         Assert.Equal(2, info.PageCount);
         Assert.Equal(240, info.Pages[0].Width, 1);
@@ -451,9 +567,9 @@ public class RtfPdfConverterTests {
 
         Assert.True(amount.Left > label.Right, $"Expected tabbed amount to render after label. LabelRight={label.Right}; AmountLeft={amount.Left}.");
         Assert.InRange(amount.Right, expectedRight - 10D, expectedRight + 10D);
-
-        string content = ExtractPdfContentStreams(pdf);
-        Assert.Contains("2E2E2E", content, StringComparison.Ordinal);
+        Assert.True(
+            letters.Count(letter => letter.Value == "." && letter.StartBaseLine.X > label.Right && letter.EndBaseLine.X < amount.Left) >= 3,
+            "Expected at least three visible dot-leader glyphs between the label and amount.");
 
         static (double Left, double Right) FindTextBounds(IReadOnlyList<UglyToad.PdfPig.Content.Letter> letters, string text) {
             for (int index = 0; index <= letters.Count - text.Length; index++) {
@@ -498,7 +614,7 @@ public class RtfPdfConverterTests {
         document.AddParagraph("Next").SetList(listId: 3, level: 0, kind: RtfListKind.Decimal);
 
         byte[] pdf = document.ToPdf();
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("7.", text, StringComparison.Ordinal);
         Assert.Contains("8.", text, StringComparison.Ordinal);
@@ -514,7 +630,7 @@ public class RtfPdfConverterTests {
         document.AddParagraph("Bullet").SetList(listId: 10, level: 0, kind: RtfListKind.Bullet);
 
         byte[] pdf = document.ToPdf();
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("1.", text, StringComparison.Ordinal);
         Assert.Contains("2.", text, StringComparison.Ordinal);
@@ -535,8 +651,8 @@ public class RtfPdfConverterTests {
         RtfRun annotationRun = paragraph.AddAnnotation("3", "Annotation body");
         annotationRun.Note!.Author = "Alice";
 
-        string defaultText = PdfCore.PdfReadDocument.Load(document.ToPdf()).ExtractText();
-        string skippedText = PdfCore.PdfReadDocument.Load(document.ToPdf(new RtfPdfSaveOptions {
+        string defaultText = PdfCore.PdfReadDocument.Open(document.ToPdf()).ExtractText();
+        string skippedText = PdfCore.PdfReadDocument.Open(document.ToPdf(new RtfPdfSaveOptions {
             IncludeNotes = false
         })).ExtractText();
 
@@ -560,7 +676,7 @@ public class RtfPdfConverterTests {
         document.AddParagraph("Body");
 
         byte[] pdf = document.ToPdf();
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("Default header", text, StringComparison.Ordinal);
         Assert.Contains("Default footer", text, StringComparison.Ordinal);
@@ -585,7 +701,7 @@ public class RtfPdfConverterTests {
         document.AddParagraph("Third page");
 
         byte[] pdf = document.ToPdf();
-        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Load(pdf);
+        PdfCore.PdfReadDocument read = PdfCore.PdfReadDocument.Open(pdf);
 
         Assert.Equal(3, read.Pages.Count);
         Assert.Contains("First header", read.Pages[0].ExtractText(), StringComparison.Ordinal);
@@ -606,7 +722,7 @@ public class RtfPdfConverterTests {
         byte[] pdf = document.ToPdf(new RtfPdfSaveOptions {
             IncludeHeaderFooters = false
         });
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("Visible body", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Hidden header", text, StringComparison.Ordinal);
@@ -623,7 +739,7 @@ public class RtfPdfConverterTests {
 
         PdfCore.PdfDocumentConversionResult result = document.ToPdfDocumentResult(options);
         byte[] pdf = result.ToBytes();
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("Object result", text, StringComparison.Ordinal);
         Assert.Contains("Shape result", text, StringComparison.Ordinal);

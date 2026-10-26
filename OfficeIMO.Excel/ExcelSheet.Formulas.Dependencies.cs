@@ -68,6 +68,43 @@ namespace OfficeIMO.Excel {
             }
         }
 
+        private sealed class FormulaDependencyInspectionContext {
+            private readonly Dictionary<string, IReadOnlyList<Cell>> _formulaCells =
+                new Dictionary<string, IReadOnlyList<Cell>>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, IReadOnlyDictionary<uint, SharedFormulaDefinition>> _sharedFormulaDefinitions =
+                new Dictionary<string, IReadOnlyDictionary<uint, SharedFormulaDefinition>>(StringComparer.OrdinalIgnoreCase);
+
+            internal FormulaDependencyInspectionContext(
+                ExcelSheet sourceSheet,
+                IReadOnlyList<Cell> sourceFormulaCells,
+                IReadOnlyDictionary<uint, SharedFormulaDefinition> sourceSharedFormulaDefinitions) {
+                _formulaCells.Add(sourceSheet.Name, sourceFormulaCells);
+                _sharedFormulaDefinitions.Add(sourceSheet.Name, sourceSharedFormulaDefinitions);
+            }
+
+            internal IReadOnlyList<Cell> GetFormulaCells(ExcelSheet sheet) {
+                if (!_formulaCells.TryGetValue(sheet.Name, out IReadOnlyList<Cell>? cells)) {
+                    cells = sheet.WorksheetRoot.Descendants<Cell>()
+                        .Where(cell => cell.CellFormula != null)
+                        .ToList();
+                    _formulaCells.Add(sheet.Name, cells);
+                }
+
+                return cells;
+            }
+
+            internal IReadOnlyDictionary<uint, SharedFormulaDefinition> GetSharedFormulaDefinitions(ExcelSheet sheet) {
+                if (!_sharedFormulaDefinitions.TryGetValue(
+                    sheet.Name,
+                    out IReadOnlyDictionary<uint, SharedFormulaDefinition>? definitions)) {
+                    definitions = sheet.BuildSharedFormulaDefinitions();
+                    _sharedFormulaDefinitions.Add(sheet.Name, definitions);
+                }
+
+                return definitions;
+            }
+        }
+
         private string GetUnsupportedFormulaReason(string formula) {
             if (string.IsNullOrWhiteSpace(formula)) {
                 return "Formula is empty.";
@@ -113,24 +150,37 @@ namespace OfficeIMO.Excel {
         }
 
         private IReadOnlyList<string> GetFormulaDependencies(
+            string? sourceCellReference,
             string formula,
-            FormulaDependencyAliasCatalog aliases) {
+            FormulaDependencyAliasCatalog aliases,
+            FormulaDependencyTableCatalog tables) {
             if (string.IsNullOrWhiteSpace(formula)) {
                 return Array.Empty<string>();
             }
 
             try {
+                bool hasSourceCell = TryParseCellReference(
+                    sourceCellReference ?? string.Empty,
+                    out int parsedSourceRow,
+                    out int parsedSourceColumn);
+                int? sourceRow = hasSourceCell ? parsedSourceRow : (int?)null;
                 string searchableFormula = MaskFormulaStringLiterals(formula);
-                string directReferenceFormula = MaskFormulaStructuredReferenceSegments(searchableFormula);
-                var dependencies = new HashSet<string>(FormulaReferenceRegex.Matches(directReferenceFormula)
-                    .Cast<Match>()
-                    .Where(match => IsLocalFormulaReferenceMatch(searchableFormula, match))
-                    .Select(match => match.Groups["reference"].Value)
-                    .Where(reference => !string.IsNullOrWhiteSpace(reference))
-                    .Select(NormalizeFormulaDependencyReference), StringComparer.OrdinalIgnoreCase);
-                foreach (FormulaDependencyAliasMatch match in aliases.FindMatches(searchableFormula)) {
-                    AddFormulaAliasDependency(searchableFormula, match, dependencies);
-                }
+                int? sourceColumn = hasSourceCell ? parsedSourceColumn : (int?)null;
+                string valueDependencyFormula = MaskFormulaReferenceShapeArguments(
+                    searchableFormula,
+                    sourceRow,
+                    sourceColumn,
+                    aliases,
+                    tables);
+                List<FormulaDependencyReferenceMatch> dependencyMatches = GetFormulaDependencyReferenceMatches(
+                    searchableFormula,
+                    valueDependencyFormula,
+                    aliases,
+                    tables,
+                    sourceRow,
+                    sourceColumn);
+                var dependencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                AddFormulaDependencies(searchableFormula, dependencyMatches, sourceRow, dependencies);
 
                 return dependencies
                     .OrderBy(reference => reference, StringComparer.OrdinalIgnoreCase)
@@ -138,6 +188,41 @@ namespace OfficeIMO.Excel {
             } catch (RegexMatchTimeoutException) {
                 return Array.Empty<string>();
             }
+        }
+
+        private List<FormulaDependencyReferenceMatch> GetFormulaDependencyReferenceMatches(
+            string searchableFormula,
+            string valueDependencyFormula,
+            FormulaDependencyAliasCatalog aliases,
+            FormulaDependencyTableCatalog tables,
+            int? sourceRow,
+            int? sourceColumn) {
+            string localReferenceFormula = MaskFormulaNonLocalReferenceSegments(valueDependencyFormula);
+            string directReferenceFormula = MaskFormulaStructuredReferenceSegments(localReferenceFormula);
+            List<FormulaDependencyReferenceMatch> dependencyMatches = FormulaReferenceRegex.Matches(directReferenceFormula)
+                    .Cast<Match>()
+                    .Where(match => IsLocalFormulaReferenceMatch(searchableFormula, match))
+                    .Where(match => !IsFormulaDependencyFunctionToken(searchableFormula, match))
+                    .Where(match => !string.IsNullOrWhiteSpace(match.Groups["reference"].Value))
+                    .Select(match => new FormulaDependencyReferenceMatch(
+                        match.Index,
+                        match.Length,
+                        match.Groups["reference"].Value))
+                    .ToList();
+            IReadOnlyList<FormulaLexicalBinding> lexicalBindings = GetFormulaLexicalBindings(searchableFormula);
+            foreach (FormulaDependencyAliasMatch match in aliases.FindMatches(valueDependencyFormula)) {
+                AddFormulaAliasDependencyMatch(valueDependencyFormula, match, lexicalBindings, sourceRow, dependencyMatches);
+            }
+            if (sourceRow.HasValue && sourceColumn.HasValue) {
+                AddUnqualifiedCurrentRowDependencyMatches(
+                    localReferenceFormula,
+                    sourceRow.Value,
+                    sourceColumn.Value,
+                    tables,
+                    dependencyMatches);
+            }
+
+            return dependencyMatches;
         }
 
         private FormulaDependencyAliasCatalog GetFormulaDependencyAliases() {
@@ -207,20 +292,25 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        private void AddFormulaAliasDependency(
+        private void AddFormulaAliasDependencyMatch(
             string formula,
             FormulaDependencyAliasMatch match,
-            ISet<string> dependencies) {
-            if (!TryGetFormulaAliasReference(formula, match, out string reference)
-                || !TryResolveFormulaRangeReference(reference, out ExcelSheet sheet, out int r1, out int c1, out int r2, out int c2)) {
+            IReadOnlyList<FormulaLexicalBinding> lexicalBindings,
+            int? sourceRow,
+            ICollection<FormulaDependencyReferenceMatch> dependencyMatches) {
+            if (!TryGetFormulaAliasReference(formula, match, out string reference)) {
                 return;
             }
 
-            string start = A1.CellReference(r1, c1);
-            string end = A1.CellReference(r2, c2);
-            dependencies.Add(r1 == r2 && c1 == c2
-                ? $"{sheet.Name}!{start}"
-                : $"{sheet.Name}!{start}:{end}");
+            bool hasStructuredSuffix = match.Alias.AllowStructuredSuffix
+                && reference.Length > match.Alias.Text.Length;
+            if ((!hasStructuredSuffix
+                    && lexicalBindings.Any(binding => binding.Shadows(match.Alias.Text, match.Index, match.Alias.Text.Length)))
+                || !TryResolveFormulaRangeReference(reference, sourceRow, out _, out _, out _, out _, out _)) {
+                return;
+            }
+
+            dependencyMatches.Add(new FormulaDependencyReferenceMatch(match.Index, reference.Length, reference));
         }
 
         private static bool TryGetFormulaAliasReference(
@@ -234,9 +324,11 @@ namespace OfficeIMO.Excel {
             bool validStart = index == 0
                 || (!IsFormulaAliasIdentifierCharacter(formula[index - 1])
                     && formula[index - 1] != '!'
-                    && formula[index - 1] != ']'
-                    && formula[index - 1] != ':');
-            if (!validStart || IsInsideFormulaStructuredReference(formula, index)) {
+                    && formula[index - 1] != ']');
+            if (!validStart
+                || IsInsideFormulaErrorLiteral(formula, index)
+                || IsInsideFormulaStructuredReference(formula, index)
+                || IsInsideQuotedFormulaSheetQualifier(formula, index)) {
                 return false;
             }
 
@@ -287,6 +379,30 @@ namespace OfficeIMO.Excel {
             return true;
         }
 
+        private static bool IsInsideFormulaErrorLiteral(string formula, int index) {
+            int start = index;
+            while (start > 0 && IsFormulaErrorLiteralCharacter(formula[start - 1])) {
+                start--;
+            }
+
+            int end = index;
+            while (end < formula.Length && IsFormulaErrorLiteralCharacter(formula[end])) {
+                end++;
+            }
+
+            return start < end
+                && formula[start] == '#'
+                && TryParseFormulaErrorLiteral(formula.Substring(start, end - start), out _);
+        }
+
+        private static bool IsFormulaErrorLiteralCharacter(char character) {
+            return char.IsLetterOrDigit(character)
+                || character == '#'
+                || character == '/'
+                || character == '!'
+                || character == '?';
+        }
+
         private static bool IsInsideFormulaStructuredReference(string formula, int index) {
             int bracketDepth = 0;
             for (int position = 0; position < index; position++) {
@@ -301,7 +417,7 @@ namespace OfficeIMO.Excel {
         }
 
         private static bool IsFormulaAliasIdentifierCharacter(char character) {
-            return char.IsLetterOrDigit(character) || character == '_' || character == '.';
+            return char.IsLetterOrDigit(character) || character == '_' || character == '.' || character == '\\';
         }
 
         private static bool IsLocalFormulaReferenceMatch(string formula, Match match) {
@@ -314,7 +430,7 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
-            if (match.Index > 0 && (formula[match.Index - 1] == ']' || formula[match.Index - 1] == ':')) {
+            if (match.Index > 0 && formula[match.Index - 1] == ']') {
                 return false;
             }
 
@@ -328,6 +444,27 @@ namespace OfficeIMO.Excel {
             }
 
             return true;
+        }
+
+        private bool IsFormulaDependencyFunctionToken(string formula, Match match) {
+            string token = match.Groups["reference"].Value;
+            if (token.IndexOf('!') >= 0 || token.IndexOf(':') >= 0 || token.IndexOf('$') >= 0) {
+                return false;
+            }
+
+            int cursor = match.Index + match.Length;
+            int whitespaceStart = cursor;
+            while (cursor < formula.Length && char.IsWhiteSpace(formula[cursor])) {
+                cursor++;
+            }
+
+            if (cursor >= formula.Length || formula[cursor] != '(') {
+                return false;
+            }
+
+            return cursor == whitespaceStart
+                || ExcelFormulaCapabilities.IsBuiltInFunction(token)
+                || _excelDocument.Calculation.TryGetCustomFunction(token, out _);
         }
 
         private static bool IsStartOfThreeDimensionalReference(string formula, int index) {
@@ -360,7 +497,10 @@ namespace OfficeIMO.Excel {
             return false;
         }
 
-        private IReadOnlyList<string> GetFormulaDependencyIssues(string formula, string? sourceCellReference, IReadOnlyList<string> dependencies) {
+        private IReadOnlyList<string> GetFormulaDependencyIssues(
+            string? sourceCellReference,
+            IReadOnlyList<string> dependencies,
+            FormulaDependencyInspectionContext inspectionContext) {
             if (dependencies.Count == 0) {
                 return Array.Empty<string>();
             }
@@ -368,7 +508,14 @@ namespace OfficeIMO.Excel {
             var issues = new List<string>();
             string? sourceReference = NormalizeFormulaCellReference(sourceCellReference);
             foreach (string dependency in dependencies) {
-                if (!TryResolveFormulaRangeReference(dependency, out ExcelSheet dependencySheet, out int r1, out int c1, out int r2, out int c2)) {
+                if (!TryResolveFormulaDependencyReference(
+                    dependency,
+                    out ExcelSheet dependencySheet,
+                    out int r1,
+                    out int c1,
+                    out int r2,
+                    out int c2,
+                    out _)) {
                     issues.Add($"Cannot resolve dependency '{dependency}'.");
                     continue;
                 }
@@ -380,7 +527,7 @@ namespace OfficeIMO.Excel {
                     issues.Add($"Dependency '{dependency}' references its own formula cell.");
                 }
 
-                foreach (Cell dependencyCell in dependencySheet.WorksheetRoot.Descendants<Cell>().Where(cell => cell.CellFormula != null)) {
+                foreach (Cell dependencyCell in inspectionContext.GetFormulaCells(dependencySheet)) {
                     string? dependencyReference = NormalizeFormulaCellReference(dependencyCell.CellReference?.Value);
                     if (dependencyReference == null
                         || !TryParseCellReference(dependencyReference, out int dependencyRow, out int dependencyColumn)
@@ -398,8 +545,10 @@ namespace OfficeIMO.Excel {
                         issues.Add($"Dependency '{formattedDependencyCell}' is a formula without a cached result.");
                     }
 
-                    string dependencyFormula = dependencySheet.ResolveCellFormulaText(dependencyCell);
-                    if (!TryEvaluateFormulaValue(dependencyFormula, out _)) {
+                    if (!dependencySheet.TryEvaluateFormulaCellValue(
+                        dependencyCell,
+                        out _,
+                        inspectionContext.GetSharedFormulaDefinitions(dependencySheet))) {
                         issues.Add($"Dependency '{formattedDependencyCell}' contains a formula outside the lightweight evaluator support.");
                     }
                 }
@@ -411,17 +560,62 @@ namespace OfficeIMO.Excel {
                 .ToList();
         }
 
-        private string NormalizeFormulaDependencyReference(string reference) {
+        private string NormalizeFormulaDependencyReference(string reference, int? sourceRow) {
             string normalized = reference.Trim().Replace("$", string.Empty);
-            if (TryResolveFormulaRangeReference(normalized, out ExcelSheet sheet, out int r1, out int c1, out int r2, out int c2)) {
-                string start = A1.CellReference(r1, c1);
-                string end = A1.CellReference(r2, c2);
-                return r1 == r2 && c1 == c2
-                    ? $"{sheet.Name}!{start}"
-                    : $"{sheet.Name}!{start}:{end}";
+            if (TryResolveFormulaDependencyReference(
+                normalized,
+                sourceRow,
+                out ExcelSheet sheet,
+                out _,
+                out _,
+                out _,
+                out _,
+                out string address)) {
+                return $"{sheet.Name}!{address}";
             }
 
             return normalized;
+        }
+
+        private bool TryResolveFormulaDependencyReference(
+            string token,
+            out ExcelSheet sheet,
+            out int r1,
+            out int c1,
+            out int r2,
+            out int c2,
+            out string address) {
+            return TryResolveFormulaDependencyReference(token, null, out sheet, out r1, out c1, out r2, out c2, out address);
+        }
+
+        private bool TryResolveFormulaDependencyReference(
+            string token,
+            int? sourceRow,
+            out ExcelSheet sheet,
+            out int r1,
+            out int c1,
+            out int r2,
+            out int c2,
+            out string address) {
+            if (TryResolveFormulaRangeReference(token, sourceRow, out sheet, out r1, out c1, out r2, out c2)) {
+                string start = A1.CellReference(r1, c1);
+                string end = A1.CellReference(r2, c2);
+                address = r1 == r2 && c1 == c2 ? start : start + ":" + end;
+                return true;
+            }
+
+            sheet = this;
+            r1 = c1 = r2 = c2 = 0;
+            address = string.Empty;
+            return TryParseQualifiedFormulaWholeRange(
+                token,
+                null,
+                out sheet,
+                out r1,
+                out c1,
+                out r2,
+                out c2,
+                out address);
         }
 
         private static string MaskFormulaStringLiterals(string formula) {
@@ -445,6 +639,42 @@ namespace OfficeIMO.Excel {
             }
 
             return builder.ToString();
+        }
+
+        private static bool IsInsideQuotedFormulaSheetQualifier(string formula, int index) {
+            for (int start = 0; start < formula.Length; start++) {
+                if (formula[start] != '\'') {
+                    continue;
+                }
+
+                int cursor = start + 1;
+                while (cursor < formula.Length) {
+                    if (formula[cursor] != '\'') {
+                        cursor++;
+                        continue;
+                    }
+                    if (cursor + 1 < formula.Length && formula[cursor + 1] == '\'') {
+                        cursor += 2;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                if (cursor >= formula.Length) {
+                    return false;
+                }
+                if (cursor + 1 >= formula.Length || formula[cursor + 1] != '!') {
+                    continue;
+                }
+
+                if (index > start && index <= cursor) {
+                    return true;
+                }
+                start = cursor;
+            }
+
+            return false;
         }
 
         private static string MaskFormulaStructuredReferenceSegments(string formula) {

@@ -24,11 +24,11 @@ public static partial class RtfPdfConverterExtensions {
         document.ToPdfDocumentResult(options).ToBytes();
 
     /// <summary>Saves an RTF document as PDF at the specified path.</summary>
-    public static PdfCore.PdfDocumentConversionResult SaveAsPdf(this RtfDocument document, string path, RtfPdfSaveOptions? options = null) =>
+    public static PdfCore.PdfSaveResult SaveAsPdf(this RtfDocument document, string path, RtfPdfSaveOptions? options = null) =>
         document.ToPdfDocumentResult(options).Save(path);
 
     /// <summary>Saves an RTF document as PDF to a caller-owned stream.</summary>
-    public static PdfCore.PdfDocumentConversionResult SaveAsPdf(this RtfDocument document, Stream stream, RtfPdfSaveOptions? options = null) =>
+    public static PdfCore.PdfSaveResult SaveAsPdf(this RtfDocument document, Stream stream, RtfPdfSaveOptions? options = null) =>
         document.ToPdfDocumentResult(options).Save(stream);
 
     /// <summary>Attempts to save an RTF document as PDF at the specified path.</summary>
@@ -55,21 +55,25 @@ public static partial class RtfPdfConverterExtensions {
         }
     }
 
-    /// <summary>Asynchronously saves an RTF document as PDF at the specified path.</summary>
-    public static Task<PdfCore.PdfDocumentConversionResult> SaveAsPdfAsync(
+    /// <summary>Converts synchronously, then asynchronously saves an RTF PDF at the specified path.</summary>
+    public static Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
         this RtfDocument document,
         string path,
         RtfPdfSaveOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        document.ToPdfDocumentResult(options).SaveAsync(path, cancellationToken);
+        CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return document.ToPdfDocumentResult(options).SaveAsync(path, cancellationToken);
+    }
 
-    /// <summary>Asynchronously saves an RTF document as PDF to a caller-owned stream.</summary>
-    public static Task<PdfCore.PdfDocumentConversionResult> SaveAsPdfAsync(
+    /// <summary>Converts synchronously, then asynchronously saves an RTF PDF to a caller-owned stream.</summary>
+    public static Task<PdfCore.PdfSaveResult> SaveAsPdfAsync(
         this RtfDocument document,
         Stream stream,
         RtfPdfSaveOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        document.ToPdfDocumentResult(options).SaveAsync(stream, cancellationToken);
+        CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return document.ToPdfDocumentResult(options).SaveAsync(stream, cancellationToken);
+    }
 
     /// <summary>Attempts to save an RTF document as PDF at the specified path asynchronously.</summary>
     public static async Task<PdfCore.PdfSaveResult> TrySaveAsPdfAsync(
@@ -77,6 +81,7 @@ public static partial class RtfPdfConverterExtensions {
         string path,
         RtfPdfSaveOptions? options = null,
         CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
         try {
             return await document.ToPdfDocumentResult(options)
                 .TrySaveAsync(path, cancellationToken)
@@ -94,6 +99,7 @@ public static partial class RtfPdfConverterExtensions {
         Stream stream,
         RtfPdfSaveOptions? options = null,
         CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
         try {
             return await document.ToPdfDocumentResult(options)
                 .TrySaveAsync(stream, cancellationToken)

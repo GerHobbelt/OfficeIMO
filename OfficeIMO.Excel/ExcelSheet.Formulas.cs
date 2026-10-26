@@ -14,6 +14,7 @@ namespace OfficeIMO.Excel {
         private Stack<FormulaEvaluationDepthFrame>? _formulaEvaluationDepthFrames;
         private FormulaEvaluationGuardState? _formulaEvaluationGuardState;
         private IReadOnlyDictionary<uint, SharedFormulaDefinition>? _formulaEvaluationSharedDefinitions;
+        private Dictionary<string, IReadOnlyDictionary<uint, SharedFormulaDefinition>>? _formulaEvaluationSharedDefinitionsBySheet;
         private string? _formulaEvaluationCellReference;
 
         private sealed class FormulaEvaluationGuardState {
@@ -51,17 +52,17 @@ namespace OfficeIMO.Excel {
             FormulaRegexTimeout);
 
         private static readonly Regex FormulaReferenceRegex = new Regex(
-            @"(?<![A-Za-z0-9_\.])(?<reference>(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_ .]*)!)?\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?)(?![A-Za-z0-9_\.]|\s*\()",
+            @"(?<![A-Za-z0-9_\.])(?<reference>(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_ .]*)!)?(?:\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?|\$?[A-Z]{1,3}:\$?[A-Z]{1,3}|\$?\d+:\$?\d+))(?![A-Za-z0-9_\.])",
             RegexOptions.IgnoreCase | RegexOptions.Compiled,
             FormulaRegexTimeout);
 
         private static readonly Regex SimpleBinaryFormulaRegex = new Regex(
-            @"^\s*=?\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|-?\d+(?:\.\d+)?)\s*([+\-*/])\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|-?\d+(?:\.\d+)?)\s*$",
+            @"^\s*=?\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|\[[^+\-*/<>=\(\)]*\]|-?\d+(?:\.\d+)?)\s*([+\-*/])\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|\[[^+\-*/<>=\(\)]*\]|-?\d+(?:\.\d+)?)\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled,
             FormulaRegexTimeout);
 
         private static readonly Regex SimpleComparisonFormulaRegex = new Regex(
-            @"^\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|-?\d+(?:\.\d+)?)\s*(>=|<=|<>|=|>|<)\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|-?\d+(?:\.\d+)?)\s*$",
+            @"^\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|\[[^+\-*/<>=\(\)]*\]|-?\d+(?:\.\d+)?)\s*(>=|<=|<>|=|>|<)\s*((?:'(?:[^']|'')+'|[A-Za-z_][^!+\-*/<>=,\(\)]*)!(?:\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*)|\$?[A-Z]+\$?[0-9]+|[A-Za-z_][A-Za-z0-9_.]*(?:\[[^+\-*/<>=\(\)]*\])*|\[[^+\-*/<>=\(\)]*\]|-?\d+(?:\.\d+)?)\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled,
             FormulaRegexTimeout);
 
@@ -116,12 +117,17 @@ namespace OfficeIMO.Excel {
                 var previousDepthFrames = _formulaEvaluationDepthFrames;
                 var previousGuardState = _formulaEvaluationGuardState;
                 var previousSharedDefinitions = _formulaEvaluationSharedDefinitions;
+                var previousSharedDefinitionsBySheet = _formulaEvaluationSharedDefinitionsBySheet;
                 _formulaEvaluationCache = new Dictionary<string, FormulaArgumentValue>(StringComparer.OrdinalIgnoreCase);
                 _formulaEvaluationDepthCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 _formulaEvaluationStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 _formulaEvaluationDepthFrames = new Stack<FormulaEvaluationDepthFrame>();
                 _formulaEvaluationGuardState = new FormulaEvaluationGuardState();
                 _formulaEvaluationSharedDefinitions = BuildSharedFormulaDefinitions();
+                _formulaEvaluationSharedDefinitionsBySheet = new Dictionary<string, IReadOnlyDictionary<uint, SharedFormulaDefinition>>(
+                    StringComparer.OrdinalIgnoreCase) {
+                    [Name] = _formulaEvaluationSharedDefinitions
+                };
                 bool changed = false;
 
                 try {
@@ -155,6 +161,7 @@ namespace OfficeIMO.Excel {
                     _formulaEvaluationDepthFrames = previousDepthFrames;
                     _formulaEvaluationGuardState = previousGuardState;
                     _formulaEvaluationSharedDefinitions = previousSharedDefinitions;
+                    _formulaEvaluationSharedDefinitionsBySheet = previousSharedDefinitionsBySheet;
                 }
 
                 if (changed) {
@@ -238,6 +245,9 @@ namespace OfficeIMO.Excel {
                     if (!TryEvaluateFormulaValue(formula, out result)) {
                         return false;
                     }
+                    if (depthFrame.DependencyGuardBlocked) {
+                        return false;
+                    }
 
                     evaluationDepth = depthFrame.MaximumChildDepth + 1;
                     _formulaEvaluationCache[cacheKey] = result;
@@ -301,22 +311,63 @@ namespace OfficeIMO.Excel {
             return Locking.ExecuteRead(_excelDocument.EnsureLock(), () => {
                 var formulas = new List<ExcelFormulaCellInfo>();
                 FormulaDependencyAliasCatalog dependencyAliases = GetFormulaDependencyAliases();
+                FormulaDependencyTableCatalog dependencyTables = GetFormulaDependencyTables();
                 IReadOnlyDictionary<uint, SharedFormulaDefinition> sharedFormulaDefinitions = BuildSharedFormulaDefinitions();
-                foreach (var cell in WorksheetRoot.Descendants<Cell>().Where(c => c.CellFormula != null)) {
-                    string formula = ResolveCellFormulaText(cell, sharedFormulaDefinitions);
-                    bool supported = TryEvaluateFormulaCellValue(cell, out _, sharedFormulaDefinitions);
-                    IReadOnlyList<string> dependencies = GetFormulaDependencies(formula, dependencyAliases);
-                    IReadOnlyList<string> dependencyIssues = GetFormulaDependencyIssues(formula, cell.CellReference?.Value, dependencies);
-                    formulas.Add(new ExcelFormulaCellInfo(
-                        Name,
-                        cell.CellReference?.Value ?? string.Empty,
-                        formula,
-                        cell.CellValue?.Text,
-                        cell.CellFormula!.CalculateCell?.Value ?? false,
-                        supported,
-                        supported ? null : GetUnsupportedFormulaReason(formula),
-                        dependencies,
-                        dependencyIssues));
+                List<Cell> formulaCells = WorksheetRoot.Descendants<Cell>().Where(c => c.CellFormula != null).ToList();
+                var dependencyInspectionContext = new FormulaDependencyInspectionContext(
+                    this,
+                    formulaCells,
+                    sharedFormulaDefinitions);
+                var previousCache = _formulaEvaluationCache;
+                var previousDepthCache = _formulaEvaluationDepthCache;
+                var previousStack = _formulaEvaluationStack;
+                var previousDepthFrames = _formulaEvaluationDepthFrames;
+                var previousGuardState = _formulaEvaluationGuardState;
+                var previousSharedDefinitions = _formulaEvaluationSharedDefinitions;
+                var previousSharedDefinitionsBySheet = _formulaEvaluationSharedDefinitionsBySheet;
+                _formulaEvaluationCache = new Dictionary<string, FormulaArgumentValue>(StringComparer.OrdinalIgnoreCase);
+                _formulaEvaluationDepthCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                _formulaEvaluationStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                _formulaEvaluationDepthFrames = new Stack<FormulaEvaluationDepthFrame>();
+                _formulaEvaluationGuardState = new FormulaEvaluationGuardState();
+                _formulaEvaluationSharedDefinitions = sharedFormulaDefinitions;
+                _formulaEvaluationSharedDefinitionsBySheet = new Dictionary<string, IReadOnlyDictionary<uint, SharedFormulaDefinition>>(
+                    StringComparer.OrdinalIgnoreCase) {
+                    [Name] = sharedFormulaDefinitions
+                };
+                try {
+                    foreach (Cell cell in formulaCells) {
+                        _formulaEvaluationGuardState.DependencyGuardBlocked = false;
+                        string formula = ResolveCellFormulaText(cell, sharedFormulaDefinitions);
+                        bool supported = TryEvaluateFormulaCellValue(cell, out _, sharedFormulaDefinitions);
+                        IReadOnlyList<string> dependencies = GetFormulaDependencies(
+                            cell.CellReference?.Value,
+                            formula,
+                            dependencyAliases,
+                            dependencyTables);
+                        IReadOnlyList<string> dependencyIssues = GetFormulaDependencyIssues(
+                            cell.CellReference?.Value,
+                            dependencies,
+                            dependencyInspectionContext);
+                        formulas.Add(new ExcelFormulaCellInfo(
+                            Name,
+                            cell.CellReference?.Value ?? string.Empty,
+                            formula,
+                            cell.CellValue?.Text,
+                            cell.CellFormula!.CalculateCell?.Value ?? false,
+                            supported,
+                            supported ? null : GetUnsupportedFormulaReason(formula),
+                            dependencies,
+                            dependencyIssues));
+                    }
+                } finally {
+                    _formulaEvaluationCache = previousCache;
+                    _formulaEvaluationDepthCache = previousDepthCache;
+                    _formulaEvaluationStack = previousStack;
+                    _formulaEvaluationDepthFrames = previousDepthFrames;
+                    _formulaEvaluationGuardState = previousGuardState;
+                    _formulaEvaluationSharedDefinitions = previousSharedDefinitions;
+                    _formulaEvaluationSharedDefinitionsBySheet = previousSharedDefinitionsBySheet;
                 }
 
                 return formulas;
@@ -485,6 +536,10 @@ namespace OfficeIMO.Excel {
                 }
             } catch (RegexMatchTimeoutException) {
                 return false;
+            }
+
+            if (TryEvaluateSingleReferenceFormulaValue(formula, out result)) {
+                return true;
             }
 
             if (TryEvaluateFormula(formula, out double numeric)) {

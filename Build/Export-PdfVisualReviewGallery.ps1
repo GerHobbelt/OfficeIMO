@@ -27,7 +27,7 @@ $resolvedOutputPath = (Resolve-Path -LiteralPath $outputPath).Path
 
 $manifestReviewFileNames = @(
     foreach ($scenario in @($scenarioManifest.scenarios)) {
-        foreach ($fileName in @($scenario.visualReviewFiles)) {
+        foreach ($fileName in @($scenario.visualReviewFiles) + @($scenario.sourceReviewFiles)) {
             if (-not [string]::IsNullOrWhiteSpace($fileName)) {
                 $fileName
             }
@@ -69,6 +69,7 @@ $standaloneReviewFileNames = @(
     'showcase-dashboard.pdf',
     'conversion-scenarios.json',
     'conversion-proof-summary.json',
+    'pdf-conversion-support-matrix.md',
     'index.md'
 )
 
@@ -85,9 +86,11 @@ foreach ($fileName in $generatedReviewFileNames) {
 }
 
 $indexPath = Join-Path $resolvedOutputPath 'index.md'
+$supportMatrixPath = Join-Path $resolvedOutputPath 'pdf-conversion-support-matrix.md'
 
 $previousReviewOutput = $env:OFFICEIMO_PDF_VISUAL_REVIEW_OUTPUT
 $previousRequireRasterizer = $env:OFFICEIMO_REQUIRE_PDF_RASTERIZER
+$previousRequireRasterBaselineMatch = $env:OFFICEIMO_REQUIRE_PDF_RASTER_BASELINE_MATCH
 $previousSkipRasterAssertions = $env:OFFICEIMO_PDF_VISUAL_REVIEW_SKIP_RASTER_ASSERTIONS
 
 try {
@@ -100,8 +103,10 @@ try {
 
     if ($SkipRasterBaselines) {
         $env:OFFICEIMO_PDF_VISUAL_REVIEW_SKIP_RASTER_ASSERTIONS = '1'
+        $env:OFFICEIMO_REQUIRE_PDF_RASTER_BASELINE_MATCH = $null
     } else {
         $env:OFFICEIMO_PDF_VISUAL_REVIEW_SKIP_RASTER_ASSERTIONS = $null
+        $env:OFFICEIMO_REQUIRE_PDF_RASTER_BASELINE_MATCH = '1'
     }
 
     $testArgs = @(
@@ -124,12 +129,30 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "dotnet test failed with exit code $LASTEXITCODE."
         }
+
+        $oneNoteTestArgs = @(
+            'test',
+            (Join-Path $repoRoot 'OfficeIMO.OneNote.Tests/OfficeIMO.OneNote.Tests.csproj'),
+            '--configuration', $Configuration,
+            '--framework', $Framework,
+            '--filter', 'FullyQualifiedName~OneNotePdfVisualScenarioTests',
+            '--verbosity', 'minimal',
+            '-p:WarningLevel=0'
+        )
+        if ($NoRestore) {
+            $oneNoteTestArgs += '--no-restore'
+        }
+        & dotnet @oneNoteTestArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "OneNote PDF visual scenario test failed with exit code $LASTEXITCODE."
+        }
     } finally {
         Pop-Location
     }
 } finally {
     $env:OFFICEIMO_PDF_VISUAL_REVIEW_OUTPUT = $previousReviewOutput
     $env:OFFICEIMO_REQUIRE_PDF_RASTERIZER = $previousRequireRasterizer
+    $env:OFFICEIMO_REQUIRE_PDF_RASTER_BASELINE_MATCH = $previousRequireRasterBaselineMatch
     $env:OFFICEIMO_PDF_VISUAL_REVIEW_SKIP_RASTER_ASSERTIONS = $previousSkipRasterAssertions
 }
 
@@ -176,6 +199,32 @@ $scenarioProof = @(
                 }
             }
         )
+        $sourceArtifacts = @(
+            foreach ($fileName in @($scenario.sourceReviewFiles)) {
+                if ([string]::IsNullOrWhiteSpace($fileName)) {
+                    continue
+                }
+
+                $artifactPath = Join-Path $resolvedOutputPath $fileName
+                if (-not (Test-Path -LiteralPath $artifactPath)) {
+                    throw "Manifest scenario '$($scenario.id)' expected source review artifact '$fileName', but it was not generated in $resolvedOutputPath."
+                }
+
+                $item = Get-Item -LiteralPath $artifactPath
+                $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $hashBytes = $hashAlgorithm.ComputeHash([System.IO.File]::ReadAllBytes($item.FullName))
+                } finally {
+                    $hashAlgorithm.Dispose()
+                }
+
+                [pscustomobject]@{
+                    file = $item.Name
+                    sizeBytes = $item.Length
+                    sha256 = (([BitConverter]::ToString($hashBytes)) -replace '-', '').ToLowerInvariant()
+                }
+            }
+        )
 
         [pscustomobject]@{
             id = $scenario.id
@@ -189,6 +238,7 @@ $scenarioProof = @(
             expectedWarnings = @($scenario.expectedWarnings)
             proof = $scenario.proof
             artifacts = $artifacts
+            sourceArtifacts = $sourceArtifacts
         }
     }
 )
@@ -196,17 +246,23 @@ $scenarioProof = @(
 $qualityContract = $scenarioManifest.qualityContract
 
 $proofSummary = [pscustomobject]@{
-    version = 1
+    version = $scenarioManifest.version
     generatedAt = $generatedAt
     commit = $commit
     outputDirectory = $resolvedOutputPath
     manifest = 'conversion-scenarios.json'
+    converterCatalog = @($scenarioManifest.converterCatalog)
+    compositionRoutes = @($scenarioManifest.compositionRoutes)
     qualityContract = $qualityContract
     scenarios = $scenarioProof
 }
 
 $proofSummaryPath = Join-Path $resolvedOutputPath 'conversion-proof-summary.json'
 $proofSummary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $proofSummaryPath -Encoding UTF8
+
+& (Join-Path $PSScriptRoot 'Export-PdfConversionSupportMatrix.ps1') `
+    -ManifestPath $scenarioManifestPath `
+    -OutputPath $supportMatrixPath
 
 $lines = [System.Collections.Generic.List[string]]::new()
 $lines.Add('# OfficeIMO PDF Visual Review Gallery')
@@ -240,6 +296,8 @@ $lines.Add("Manifest: [conversion-scenarios.json](conversion-scenarios.json)")
 $lines.Add('')
 $lines.Add("Proof summary: [conversion-proof-summary.json](conversion-proof-summary.json)")
 $lines.Add('')
+$lines.Add("Generated support matrix: [pdf-conversion-support-matrix.md](pdf-conversion-support-matrix.md)")
+$lines.Add('')
 $lines.Add('## Premium Quality Contract')
 $lines.Add('')
 $lines.Add($qualityContract.goal)
@@ -252,10 +310,35 @@ foreach ($proofItem in @($qualityContract.requiredProof)) {
     $lines.Add("- $proofItem")
 }
 $lines.Add('')
-$lines.Add('Backlog still tracked by the contract:')
+$lines.Add('Known limits:')
 $lines.Add('')
-foreach ($backlogItem in @($qualityContract.premiumBacklog)) {
-    $lines.Add("- $backlogItem")
+foreach ($knownLimit in @($qualityContract.knownLimits)) {
+    $lines.Add("- $knownLimit")
+}
+$lines.Add('')
+$lines.Add('## Direct Converter Catalog')
+$lines.Add('')
+$lines.Add('| Source | Formats | Adapter | Mode | Evidence status |')
+$lines.Add('| --- | --- | --- | --- | --- |')
+foreach ($converter in @($scenarioManifest.converterCatalog)) {
+    $source = ([string]$converter.id).Replace('|', '\|')
+    $formats = (@($converter.sourceFormats) -join ', ').Replace('|', '\|')
+    $adapter = ([string]$converter.adapter).Replace('|', '\|')
+    $mode = ([string]$converter.conversionMode).Replace('|', '\|')
+    $fidelityStatus = ([string]$converter.fidelityStatus).Replace('|', '\|')
+    $lines.Add("| $source | $formats | $adapter | $mode | $fidelityStatus |")
+}
+$lines.Add('')
+$lines.Add('## Composed And Planned Routes')
+$lines.Add('')
+$lines.Add('| Route | Formats | Status | Stages |')
+$lines.Add('| --- | --- | --- | --- |')
+foreach ($route in @($scenarioManifest.compositionRoutes)) {
+    $routeId = ([string]$route.id).Replace('|', '\|')
+    $formats = (@($route.sourceFormats) -join ', ').Replace('|', '\|')
+    $routeStatus = ([string]$route.status).Replace('|', '\|')
+    $stages = (@($route.stages) -join ' -> ').Replace('|', '\|')
+    $lines.Add("| $routeId | $formats | $routeStatus | $stages |")
 }
 $lines.Add('')
 $lines.Add('| Scenario | Path | Converter | Review artifacts |')

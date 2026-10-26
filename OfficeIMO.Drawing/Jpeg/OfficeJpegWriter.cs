@@ -122,8 +122,8 @@ internal static class OfficeJpegWriter {
     private static void WriteRgbaCore(Stream stream, int width, int height, byte[] rgba, int stride, int rowOffset, int rowStride, OfficeJpegEncodeOptions options, string bufferName, string bufferMessage) {
         if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
         if (height <= 0) throw new ArgumentOutOfRangeException(nameof(height));
-        if (width > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(width), "JPEG width cannot exceed 65535 pixels.");
-        if (height > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(height), "JPEG height cannot exceed 65535 pixels.");
+        if (width > OfficeRasterImageEncoder.JpegMaximumDimension) throw new ArgumentOutOfRangeException(nameof(width), "JPEG width cannot exceed 65535 pixels.");
+        if (height > OfficeRasterImageEncoder.JpegMaximumDimension) throw new ArgumentOutOfRangeException(nameof(height), "JPEG height cannot exceed 65535 pixels.");
         _ = OfficeRasterGuards.EnsureOutputPixels(width, height, JpegOutputLimitMessage);
         _ = OfficeRasterGuards.EnsureOutputBytes((long)width * height * 4, JpegOutputLimitMessage);
         if (rgba is null) throw new ArgumentNullException(bufferName);
@@ -160,7 +160,7 @@ internal static class OfficeJpegWriter {
 
         WriteMarker(stream, 0xFFD8);
         if (options.WriteJfifHeader) {
-            WriteApp0(stream);
+            WriteApp0(stream, options.DpiX, options.DpiY);
         }
         WriteMetadata(stream, options.Metadata);
         WriteDqt(stream, 0, qY);
@@ -742,7 +742,19 @@ internal static class OfficeJpegWriter {
         return outTable;
     }
 
-    private static void WriteApp0(Stream s) {
+    private static void WriteApp0(Stream s, double dpiX, double dpiY) {
+        if (dpiX < OfficeRasterImageEncoder.JpegMinimumDpi ||
+            double.IsNaN(dpiX) ||
+            double.IsInfinity(dpiX) ||
+            dpiX > ushort.MaxValue) {
+            throw new ArgumentOutOfRangeException(nameof(dpiX));
+        }
+        if (dpiY < OfficeRasterImageEncoder.JpegMinimumDpi ||
+            double.IsNaN(dpiY) ||
+            double.IsInfinity(dpiY) ||
+            dpiY > ushort.MaxValue) {
+            throw new ArgumentOutOfRangeException(nameof(dpiY));
+        }
         WriteMarker(s, 0xFFE0);
         WriteUInt16(s, 16);
         s.WriteByte((byte)'J');
@@ -752,9 +764,9 @@ internal static class OfficeJpegWriter {
         s.WriteByte(0);
         s.WriteByte(1);
         s.WriteByte(1);
-        s.WriteByte(0);
-        WriteUInt16(s, 1);
-        WriteUInt16(s, 1);
+        s.WriteByte(1);
+        WriteUInt16(s, checked((ushort)Math.Round(dpiX, MidpointRounding.AwayFromZero)));
+        WriteUInt16(s, checked((ushort)Math.Round(dpiY, MidpointRounding.AwayFromZero)));
         s.WriteByte(0);
         s.WriteByte(0);
     }

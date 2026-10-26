@@ -12,10 +12,10 @@ The ownership rules are:
 
 - native format packages own parsing, loading, editing, validation, and serialization for their format;
 - adapter packages project one native model into another and do not implement a second parser or document brain;
-- `OfficeIMO.Reader` owns normalized read orchestration, while format-specific Reader packages register typed handlers;
+- `OfficeIMO.Reader.Core` owns normalized read orchestration and contracts, while format-specific Reader packages register typed handlers;
 - `OfficeIMO.Html` owns the canonical HTML source model, resource policy, media filtering, and render scene;
 - shared colors, fonts, images, stream contracts, lifecycle options, and image export results live in `OfficeIMO.Drawing`;
-- package-specific signing remains with the package that owns the signed artifact.
+- `OfficeIMO.Security` owns neutral CMS/X.509/RFC 3161 operations, while each format package owns only its signed-artifact orchestration.
 
 The former compiled `OfficeIMO.Shared` implementation layer is gone. `OfficeIMO.SharedSource` is source-only, and reusable runtime behavior has an explicit owner.
 
@@ -93,7 +93,7 @@ RTF bridges use `RtfConversionResult<T>`. PDF save attempts expose their report,
 
 ## Image export
 
-Word, Excel, PowerPoint, Visio, and HTML image export use `OfficeImageExportResult` and `OfficeImageExportFormat` from `OfficeIMO.Drawing`.
+Word, Excel, PowerPoint, Visio, HTML, email, EPUB, OneNote, PDF, and the ODT/ODS/ODP bridges use `OfficeImageExportResult` and `OfficeImageExportFormat` from `OfficeIMO.Drawing`.
 
 ```csharp
 HtmlConversionDocument source = HtmlConversionDocument.Parse(html);
@@ -101,7 +101,60 @@ OfficeImageExportResult png = source.ExportImage(OfficeImageExportFormat.Png, op
 OfficeImageExportResult saved = source.SaveAsPng("preview.png", options);
 ```
 
-`ToPng()` returns PNG bytes and `ToSvg()` returns SVG text. `ExportImage()` and `ExportImages()` return encoded output, dimensions, format, source metadata, and diagnostics. `SaveAsPng()` and `SaveAsSvg()` write to a path or stream and return the same structured evidence. The redundant `ToPngResult`, `ToSvgResult`, and plural result aliases were removed.
+`ToPng()`, `ToJpeg()`, `ToTiff()`, and `ToWebp()` return encoded bytes; `ToSvg()` returns SVG text. `ExportImage()` and `ExportImages()` return encoded output, dimensions, format, density, source metadata, and diagnostics. Format-specific save methods and the fluent `As...().Save(...)` surface write to a path or stream and return the same structured evidence. The redundant `ToPngResult`, `ToSvgResult`, and plural result aliases were removed.
+
+Every result validates that its encoded bytes and dimensions match the declared format and dimensions. `DpiX`, `DpiY`, `PhysicalWidthInches`, `PhysicalHeightInches`, and `EncodedLength` are derived from the encoded payload. PNG, JPEG, and TIFF write density metadata through the shared encoder.
+
+Shared options own `MaximumRasterPixels`, `RasterOverflowBehavior`, `ImageCodec`, `RasterEncoding`, `TargetDpi`, `Fonts`, `Policy`, `Progress`, aggregate batch limits, and maximum concurrency. Document-specific option types inherit and clone those settings instead of redeclaring them. The shared default is 50 million output pixels per raster. The default overflow policy reduces scale before allocating a pixel buffer and emits `IMAGE_RASTER_SCALE_REDUCED`. Set `RasterOverflowBehavior = OfficeRasterOverflowBehavior.Throw` to receive an `OfficeImageExportLimitException` with requested and allowed dimensions.
+
+Use `AtDpi(...)` for physical output density and `ForPrint(...)` for the print profile. `WithDpi(...)` and `ForHighResolution(...)` were removed because they used inconsistent scaling rules across packages. `WithScale(...)` remains for callers that intentionally work in renderer-relative scale.
+
+File saves now fail when the destination already exists. Select `Replace` or `CreateUnique` explicitly:
+
+```csharp
+OfficeImageExportResult saved = document
+    .ToImage()
+    .AsPng()
+    .OnFileConflict(OfficeImageExportFileConflictPolicy.CreateUnique)
+    .Save("preview");
+
+Console.WriteLine(saved.SavedPath);
+```
+
+The returned path is absolute and includes any appended canonical extension or unique suffix. Direct result saves use the same `OfficeImageExportFileConflictPolicy`.
+
+Batch builders now support `ExportEach(...)` / `ExportEachAsync(...)`, cancellation, progress, deterministic bounded concurrency, and aggregate limits for count, raster pixels, and encoded bytes. Use `SaveFiles(...)` / `SaveFilesAsync(...)` to return path/metadata/diagnostics without retaining every encoded payload.
+
+Image diagnostics now include `OfficeImageExportLossKind`. `OfficeImageExportPolicy` can reject all loss, omissions, failures, or selected codes before a direct or fluent export is returned or saved. Missing requested fonts use the shared `IMAGE_FONT_SUBSTITUTED` code. Supply intended TrueType faces through `WithFont(...)`, `WithFonts(...)`, or `OfficeImageExportOptions.Fonts`.
+
+Format-neutral SVG image export now uses whole-pixel `px` root dimensions so its encoded dimensions match `OfficeImageExportResult.Width` and `Height`. The lower-level `OfficeDrawingSvgExporter.ToSvg(drawing, scale)` overload retains its point-based legacy surface; choose `OfficeSvgSizeUnit.Point` explicitly when a non-image Drawing workflow needs points.
+
+PDF exposes the same canonical surface:
+
+```csharp
+PdfReadDocument loaded = PdfReadDocument.Open(pdfBytes);
+loaded.ToImages()
+    .Pages("2,1")
+    .AtDpi(144)
+    .AsWebp()
+    .Save("pages");
+```
+
+`PdfDocumentConversionResult` is the one paged-image adapter for any source that already converts to the first-party PDF model. It keeps Markdown, AsciiDoc, LaTeX, RTF, OneNote, Word, Excel, PowerPoint, or HTML conversion warnings on every exported page:
+
+```csharp
+IReadOnlyList<OfficeImageExportResult> pages = markdown
+    .ToPdfDocumentResult()
+    .ToImages()
+    .AsPng()
+    .Export();
+```
+
+`PdfImageExportOptions.MaxPages` was removed because it duplicated the Drawing-owned batch budget. Set `MaximumOutputCount` directly or use `ToImages().WithMaximumPages(...)`; both now enforce the same limit before any selected page is rendered.
+
+Use `PdfReadPage.ToDrawing()` when a caller needs the intermediate `OfficeDrawing` scene. The older `PdfPageRenderResult` batch remains a low-level inspection/OCR/verification contract behind the fluent reader facade because it carries per-page elapsed time, continue-on-error state, and typed PDF capability diagnostics; it is not the general five-format export API.
+
+ODT, ODS, and ODP direct image extensions live in their existing Word/Excel/PowerPoint OpenDocument adapter packages and attach ODF conversion diagnostics to every image. `OfficeIMO.Epub.Image` projects retained EPUB chapter HTML/resources through the HTML renderer. The email bridge selects HTML, RTF, or text bodies and resolves allowed inline MIME resources through the same HTML resource pipeline.
 
 ## HTML source ownership
 
@@ -155,6 +208,27 @@ Visio separates two different concepts:
 
 Layout settings remain layout options and are not duplicated as themes. Office colors and hexadecimal formatting are owned by `OfficeIMO.Drawing`; Word and Excel no longer carry duplicate color helpers.
 
+## Image export diagnostics
+
+Source-image decode policy now belongs to `OfficeIMO.Drawing` across Word, Excel, PowerPoint, HTML, OneNote, Visio, and PDF image export. Family-specific preflight warnings that claimed an image was skipped have been removed because the final renderer may decode it through Drawing, a caller-supplied `ImageCodec`, or a visible fallback.
+
+Use the shared result diagnostics instead:
+
+| Removed diagnostic | Replacement |
+| --- | --- |
+| `ExcelImageRasterFormatUnsupported` | `IMAGE_SOURCE_DECODE_FALLBACK` |
+| `ExcelImageSvgFormatUnsupported` | `IMAGE_SOURCE_DECODE_FALLBACK` |
+| `ExcelImagePngDecodeUnavailable` | `IMAGE_SOURCE_DECODE_FALLBACK` |
+| `ExcelHeaderFooterImageUnsupported` | `IMAGE_SOURCE_DECODE_FALLBACK` |
+| `unsupported-word-image-raster` / `unsupported-word-image-svg` | `IMAGE_SOURCE_DECODE_FALLBACK` |
+| `unsupported-powerpoint-image-raster` / `unsupported-powerpoint-image-svg` | `IMAGE_SOURCE_DECODE_FALLBACK` |
+| `HtmlRenderRasterDecoderUnavailable` | `IMAGE_SOURCE_DECODE_FALLBACK` on the final image export result |
+| `ExcelCellFontFamilyFallback` | `IMAGE_FONT_SUBSTITUTED` |
+| `ExcelChartFontFamilyFallback` | `IMAGE_FONT_SUBSTITUTED` |
+| `ExcelHeaderFooterFontFamilyFallback` | `IMAGE_FONT_SUBSTITUTED` |
+
+`IMAGE_SOURCE_DECODED_BY_CALLER_CODEC` is informational proof that `ImageCodec` handled the source. When no codec succeeds, the renderer keeps the content visible with a placeholder or a documented family-specific artwork fallback; it no longer emits a warning that says content was omitted when it was not. Drawing can rasterize its bounded SVG subset directly; unsupported SVG features continue through the caller codec or the diagnosed fallback.
+
 ## Canonical member names
 
 | Removed member | Replacement |
@@ -196,6 +270,26 @@ Layout settings remain layout options and are not duplicated as themes. Office c
 
 Generic file-copy, file-lock probing, duplicate color helpers, public internal save writers, and other APIs with no useful Office document contract were removed rather than renamed.
 
+## PDF converter trust and fidelity defaults
+
+All PDF adapter options now use `PdfResourcePolicy`. The balanced default enables installed fonts and bounded data URI/package resources for document fidelity while denying arbitrary local-file and remote resolver access. For fully reproducible or untrusted conversion, set `PdfResourcePolicy.CreatePortableDeterministic()`. For trusted inputs that intentionally use local or remote resources, set:
+
+```csharp
+options.ResourcePolicy = PdfResourcePolicy.CreateTrustedHost();
+```
+
+The following duplicate trust switches were removed:
+
+| Removed member | Replacement |
+| --- | --- |
+| `AllowSystemFontEmbedding` | `ResourcePolicy.AllowSystemFontEmbedding` or `CreateTrustedHost()` |
+| Markdown `IncludeLocalImages` | `IncludeImages` plus `ResourcePolicy.AllowLocalFileAccess` |
+| Markdown `IncludeDataUriImages` | `IncludeImages` plus `ResourcePolicy.AllowDataUris` |
+
+Profiles no longer change trust. Markdown text-only/lightweight profiles only change image participation, and Excel profiles reset their complete profile-owned option set on every application.
+
+Word `IncludePageNumbers` and Excel `IncludeSheetHeadings` now default to `false`; set either to `true` when synthetic visible labels are desired. PowerPoint removed `UseSharedVisualSnapshot`: full-slide PDF always uses its hyperlink-capable native PDF renderer, while PNG/SVG/HTML review and thumbnails use the shared visual snapshot. OneNote now accepts one `OneNotePdfSaveOptions` object and returns explicit semantic-projection diagnostics through `ToPdfDocumentResult()`.
+
 ## Migration checklist
 
 - Replace aliases with the canonical names; do not add consumer-side compatibility shims.
@@ -205,4 +299,8 @@ Generic file-copy, file-lock probing, duplicate color helpers, public internal s
 - Parse HTML into `HtmlConversionDocument` before projecting it to another format.
 - Build Reader instances with explicit typed handlers.
 - Import shared colors, fonts, images, lifecycle options, and export results from `OfficeIMO.Drawing`.
+- Replace image `WithDpi(...)` / `ForHighResolution(...)` with `AtDpi(...)` / `ForPrint(...)`.
+- Choose an explicit image file-conflict policy when replacement or unique naming is intended.
+- Replace Excel-specific font fallback codes with `OfficeImageExportDiagnosticCodes.FontSubstituted`.
+- Use streaming/payload-free batch APIs for production-size page, slide, sheet, chapter, or message exports.
 - Treat this as one coordinated package upgrade because old and new surface names are not supported side by side.

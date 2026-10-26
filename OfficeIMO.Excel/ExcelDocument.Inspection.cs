@@ -45,7 +45,7 @@ namespace OfficeIMO.Excel {
                 snapshot.TimelineBindingMetadataPartCount = CountPackageParts(workbookPart, IsTimelineBindingMetadataPart);
                 snapshot.ConnectionPartCount = CountPackagePartsByContentType(workbookPart, "connections");
                 snapshot.QueryTablePartCount = CountPackagePartsByContentType(workbookPart, "queryTable");
-                snapshot.ChartPartCount = CountPackageParts(workbookPart, part => part is ChartPart);
+                snapshot.ChartPartCount = CountPackageParts(workbookPart, part => part is ChartPart || part is ExtendedChartPart);
                 snapshot.PivotTablePartCount = CountPackageParts(workbookPart, part => part is PivotTablePart);
                 var sheetElements = workbook.Sheets?.Elements<Sheet>().ToList() ?? new List<Sheet>();
                 int? activeWorksheetIndex = GetActiveWorksheetIndex(workbook, sheetElements.Count);
@@ -64,6 +64,7 @@ namespace OfficeIMO.Excel {
 
                     var worksheet = worksheetPart.Worksheet ?? throw new InvalidOperationException("Worksheet is missing.");
                     var sheetName = sheet.Name?.Value ?? $"Sheet{sheetIndex + 1}";
+                    IReadOnlyDictionary<string, string> resolvedFormulaTexts = this[sheetName].BuildResolvedFormulaTextMap();
                     var readerSheet = reader.GetSheet(sheetName);
                     var typedValues = BuildTypedCellMap(readerSheet);
                     string usedRangeA1 = readerSheet.GetUsedRangeA1();
@@ -157,7 +158,9 @@ namespace OfficeIMO.Excel {
                                     Row = rowIndex,
                                     Column = columnIndex,
                                     Value = GetTypedValue(typedValues, rowIndex, columnIndex),
-                                    Formula = cell.CellFormula?.Text,
+                                    Formula = resolvedFormulaTexts.TryGetValue(cellReference, out string? formulaText)
+                                        ? formulaText
+                                        : cell.CellFormula?.Text,
                                     StyleIndex = cell.StyleIndex?.Value,
                                     Style = BuildCellStyleSnapshot(styleContext, cell.StyleIndex?.Value),
                                     Hyperlink = hyperlinkMap.TryGetValue(cellReference, out var hyperlink) ? hyperlink : null,
@@ -320,20 +323,24 @@ namespace OfficeIMO.Excel {
 
         private static bool IsNativeSlicerPackagePart(OpenXmlPart part) {
             return string.Equals(part.ContentType, "application/vnd.ms-excel.slicer+xml", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(part.ContentType, "application/vnd.ms-excel.slicerCache+xml", StringComparison.OrdinalIgnoreCase);
+                || (string.Equals(part.ContentType, MicrosoftWorkbookSlicerCacheContentType, StringComparison.OrdinalIgnoreCase)
+                    && !IsLegacyOfficeImoPivotInteractionMetadataPart(part, ExcelPivotInteractionCacheKind.Slicer));
         }
 
         private static bool IsNativeTimelinePackagePart(OpenXmlPart part) {
             return string.Equals(part.ContentType, "application/vnd.ms-excel.timeline+xml", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(part.ContentType, "application/vnd.ms-excel.timelineCache+xml", StringComparison.OrdinalIgnoreCase);
+                || (string.Equals(part.ContentType, MicrosoftWorkbookTimelineCacheContentType, StringComparison.OrdinalIgnoreCase)
+                    && !IsLegacyOfficeImoPivotInteractionMetadataPart(part, ExcelPivotInteractionCacheKind.Timeline));
         }
 
         private static bool IsSlicerBindingMetadataPart(OpenXmlPart part) {
-            return string.Equals(part.ContentType, WorkbookSlicerCacheContentType, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(part.ContentType, WorkbookSlicerCacheContentType, StringComparison.OrdinalIgnoreCase)
+                || IsLegacyOfficeImoPivotInteractionMetadataPart(part, ExcelPivotInteractionCacheKind.Slicer);
         }
 
         private static bool IsTimelineBindingMetadataPart(OpenXmlPart part) {
-            return string.Equals(part.ContentType, WorkbookTimelineCacheContentType, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(part.ContentType, WorkbookTimelineCacheContentType, StringComparison.OrdinalIgnoreCase)
+                || IsLegacyOfficeImoPivotInteractionMetadataPart(part, ExcelPivotInteractionCacheKind.Timeline);
         }
 
         private static ExcelWorksheetProtectionSnapshot? BuildWorksheetProtectionSnapshot(SheetProtection? protection) {
@@ -414,6 +421,7 @@ namespace OfficeIMO.Excel {
                 Underline = font?.Underline != null,
                 Strikethrough = font?.Strike != null,
                 FontName = font?.FontName?.Val?.Value,
+                IsFontFamilyExplicit = (cellFormat.FontId?.Value ?? 0U) != 0U,
                 FontSize = font?.FontSize?.Val?.Value,
                 FontColorArgb = context.GetColorArgb(font?.Color),
                 FillColorArgb = context.GetFillColorArgb(fill),

@@ -3,7 +3,7 @@
 [![nuget version](https://img.shields.io/nuget/v/OfficeIMO.Drawing)](https://www.nuget.org/packages/OfficeIMO.Drawing)
 [![nuget downloads](https://img.shields.io/nuget/dt/OfficeIMO.Drawing?label=nuget%20downloads)](https://www.nuget.org/packages/OfficeIMO.Drawing)
 
-`OfficeIMO.Drawing` is the zero-dependency shared foundation for OfficeIMO packages. It owns the common document lifecycle contracts as well as color and calibrated-color conversion, image metadata, font, text measurement, vector shape, chart snapshot, SVG, raster canvas, PNG/JPEG/TIFF/WebP encoding, and drawing-quality primitives. Format packages keep their document-specific behavior while reusing one lifecycle and persistence vocabulary.
+`OfficeIMO.Drawing` is the zero-dependency shared foundation for OfficeIMO packages. It owns common document lifecycle contracts plus color conversion, image metadata, font and text measurement, vector scenes, reusable ink and math models, chart snapshots, SVG, raster canvases, PNG/JPEG/TIFF/WebP encoding, and drawing-quality primitives. Format packages keep their file-format behavior while reusing these document-agnostic models and renderers.
 
 ## Install
 
@@ -67,7 +67,7 @@ using OfficeIMO.Drawing;
 var image = new OfficeRasterImage(320, 180, OfficeColor.White);
 var options = new OfficeRasterEncodingOptions {
     Jpeg = new OfficeJpegEncodeOptions { Quality = 90 },
-    Tiff = new OfficeTiffEncodeOptions { Compression = OfficeTiffCompression.PackBits }
+    Tiff = new OfficeTiffEncodeOptions { Compression = OfficeTiffCompression.Deflate }
 };
 
 byte[] jpeg = OfficeRasterImageEncoder.Encode(image, OfficeImageExportFormat.Jpeg, options);
@@ -75,7 +75,11 @@ byte[] tiff = OfficeRasterImageEncoder.Encode(image, OfficeImageExportFormat.Tif
 byte[] webp = OfficeRasterImageEncoder.Encode(image, OfficeImageExportFormat.Webp, options);
 ```
 
-WebP output is deterministic, lossless VP8L. TIFF output is a single-page baseline RGBA image with uncompressed or PackBits strips. JPEG uses the existing managed quality, subsampling, progressive, metadata, and transparency-flattening settings.
+WebP output is deterministic, lossless VP8L. TIFF output is a single-page classic RGBA image with uncompressed, PackBits, or Deflate strips. JPEG uses the existing managed quality, subsampling, progressive, metadata, and transparency-flattening settings.
+
+`OfficeRasterExportPlanner` is the shared pre-allocation owner for image export. It combines the caller's `MaximumRasterPixels` with renderer and encoder dimension/pixel limits, then either reduces scale with `IMAGE_RASTER_SCALE_REDUCED` or throws `OfficeImageExportLimitException`, according to `RasterOverflowBehavior`. The returned plan also owns the effective encoding settings: `CreateEncodingOptions()` reduces encoded density with the raster scale so safety limits preserve the document's physical size. Explicit top-level `DpiX`/`DpiY` values apply across formats; when those values are not assigned, format-specific PNG, JPEG, and TIFF density remains authoritative. Drawing's managed PNG, JPEG, classic 8-bit chunky grayscale/palette/RGB/RGBA/DeviceCMYK TIFF, uncompressed BMP, explicitly selected composited GIF frame, and OfficeIMO literal-lossless WebP decoders enforce encoded-payload and source-pixel guards. `OfficeRasterDecodeOptions` selects a GIF frame or rejects animated input, while `OfficeRasterDecodeInfo` reports the detected format, frame count, selected frame, success, and any discarded animation. TIFF accepts uncompressed, PackBits, and Deflate strips with horizontal prediction; LZW/JPEG, tiled, planar, floating-point, BigTIFF pixel data, and multi-page images remain outside the bounded profile. `OfficeRasterImageFallbackCodec` can wrap an application codec at the final raster boundary. It reports `IMAGE_SOURCE_DECODED_BY_CALLER_CODEC` when that codec succeeds; if neither Drawing nor the application can decode a source image, it returns a visible placeholder and `IMAGE_SOURCE_DECODE_FALLBACK` instead of allowing the renderer to omit the image silently.
+
+For raster complex text, set `TextShapingProvider` and optionally `TextShapingLanguage` on any shared image-export options or use `WithTextShaping(...)` on a fluent builder. `OfficeManagedTextShapingProvider.Instance` is the dependency-light built-in provider for the proven core-Arabic/TrueType-outline subset. Drawing passes the selected TrueType font bytes, base direction, language, cancellation token, and Unicode source mapping to any provider, then caches the resolved run for measurement and painting. The built-in provider deliberately declines CFF fonts and scripts that require broader GSUB/GPOS behavior. If no provider accepts a complex run, the managed core-Arabic and bounded bidirectional fallback keeps common text visible and adds `IMAGE_TEXT_SHAPING_FALLBACK` as an approximation. Set `Policy.RequireNoLoss = true` when that fallback is not acceptable.
 
 ### Deterministic text measurement
 
@@ -90,6 +94,47 @@ if (metrics.WidthPixels > 240) {
     Console.WriteLine("The label needs wrapping or a smaller font.");
 }
 ```
+
+### Reusable ink
+
+```csharp
+using OfficeIMO.Drawing;
+
+var stroke = new OfficeInkStroke {
+    Color = OfficeColor.Crimson,
+    Width = 2.2,
+    Height = 2.2,
+    Bias = OfficeInkBias.Handwriting,
+    RecognizedText = "hello"
+};
+stroke.AddPoint(8, 30, 0.35)
+      .AddPoint(60, 12, 1.0)
+      .AddPoint(120, 36, 0.55);
+
+var ink = new OfficeInkDocument().Add(stroke);
+OfficeDrawing inkDrawing = OfficeInkRenderer.Render(ink, width: 140, height: 60);
+```
+
+The model keeps sampled geometry, normalized pressure, pen dimensions and tip shape, transforms, handwriting/drawing bias, language, and recognition alternatives. A format adapter decides how those values map to native storage.
+
+### Structured math
+
+```csharp
+using OfficeIMO.Drawing;
+
+OfficeMathExpression expression = OfficeMath.Fraction(
+    OfficeMath.Row(
+        OfficeMath.Identifier("x"),
+        OfficeMath.Operator("+"),
+        OfficeMath.Number("1")),
+    OfficeMath.Radical(OfficeMath.Identifier("y")));
+
+string mathMl = OfficeMathMarkup.ToMathMl(expression);
+string latex = OfficeMathMarkup.ToLatex(expression);
+OfficeDrawing mathDrawing = OfficeMathRenderer.Render(expression);
+```
+
+The same immutable expression tree feeds native OneNote math and Word OMML adapters. The shared model includes right and left scripts, centered upper/lower limits, built-up and slashed fractions, delimiter lists, stacks, matrices, equation arrays, n-ary operators, accents, bars, boxes, and phantoms. OneNote maps all of those structures natively. Word maps the lossless OMML subset; `Stack` and `StretchStack` fail with `NotSupportedException` because OMML has no equivalent, and callers can choose `EquationArray` explicitly when that projection is intended. Drawing owns the AST, portable markup, measurement, and visual layout; each document package owns only its native codec. MathML and LaTeX parsing default to a nesting limit of 128 and expose bounded overloads; excessive nesting fails with `OfficeMathParseException.Code == "DRAWING_MATH_DEPTH"`.
 
 ## Examples
 
@@ -170,19 +215,21 @@ if (font != null) {
 - `OfficeImageFit` for shared stretch, contain, and cover intent.
 - `OfficeFontInfo`, `OfficeFontStyle`, `OfficeTextMeasurer`, and `OfficeTextMetrics` for deterministic layout estimates.
 - `OfficeTrueTypeFont` for dependency-free font-outline reading when renderers need glyph contours.
+- `OfficeInkDocument`, `OfficeInkStroke`, sampled pressure/style metadata, recognition alternatives, and `OfficeInkRenderer` for reusable ink capture and projection.
+- `OfficeMathExpression`, `OfficeMath`, MathML/LaTeX conversion, deterministic measurement, and `OfficeMathRenderer` for reusable structured equations.
 - `OfficeShape`, `OfficeDrawing`, gradients, shadows, transforms, clipping, and vector descriptors that format-specific packages can map into their own coordinate systems.
 - `OfficeChartSnapshot` and chart rendering primitives shared by PDF and Office exporters.
 - `OfficeRasterImage`, `OfficeRasterCanvas`, `OfficeRasterRenderTarget`, and `OfficeDrawingRasterRenderer` for shared dependency-free raster rendering.
 - `OfficePngReader`, `OfficePngWriter`, and `OfficeJpegCodec` for PNG/JPEG paths that should not be reimplemented by document packages.
-- `OfficeTiffCodec`, `OfficeWebpCodec`, and `OfficeRasterImageEncoder` for shared baseline TIFF, lossless WebP, and format-neutral raster output.
+- `OfficeTiffCodec`, `OfficeWebpCodec`, and `OfficeRasterImageEncoder` for shared bounded TIFF, lossless WebP, and format-neutral raster output.
 - Shared SVG formatting, primitive writing, image projection, text-block rendering, hatch-pattern, data-bar, and sparkline helpers.
 - Drawing quality diagnostics for canvas bounds and text overlap checks.
 
 ## Boundaries
 
-- This package owns shared lifecycle contracts, persistence mechanics, drawing intent, raster buffers, SVG and raster encoding primitives, image projection, text layout helpers, chart drawing, and document-agnostic visual diagnostics.
+- This package owns shared lifecycle contracts, persistence mechanics, drawing intent, ink/math models and renderers, raster buffers, SVG and raster encoding primitives, image projection, text layout helpers, chart drawing, and document-agnostic visual diagnostics.
 - Word, Excel, PowerPoint, Visio, and PDF packages own source-document semantics: package parsing, layout policy, coordinate systems, style/theme resolution, and user-facing export APIs.
-- Document packages should not add private pixel engines, image encoders/decoders, SVG primitive writers, text wrapping engines, or duplicate image-transform loops when the behavior can reasonably live here.
+- Document packages should not add private ink or math ASTs, pixel engines, image encoders/decoders, SVG primitive writers, text wrapping engines, or duplicate image-transform loops when the behavior can reasonably live here.
 - PDF keeps PDF-stream and page-writer behavior in `OfficeIMO.Pdf`; when it needs generic image-like drawing, vector descriptors, colors, chart snapshots, PNG helpers, or raster visual QA, it should use `OfficeIMO.Drawing`.
 - Unsupported or approximate source features belong in stable diagnostics from the adapter, not as silent omissions in a renderer.
 

@@ -3,7 +3,7 @@
 [![nuget version](https://img.shields.io/nuget/v/OfficeIMO.Reader.Rtf)](https://www.nuget.org/packages/OfficeIMO.Reader.Rtf)
 [![nuget downloads](https://img.shields.io/nuget/dt/OfficeIMO.Reader.Rtf?label=nuget%20downloads)](https://www.nuget.org/packages/OfficeIMO.Reader.Rtf)
 
-`OfficeIMO.Reader.Rtf` provides a bounded RTF adapter for `OfficeIMO.Reader` using the shared `OfficeIMO.Rtf` semantic model.
+`OfficeIMO.Reader.Rtf` provides a bounded RTF adapter for `OfficeIMO.Reader.Core` using the shared `OfficeIMO.Rtf` semantic model.
 
 ## Install
 
@@ -85,6 +85,28 @@ foreach (OfficeDocumentAsset asset in document.Assets) {
 
 `reader.ReadDocument("form.rtf")` uses the same native rich mapping as the adapter-specific APIs.
 
+### Reconstruct explicit page locations
+
+```csharp
+OfficeDocumentReader reader = new OfficeDocumentReaderBuilder()
+    .AddRtfHandler(new ReaderRtfOptions {
+        IncludePageLocations = true
+    })
+    .Build();
+
+OfficeDocumentReadResult document = reader.ReadDocument("policy.rtf");
+OfficeDocumentSearchResult matches = document.Search("retention period");
+
+foreach (OfficeDocumentSearchHit hit in matches.Hits) {
+    Console.WriteLine(string.Join(", ", hit.Pages.Select(page => page.Display)));
+}
+```
+
+RTF is flow content rather than a fixed-page format. This option reconstructs membership from `\page`,
+`\softpage`, `\pagebb`, and page-starting section controls. A saved `\nofpages` value contributes the total
+page count when present. Reader emits `OfficeDocumentPageProvenance.ExplicitBreak` and an informational diagnostic;
+it does not estimate page changes caused only by automatic text overflow.
+
 ## What it emits
 
 - RTF input kind and deterministic source/chunk metadata.
@@ -93,12 +115,13 @@ foreach (OfficeDocumentAsset asset in document.Assets) {
 - Parser and binder diagnostics as reader warnings when requested.
 - A shared conversion report for flattened, omitted, and blocked features.
 - A schema-v5 rich result containing semantic blocks, tables, hyperlinks, form fields, image visuals and payloads, embedded-object assets, metadata, and structured diagnostics.
+- Optional explicit-break page membership compatible with Reader Core location, search, and page-Markdown helpers.
 
 ## Boundaries
 
 - Reader adapter configuration belongs here.
 - RTF parsing, syntax preservation, semantic binding, and writing belong in `OfficeIMO.Rtf`.
-- Shared extraction contracts belong in `OfficeIMO.Reader`.
+- Shared extraction contracts belong in `OfficeIMO.Reader.Core`.
 
 ## Targets and license
 
@@ -108,6 +131,6 @@ foreach (OfficeDocumentAsset asset in document.Assets) {
 ## Dependency footprint
 
 - **External:** None beyond the dependencies of its OfficeIMO format packages.
-- **OfficeIMO:** `OfficeIMO.Reader` and the first-party `OfficeIMO.Rtf` engine own parsing, semantic binding, chunks, assets, and diagnostics.
+- **OfficeIMO:** `OfficeIMO.Reader.Core` and the first-party `OfficeIMO.Rtf` engine own parsing, semantic binding, chunks, assets, and diagnostics.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

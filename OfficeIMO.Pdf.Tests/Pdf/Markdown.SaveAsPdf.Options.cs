@@ -48,10 +48,10 @@ public class MarkdownSaveAsPdfOptionsTests {
     }
 
     [Fact]
-    public void ToPdfDocument_Markdown_FontFamilyHonorsSystemFontEmbeddingOptOut() {
+    public void ToPdfDocument_Markdown_PortableDeterministicResourcePolicyDoesNotEmbedSystemFonts() {
         var options = new MarkdownPdfSaveOptions {
             FontFamily = "Georgia",
-            AllowSystemFontEmbedding = false
+            ResourcePolicy = PdfCore.PdfResourcePolicy.CreatePortableDeterministic()
         };
 
         PdfCore.PdfDocument document = OfficeIMO.Markdown.MarkdownReader.Parse("# Heading\n\nBody").ToPdfDocument(options);
@@ -114,7 +114,7 @@ public class MarkdownSaveAsPdfOptionsTests {
         byte[] bytes = OfficeIMO.Markdown.MarkdownReader.Parse("# Faktura\n\n" + polish).ToPdfDocument(new MarkdownPdfSaveOptions()).ToBytes();
 
         string raw = Encoding.ASCII.GetString(bytes);
-        string text = PdfCore.PdfReadDocument.Load(bytes).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(bytes).ExtractText();
 
         Assert.Contains("/Subtype /Type0", raw, StringComparison.Ordinal);
         Assert.Contains("/Encoding /Identity-H", raw, StringComparison.Ordinal);

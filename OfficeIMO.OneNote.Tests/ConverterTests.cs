@@ -1,8 +1,12 @@
 using OfficeIMO.Markdown;
+using OfficeIMO.Drawing;
 using OfficeIMO.OneNote.Html;
 using OfficeIMO.OneNote.Markdown;
 using OfficeIMO.OneNote.Pdf;
+using OfficeIMO.Pdf;
+using System.Reflection;
 using System.Text;
+using System.Threading;
 
 namespace OfficeIMO.OneNote.Tests;
 
@@ -115,6 +119,200 @@ public sealed class ConverterTests {
         Assert.Equal("%PDF", Encoding.ASCII.GetString(bytes, 0, 4));
         Assert.True(stream.CanWrite);
         Assert.Equal("%PDF", Encoding.ASCII.GetString(stream.ToArray(), 0, 4));
+    }
+
+    [Fact]
+    public void PdfConversionReportsSemanticProjectionLossInsteadOfSilentlyFlatteningIt() {
+        OneNoteSection section = CreateNotebook().SectionGroups[0].Sections[0];
+        section.Pages[0].DirectContent[0].Layout = new OneNoteLayout { X = 120, Y = 80, Width = 240 };
+
+        PdfDocumentConversionResult result = section.ToPdfDocumentResult();
+
+        Assert.Contains(result.Warnings, warning => warning.Code == "ONENOTE_MARKDOWN_CANVAS_FLATTENED");
+        Assert.Contains(result.Warnings, warning => warning.Code == "ONENOTE_MARKDOWN_ASSET_PLACEHOLDER");
+        Assert.True(result.HasLoss);
+        Assert.Throws<InvalidOperationException>(() => result.RequireNoLoss());
+    }
+
+    [Fact]
+    public void NullAssetResolverOutcomeRemainsAReportedProjectionLoss() {
+        OneNoteSection section = CreateNotebook().SectionGroups[0].Sections[0];
+        var options = new OneNoteMarkdownOptions { AssetUriResolver = _ => null };
+
+        OneNoteMarkdownConversionResult markdown = section.ToMarkdownDocumentResult(options);
+        PdfDocumentConversionResult pdf = section.ToPdfDocumentResult(new OneNotePdfSaveOptions {
+            ProjectionOptions = options
+        });
+
+        Assert.True(markdown.HasLoss);
+        Assert.Contains(markdown.Diagnostics, diagnostic => diagnostic.Code == "ONENOTE_MARKDOWN_ASSET_PLACEHOLDER");
+        Assert.True(pdf.HasLoss);
+        Assert.Contains(pdf.Warnings, warning => warning.Code == "ONENOTE_MARKDOWN_ASSET_PLACEHOLDER");
+        Assert.Throws<InvalidOperationException>(() => pdf.RequireNoLoss());
+    }
+
+    [Theory]
+    [InlineData(typeof(OneNoteSectionPdfConverterExtensions))]
+    [InlineData(typeof(OneNoteNotebookPdfConverterExtensions))]
+    public void PdfAdaptersExposeTheSharedLifecyclePerSourceType(Type adapterType) {
+        MethodInfo[] methods = adapterType.GetMethods(BindingFlags.Public | BindingFlags.Static);
+
+        Assert.Single(methods, method => method.Name == "ToPdf");
+        Assert.Single(methods, method => method.Name == "ToPdfDocument");
+        Assert.Single(methods, method => method.Name == "ToPdfDocumentResult");
+        Assert.Equal(2, methods.Count(method => method.Name == "SaveAsPdf"));
+        Assert.Equal(2, methods.Count(method => method.Name == "TrySaveAsPdf"));
+        Assert.Equal(2, methods.Count(method => method.Name == "SaveAsPdfAsync"));
+        Assert.Equal(2, methods.Count(method => method.Name == "TrySaveAsPdfAsync"));
+    }
+
+    [Fact]
+    public async Task PdfAsyncAdaptersObservePreCanceledTokensBeforeProjection() {
+        OneNoteSection section = CreateNotebook().SectionGroups[0].Sections[0];
+        using var stream = new MemoryStream();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            section.SaveAsPdfAsync(stream, cancellationToken: cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            section.TrySaveAsPdfAsync(stream, cancellationToken: cancellation.Token));
+        Assert.Equal(0, stream.Length);
+    }
+
+    [Fact]
+    public async Task VisualHtmlUsesTheNativeSvgCanvasAndAccessibleEncodedText() {
+        OneNoteSection section = CreateNotebook().SectionGroups[0].Sections[0];
+        section.Pages[0].Title = "Visual <script>title</script>";
+        var options = new OneNoteVisualHtmlOptions {
+            DocumentTitle = "Canvas export",
+            PageRendering = new OneNotePageRenderingOptions { Scale = 0.5D }
+        };
+
+        string document = section.ToVisualHtmlDocument(options);
+        string fragment = section.ToVisualHtmlFragment(options);
+        using var stream = new MemoryStream();
+        await section.SaveAsVisualHtmlAsync(stream, options);
+
+        Assert.Contains("<!DOCTYPE html>", document, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<svg", document, StringComparison.Ordinal);
+        Assert.Contains("data-section-path=\"Section A\"", document, StringComparison.Ordinal);
+        Assert.Contains("officeimo-onenote-assistive", document, StringComparison.Ordinal);
+        Assert.Contains("Visual &lt;script&gt;title&lt;/script&gt;", document, StringComparison.Ordinal);
+        Assert.DoesNotContain("<script>title", document, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<!DOCTYPE html>", fragment, StringComparison.OrdinalIgnoreCase);
+        Assert.True(stream.CanWrite);
+        Assert.Contains("<svg", Encoding.UTF8.GetString(stream.ToArray()), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VisualHtmlDecodesAndEmbedsTiffSourceImagesWithoutFallback() {
+        byte[] sourceTiff = OfficeRasterImageEncoder.Encode(
+            new OfficeRasterImage(8, 4, OfficeColor.CornflowerBlue),
+            OfficeImageExportFormat.Tiff);
+        var section = new OneNoteSection { Name = "TIFF" };
+        var page = new OneNotePage { Title = "Scan", PageSize = OneNotePageSize.IndexCard };
+        page.DirectContent.Add(new OneNoteImage {
+            FileName = "scan.tiff",
+            MediaType = "image/tiff",
+            Payload = OneNoteBinaryPayload.FromBytes(sourceTiff)
+        });
+        section.Pages.Add(page);
+        var diagnostics = new List<OfficeImageExportDiagnostic>();
+
+        string html = section.ToVisualHtmlDocument(new OneNoteVisualHtmlOptions { DiagnosticSink = diagnostics });
+
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Code == OfficeImageExportDiagnosticCodes.SourceImageDecodeFallback);
+        Assert.Contains("data:image/png;base64,", html, StringComparison.Ordinal);
+        Assert.Contains("<image", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VisualHtmlNamespacesGeneratedSvgResourcesPerEmbeddedPage() {
+        var section = new OneNoteSection { Name = "Inline SVG" };
+        for (int index = 0; index < 2; index++) {
+            var page = new OneNotePage { Title = "Page " + index, PageSize = OneNotePageSize.IndexCard };
+            var paragraph = new OneNoteParagraph { Layout = new OneNoteLayout { X = -0.1D, Y = 0D, Width = 1D } };
+            paragraph.Runs.Add(new OneNoteTextRun { Text = "Clipped" });
+            page.DirectContent.Add(paragraph);
+            section.Pages.Add(page);
+        }
+
+        string html = section.ToVisualHtmlFragment();
+
+        Assert.Contains("id=\"officeimo-onenote-page-0-officeimo-group-clip-1\"", html, StringComparison.Ordinal);
+        Assert.Contains("url(#officeimo-onenote-page-0-officeimo-group-clip-1)", html, StringComparison.Ordinal);
+        Assert.Contains("id=\"officeimo-onenote-page-1-officeimo-group-clip-1\"", html, StringComparison.Ordinal);
+        Assert.Contains("url(#officeimo-onenote-page-1-officeimo-group-clip-1)", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("id=\"officeimo-group-clip-1\"", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VisualPdfPreservesPageGeometryAndLeavesCallerOwnedStreamOpen() {
+        OneNoteSection section = CreateNotebook().SectionGroups[0].Sections[0];
+        section.Pages[0].PageSize = OneNotePageSize.IndexCard;
+        OneNoteImage image = Assert.Single(section.Pages[0].DirectContent.OfType<OneNoteImage>());
+        image.Payload = OneNoteBinaryPayload.FromBytes(OfficePngWriter.Encode(new OfficeRasterImage(4, 4, OfficeColor.CornflowerBlue)));
+        var options = new OneNoteVisualPdfOptions { RasterScale = 0.5D };
+
+        OfficeIMO.Pdf.PdfDocumentConversionResult result = section.ToVisualPdfDocumentResult(options);
+        byte[] bytes = result.Value.ToBytes();
+        using var stream = new MemoryStream();
+        await section.SaveAsVisualPdfAsync(stream, options);
+        OfficeIMO.Pdf.PdfDocumentInfo info = OfficeIMO.Pdf.PdfDocument.Open(bytes).Read.DocumentInfo();
+
+        Assert.DoesNotContain(
+            result.Warnings,
+            warning => warning.Code !=
+                       OfficeImageExportDiagnosticCodes.FontSubstituted);
+        Assert.Equal("%PDF", Encoding.ASCII.GetString(bytes, 0, 4));
+        Assert.Equal(1, info.PageCount);
+        Assert.InRange(info.Pages[0].Width, 215.9D, 216.1D);
+        Assert.InRange(info.Pages[0].Height, 359.9D, 360.1D);
+        Assert.True(stream.CanWrite);
+        Assert.Equal("%PDF", Encoding.ASCII.GetString(stream.ToArray(), 0, 4));
+    }
+
+    [Fact]
+    public void VisualPdfMaximumRasterPixelsRemainsAHardLimitForVeryLargeCanvases() {
+        var section = new OneNoteSection { Name = "Large canvas" };
+        section.Pages.Add(new OneNotePage {
+            Title = "Large page",
+            PageSize = OneNotePageSize.Custom,
+            Width = 100000D / OneNotePageRenderer.PointsPerHalfInch,
+            Height = 100000D / OneNotePageRenderer.PointsPerHalfInch
+        });
+        var options = new OneNoteVisualPdfOptions {
+            RasterScale = 1D,
+            MaximumRasterPixels = 10_000L
+        };
+
+        OfficeIMO.Pdf.PdfDocumentConversionResult result = section.ToVisualPdfDocumentResult(options);
+
+        OfficeIMO.Pdf.PdfConversionWarning warning = Assert.Single(result.Warnings, item =>
+            item.Code == "ONENOTE_PDF_RASTER_SCALE_LIMITED");
+        Assert.Contains("to 0.001", warning.Message, StringComparison.Ordinal);
+        Assert.True(result.Value.ToBytes().Length > 100);
+    }
+
+    [Fact]
+    public void CanonicalPageTraversalSharesNativeTocOrderAcrossVisualExporters() {
+        var notebook = new OneNoteNotebook { Name = "Ordered visuals" };
+        OneNoteSection second = SectionWithPage("Second", "Page 2");
+        second.TableOfContentsOrder = 1;
+        notebook.Sections.Add(second);
+        var firstGroup = new OneNoteSectionGroup { Name = "First", TableOfContentsOrder = 0 };
+        firstGroup.Sections.Add(SectionWithPage("Nested", "Page 1"));
+        notebook.SectionGroups.Add(firstGroup);
+
+        IReadOnlyList<OneNotePageReference> pages = OneNotePageTraversal.Flatten(notebook);
+        string html = notebook.ToVisualHtmlFragment(new OneNoteVisualHtmlOptions {
+            PageRendering = new OneNotePageRenderingOptions { Scale = 0.25D }
+        });
+
+        Assert.Equal(new[] { "Page 1", "Page 2" }, pages.Select(page => page.Page.Title));
+        Assert.Equal(new[] { "First/Nested", "Second" }, pages.Select(page => page.SectionPath));
+        Assert.True(html.IndexOf("First/Nested", StringComparison.Ordinal) < html.IndexOf("Second", StringComparison.Ordinal));
     }
 
     [Fact]

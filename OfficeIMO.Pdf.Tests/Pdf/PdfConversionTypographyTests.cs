@@ -44,7 +44,7 @@ public sealed class PdfConversionTypographyTests {
         }
 
         string raw = Encoding.ASCII.GetString(pdf);
-        string text = PdfCore.PdfReadDocument.Load(pdf).ExtractText();
+        string text = PdfCore.PdfReadDocument.Open(pdf).ExtractText();
 
         Assert.Contains("/Subtype /Type0", raw, StringComparison.Ordinal);
         Assert.Contains("/Encoding /Identity-H", raw, StringComparison.Ordinal);
@@ -317,7 +317,11 @@ Zażółć gęślą jaźń
         };
         PdfCore.PdfDocumentConversionResult result = presentation.ToPdfDocumentResult(options);
         byte[] pdf = result.ToBytes();
-        Assert.False(result.HasWarnings);
+        Assert.False(
+            result.HasWarnings,
+            string.Join(
+                Environment.NewLine,
+                result.Warnings.Select(static warning => warning.Code + ": " + warning.Message)));
         return pdf;
     }
 

@@ -381,6 +381,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(1, 1, 2d);
                 sheet.CellFormula(1, 2, "A1+1");
                 sheet.CellFormula(1, 3, "B1+1");
+                sheet.CellFormula(1, 4, "C1+1");
                 document.Save();
             }
 
@@ -392,6 +393,37 @@ namespace OfficeIMO.Tests {
                 Assert.Contains(report.PreservedFeatures, feature => feature.Name == "Formula dependency issues");
                 Assert.Empty(report.GetCapabilityDiagnostics(ExcelPreflightCapability.CalculateFormulas));
             }
+        }
+
+        [Fact]
+        public void FeatureReport_Preflight_BlocksCircularFormulasWithCleanCachedResults() {
+            string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.CircularFormulaCaches.xlsx");
+
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorksheet("Calc");
+                sheet.CellFormula(1, 1, "B1+1");
+                sheet.CellFormula(1, 2, "A1+1");
+                document.Save();
+            }
+
+            AddCachedFormulaValue(filePath, "A1", "1");
+            AddCachedFormulaValue(filePath, "B1", "2");
+            ClearWorkbookRecalculationRequest(filePath);
+
+            using ExcelDocument loaded = ExcelDocument.Load(
+                filePath,
+                new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+            ExcelFeatureReport report = loaded.InspectFeatures();
+
+            Assert.True(report.Can(ExcelPreflightCapability.UseCachedFormulaValues));
+            Assert.False(report.Can(ExcelPreflightCapability.CalculateFormulas));
+            string diagnostics = string.Join(
+                Environment.NewLine,
+                report.GetCapabilityDiagnostics(ExcelPreflightCapability.CalculateFormulas));
+            Assert.Contains("Formula dependency issues", diagnostics);
+            Assert.Contains("Circular reference", diagnostics);
+            Assert.Contains("Formula dependency issues", Assert.Throws<InvalidOperationException>(() =>
+                report.EnsureCan(ExcelPreflightCapability.CalculateFormulas)).Message);
         }
 
         [Fact]
@@ -601,13 +633,13 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void FeatureReport_Preflight_BlocksPdfExportForUnsupportedWorksheetImages() {
-            string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.UnsupportedImage.xlsx");
+        public void FeatureReport_Preflight_AllowsPdfExportForSupportedWorksheetGif() {
+            string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.SupportedGifImage.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.CellValue(1, 1, "Image");
-                sheet.AddImage(2, 1, new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, "image/gif",
+                sheet.AddImage(2, 1, CreateFeatureReportGif(), "image/gif",
                     widthPixels: 12, heightPixels: 12, name: "GifLogo");
                 document.Save();
             }
@@ -615,23 +647,19 @@ namespace OfficeIMO.Tests {
             using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
-                Assert.False(report.Can(ExcelPreflightCapability.ExportPdfReport));
-
-                string diagnostics = string.Join(Environment.NewLine,
-                    report.GetCapabilityDiagnostics(ExcelPreflightCapability.ExportPdfReport));
-                Assert.Contains("PDF-unsupported images", diagnostics);
-                Assert.Contains("image/gif", diagnostics);
+                Assert.True(report.Can(ExcelPreflightCapability.ExportPdfReport));
+                Assert.Empty(report.GetCapabilityDiagnostics(ExcelPreflightCapability.ExportPdfReport));
             }
         }
 
         [Fact]
-        public void FeatureReport_Preflight_BlocksPdfExportForUnsupportedHeaderFooterImages() {
-            string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.UnsupportedHeaderImage.xlsx");
+        public void FeatureReport_Preflight_AllowsPdfExportForSupportedHeaderFooterGif() {
+            string filePath = Path.Combine(_directoryWithFiles, "FeatureReport.Preflight.SupportedHeaderGif.xlsx");
 
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 ExcelSheet sheet = document.AddWorksheet("Images");
                 sheet.CellValue(1, 1, "Image");
-                sheet.SetHeaderImage(HeaderFooterPosition.Center, new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, "image/gif",
+                sheet.SetHeaderImage(HeaderFooterPosition.Center, CreateFeatureReportGif(), "image/gif",
                     widthPoints: 24, heightPoints: 24);
                 document.Save();
             }
@@ -639,15 +667,13 @@ namespace OfficeIMO.Tests {
             using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
                 ExcelFeatureReport report = document.InspectFeatures();
 
-                Assert.False(report.Can(ExcelPreflightCapability.ExportPdfReport));
-
-                string diagnostics = string.Join(Environment.NewLine,
-                    report.GetCapabilityDiagnostics(ExcelPreflightCapability.ExportPdfReport));
-                Assert.Contains("PDF-unsupported images", diagnostics);
-                Assert.Contains("header center", diagnostics);
-                Assert.Contains("image/gif", diagnostics);
+                Assert.True(report.Can(ExcelPreflightCapability.ExportPdfReport));
+                Assert.Empty(report.GetCapabilityDiagnostics(ExcelPreflightCapability.ExportPdfReport));
             }
         }
+
+        private static byte[] CreateFeatureReportGif() =>
+            Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==");
 
         [Fact]
         public void FeatureReport_Preflight_BlocksPdfExportForUnsupportedHeaderFooterFormatting() {
