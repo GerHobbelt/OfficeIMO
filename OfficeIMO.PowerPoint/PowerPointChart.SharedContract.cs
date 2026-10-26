@@ -35,7 +35,8 @@ namespace OfficeIMO.PowerPoint {
                     "Bubble chart data cannot be updated without an embedded workbook.");
             }
             byte[]? workbookBytes = embedded != null ? OfficeOpenXmlChartWriter.BuildWorkbook(data, chartKind) : null;
-            Action? preserveBindings = embedded != null ? OfficeOpenXmlChartWriter.PrepareSharedWorkbookBindings(chartPart) : null;
+            Action? preserveBindings = embedded != null ? OfficeOpenXmlChartWriter.PrepareSharedWorkbookBindings(
+                chartPart, data.Series.Select(series => series.Values.Count).ToArray()) : null;
             OfficeOpenXmlChartWriter.UpdateSharedChartData(chartPart, data, chartKind);
             preserveBindings?.Invoke();
 
@@ -145,7 +146,40 @@ namespace OfficeIMO.PowerPoint {
             }
             snapshot = PowerPointChartSnapshotMapper.ToOfficeSnapshot(powerPointSnapshot,
                 powerPointSnapshot.WidthPoints, powerPointSnapshot.HeightPoints);
+            if (GetChartPart().ChartSpace?.GetFirstChild<C.Chart>() is C.Chart nativeChart &&
+                OfficeOpenXmlChartSeriesReader.HasSuppressedOverMaximumDataLabels(nativeChart,
+                    snapshot.Data.Series, snapshot.ChartKind)) {
+                snapshot = null!;
+                return false;
+            }
+            if (HasUnprojectedNativeAxisUnits(snapshot.Layout) ||
+                OfficeChartDrawingRenderer.HasUnsupportedAxisUnitBudget(snapshot)) {
+                snapshot = null!;
+                return false;
+            }
             return true;
+        }
+
+        private bool HasUnprojectedNativeAxisUnits(OfficeChartLayout layout) {
+            C.ValueAxis? secondaryAxis = OfficeOpenXmlChartSecondaryAxis.Resolve(GetChart().PlotArea);
+            foreach (C.ValueAxis axis in GetChartPart().ChartSpace?.Descendants<C.ValueAxis>() ??
+                Enumerable.Empty<C.ValueAxis>()) {
+                bool secondary = ReferenceEquals(axis, secondaryAxis);
+                C.AxisPositionValues? position = axis.AxisPosition?.Val?.Value;
+                if (position == null && (axis.GetFirstChild<C.MajorUnit>() != null ||
+                    axis.GetFirstChild<C.MinorUnit>() != null)) return true;
+                bool horizontal = position == C.AxisPositionValues.Bottom ||
+                    position == C.AxisPositionValues.Top;
+                double? projectedMajor = secondary ? layout.SecondaryValueAxis?.MajorUnit :
+                    horizontal ? layout.HorizontalAxisMajorUnit : layout.VerticalAxisMajorUnit;
+                double? projectedMinor = secondary ? layout.SecondaryValueAxis?.MinorUnit :
+                    horizontal ? layout.HorizontalAxisMinorUnit : layout.VerticalAxisMinorUnit;
+                if (axis.GetFirstChild<C.MajorUnit>()?.Val?.Value is double major &&
+                    major != projectedMajor ||
+                    axis.GetFirstChild<C.MinorUnit>()?.Val?.Value is double minor &&
+                    minor != projectedMinor) return true;
+            }
+            return false;
         }
 
         private OfficeChartStyle? ReadSharedTextStyle(C.Chart chart) {

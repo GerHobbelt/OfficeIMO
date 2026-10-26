@@ -1,14 +1,104 @@
 using System.IO;
 using System.Linq;
+using DocumentFormat.OpenXml.Packaging;
 using OfficeIMO.Drawing;
 using OfficeIMO.PowerPoint;
 using Xunit;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
+using S = DocumentFormat.OpenXml.Spreadsheet;
 
 namespace OfficeIMO.Tests;
 
 public sealed class PowerPointChartSecondaryAxisLayoutTests {
+    [Fact]
+    public void PrimarySourceLinkedAxisUsesGeneralWorkbookFormatInsteadOfCachedCode() {
+        using var presentation = PowerPointPresentation.Create();
+        var slide = presentation.AddSlide();
+        var chart = slide.AddChart(OfficeChartKind.ColumnClustered,
+            new OfficeChartData(new[] { "A" }, new[] { new OfficeChartSeries("Values", new[] { 12d }) }));
+        var axis = slide.SlidePart.ChartParts.Single().ChartSpace!.Descendants<C.ValueAxis>().Single();
+        axis.GetFirstChild<C.NumberingFormat>()!.FormatCode = "$0.00";
+        axis.GetFirstChild<C.NumberingFormat>()!.SourceLinked = true;
+
+        Assert.True(chart.TryGetOfficeSnapshot(out var snapshot));
+        Assert.Equal("General", snapshot.Layout.VerticalAxisNumberFormat);
+    }
+
+    [Fact]
+    public void CacheOnlySourceLinkedPrimaryFormatMustBeRenderable() {
+        using var presentation = PowerPointPresentation.Create();
+        var slide = presentation.AddSlide();
+        var chart = slide.AddChart(OfficeChartKind.ColumnClustered,
+            new OfficeChartData(new[] { "A" }, new[] { new OfficeChartSeries("Values", new[] { 12d }) }));
+        var space = slide.SlidePart.ChartParts.Single().ChartSpace!;
+        space.GetFirstChild<C.ExternalData>()!.Remove();
+        C.NumberingFormat format = space.Descendants<C.ValueAxis>().Single().GetFirstChild<C.NumberingFormat>()!;
+        format.SourceLinked = true;
+        format.FormatCode = "0.0";
+        Assert.True(chart.TryGetOfficeSnapshot(out _));
+
+        format.FormatCode = "[Red]0";
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PrimarySourceLinkedAxisRejectsInheritedWorkbookStyles(bool columnStyle) {
+        using var presentation = PowerPointPresentation.Create();
+        var slide = presentation.AddSlide();
+        var chart = slide.AddChart(OfficeChartKind.ColumnClustered,
+            new OfficeChartData(new[] { "A" }, new[] { new OfficeChartSeries("Values", new[] { 12d }) }));
+        var part = slide.SlidePart.ChartParts.Single();
+        part.ChartSpace!.Descendants<C.ValueAxis>().Single().GetFirstChild<C.NumberingFormat>()!.SourceLinked = true;
+        var package = part.GetPartsOfType<EmbeddedPackagePart>().Single();
+        using var bytes = new MemoryStream();
+        using (var source = package.GetStream(FileMode.Open, FileAccess.Read)) source.CopyTo(bytes);
+        bytes.Position = 0;
+        using (var workbook = SpreadsheetDocument.Open(bytes, true)) {
+            var stylesPart = workbook.WorkbookPart!.WorkbookStylesPart ??
+                workbook.WorkbookPart.AddNewPart<WorkbookStylesPart>();
+            var styles = stylesPart.Stylesheet ??= new S.Stylesheet();
+            var formats = styles.CellFormats ?? (styles.CellFormats = new S.CellFormats());
+            if (formats.ChildElements.Count == 0)
+                formats.Append(new S.CellFormat { NumberFormatId = 0U });
+            formats.Append(new S.CellFormat { NumberFormatId = 4U, FontId = 0U, FillId = 0U,
+                BorderId = 0U, FormatId = 0U, ApplyNumberFormat = true });
+            formats.Count = (uint)formats.ChildElements.Count;
+            styles.Save();
+            var worksheet = workbook.WorkbookPart.WorksheetParts.Single().Worksheet;
+            if (columnStyle) {
+                worksheet.InsertBefore(new S.Columns(new S.Column { Min = 1U, Max = 1U, Style = 1U }),
+                    worksheet.GetFirstChild<S.SheetData>());
+            } else {
+                worksheet.Descendants<S.Row>().First().StyleIndex = 1U;
+                worksheet.Descendants<S.Row>().First().CustomFormat = true;
+            }
+            worksheet.Save();
+        }
+        bytes.Position = 0;
+        package.FeedData(bytes);
+
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void UpdateDataPreservesUnsupportedPrimaryAxisDisplayFormat() {
+        using var presentation = PowerPointPresentation.Create();
+        var slide = presentation.AddSlide();
+        var chart = slide.AddChart(OfficeChartKind.ColumnClustered,
+            new OfficeChartData(new[] { "A" }, new[] { new OfficeChartSeries("Values", new[] { 12d }) }));
+        var axis = slide.SlidePart.ChartParts.Single().ChartSpace!.Descendants<C.ValueAxis>().Single();
+        axis.GetFirstChild<C.NumberingFormat>()!.FormatCode = "[Red]0";
+        axis.GetFirstChild<C.NumberingFormat>()!.SourceLinked = false;
+
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+        chart.UpdateData(new OfficeChartData(new[] { "A" },
+            new[] { new OfficeChartSeries("Values", new[] { 24d }) }));
+        Assert.Equal("[Red]0", axis.GetFirstChild<C.NumberingFormat>()!.FormatCode!.Value);
+    }
+
     [Theory]
     [InlineData("color")]
     [InlineData("size")]
@@ -141,7 +231,6 @@ public sealed class PowerPointChartSecondaryAxisLayoutTests {
     [InlineData("logarithmic")]
     [InlineData("reversed")]
     [InlineData("displayUnits")]
-    [InlineData("sourceLinked")]
     [InlineData("deleted")]
     public void SecondaryValueAxis_UnsupportedProjectionPreservesNativeUpdates(string setting) {
         using var presentation = PowerPointPresentation.Create();
@@ -157,7 +246,6 @@ public sealed class PowerPointChartSecondaryAxisLayoutTests {
         if (setting == "deleted") secondary.AddChild(new C.Delete { Val = true }, true);
         else if (setting == "logarithmic") secondary.Scaling!.AddChild(new C.LogBase { Val = 10 }, true);
         else if (setting == "reversed") secondary.Scaling!.AddChild(new C.Orientation { Val = C.OrientationValues.MaxMin }, true);
-        else if (setting == "sourceLinked") secondary.NumberingFormat!.SourceLinked = true;
         else secondary.AddChild(new C.DisplayUnits(new C.BuiltInUnit { Val = C.BuiltInUnitValues.Thousands }), true);
         string Appearance(C.ValueAxis axis) {
             var copy = (C.ValueAxis)axis.CloneNode(true);
@@ -239,6 +327,25 @@ public sealed class PowerPointChartSecondaryAxisLayoutTests {
         Assert.Equal(-2d, snapshot.Layout.VerticalAxisMinimum);
         Assert.Equal(8d, snapshot.Layout.VerticalAxisMaximum);
         Assert.Equal(2d, snapshot.Layout.VerticalAxisMajorUnit);
+    }
+
+    [Fact]
+    public void SecondaryValueAxis_SourceLinkedGeneralWorkbookUsesResolvedFormat() {
+        using var presentation = PowerPointPresentation.Create();
+        var slide = presentation.AddSlide();
+        var data = new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Count", new[] { 100d, 150d }),
+            new OfficeChartSeries("Ratio", new[] { 1d, 2d }, null, null, null, true,
+                renderKind: OfficeChartKind.Line, axisGroup: OfficeChartAxisGroup.Secondary) });
+        var chart = slide.AddChart(OfficeChartKind.ColumnClustered, data);
+        var secondary = slide.SlidePart.ChartParts.Single().ChartSpace!.Descendants<C.ValueAxis>()
+            .Single(axis => axis.AxisPosition?.Val?.Value == C.AxisPositionValues.Right);
+        secondary.NumberingFormat!.FormatCode = "$0.00";
+        secondary.NumberingFormat.SourceLinked = true;
+        Assert.True(chart.TryGetOfficeSnapshot(out var snapshot));
+        Assert.Equal("General", snapshot.Layout.SecondaryValueAxis!.NumberFormat);
+        chart.UpdateData(data);
+        Assert.True(secondary.NumberingFormat.SourceLinked.Value);
     }
 
     [Theory]

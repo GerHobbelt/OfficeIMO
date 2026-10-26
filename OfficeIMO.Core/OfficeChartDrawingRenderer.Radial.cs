@@ -5,6 +5,26 @@ using System.Linq;
 namespace OfficeIMO.Drawing;
 
 public static partial class OfficeChartDrawingRenderer {
+    private static bool HasRenderableOutsideRadialLabel(OfficeChartLayout layout,
+        IReadOnlyList<string> categories, IReadOnlyList<(OfficeChartSeries Series, int SourceIndex)> series) {
+        if (!layout.ShowDataLabels || layout.DataLabelPosition != OfficeChartDataLabelPosition.OutsideEnd)
+            return false;
+        for (int seriesIndex = 0; seriesIndex < series.Count; seriesIndex++) {
+            (OfficeChartSeries values, int sourceIndex) = series[seriesIndex];
+            for (int point = 0; point < categories.Count; point++) {
+                if (!ShouldShowDataLabel(layout, sourceIndex, point) ||
+                    !TryGetSeriesValue(values, point, out double value) ||
+                    (seriesIndex > 0 && value <= 0D))
+                    continue;
+                if (layout.ShowDataLabelValues || layout.ShowDataLabelPercentages ||
+                    layout.ShowDataLabelCategoryNames && !string.IsNullOrWhiteSpace(categories[point]) ||
+                    layout.ShowDataLabelSeriesNames && !string.IsNullOrWhiteSpace(values.Name))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private static void GetRadialPlotGeometry(double width, double height, double topBand,
         double bottomBand, double sideBand, bool leftLegend, double horizontalPadding,
         double verticalPadding, out double centerX, out double centerY, out double radius,
@@ -35,12 +55,7 @@ public static partial class OfficeChartDrawingRenderer {
         }
 
         OfficeChartSeries values = series[0];
-        double total = 0D;
-        for (int i = 0; i < categories.Count; i++) {
-            if (TryGetSeriesValue(values, i, out double value) && value > 0D) {
-                total += value;
-            }
-        }
+        double total = GetPositiveSeriesNormalizedTotal(values, categories.Count, out double scale);
 
         if (total <= 0D) {
             return;
@@ -60,9 +75,16 @@ public static partial class OfficeChartDrawingRenderer {
             : bottomLegendHeight;
         double legendWidth = GetCategoryLegendWidth(categories, width, layout);
         bool leftLegend = layout.LegendPosition == OfficeChartLegendPosition.Left;
+        bool outsideLabels = HasRenderableOutsideRadialLabel(layout, categories,
+            new[] { (values, 0) });
         GetRadialPlotGeometry(width, height, contentTop, categoryBottomLegendHeight, legendWidth,
-            leftLegend, 48D, 36D, out double centerX, out double centerY, out double radius,
+            leftLegend, outsideLabels ? 180D : 48D, outsideLabels ? 56D : 36D,
+            out double centerX, out double centerY, out double radius,
             out double visualWidth, out double contentHeight);
+        if (outsideLabels) radius = ReserveOutsideRadialLabelGutters(radius, visualWidth);
+        int maximumExplosion = GetMaximumRenderableExplosion(values, categories.Count);
+        radius /= 1D + maximumExplosion / 100D;
+        var outside = new List<RadialOutsideLabel>();
         double start = GetFirstSliceAngle(snapshot.RadialLayout);
         int zeroLabelIndex = 0;
         OfficeColor zeroLabelColor = GetPointDataLabelColor(style, values,
@@ -73,32 +95,47 @@ public static partial class OfficeChartDrawingRenderer {
             }
 
             double value = Math.Max(0D, seriesValue);
-            double sweep = value / total * Math.PI * 2D;
+            double ratio = value / scale / total;
+            double sweep = ratio * Math.PI * 2D;
             if (value > 0D) {
                 double end = start + sweep;
+                double middle = start + sweep / 2D;
+                int explosion = values.PointExplosions?[i] ?? 0;
+                double sliceCenterX = centerX + Math.Cos(middle) * radius * explosion / 100D;
+                double sliceCenterY = centerY + Math.Sin(middle) * radius * explosion / 100D;
                 var points = new List<OfficePoint> {
-                    new OfficePoint(centerX, centerY)
+                    new OfficePoint(sliceCenterX, sliceCenterY)
                 };
                 int segments = Math.Max(2, (int)Math.Ceiling(sweep / (Math.PI / 18D)));
                 for (int segment = 0; segment <= segments; segment++) {
                     double angle = start + sweep * segment / segments;
                     points.Add(new OfficePoint(
-                        centerX + Math.Cos(angle) * radius,
-                        centerY + Math.Sin(angle) * radius));
+                        sliceCenterX + Math.Cos(angle) * radius,
+                        sliceCenterY + Math.Sin(angle) * radius));
                 }
 
                 OfficeColor sliceColor = GetPointColor(style, values, i);
                 AddStyledPointPolygon(drawing, points, sliceColor, GetPointStyle(values, i), OfficeColor.White, 0.5D);
                 if (ShouldShowDataLabel(layout, 0, i)) {
-                    AddPieDataLabel(drawing, layout, style, GetPointDataLabelColor(style, values, i), categories[i], values, value, total, centerX, centerY, radius * 0.58D, start + sweep / 2D, zeroLabelIndex: null);
+                    if (outsideLabels) QueueRadialOutsideLabel(outside, layout, style, categories[i], values,
+                        value, total, sliceCenterX, sliceCenterY, radius, middle, hasSlice: true,
+                        percentageRatio: ratio);
+                    else AddPieDataLabel(drawing, layout, style, GetPointDataLabelColor(style, values, i), categories[i], values, value, total, sliceCenterX, sliceCenterY, radius * 0.58D, middle, zeroLabelIndex: null, percentageRatio: ratio);
                 }
 
                 start = end;
             } else if (ShouldShowDataLabel(layout, 0, i)) {
-                AddPieDataLabel(drawing, layout, style, zeroLabelColor, categories[i], values, 0D, total, centerX, centerY, radius * 0.9D, GetFirstSliceAngle(snapshot.RadialLayout), zeroLabelIndex);
+                if (outsideLabels) QueueRadialOutsideLabel(outside, layout, style, categories[i], values,
+                    0D, total, centerX, centerY, radius, GetFirstSliceAngle(snapshot.RadialLayout), hasSlice: false,
+                    percentageRatio: 0D);
+                else AddPieDataLabel(drawing, layout, style, zeroLabelColor, categories[i], values, 0D, total, centerX, centerY, radius * 0.9D, GetFirstSliceAngle(snapshot.RadialLayout), zeroLabelIndex, percentageRatio: 0D);
                 zeroLabelIndex++;
             }
         }
+        if (outsideLabels) AddRadialOutsideLabels(drawing, outside, layout, style,
+            leftLegend ? legendWidth : 0D, leftLegend ? width : width - legendWidth,
+            contentTop, height - categoryBottomLegendHeight, centerX,
+            radius * (1D + maximumExplosion / 100D));
 
         if (layout.OverlayLegend) {
             AddOverlayCategoryLegend(drawing, categories, leftLegend ? legendWidth : 0D, contentTop + 4D, visualWidth, Math.Max(20D, contentHeight - 8D), style, layout, categoryPointColors, values.PointStyles);
@@ -125,7 +162,7 @@ public static partial class OfficeChartDrawingRenderer {
         IReadOnlyList<OfficeChartSeries> series = snapshot.Data.Series;
         var renderableSeries = new List<(OfficeChartSeries Series, int SourceIndex)>();
         for (int s = 0; s < series.Count; s++) {
-            if (GetPositiveSeriesTotal(series[s], categories.Count) > 0D) {
+            if (GetPositiveSeriesNormalizedTotal(series[s], categories.Count, out _) > 0D) {
                 renderableSeries.Add((series[s], s));
             }
         }
@@ -150,10 +187,26 @@ public static partial class OfficeChartDrawingRenderer {
             : bottomLegendHeight;
         double legendWidth = GetCategoryLegendWidth(categories, width, layout);
         bool leftLegend = layout.LegendPosition == OfficeChartLegendPosition.Left;
+        bool outsideLabels = HasRenderableOutsideRadialLabel(layout, categories, renderableSeries);
+        if (outsideLabels && layout.ShowDataLabelLeaderLines && renderableSeries.Count > 1 &&
+            renderableSeries.Take(renderableSeries.Count - 1).Any(item =>
+                Enumerable.Range(0, categories.Count).Any(index =>
+                    TryGetSeriesValue(item.Series, index, out double value) && value > 0D &&
+                    ShouldShowDataLabel(layout, item.SourceIndex, index) &&
+                    (layout.ShowDataLabelValues || layout.ShowDataLabelPercentages ||
+                     layout.ShowDataLabelCategoryNames && !string.IsNullOrWhiteSpace(categories[index]) ||
+                     layout.ShowDataLabelSeriesNames && !string.IsNullOrWhiteSpace(item.Series.Name)))))
+            throw new NotSupportedException("Outside leader lines cannot cross the outer ring of a multi-series doughnut.");
         GetRadialPlotGeometry(width, height, contentTop, categoryBottomLegendHeight, legendWidth,
-            leftLegend, 48D, 36D, out double centerX, out double centerY, out double radius,
+            leftLegend, outsideLabels ? 180D : 48D, outsideLabels ? 56D : 36D,
+            out double centerX, out double centerY, out double radius,
             out double visualWidth, out double contentHeight);
+        if (outsideLabels) radius = ReserveOutsideRadialLabelGutters(radius, visualWidth);
 
+        int maximumExplosion = renderableSeries.Max(item =>
+            GetMaximumRenderableExplosion(item.Series, categories.Count));
+        radius /= 1D + maximumExplosion / 100D;
+        var outside = new List<RadialOutsideLabel>();
         double holeRadius = radius * snapshot.RadialLayout.DoughnutHolePercent / 100D;
         double ringThickness = (radius - holeRadius) / renderableSeries.Count;
         for (int s = 0; s < renderableSeries.Count; s++) {
@@ -161,7 +214,7 @@ public static partial class OfficeChartDrawingRenderer {
             int sourceSeriesIndex = renderableSeries[s].SourceIndex;
             double outerRadius = holeRadius + (s + 1) * ringThickness;
             double innerRadius = holeRadius + s * ringThickness;
-            double total = GetPositiveSeriesTotal(values, categories.Count);
+            double total = GetPositiveSeriesNormalizedTotal(values, categories.Count, out double scale);
             double start = GetFirstSliceAngle(snapshot.RadialLayout);
             int zeroLabelIndex = 0;
             OfficeColor zeroLabelColor = GetPointDataLabelColor(style, values,
@@ -172,22 +225,37 @@ public static partial class OfficeChartDrawingRenderer {
                 }
 
                 double value = Math.Max(0D, seriesValue);
-                double sweep = value / total * Math.PI * 2D;
+                double ratio = value / scale / total;
+                double sweep = ratio * Math.PI * 2D;
                 if (value > 0D) {
                     double end = start + sweep;
+                    double middle = start + sweep / 2D;
+                    int explosion = values.PointExplosions?[i] ?? 0;
+                    double sliceCenterX = centerX + Math.Cos(middle) * outerRadius * explosion / 100D;
+                    double sliceCenterY = centerY + Math.Sin(middle) * outerRadius * explosion / 100D;
                     OfficeColor sliceColor = GetPointColor(style, values, i);
-                    AddDoughnutSlice(drawing, centerX, centerY, outerRadius, innerRadius, start, sweep, sliceColor, GetPointStyle(values, i));
+                    AddDoughnutSlice(drawing, sliceCenterX, sliceCenterY, outerRadius, innerRadius, start, sweep, sliceColor, GetPointStyle(values, i));
                     if (ShouldShowDataLabel(layout, sourceSeriesIndex, i)) {
-                        AddPieDataLabel(drawing, layout, style, GetPointDataLabelColor(style, values, i), categories[i], values, value, total, centerX, centerY, (innerRadius + outerRadius) / 2D, start + sweep / 2D, zeroLabelIndex: null);
+                        if (outsideLabels) QueueRadialOutsideLabel(outside, layout, style, categories[i], values,
+                            value, total, sliceCenterX, sliceCenterY, outerRadius, middle, hasSlice: true,
+                            percentageRatio: ratio);
+                        else AddPieDataLabel(drawing, layout, style, GetPointDataLabelColor(style, values, i), categories[i], values, value, total, sliceCenterX, sliceCenterY, (innerRadius + outerRadius) / 2D, middle, zeroLabelIndex: null, percentageRatio: ratio);
                     }
 
                     start = end;
                 } else if (s == 0 && ShouldShowDataLabel(layout, sourceSeriesIndex, i)) {
-                    AddPieDataLabel(drawing, layout, style, zeroLabelColor, categories[i], values, 0D, total, centerX, centerY, (innerRadius + outerRadius) / 2D, GetFirstSliceAngle(snapshot.RadialLayout), zeroLabelIndex);
+                    if (outsideLabels) QueueRadialOutsideLabel(outside, layout, style, categories[i], values,
+                        0D, total, centerX, centerY, outerRadius, GetFirstSliceAngle(snapshot.RadialLayout), hasSlice: false,
+                        percentageRatio: 0D);
+                    else AddPieDataLabel(drawing, layout, style, zeroLabelColor, categories[i], values, 0D, total, centerX, centerY, (innerRadius + outerRadius) / 2D, GetFirstSliceAngle(snapshot.RadialLayout), zeroLabelIndex, percentageRatio: 0D);
                     zeroLabelIndex++;
                 }
             }
         }
+        if (outsideLabels) AddRadialOutsideLabels(drawing, outside, layout, style,
+            leftLegend ? legendWidth : 0D, leftLegend ? width : width - legendWidth,
+            contentTop, height - categoryBottomLegendHeight, centerX,
+            radius * (1D + maximumExplosion / 100D));
 
         if (layout.OverlayLegend) {
             AddOverlayCategoryLegend(drawing, categories, leftLegend ? legendWidth : 0D, contentTop + 4D, visualWidth, Math.Max(20D, contentHeight - 8D), style, layout, legendPointColors, legendPointStyles);
@@ -222,8 +290,8 @@ public static partial class OfficeChartDrawingRenderer {
         double centerY,
         double radius,
         double angle,
-        int? zeroLabelIndex) {
-        string label = FormatDataLabel(layout, category, series, value, total);
+        int? zeroLabelIndex, double percentageRatio) {
+        string label = FormatDataLabel(layout, category, series, value, total, percentageRatio);
         if (string.IsNullOrWhiteSpace(label)) {
             return;
         }
@@ -251,15 +319,31 @@ public static partial class OfficeChartDrawingRenderer {
         return luminance < 0.52D ? OfficeColor.White : OfficeColor.Black;
     }
 
-    private static double GetPositiveSeriesTotal(OfficeChartSeries values, int categoryCount) {
+    private static double GetPositiveSeriesNormalizedTotal(OfficeChartSeries values, int categoryCount,
+        out double scale) {
+        scale = 0D;
+        for (int i = 0; i < categoryCount; i++)
+            if (TryGetSeriesValue(values, i, out double value) && value > scale)
+                scale = value;
+        if (scale == 0D) return 0D;
+
         double total = 0D;
         for (int i = 0; i < categoryCount; i++) {
             if (TryGetSeriesValue(values, i, out double value) && value > 0D) {
-                total += value;
+                total += value / scale;
             }
         }
 
         return total;
+    }
+
+    private static int GetMaximumRenderableExplosion(OfficeChartSeries series, int categoryCount) {
+        if (series.PointExplosions == null) return 0;
+        int maximum = 0;
+        for (int index = 0; index < categoryCount; index++)
+            if (TryGetSeriesValue(series, index, out double value) && value > 0D)
+                maximum = Math.Max(maximum, series.PointExplosions[index]);
+        return maximum;
     }
 
     private static void AddPieSlice(OfficeDrawing drawing, double centerX, double centerY, double radius, double start, double sweep, OfficeColor color, OfficeChartPointStyle? pointStyle = null) {

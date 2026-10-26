@@ -175,15 +175,29 @@ public sealed class IWorkTextParagraph {
 
 /// <summary>Immutable rich text recovered from one iWork text storage.</summary>
 public sealed class IWorkTextContent {
-    internal IWorkTextContent(IReadOnlyList<IWorkTextParagraph> paragraphs, bool isComplete) {
+    internal IWorkTextContent(IReadOnlyList<IWorkTextParagraph> paragraphs,
+        bool isComplete, bool isTextComplete, bool hasInvalidSourceText = false,
+        bool hasUnresolvedInlineObjects = false, bool? isFormattingComplete = null) {
         Paragraphs = Array.AsReadOnly(paragraphs.ToArray());
         IsComplete = isComplete;
+        IsTextComplete = isTextComplete;
+        HasInvalidSourceText = hasInvalidSourceText;
+        HasUnresolvedInlineObjects = hasUnresolvedInlineObjects;
+        IsFormattingComplete = isFormattingComplete ?? isComplete;
     }
 
     /// <summary>Gets paragraphs, including meaningful empty paragraphs.</summary>
     public IReadOnlyList<IWorkTextParagraph> Paragraphs { get; }
     /// <summary>Gets whether text and all referenced style records were decoded.</summary>
     public bool IsComplete { get; }
+    /// <summary>Gets whether all source text was decoded independently of its formatting.</summary>
+    public bool IsTextComplete { get; }
+    /// <summary>Gets whether source text contains invalid encoding, unsupported characters, or malformed text fields.</summary>
+    public bool HasInvalidSourceText { get; }
+    /// <summary>Gets whether inline object markers could not be resolved into editable content.</summary>
+    public bool HasUnresolvedInlineObjects { get; }
+    /// <summary>Gets whether the referenced paragraph, list, run, and hyperlink formatting was decoded.</summary>
+    public bool IsFormattingComplete { get; }
     /// <summary>Gets normalized plain text while preserving paragraph boundaries.</summary>
     public string PlainText => string.Join("\n", Paragraphs.Select(paragraph => paragraph.Text));
 }

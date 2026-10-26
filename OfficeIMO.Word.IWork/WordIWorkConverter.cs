@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Globalization;
 using OfficeIMO.Drawing;
 using OfficeIMO.IWork;
@@ -16,7 +17,10 @@ namespace OfficeIMO.Word.IWork;
 public static partial class WordIWorkConverter {
     private static PagesToWordResult ProjectPages(IWorkSourceDocument source,
         IWorkConversionOptions? options = null) {
-        IWorkConversionMode mode = (options ?? new IWorkConversionOptions()).Clone().Mode;
+        CancellationToken cancellationToken = source.CancellationToken;
+        cancellationToken.ThrowIfCancellationRequested();
+        IWorkConversionOptions settings = (options ?? new IWorkConversionOptions()).Clone();
+        IWorkConversionMode mode = settings.Mode;
         IWorkPreviewAsset? preview = mode == IWorkConversionMode.VisualOnly
             ? source.PreferredRasterPreview
             : null;
@@ -27,14 +31,50 @@ public static partial class WordIWorkConverter {
         IWorkPagesProjection projection = source.ReadPages();
         string? destinationLimitation = mode == IWorkConversionMode.VisualOnly
             ? null
-            : FindWordProjectionLimitation(projection);
-        bool editable = mode != IWorkConversionMode.VisualOnly && projection.HasEditableContent
+            : FindWordProjectionLimitation(projection, settings.AllowPartialEditableReconstruction);
+        bool hasEditableContent = projection.HasEditableContent
+            || settings.AllowPartialEditableReconstruction && projection.HasRecoverableContent;
+        bool editable = mode != IWorkConversionMode.VisualOnly && hasEditableContent
             && destinationLimitation == null;
-        IReadOnlyList<IWorkDiagnostic> destinationDiagnostics = !projection.HasEditableContent
+        IReadOnlyList<IWorkDiagnostic> destinationDiagnostics = !hasEditableContent
                 || destinationLimitation == null
             ? Array.Empty<IWorkDiagnostic>()
             : new[] { new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning,
                 "IWORK_PAGES_WORD_DESTINATION_UNSUPPORTED", destinationLimitation) };
+        if (editable && settings.AllowPartialEditableReconstruction && RequiresWordRounding(projection)) {
+            destinationDiagnostics = destinationDiagnostics.Concat(new[] {
+                new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning, "IWORK_PAGES_DOCX_PRECISION",
+                    "Source geometry, spacing, or font sizes were rounded to the nearest supported DOCX measurement unit; original values remain available on the projection.")
+            }).ToArray();
+        }
+        if (editable && settings.AllowPartialEditableReconstruction && projection.Tables.Any(table =>
+                table.Geometry is { } geometry && (Math.Abs(geometry.LeftPoints) > 0.000001d
+                    || Math.Abs(geometry.TopPoints) > 0.000001d || Math.Abs(geometry.WidthPoints) > 0.000001d
+                    || Math.Abs(geometry.HeightPoints) > 0.000001d || Math.Abs(geometry.RotationDegrees) > 0.000001d))) {
+            destinationDiagnostics = destinationDiagnostics.Concat(new[] {
+                new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning, "IWORK_PAGES_TABLE_LAYOUT_APPROXIMATED",
+                    "Positioned source tables were retained as editable flowing DOCX tables; source geometry remains available on the projection.",
+                    lossKind: global::OfficeIMO.OfficeConversionLossKind.Approximation)
+            }).ToArray();
+        }
+        int reconstructedSectionCount = 1 + projection.Body.Paragraphs.Count(paragraph =>
+            paragraph.BreakKind == IWorkParagraphBreakKind.Section);
+        if (editable && projection.Sections.Count > reconstructedSectionCount) {
+            destinationDiagnostics = destinationDiagnostics.Concat(new[] {
+                new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning, "IWORK_PAGES_SECTION_CONTENT_OMITTED",
+                    (projection.Sections.Count - reconstructedSectionCount) + " source section(s) have no recovered DOCX section boundary; their headers and footers were not reconstructed.",
+                    lossKind: global::OfficeIMO.OfficeConversionLossKind.Omission)
+            }).ToArray();
+        }
+        if (editable && settings.AllowPartialEditableReconstruction &&
+            (!projection.HasEditableContent || destinationDiagnostics.Count > 0 || projection.Diagnostics.Any(diagnostic =>
+                diagnostic.Severity != IWorkDiagnosticSeverity.Information))) {
+            destinationDiagnostics = destinationDiagnostics.Concat(new[] {
+                new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning,
+                    "IWORK_PARTIAL_EDITABLE_RECONSTRUCTION",
+                    "Recovered editable content was retained under the explicit partial-reconstruction policy; source diagnostics describe incomplete details.")
+            }).ToArray();
+        }
         if (!editable && mode == IWorkConversionMode.EditableOnly) {
             throw new InvalidDataException(destinationLimitation
                 ?? "The Pages source has no supported editable content.");
@@ -45,9 +85,11 @@ public static partial class WordIWorkConverter {
             throw new NotSupportedException("The Pages source has no supported editable content or embedded raster preview.");
         }
 
+        if (!editable) settings.ValidateVisualPreview(preview);
+
         WordDocument document = WordDocument.Create();
         try {
-            if (projection.PageLayout is { } pageLayout && CanApplyPageLayout(pageLayout)) {
+            if (projection.PageLayout is { } pageLayout && CanApplyPageLayout(pageLayout, settings.AllowPartialEditableReconstruction)) {
                 ApplyPageLayout(document.Sections[0], pageLayout);
             }
             if (editable) {
@@ -76,11 +118,12 @@ public static partial class WordIWorkConverter {
                             semanticSections.Add(section);
                             currentPageIndex++;
                         }
-                    });
+                    }, cancellationToken: cancellationToken);
                 if (projection.PageLayout != null) {
                     foreach (WordSection section in document.Sections) ApplyPageLayout(section, projection.PageLayout);
                 }
                 for (int drawableIndex = 0; drawableIndex < projection.Drawables.Count; drawableIndex++) {
+                    cancellationToken.ThrowIfCancellationRequested();
                     IWorkPagesDrawable sourceDrawable = projection.Drawables[drawableIndex];
                     WordParagraph? pageHost = sourceDrawable.PageIndex.HasValue
                         && pageHosts.TryGetValue(sourceDrawable.PageIndex.Value, out WordParagraph? host)
@@ -89,7 +132,7 @@ public static partial class WordIWorkConverter {
                     uint zOrder = checked(251658240U + (uint)drawableIndex);
                     switch (sourceDrawable.Kind) {
                         case IWorkPagesDrawableKind.TextBox:
-                            AddRichTextBox(document, sourceDrawable.TextBox!, nativeLists, pageHost).ZOrder = zOrder;
+                            AddRichTextBox(document, sourceDrawable.TextBox!, nativeLists, pageHost, cancellationToken).ZOrder = zOrder;
                             break;
                         case IWorkPagesDrawableKind.Image:
                             AddImage(document, sourceDrawable.Image!, contentWidth, contentHeight, pageHost).ZOrder = zOrder;
@@ -101,7 +144,7 @@ public static partial class WordIWorkConverter {
                                     ? anchor
                                     : null;
                             WordTable? insertedTable = AddTable(document,
-                                sourceDrawable.Table!, pageHost, priorTable);
+                                sourceDrawable.Table!, nativeLists, pageHost, priorTable, cancellationToken);
                             if (sourceDrawable.PageIndex.HasValue && insertedTable != null) {
                                 pageTableAnchors[sourceDrawable.PageIndex.Value] = insertedTable;
                             }
@@ -110,10 +153,12 @@ public static partial class WordIWorkConverter {
                 }
                 bool hasAnyEvenPageTemplate = projection.Sections.Any(section => section.HasEvenPageTemplate);
                 for (int sectionIndex = 0; sectionIndex < projection.Sections.Count; sectionIndex++) {
+                    cancellationToken.ThrowIfCancellationRequested();
                     IWorkPagesSection sourceSection = projection.Sections[sectionIndex];
+                    if (sectionIndex >= semanticSections.Count) break;
                     WordSection targetSection = semanticSections[sectionIndex];
                     AddSectionHeadersAndFooters(targetSection, sourceSection, nativeLists,
-                        hasAnyEvenPageTemplate);
+                        hasAnyEvenPageTemplate, cancellationToken);
                 }
             } else {
                 byte[] bytes = preview!.GetBytes();
@@ -128,8 +173,10 @@ public static partial class WordIWorkConverter {
             IWorkProjectionKind kind = editable
                 ? IWorkProjectionKind.EditableReconstruction
                 : IWorkProjectionKind.VisualFallback;
+            cancellationToken.ThrowIfCancellationRequested();
             return new PagesToWordResult(document, source, projection,
-                projection.CreateConversionReport(kind, preview, destinationDiagnostics));
+                projection.CreateConversionReport(kind, preview, destinationDiagnostics,
+                    settings.AllowPartialEditableReconstruction));
         } catch {
             document.Dispose();
             throw;
@@ -195,25 +242,25 @@ public static partial class WordIWorkConverter {
 
     private static void AddSectionHeadersAndFooters(WordSection target,
         IWorkPagesSection source, IWorkNativeListCatalog nativeLists,
-        bool hasAnyEvenPageTemplate) {
+        bool hasAnyEvenPageTemplate, CancellationToken cancellationToken) {
         if (source.HasDefaultPageTemplate) {
             WordHeader header = target.GetOrCreateHeader(WordHeaderFooterType.Default);
             WordFooter footer = target.GetOrCreateFooter(WordHeaderFooterType.Default);
             foreach (IWorkTextContent content in source.DefaultPageHeaderContents) {
-                AddRichText(content, header.AddParagraph, nativeLists);
+                AddRichText(content, header.AddParagraph, nativeLists, cancellationToken: cancellationToken);
             }
             foreach (IWorkTextContent content in source.DefaultPageFooterContents) {
-                AddRichText(content, footer.AddParagraph, nativeLists);
+                AddRichText(content, footer.AddParagraph, nativeLists, cancellationToken: cancellationToken);
             }
         }
         if (source.HasFirstPageTemplate) {
             WordHeader header = target.GetOrCreateHeader(WordHeaderFooterType.First);
             WordFooter footer = target.GetOrCreateFooter(WordHeaderFooterType.First);
             foreach (IWorkTextContent content in source.FirstPageHeaderContents) {
-                AddRichText(content, header.AddParagraph, nativeLists);
+                AddRichText(content, header.AddParagraph, nativeLists, cancellationToken: cancellationToken);
             }
             foreach (IWorkTextContent content in source.FirstPageFooterContents) {
-                AddRichText(content, footer.AddParagraph, nativeLists);
+                AddRichText(content, footer.AddParagraph, nativeLists, cancellationToken: cancellationToken);
             }
         }
         if (hasAnyEvenPageTemplate) {
@@ -226,16 +273,17 @@ public static partial class WordIWorkConverter {
                 ? source.EvenPageFooterContents
                 : source.DefaultPageFooterContents;
             foreach (IWorkTextContent content in headerContents) {
-                AddRichText(content, header.AddParagraph, nativeLists);
+                AddRichText(content, header.AddParagraph, nativeLists, cancellationToken: cancellationToken);
             }
             foreach (IWorkTextContent content in footerContents) {
-                AddRichText(content, footer.AddParagraph, nativeLists);
+                AddRichText(content, footer.AddParagraph, nativeLists, cancellationToken: cancellationToken);
             }
         }
     }
 
     private static WordTable? AddTable(WordDocument document, IWorkTable source,
-        WordParagraph? pageHost = null, WordTable? tableHost = null) {
+        IWorkNativeListCatalog nativeLists,
+        WordParagraph? pageHost, WordTable? tableHost, CancellationToken cancellationToken) {
         if (source.RowCount == 0 || source.ColumnCount == 0) return null;
         WordTable table = pageHost == null
             ? document.AddTable(source.RowCount, source.ColumnCount, WordTableStyle.TableGrid)
@@ -248,17 +296,33 @@ public static partial class WordIWorkConverter {
         }
         if (source.DefaultRowHeight is > 0) {
             int height = ToSignedTwips(source.DefaultRowHeight.Value);
-            foreach (WordTableRow row in table.Rows) row.Height = height;
+            foreach (WordTableRow row in table.Rows) {
+                cancellationToken.ThrowIfCancellationRequested();
+                row.Height = height;
+            }
         }
         foreach (IWorkTableCell sourceCell in source.Cells) {
+            cancellationToken.ThrowIfCancellationRequested();
             WordTableCell target = table.Rows[sourceCell.Row - 1].Cells[sourceCell.Column - 1];
-            WordParagraph paragraph = target.AddParagraph(CellText(sourceCell), removeExistingParagraphs: true);
-            if (sourceCell.Row <= source.HeaderRowCount || sourceCell.Column <= source.HeaderColumnCount
-                || sourceCell.Row > source.RowCount - source.FooterRowCount) {
-                paragraph.Bold = true;
+            bool header = sourceCell.Row <= source.HeaderRowCount
+                || sourceCell.Column <= source.HeaderColumnCount
+                || sourceCell.Row > source.RowCount - source.FooterRowCount;
+            if (sourceCell.RichText is { Paragraphs.Count: > 0 } richText) {
+                bool first = true;
+                AddRichText(richText, _ => {
+                    WordParagraph paragraph = target.AddParagraph(string.Empty,
+                        removeExistingParagraphs: first);
+                    first = false;
+                    return paragraph;
+                }, nativeLists, forceBold: header, cancellationToken: cancellationToken);
+            } else {
+                WordParagraph paragraph = target.AddParagraph(CellText(sourceCell),
+                    removeExistingParagraphs: true);
+                if (header) paragraph.Bold = true;
             }
         }
         foreach (IWorkTableMergeRange merge in source.MergedRanges) {
+            cancellationToken.ThrowIfCancellationRequested();
             table.MergeCells(merge.FirstRow - 1, merge.FirstColumn - 1,
                 merge.LastRow - merge.FirstRow + 1, merge.LastColumn - merge.FirstColumn + 1);
         }
@@ -271,7 +335,7 @@ public static partial class WordIWorkConverter {
     }
 
     private static WordTextBox AddRichTextBox(WordDocument document, IWorkTextBox source,
-        IWorkNativeListCatalog nativeLists, WordParagraph? pageHost = null) {
+        IWorkNativeListCatalog nativeLists, WordParagraph? pageHost, CancellationToken cancellationToken) {
         WordTextBox textBox = pageHost == null
             ? document.AddTextBox(string.Empty)
             : pageHost.AddTextBox(string.Empty, WordImageTextWrapping.Square);
@@ -294,7 +358,7 @@ public static partial class WordIWorkConverter {
             var result = new WordParagraph(document, paragraph, newRun: false);
             if (value.Length > 0) result.AddText(value);
             return result;
-        }, nativeLists);
+        }, nativeLists, cancellationToken: cancellationToken);
         if (!content.Elements<OpenXmlParagraph>().Any()) {
             content.Append(new OpenXmlParagraph(new OpenXmlRun()));
         }
@@ -307,212 +371,18 @@ public static partial class WordIWorkConverter {
             : cell.DisplayText;
     }
 
-    private static string? FindWordProjectionLimitation(IWorkPagesProjection projection) {
-        const long MaximumDestinationTableCells = 1_000_000;
-        long destinationTableCells = 0;
-        if (projection.TextBoxObjects.Any(textBox => textBox.Hyperlink != null)
-            || projection.Images.Any(image => image.Hyperlink != null)) {
-            return "Pages contains a drawable hyperlink that cannot be represented by the DOCX owner.";
-        }
-        if (projection.Sections.SelectMany(section => section.HeaderContents)
-            .Concat(projection.Sections.SelectMany(section => section.FooterContents))
-            .Any(HasContainerScopedBreak)) {
-            return "Pages headers or footers contain a section, layout, or page break that cannot be represented inside a DOCX header or footer.";
-        }
-        if (projection.TextBoxObjects.Any(textBox => HasContainerScopedBreak(textBox.Content))) {
-            return "A Pages text box contains a section, layout, or page break that cannot be represented inside a DOCX text box.";
-        }
-        if (projection.Body.Paragraphs
-                .Concat(projection.TextBoxObjects.SelectMany(textBox => textBox.Content.Paragraphs))
-                .Concat(projection.Sections.SelectMany(section => section.HeaderContents)
-                    .Concat(projection.Sections.SelectMany(section => section.FooterContents))
-                    .SelectMany(content => content.Paragraphs))
-                .SelectMany(paragraph => paragraph.Runs)
-                .Any(run => run.Hyperlink != null
-                    && !Uri.TryCreate(run.Hyperlink, UriKind.Absolute, out _))) {
-            return "Pages contains a text hyperlink that cannot be represented by the DOCX owner.";
-        }
-        if (projection.Body.Paragraphs
-                .Concat(projection.TextBoxObjects.SelectMany(textBox => textBox.Content.Paragraphs))
-                .Concat(projection.Sections.SelectMany(section => section.HeaderContents)
-                    .Concat(projection.Sections.SelectMany(section => section.FooterContents))
-                    .SelectMany(content => content.Paragraphs))
-                .Any(paragraph => paragraph.ListLevel > 8)) {
-            return "Pages contains a list nesting level outside the DOCX numbering range.";
-        }
-        if (AllPagesText(projection).SelectMany(content => content.Paragraphs)
-                .Any(paragraph => paragraph.ListLevel >= 0
-                    && !IWorkNativeListCatalog.CanPreserveStart(paragraph.ListLabel))) {
-            return "Pages contains an ordered-list marker that cannot be represented by DOCX numbering.";
-        }
-        if (projection.PageLayout is { } layout && !CanApplyPageLayout(layout)) {
-            return "The Pages page layout exceeds the DOCX measurement range.";
-        }
-        var pagesWithBodyParagraphs = new HashSet<int>();
-        int bodyPageIndex = 1;
-        foreach (IWorkTextParagraph paragraph in projection.Body.Paragraphs) {
-            pagesWithBodyParagraphs.Add(bodyPageIndex);
-            if (paragraph.BreakKind is IWorkParagraphBreakKind.Page
-                or IWorkParagraphBreakKind.Section) bodyPageIndex++;
-        }
-        if (projection.Drawables.Any(drawable => drawable.PageIndex.HasValue
-                && !pagesWithBodyParagraphs.Contains(drawable.PageIndex.Value))) {
-            return "A Pages drawable belongs to a source page with no DOCX anchor paragraph.";
-        }
-        foreach (IWorkTable table in projection.Tables) {
-            long tableCells = (long)table.RowCount * table.ColumnCount;
-            if (table.RowCount == 0 || table.ColumnCount == 0) {
-                return $"Pages table '{table.Name}' has no rows or columns and cannot be represented by the DOCX table owner.";
-            }
-            if (table.ColumnCount > 63) {
-                return $"Pages table '{table.Name}' exceeds Word's supported 63-column table layout.";
-            }
-            if (table.RowCount > 32_767 || tableCells > 100_000) {
-                return $"Pages table '{table.Name}' is too large for bounded DOCX table reconstruction.";
-            }
-            if (projection.HasEditableContent && table.HasPopulatedCoveredMergeCells()) {
-                return $"Pages table '{table.Name}' contains content in a covered merged cell that the DOCX owner cannot preserve.";
-            }
-            if (destinationTableCells > MaximumDestinationTableCells - tableCells) {
-                return "Pages tables exceed the bounded DOCX destination cell budget.";
-            }
-            if (table.Cells.Any(cell => cell.Kind == IWorkCellKind.Formula && cell.Value == null)) {
-                return $"Pages table '{table.Name}' contains an uncached formula that the DOCX owner cannot evaluate.";
-            }
-            if (!FitsSignedTwips(table.DefaultRowHeight)
-                || !FitsSignedTwips(table.DefaultColumnWidth)) {
-                return $"Pages table '{table.Name}' has default sizing outside the DOCX measurement range.";
-            }
-            if (table.Geometry is { } geometry
-                && (Math.Abs(geometry.LeftPoints) > 0.000001d
-                    || Math.Abs(geometry.TopPoints) > 0.000001d
-                    || Math.Abs(geometry.WidthPoints) > 0.000001d
-                    || Math.Abs(geometry.HeightPoints) > 0.000001d
-                    || Math.Abs(geometry.RotationDegrees) > 0.000001d)) {
-                return $"Pages table '{table.Name}' has positioned, sized, or rotated drawable geometry that the DOCX table owner cannot preserve.";
-            }
-            destinationTableCells += tableCells;
-        }
-        foreach (IWorkTextBox textBox in projection.TextBoxObjects) {
-            if (textBox.Geometry is { } geometry
-                && (!FitsEmuOffset(geometry.LeftPoints) || !FitsEmuOffset(geometry.TopPoints)
-                    || !FitsEmuExtent(geometry.WidthPoints) || !FitsEmuExtent(geometry.HeightPoints)
-                    || Math.Abs(geometry.RotationDegrees) > 0.000001d)) {
-                return "A Pages text box has unsupported rotation or geometry outside the DOCX measurement range.";
-            }
-        }
-        foreach (IWorkImageAsset image in projection.Images) {
-            if (image.Geometry is { } geometry
-                && (geometry.WidthPoints <= 0 || geometry.HeightPoints <= 0
-                    || !FitsEmuExtent(geometry.WidthPoints)
-                    || !FitsEmuExtent(geometry.HeightPoints)
-                    || !FitsEmuOffset(geometry.LeftPoints)
-                    || !FitsEmuOffset(geometry.TopPoints)
-                    || Math.Abs(geometry.RotationDegrees) > 0.000001d)) {
-                return "A Pages image has unsupported placement, rotation, or extent for the DOCX image owner.";
-            }
-        }
-        foreach (IWorkTextContent content in AllPagesText(projection)) {
-            foreach (IWorkTextParagraph paragraph in content.Paragraphs) {
-                IWorkParagraphStyle style = paragraph.Style;
-                if (!FitsSignedTwips(style.FirstLineIndentPoints)
-                    || !FitsSignedTwips(style.LeftIndentPoints)
-                    || !FitsSignedTwips(style.RightIndentPoints)
-                    || !FitsUnsignedNullableTwips(style.SpaceBeforePoints)
-                    || !FitsUnsignedNullableTwips(style.SpaceAfterPoints)) {
-                    return "Pages paragraph formatting exceeds the DOCX measurement range.";
-                }
-                foreach (IWorkTextRun run in paragraph.Runs) {
-                    if (run.Style.Color is { Alpha: < byte.MaxValue }
-                        || run.Style.BackgroundColor is { Alpha: < byte.MaxValue }) {
-                        return "Pages contains transparent text colors that cannot be represented by the DOCX owner.";
-                    }
-                    if (run.Style.FontSizePoints is double fontSize
-                        && (!IsFinite(fontSize) || fontSize < 0 || fontSize > int.MaxValue / 2d
-                            || fontSize * 2d != Math.Round(fontSize * 2d,
-                                MidpointRounding.AwayFromZero))) {
-                        return "A Pages font size exceeds the DOCX measurement range or half-point precision.";
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    private static IEnumerable<IWorkTextContent> AllPagesText(IWorkPagesProjection projection) {
-        yield return projection.Body;
-        foreach (IWorkPagesSection section in projection.Sections) {
-            foreach (IWorkTextContent header in section.HeaderContents) yield return header;
-            foreach (IWorkTextContent footer in section.FooterContents) yield return footer;
-        }
-        foreach (IWorkTextBox textBox in projection.TextBoxObjects) yield return textBox.Content;
-    }
-
-    private static bool HasContainerScopedBreak(IWorkTextContent content) =>
-        content.Paragraphs.Any(paragraph => paragraph.BreakKind is IWorkParagraphBreakKind.Section
-            or IWorkParagraphBreakKind.Layout or IWorkParagraphBreakKind.Page);
-
-    private static bool FitsUnsignedTwips(double points) =>
-        IsFinite(points) && points >= 0 && points <= uint.MaxValue / 20d
-        && IsExactDestinationUnit(points, 20d);
-
-    private static bool CanApplyPageLayout(IWorkPageLayout layout) =>
-        layout.WidthPoints > 0 && layout.HeightPoints > 0
-        && layout.LeftMarginPoints + layout.RightMarginPoints < layout.WidthPoints
-        && layout.TopMarginPoints + layout.BottomMarginPoints < layout.HeightPoints
-        && FitsUnsignedTwips(layout.WidthPoints)
-        && FitsUnsignedTwips(layout.HeightPoints)
-        && FitsUnsignedTwips(layout.LeftMarginPoints)
-        && FitsUnsignedTwips(layout.RightMarginPoints)
-        && FitsSignedTwips(layout.TopMarginPoints)
-        && FitsSignedTwips(layout.BottomMarginPoints)
-        && FitsUnsignedTwips(layout.HeaderMarginPoints)
-        && layout.HeaderMarginPoints <= layout.HeightPoints
-        && FitsUnsignedTwips(layout.FooterMarginPoints)
-        && layout.FooterMarginPoints <= layout.HeightPoints;
-
-    private static bool FitsSignedTwips(double? points) => !points.HasValue
-        || IsFinite(points.Value) && Math.Abs(points.Value) <= int.MaxValue / 20d
-        && IsExactDestinationUnit(points.Value, 20d);
-
-    private static bool FitsUnsignedNullableTwips(double? points) => !points.HasValue
-        || IsFinite(points.Value) && points.Value >= 0 && points.Value <= uint.MaxValue / 20d
-        && IsExactDestinationUnit(points.Value, 20d);
-
-    private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
-
-    private static bool FitsEmuOffset(double points) =>
-        !double.IsNaN(points) && !double.IsInfinity(points)
-        && points >= int.MinValue / 12700d && points <= int.MaxValue / 12700d
-        && IsExactDestinationUnit(points, 12700d);
-
-    private static bool FitsEmuExtent(double points) =>
-        !double.IsNaN(points) && !double.IsInfinity(points)
-        && points >= 0 && points <= long.MaxValue / 12700d
-        && IsExactDestinationUnit(points, 12700d);
-
-    private static bool IsExactDestinationUnit(double points, double unitsPerPoint) {
-        double scaled = points * unitsPerPoint;
-        double rounded = Math.Round(scaled, MidpointRounding.AwayFromZero);
-        double sourceFloatTolerance = Math.Max(1e-6d, Math.Abs(scaled) * 1e-7d);
-        return Math.Abs(scaled - rounded) <= sourceFloatTolerance;
-    }
-
-    private static int ToEmusInt32(double points) => checked((int)Math.Round(points * 12700d,
-        MidpointRounding.AwayFromZero));
-
-    private static long ToEmusInt64(double points) => checked((long)Math.Round(points * 12700d,
-        MidpointRounding.AwayFromZero));
-
     private static void AddRichText(IWorkTextContent content, Func<string, WordParagraph> addParagraph,
         IWorkNativeListCatalog nativeLists,
         Func<WordParagraph>? addPageBreak = null,
-        Action<IWorkParagraphBreakKind>? addSectionBreak = null) {
+        Action<IWorkParagraphBreakKind>? addSectionBreak = null,
+        bool forceBold = false, CancellationToken cancellationToken = default) {
         ulong? previousListIdentifier = null;
         bool hasPreviousListParagraph = false;
         foreach (IWorkTextParagraph sourceParagraph in content.Paragraphs) {
+            cancellationToken.ThrowIfCancellationRequested();
             WordParagraph paragraph = addParagraph(string.Empty);
             ApplyParagraphStyle(paragraph, sourceParagraph);
+            if (forceBold) paragraph.Bold = true;
             if (sourceParagraph.ListLevel >= 0) {
                 bool startsNewList = !hasPreviousListParagraph
                     || sourceParagraph.ListIdentifier != previousListIdentifier;
@@ -525,7 +395,8 @@ public static partial class WordIWorkConverter {
                 hasPreviousListParagraph = false;
             }
             foreach (IWorkTextRun sourceRun in sourceParagraph.Runs) {
-                AddStyledTextRun(paragraph, sourceRun);
+                cancellationToken.ThrowIfCancellationRequested();
+                AddStyledTextRun(paragraph, sourceRun, forceBold);
             }
             if (sourceParagraph.BreakKind == IWorkParagraphBreakKind.Page) addPageBreak?.Invoke();
             else if (sourceParagraph.BreakKind is IWorkParagraphBreakKind.Section
@@ -533,7 +404,8 @@ public static partial class WordIWorkConverter {
         }
     }
 
-    private static void AddStyledTextRun(WordParagraph paragraph, IWorkTextRun sourceRun) {
+    private static void AddStyledTextRun(WordParagraph paragraph, IWorkTextRun sourceRun,
+        bool forceBold = false) {
         string[] lines = sourceRun.Text.Split('\n');
         for (int index = 0; index < lines.Length; index++) {
             if (index > 0) paragraph.AddBreak();
@@ -548,6 +420,7 @@ public static partial class WordIWorkConverter {
                 run = paragraph.AddText(lines[index]);
             }
             ApplyTextStyle(run, sourceRun.Style);
+            if (forceBold) run.Bold = true;
         }
     }
 

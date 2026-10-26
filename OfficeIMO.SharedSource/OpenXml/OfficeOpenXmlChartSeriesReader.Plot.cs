@@ -27,12 +27,21 @@ namespace OfficeIMO.OpenXml.Internal {
             if (!HasSupportedProjectionAxisGroups(layers, axisGroups)) return null;
             var projectionBudget = new ProjectionBudget();
             var series = new List<Series>();
+            var stackedLayers = new HashSet<(OfficeChartKind Kind, OfficeChartAxisGroup AxisGroup)>();
             IReadOnlyList<string>? categories = null;
             for (int index = 0; index < layers.Count; index++) {
                 var layer = layers[index];
                 if (layer is not C.BarChart && layer is not C.LineChart && layer is not C.AreaChart && layer is not C.RadarChart &&
                     layer is not C.ScatterChart && layer is not C.BubbleChart && layer is not C.PieChart && layer is not C.DoughnutChart) return null;
                 if (!TryReadKind(layer, out var layerKind)) return null;
+                // Separate native stacked layers have independent stacks. The flat
+                // chart model groups them by kind and axis, so it cannot preserve both.
+                if (layerKind is OfficeChartKind.BarStacked or OfficeChartKind.BarStacked100 or
+                    OfficeChartKind.ColumnStacked or OfficeChartKind.ColumnStacked100 or
+                    OfficeChartKind.LineStacked or OfficeChartKind.LineStacked100 or
+                    OfficeChartKind.AreaStacked or OfficeChartKind.AreaStacked100) {
+                    if (!stackedLayers.Add((layerKind, axisGroups.Read(layer)))) return null;
+                }
                 if (HasUnsupportedLayerPresentation(layer)) return null;
                 if (HasIncompleteNumericProjectionCaches(layer, maximumPoints)) return null;
                 if (index == 0) kind = layerKind;
@@ -73,12 +82,92 @@ namespace OfficeIMO.OpenXml.Internal {
             bool categoryLegend = kind == OfficeChartKind.Pie || kind == OfficeChartKind.Doughnut;
             series = series.Select((item, index) => new Series(item.SourceIndex,
                 item.Data.WithLegendVisibility(legend != null && (categoryLegend ||
-                    !hidden.Contains((uint)index))), item.HasUnsupportedAppearance, item.SourceOrder)).ToList();
+                    !hidden.Contains((uint)index))), item.HasUnsupportedAppearance, item.SourceOrder,
+                item.HasAutomaticColor)).ToList();
             var result = new Result(categories, series);
+            if (HasSuppressedOverMaximumDataLabels(chart,
+                    series.Select(item => item.Data), kind))
+                return null;
             // The same authoring contract declares supported family/axis combinations.
             OfficeOpenXmlChartWriter.ValidateSharedChartData(result.ToData(), kind);
             return result;
         }
+
+        internal static bool HasSuppressedOverMaximumDataLabels(C.Chart chart, IEnumerable<OfficeChartSeries> series,
+            OfficeChartKind defaultKind) {
+            // Office suppresses labels beyond an explicit value-axis maximum when
+            // showDLblsOverMax is false. The shared renderer cannot model that
+            // per-point suppression, so keep the native chart unprojected.
+            C.PlotArea? plot = chart.PlotArea;
+            if (plot == null || chart.GetFirstChild<C.ShowDataLabelsOverMaximum>()?.Val?.Value != false ||
+                !plot.Descendants<C.DataLabels>().Any(labels =>
+                    labels.Elements<C.DataLabel>().Any() ||
+                    labels.GetFirstChild<C.ShowValue>() is C.ShowValue value && value.Val?.Value != false ||
+                    labels.GetFirstChild<C.ShowCategoryName>() is C.ShowCategoryName category && category.Val?.Value != false ||
+                    labels.GetFirstChild<C.ShowSeriesName>() is C.ShowSeriesName name && name.Val?.Value != false ||
+                    labels.GetFirstChild<C.ShowPercent>() is C.ShowPercent percent && percent.Val?.Value != false ||
+                    labels.GetFirstChild<C.ShowBubbleSize>() is C.ShowBubbleSize bubble && bubble.Val?.Value != false))
+                return false;
+            OfficeChartSeries[] allSeries = series.ToArray();
+            bool horizontalBar = plot.Descendants<C.BarChart>().Any(bar =>
+                bar.BarDirection?.Val?.Value == C.BarDirectionValues.Bar);
+            bool scatter = plot.Descendants<C.ScatterChart>().Any();
+            foreach (C.ValueAxis axis in plot.Elements<C.ValueAxis>()) {
+                double? maximum = axis.GetFirstChild<C.Scaling>()?.GetFirstChild<C.MaxAxisValue>()?.Val?.Value;
+                if (!maximum.HasValue) continue;
+                C.AxisPositionValues? position = axis.AxisPosition?.Val?.Value;
+                bool horizontal = position == C.AxisPositionValues.Bottom || position == C.AxisPositionValues.Top;
+                if (horizontal && !horizontalBar && !scatter || !horizontal && horizontalBar) continue;
+                OfficeChartAxisGroup group = position == C.AxisPositionValues.Right || position == C.AxisPositionValues.Top
+                    ? OfficeChartAxisGroup.Secondary : OfficeChartAxisGroup.Primary;
+                foreach (OfficeChartSeries item in allSeries.Where(item => item.AxisGroup == group)) {
+                    OfficeChartKind kind = item.RenderKind ?? defaultKind;
+                    if (IsStackedForLabelMaximum(kind)) continue;
+                    IReadOnlyList<double>? values = horizontal && scatter ? item.XValues : item.Values;
+                    if (values?.Any(value => value > maximum.Value) == true) return true;
+                }
+                foreach (var stack in allSeries.Where(item => item.AxisGroup == group &&
+                        IsStackedForLabelMaximum(item.RenderKind ?? defaultKind))
+                    .GroupBy(item => item.RenderKind ?? defaultKind)) {
+                    OfficeChartSeries[] members = stack.ToArray();
+                    bool percent = IsPercentStackedForLabelMaximum(stack.Key);
+                    int count = members.Max(item => item.Values.Count);
+                    for (int index = 0; index < count; index++) {
+                        double positiveTotal = 0D, negativeTotal = 0D;
+                        if (percent) {
+                            foreach (OfficeChartSeries member in members) {
+                                if (index >= member.Values.Count) continue;
+                                if (member.Values[index] > 0D) positiveTotal += member.Values[index];
+                                else if (member.Values[index] < 0D) negativeTotal -= member.Values[index];
+                            }
+                        }
+                        double positiveCumulative = 0D, negativeCumulative = 0D;
+                        foreach (OfficeChartSeries member in members) {
+                            if (index >= member.Values.Count) continue;
+                            double value = member.Values[index];
+                            if (value > 0D) {
+                                positiveCumulative += value;
+                                if ((percent ? positiveCumulative / positiveTotal : positiveCumulative) > maximum.Value) return true;
+                            } else if (value < 0D) {
+                                negativeCumulative += value;
+                                if ((percent ? negativeCumulative / negativeTotal : negativeCumulative) > maximum.Value) return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static bool IsStackedForLabelMaximum(OfficeChartKind kind) => kind is
+            OfficeChartKind.BarStacked or OfficeChartKind.BarStacked100 or
+            OfficeChartKind.ColumnStacked or OfficeChartKind.ColumnStacked100 or
+            OfficeChartKind.LineStacked or OfficeChartKind.LineStacked100 or
+            OfficeChartKind.AreaStacked or OfficeChartKind.AreaStacked100;
+
+        private static bool IsPercentStackedForLabelMaximum(OfficeChartKind kind) => kind is
+            OfficeChartKind.BarStacked100 or OfficeChartKind.ColumnStacked100 or
+            OfficeChartKind.LineStacked100 or OfficeChartKind.AreaStacked100;
 
         private static bool HasUnsupportedLayerPresentation(OpenXmlCompositeElement layer) {
             if (layer.Descendants<C.Symbol>().Any(symbol => symbol.Val?.Value == C.MarkerStyleValues.Auto)) return true;
@@ -98,7 +187,6 @@ namespace OfficeIMO.OpenXml.Internal {
                 // Radial default colouring is per category in the shared renderer.
                 if (layer.GetFirstChild<C.VaryColors>()?.Val?.Value != true &&
                     layer.Elements<C.PieChartSeries>().Any(series => series.GetFirstChild<C.ChartShapeProperties>()?.GetFirstChild<A.SolidFill>() == null)) return true;
-                if (layer.Descendants<C.Explosion>().Any(explosion => explosion.Val?.Value != 0)) return true;
             } else if (layer is not C.BubbleChart && IsVaryColorsEnabled(layer.GetFirstChild<C.VaryColors>())) return true;
             if (layer is C.BarChart bars) {
                 if (bars.Descendants().Any(element => element.LocalName == "shape" &&

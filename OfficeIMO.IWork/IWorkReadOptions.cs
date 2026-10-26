@@ -2,8 +2,8 @@ namespace OfficeIMO.IWork;
 
 /// <summary>Bounds and preservation preferences applied while reading an iWork source.</summary>
 public sealed class IWorkReadOptions {
-    /// <summary>Gets or sets whether raw records not losslessly represented by a typed projection remain available on the result.</summary>
-    public bool PreserveUnsupportedRecords { get; set; } = true;
+    /// <summary>Gets or sets whether raw source records are included in the conversion report for inspection.</summary>
+    public bool PreserveSourceRecords { get; set; } = true;
 
     /// <summary>Gets or sets the maximum source package size in bytes.</summary>
     public long MaximumPackageBytes { get; set; } = 512L * 1024 * 1024;
@@ -100,6 +100,9 @@ public sealed class IWorkReadOptions {
 
     /// <summary>Gets or sets the maximum cross-record inheritance depth of an iWork text style.</summary>
     public int MaximumTextStyleInheritanceDepth { get; set; } = 64;
+
+    /// <summary>Returns a validated copy suitable for an isolated reader registration.</summary>
+    public IWorkReadOptions Clone() => Snapshot();
 
     internal IWorkReadOptions Snapshot() {
         ValidatePositive(MaximumPackageBytes, nameof(MaximumPackageBytes));

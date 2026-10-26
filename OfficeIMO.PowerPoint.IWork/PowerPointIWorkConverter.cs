@@ -1,3 +1,4 @@
+using System.Threading;
 using OfficeIMO.Drawing;
 using OfficeIMO.IWork;
 using OfficeIMO.PowerPoint.IWork;
@@ -8,7 +9,10 @@ namespace OfficeIMO.PowerPoint.IWork;
 public static partial class PowerPointIWorkConverter {
     private static KeynoteToPowerPointResult ProjectKeynote(
         IWorkSourceDocument source, IWorkConversionOptions? options = null) {
-        IWorkConversionMode mode = (options ?? new IWorkConversionOptions()).Clone().Mode;
+        CancellationToken cancellationToken = source.CancellationToken;
+        cancellationToken.ThrowIfCancellationRequested();
+        IWorkConversionOptions settings = (options ?? new IWorkConversionOptions()).Clone();
+        IWorkConversionMode mode = settings.Mode;
         IWorkPreviewAsset? preview = mode == IWorkConversionMode.VisualOnly
             ? source.PreferredRasterPreview
             : null;
@@ -19,11 +23,13 @@ public static partial class PowerPointIWorkConverter {
         IWorkKeynoteProjection projection = source.ReadKeynote();
         string? destinationLimitation = mode == IWorkConversionMode.VisualOnly
             ? null
-            : FindPowerPointProjectionLimitation(projection);
-        bool editable = mode != IWorkConversionMode.VisualOnly && projection.HasEditableContent
+            : FindPowerPointProjectionLimitation(projection, settings.AllowPartialEditableReconstruction);
+        bool hasEditableContent = projection.HasEditableContent
+            || settings.AllowPartialEditableReconstruction && projection.HasRecoverableContent;
+        bool editable = mode != IWorkConversionMode.VisualOnly && hasEditableContent
             && destinationLimitation == null;
         IReadOnlyList<IWorkDiagnostic> destinationDiagnostics =
-            (!projection.HasEditableContent || destinationLimitation == null
+            (!hasEditableContent || destinationLimitation == null
                 ? Array.Empty<IWorkDiagnostic>()
                 : new[] { new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning,
                     "IWORK_KEYNOTE_POWERPOINT_DESTINATION_UNSUPPORTED", destinationLimitation) })
@@ -31,6 +37,15 @@ public static partial class PowerPointIWorkConverter {
                 ? FindPowerPointProjectionDiagnostics(projection)
                 : Array.Empty<IWorkDiagnostic>())
             .ToArray();
+        if (editable && settings.AllowPartialEditableReconstruction &&
+            (!projection.HasEditableContent || projection.Diagnostics.Any(diagnostic =>
+                diagnostic.Severity != IWorkDiagnosticSeverity.Information))) {
+            destinationDiagnostics = destinationDiagnostics.Concat(new[] {
+                new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning,
+                    "IWORK_PARTIAL_EDITABLE_RECONSTRUCTION",
+                    "Recovered editable content was retained under the explicit partial-reconstruction policy; source diagnostics describe incomplete details.")
+            }).ToArray();
+        }
         if (!editable && mode == IWorkConversionMode.EditableOnly) {
             throw new InvalidDataException(destinationLimitation
                 ?? "The Keynote source has no supported editable slides.");
@@ -40,6 +55,8 @@ public static partial class PowerPointIWorkConverter {
         if (!editable && preview == null) {
             throw new NotSupportedException("The Keynote source has no supported editable slides or embedded raster preview.");
         }
+
+        if (!editable) settings.ValidateVisualPreview(preview);
 
         PowerPointPresentation presentation = PowerPointPresentation.Create();
         try {
@@ -59,28 +76,31 @@ public static partial class PowerPointIWorkConverter {
                 var slidePairs = new List<(IWorkKeynoteSlide Source, PowerPointSlide Target)>(
                     projection.Slides.Count);
                 foreach (IWorkKeynoteSlide sourceSlide in projection.Slides) {
+                    cancellationToken.ThrowIfCancellationRequested();
                     PowerPointSlide slide = presentation.AddSlide();
                     if (sourceSlide.Name.Length > 0) slide.Name = sourceSlide.Name;
                     slide.Hidden = sourceSlide.IsSkipped;
                     slidePairs.Add((sourceSlide, slide));
                 }
                 foreach ((IWorkKeynoteSlide sourceSlide, PowerPointSlide slide) in slidePairs) {
+                    cancellationToken.ThrowIfCancellationRequested();
                     foreach (IWorkKeynoteDrawable drawable in sourceSlide.Drawables) {
+                        cancellationToken.ThrowIfCancellationRequested();
                         switch (drawable.Kind) {
                             case IWorkKeynoteDrawableKind.TextBox:
                                 IWorkTextBox textBox = drawable.TextBox!;
                                 if (drawable.IsTitlePlaceholder) {
                                     AddRichTextBox(slide, textBox,
                                         canvasWidth * 0.04875d, canvasHeight * 0.06d,
-                                        canvasWidth * 0.9d, canvasHeight / 7.5d);
+                                        canvasWidth * 0.9d, canvasHeight / 7.5d, cancellationToken);
                                 } else {
                                     AddRichTextBox(slide, textBox,
                                         canvasWidth * 0.06375d, canvasHeight * 0.22d,
-                                        canvasWidth * 0.87d, canvasHeight * 0.6533333333333333d);
+                                        canvasWidth * 0.87d, canvasHeight * 0.6533333333333333d, cancellationToken);
                                 }
                                 break;
                             case IWorkKeynoteDrawableKind.Table:
-                                AddEditableTable(slide, drawable.Table!);
+                                AddEditableTable(slide, drawable.Table!, cancellationToken);
                                 break;
                             case IWorkKeynoteDrawableKind.Image:
                                 AddEditableImage(slide, drawable.Image!, canvasWidth, canvasHeight);
@@ -88,7 +108,7 @@ public static partial class PowerPointIWorkConverter {
                         }
                     }
                     if (sourceSlide.PresenterNoteContent.Paragraphs.Count > 0) {
-                        SetRichPresenterNotes(slide.Notes, sourceSlide.PresenterNoteContent);
+                        SetRichPresenterNotes(slide.Notes, sourceSlide.PresenterNoteContent, cancellationToken);
                     }
                 }
             } else {
@@ -106,8 +126,10 @@ public static partial class PowerPointIWorkConverter {
             IWorkProjectionKind kind = editable
                 ? IWorkProjectionKind.EditableReconstruction
                 : IWorkProjectionKind.VisualFallback;
+            cancellationToken.ThrowIfCancellationRequested();
             return new KeynoteToPowerPointResult(presentation, source, projection,
-                projection.CreateConversionReport(kind, preview, destinationDiagnostics));
+                projection.CreateConversionReport(kind, preview, destinationDiagnostics,
+                    settings.AllowPartialEditableReconstruction));
         } catch {
             presentation.Dispose();
             throw;
@@ -124,7 +146,8 @@ public static partial class PowerPointIWorkConverter {
         return ((slideWidth - width) / 2d, (slideHeight - height) / 2d, width, height);
     }
 
-    private static void AddEditableTable(PowerPointSlide slide, IWorkTable source) {
+    private static void AddEditableTable(PowerPointSlide slide, IWorkTable source,
+        CancellationToken cancellationToken) {
         if (source.RowCount == 0 || source.ColumnCount == 0) return;
         double left = source.Geometry?.LeftPoints ?? 72d;
         double top = source.Geometry?.TopPoints ?? 72d;
@@ -152,24 +175,48 @@ public static partial class PowerPointIWorkConverter {
         table.FirstColumn = source.HeaderColumnCount > 0;
         table.LastRow = source.FooterRowCount > 0;
         foreach (IWorkTableCell sourceCell in source.Cells) {
+            cancellationToken.ThrowIfCancellationRequested();
             PowerPointTableCell target = table.GetCell(sourceCell.Row - 1, sourceCell.Column - 1);
-            target.Text = sourceCell.Kind == IWorkCellKind.Formula && sourceCell.Value != null
-                ? sourceCell.CachedDisplayText
-                : sourceCell.DisplayText;
+            if (sourceCell.RichText is { Paragraphs.Count: > 0 } richText) {
+                IReadOnlyList<PowerPointParagraph> paragraphs = target.SetParagraphs(
+                    richText.Paragraphs.Select(_ => string.Empty));
+                var listState = new IWorkPowerPointListState();
+                for (int index = 0; index < paragraphs.Count; index++) {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    IWorkTextParagraph sourceParagraph = richText.Paragraphs[index];
+                    ApplyParagraphStyle(paragraphs[index], sourceParagraph,
+                        listState.StartsAtSourceLabel(sourceParagraph));
+                    WriteParagraphContent(paragraphs[index], sourceParagraph, cancellationToken);
+                }
+                if (sourceCell.Row <= source.HeaderRowCount
+                    || sourceCell.Column <= source.HeaderColumnCount
+                    || sourceCell.Row > source.RowCount - source.FooterRowCount) {
+                    foreach (PowerPointParagraph paragraph in paragraphs) {
+                        foreach (PowerPointTextRun run in paragraph.Runs) run.Bold = true;
+                    }
+                }
+            } else {
+                target.Text = sourceCell.Kind == IWorkCellKind.Formula && sourceCell.Value != null
+                    ? sourceCell.CachedDisplayText
+                    : sourceCell.DisplayText;
+            }
             if (sourceCell.Row <= source.HeaderRowCount || sourceCell.Column <= source.HeaderColumnCount
                 || sourceCell.Row > source.RowCount - source.FooterRowCount) target.Bold = true;
         }
         foreach (IWorkTableMergeRange merge in source.MergedRanges) {
+            cancellationToken.ThrowIfCancellationRequested();
             table.MergeCells(merge.FirstRow - 1, merge.FirstColumn - 1,
                 merge.LastRow - 1, merge.LastColumn - 1);
         }
         if (columnWidth.HasValue && source.Geometry is not { WidthPoints: > 0 }) {
             for (int column = 0; column < source.ColumnCount; column++) {
+                cancellationToken.ThrowIfCancellationRequested();
                 table.SetColumnWidthPoints(column, columnWidth.Value);
             }
         }
         if (rowHeight.HasValue && source.Geometry is not { HeightPoints: > 0 }) {
             for (int row = 0; row < source.RowCount; row++) {
+                cancellationToken.ThrowIfCancellationRequested();
                 table.SetRowHeightPoints(row, rowHeight.Value);
             }
         }
@@ -207,7 +254,8 @@ public static partial class PowerPointIWorkConverter {
         }
     }
 
-    private static string? FindPowerPointProjectionLimitation(IWorkKeynoteProjection projection) {
+    private static string? FindPowerPointProjectionLimitation(IWorkKeynoteProjection projection,
+        bool allowPartialEditableReconstruction) {
         const double MaximumPointMeasurement = int.MaxValue / 12700d;
         const long MaximumDestinationTableCells = 1_000_000;
         long destinationTableCells = 0;
@@ -225,6 +273,11 @@ public static partial class PowerPointIWorkConverter {
                 || SlideText(slide).SelectMany(content => content.Paragraphs)
                     .SelectMany(paragraph => paragraph.Runs)
                     .Select(run => run.Hyperlink)
+                    .Concat(slide.Tables.SelectMany(table => table.Cells)
+                        .Where(cell => cell.RichText != null)
+                        .SelectMany(cell => cell.RichText!.Paragraphs)
+                        .SelectMany(paragraph => paragraph.Runs)
+                        .Select(run => run.Hyperlink))
                     .Any(value => IsUnsupportedHyperlink(value, projection.Slides.Count))) {
                 return $"Keynote slide {slide.Index} contains a hyperlink that cannot be represented by the PPTX owner.";
             }
@@ -272,8 +325,8 @@ public static partial class PowerPointIWorkConverter {
                         return $"Keynote slide {slide.Index} contains a list marker that cannot be represented by native PPTX numbering.";
                     }
                     IWorkParagraphStyle style = paragraph.Style;
-                    if (style.PageBreakBefore == true || style.KeepWithNext == true
-                        || style.KeepLinesTogether == true) {
+                    if (!allowPartialEditableReconstruction && (style.PageBreakBefore == true
+                        || style.KeepWithNext == true || style.KeepLinesTogether == true)) {
                         return $"Keynote slide {slide.Index} contains paragraph pagination formatting that the PPTX owner cannot preserve.";
                     }
                     if (!FitsTextCoordinate(style.FirstLineIndentPoints)
@@ -308,10 +361,15 @@ public static partial class PowerPointIWorkConverter {
                 if (destinationTableCells > MaximumDestinationTableCells - tableCells) {
                     return "Keynote tables exceed the bounded PPTX destination cell budget.";
                 }
-                if (table.Cells.Any(cell => cell.Kind == IWorkCellKind.Formula && cell.Value == null)) {
-                    return $"Keynote table '{table.Name}' contains an uncached formula that the PPTX owner cannot evaluate.";
+                if (table.Cells.Any(cell => cell.Kind == IWorkCellKind.Formula
+                    && (cell.Value == null || !cell.CachedValueIsComplete))) {
+                    return $"Keynote table '{table.Name}' contains a formula without a complete cached value that the PPTX owner cannot evaluate.";
                 }
-                if (projection.HasEditableContent && table.HasPopulatedCoveredMergeCells()) {
+                if (table.Cells.Any(cell => cell.Kind == IWorkCellKind.Formula
+                    && cell.RichText is { IsComplete: false })) {
+                    return $"Keynote table '{table.Name}' contains formula cached text with incomplete formatting that the PPTX owner cannot preserve.";
+                }
+                if (table.HasPopulatedCoveredMergeCells()) {
                     return $"Keynote table '{table.Name}' contains content in a covered merged cell that the PPTX owner cannot preserve.";
                 }
                 destinationTableCells += tableCells;
@@ -393,6 +451,11 @@ public static partial class PowerPointIWorkConverter {
         if (slide.TitleBox != null) yield return slide.TitleBox.Content;
         foreach (IWorkTextBox textBox in slide.TextBoxes) yield return textBox.Content;
         yield return slide.PresenterNoteContent;
+        foreach (IWorkTable table in slide.Tables) {
+            foreach (IWorkTableCell cell in table.Cells) {
+                if (cell.RichText != null) yield return cell.RichText;
+            }
+        }
     }
 
     private static bool FitsTextCoordinate(double? points) {
@@ -424,7 +487,8 @@ public static partial class PowerPointIWorkConverter {
     }
 
     private static void AddRichTextBox(PowerPointSlide slide, IWorkTextBox source,
-        double fallbackLeft, double fallbackTop, double fallbackWidth, double fallbackHeight) {
+        double fallbackLeft, double fallbackTop, double fallbackWidth, double fallbackHeight,
+        CancellationToken cancellationToken) {
         double left = source.Geometry?.LeftPoints ?? fallbackLeft;
         double top = source.Geometry?.TopPoints ?? fallbackTop;
         double width = source.Geometry?.WidthPoints ?? fallbackWidth;
@@ -440,6 +504,7 @@ public static partial class PowerPointIWorkConverter {
         bool first = true;
         var listState = new IWorkPowerPointListState();
         foreach (IWorkTextParagraph sourceParagraph in source.Content.Paragraphs) {
+            cancellationToken.ThrowIfCancellationRequested();
             PowerPointParagraph paragraph;
             if (first) {
                 paragraph = textBox.Paragraphs[0];
@@ -450,20 +515,22 @@ public static partial class PowerPointIWorkConverter {
             }
             ApplyParagraphStyle(paragraph, sourceParagraph,
                 listState.StartsAtSourceLabel(sourceParagraph));
-            WriteParagraphContent(paragraph, sourceParagraph);
+            WriteParagraphContent(paragraph, sourceParagraph, cancellationToken);
         }
     }
 
-    private static void SetRichPresenterNotes(PowerPointNotes notes, IWorkTextContent source) {
+    private static void SetRichPresenterNotes(PowerPointNotes notes, IWorkTextContent source,
+        CancellationToken cancellationToken) {
         IReadOnlyList<PowerPointParagraph> paragraphs = notes.SetParagraphs(
             source.Paragraphs.Select(_ => string.Empty));
         var listState = new IWorkPowerPointListState();
         for (int paragraphIndex = 0; paragraphIndex < source.Paragraphs.Count; paragraphIndex++) {
+            cancellationToken.ThrowIfCancellationRequested();
             IWorkTextParagraph sourceParagraph = source.Paragraphs[paragraphIndex];
             PowerPointParagraph paragraph = paragraphs[paragraphIndex];
             ApplyParagraphStyle(paragraph, sourceParagraph,
                 listState.StartsAtSourceLabel(sourceParagraph));
-            WriteParagraphContent(paragraph, sourceParagraph);
+            WriteParagraphContent(paragraph, sourceParagraph, cancellationToken);
         }
         notes.Save();
     }
@@ -522,12 +589,14 @@ public static partial class PowerPointIWorkConverter {
     }
 
     private static void WriteParagraphContent(PowerPointParagraph paragraph,
-        IWorkTextParagraph source) {
+        IWorkTextParagraph source, CancellationToken cancellationToken) {
         paragraph.Text = string.Empty;
         bool canReuseInitialRun = true;
         foreach (IWorkTextRun sourceRun in source.Runs) {
+            cancellationToken.ThrowIfCancellationRequested();
             string[] lines = sourceRun.Text.Split(new[] { '\n' });
             for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++) {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (lineIndex > 0) {
                     paragraph.AddLineBreak();
                     canReuseInitialRun = false;

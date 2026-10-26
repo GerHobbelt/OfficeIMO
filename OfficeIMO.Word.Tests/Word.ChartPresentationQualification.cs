@@ -153,6 +153,8 @@ public sealed class WordChartPresentationQualificationTests {
     [InlineData("# ?/?")]
     [InlineData("0.00E+00")]
     [InlineData("[>=100]0;0")]
+    [InlineData(@"0\%")]
+    [InlineData("0\"%\"")]
     public void Snapshot_RejectsUnrepresentedAxisFormats(string format) {
         using var document = WordDocument.Create();
         var chart = Create(document, OfficeChartKind.Line);
@@ -233,17 +235,6 @@ public sealed class WordChartPresentationQualificationTests {
     [Theory]
     [InlineData(OfficeChartKind.Pie)]
     [InlineData(OfficeChartKind.Doughnut)]
-    public void Snapshot_RejectsExplodedSlices(OfficeChartKind kind) {
-        using var document = WordDocument.Create();
-        var chart = Create(document, kind);
-        chart.ChartPart!.ChartSpace!.Descendants<C.PieChartSeries>().Single().AddChild(
-            new C.DataPoint(new C.Index { Val = 0 }, new C.Explosion { Val = 25 }), true);
-        Assert.False(chart.TryGetOfficeSnapshot(out _));
-    }
-
-    [Theory]
-    [InlineData(OfficeChartKind.Pie)]
-    [InlineData(OfficeChartKind.Doughnut)]
     public void Snapshot_RejectsUnrepresentedUniformRadialPalette(OfficeChartKind kind) {
         using var document = WordDocument.Create();
         var chart = Create(document, kind);
@@ -311,6 +302,28 @@ public sealed class WordChartPresentationQualificationTests {
         Assert.Equal(OfficeFontStyle.Bold, snapshot.Layout.LegendFontStyle);
         Assert.Equal(OfficeColor.FromRgb(34, 68, 102), snapshot.Style.LegendTextColor);
         Assert.Equal(OfficeColor.FromRgb(102, 119, 136), snapshot.Style.MutedTextColor);
+    }
+
+    [Theory]
+    [InlineData("+mn-lt", false)]
+    [InlineData("+mj-lt", true)]
+    public void Snapshot_ResolvesThemeTypefaceTokensInLegendText(string token, bool major) {
+        using var document = WordDocument.Create();
+        var chart = Create(document, OfficeChartKind.Line);
+        var native = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!;
+        OpenXmlCompositeElement[] owners = new OpenXmlCompositeElement[] { native.Legend! }
+            .Concat(native.PlotArea!.ChildElements.OfType<OpenXmlCompositeElement>()
+                .Where(axis => axis is C.CategoryAxis or C.ValueAxis)).ToArray();
+        foreach (OpenXmlCompositeElement owner in owners)
+            owner.AddChild(new C.TextProperties(new A.BodyProperties(), new A.ListStyle(),
+                new A.Paragraph(new A.ParagraphProperties(
+                    new A.DefaultRunProperties(new A.LatinFont { Typeface = token })))), true);
+
+        Assert.True(chart.TryGetOfficeSnapshot(out var snapshot));
+        A.FontScheme fonts = document.MainDocumentPartRoot.ThemePart!.Theme!.ThemeElements!.FontScheme!;
+        string? expected = major ? fonts.MajorFont!.LatinFont!.Typeface!.Value :
+            fonts.MinorFont!.LatinFont!.Typeface!.Value;
+        Assert.Equal(expected, snapshot.Layout.LegendFontFamily);
     }
 
     [Theory]

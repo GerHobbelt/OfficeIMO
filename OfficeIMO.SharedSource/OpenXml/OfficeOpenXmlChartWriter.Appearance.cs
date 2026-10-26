@@ -8,19 +8,80 @@ using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeIMO.OpenXml.Internal {
     internal static partial class OfficeOpenXmlChartWriter {
+        private const string AutomaticSeriesColorExtensionUri = "urn:officeimo:chart:auto-series-color:1";
+
+        internal static bool HasAutomaticSeriesColor(OpenXmlCompositeElement element) =>
+            element.ChildElements.Where(child => child.LocalName == "extLst")
+                .SelectMany(list => list.ChildElements)
+                .Any(extension => extension.GetAttribute("uri", string.Empty).Value ==
+                    AutomaticSeriesColorExtensionUri);
+
+        private static void SetAutomaticSeriesColor(OpenXmlCompositeElement element, bool automatic) {
+            OpenXmlCompositeElement? extensions = element.ChildElements
+                .OfType<OpenXmlCompositeElement>().FirstOrDefault(child => child.LocalName == "extLst");
+            foreach (OpenXmlElement extension in extensions?.ChildElements
+                .Where(child => child.GetAttribute("uri", string.Empty).Value ==
+                    AutomaticSeriesColorExtensionUri).ToArray() ?? Array.Empty<OpenXmlElement>())
+                extension.Remove();
+            if (!automatic) return;
+            OpenXmlCompositeElement? marker = element switch {
+                C.BarChartSeries => new C.BarSerExtension { Uri = AutomaticSeriesColorExtensionUri },
+                C.LineChartSeries => new C.LineSerExtension { Uri = AutomaticSeriesColorExtensionUri },
+                C.ScatterChartSeries => new C.ScatterSerExtension { Uri = AutomaticSeriesColorExtensionUri },
+                C.AreaChartSeries => new C.AreaSerExtension { Uri = AutomaticSeriesColorExtensionUri },
+                C.RadarChartSeries => new C.RadarSerExtension { Uri = AutomaticSeriesColorExtensionUri },
+                C.PieChartSeries => new C.PieSerExtension { Uri = AutomaticSeriesColorExtensionUri },
+                C.BubbleChartSeries => new C.BubbleSerExtension { Uri = AutomaticSeriesColorExtensionUri },
+                _ => null
+            };
+            if (marker == null) return;
+            marker.Append(new OpenXmlUnknownElement("oi", "autoColor",
+                AutomaticSeriesColorExtensionUri));
+            extensions ??= element switch {
+                C.BarChartSeries => new C.BarSerExtensionList(),
+                C.LineChartSeries => new C.LineSerExtensionList(),
+                C.ScatterChartSeries => new C.ScatterSerExtensionList(),
+                C.AreaChartSeries => new C.AreaSerExtensionList(),
+                C.RadarChartSeries => new C.RadarSerExtensionList(),
+                C.PieChartSeries => new C.PieSerExtensionList(),
+                C.BubbleChartSeries => new C.BubbleSerExtensionList(),
+                _ => throw new NotSupportedException("The series cannot carry automatic color provenance.")
+            };
+            if (extensions.Parent == null) element.Append(extensions);
+            extensions.Append(marker);
+        }
+
+        private static OfficeColor? ReadDirectSeriesColor(OpenXmlCompositeElement seriesElement) {
+            var properties = seriesElement.GetFirstChild<C.ChartShapeProperties>();
+            var marker = seriesElement.GetFirstChild<C.Marker>()?.ChartShapeProperties;
+            return OfficeOpenXmlThemeColorResolver.ResolveColor(properties?.GetFirstChild<A.SolidFill>(), null)
+                ?? OfficeOpenXmlThemeColorResolver.ResolveColor(properties?.GetFirstChild<A.Outline>()?.GetFirstChild<A.SolidFill>(), null)
+                ?? OfficeOpenXmlThemeColorResolver.ResolveColor(marker?.GetFirstChild<A.SolidFill>(), null);
+        }
+
+        internal static void MaterializeDefaultSeriesColor(OpenXmlCompositeElement element,
+            OfficeChartKind kind, int seriesIndex) {
+            var appearance = new OfficeChartSeries(string.Empty, Array.Empty<double>(), null,
+                OfficeChartStyle.Default.GetSeriesColor(seriesIndex));
+            ApplySharedSeriesShapeStyle(element, appearance, kind, null);
+            SetAutomaticSeriesColor(element, true);
+        }
+
         private static void ApplySharedSeriesShapeStyle(OpenXmlCompositeElement seriesElement,
             OfficeChartSeries series, OfficeChartKind kind,
             OfficeColor? fallbackFillColor) {
             OfficeColor? fillColor = series.Color ?? fallbackFillColor;
-            OfficeColor? outlineColor = kind == OfficeChartKind.Bubble
-                ? series.MarkerOutlineColor ?? fillColor
-                : fillColor;
-            double? outlineWidth = kind == OfficeChartKind.Bubble
-                ? series.MarkerOutlineWidth ?? series.StrokeWidth
-                : series.StrokeWidth;
             C.ChartShapeProperties properties =
                 seriesElement.GetFirstChild<C.ChartShapeProperties>() ??
                 new C.ChartShapeProperties();
+            OfficeColor? existingOutlineColor = OfficeOpenXmlThemeColorResolver.ResolveColor(
+                properties.GetFirstChild<A.Outline>()?.GetFirstChild<A.SolidFill>(), null);
+            OfficeColor? outlineColor = kind == OfficeChartKind.Bubble
+                ? series.MarkerOutlineColor ?? existingOutlineColor ?? fillColor
+                : IsFilledSharedKind(kind) ? null : fillColor;
+            double? outlineWidth = kind == OfficeChartKind.Bubble
+                ? series.MarkerOutlineWidth ?? series.StrokeWidth
+                : series.StrokeWidth;
             bool reenableBubbleOutline = kind == OfficeChartKind.Bubble &&
                 series.ShowMarkerOutline &&
                 properties.GetFirstChild<A.Outline>()?.GetFirstChild<A.NoFill>() != null;
@@ -32,7 +93,7 @@ namespace OfficeIMO.OpenXml.Internal {
                 series.StrokeDashStyle == null &&
                 (series.ConnectLine || IsFilledSharedKind(kind)) &&
                 !reenableBubbleOutline && !reenableConnectingLine && !hideAreaOutline) return;
-            if (fillColor.HasValue && IsFilledSharedKind(kind)) {
+            if (fillColor.HasValue && (IsFilledSharedKind(kind) || kind == OfficeChartKind.Line)) {
                 properties.RemoveAllChildren<A.SolidFill>();
                 properties.RemoveAllChildren<A.NoFill>();
                 properties.RemoveAllChildren<A.GradientFill>();
@@ -82,21 +143,22 @@ namespace OfficeIMO.OpenXml.Internal {
         }
 
         private static void ApplySharedSeriesMarker(OpenXmlCompositeElement seriesElement,
-            OfficeChartSeries series, OfficeChartKind kind) {
+            OfficeChartSeries series, OfficeChartKind kind, OfficeColor? fallbackColor) {
             if (!IsMarkerKind(kind)) return;
             C.Marker marker = seriesElement.GetFirstChild<C.Marker>() ?? new C.Marker();
-            marker.Symbol = new C.Symbol {
-                Val = series.ShowMarkers ? MapMarker(series.MarkerShape) : C.MarkerStyleValues.None
-            };
+            if (!series.ShowMarkers) marker.Symbol = new C.Symbol { Val = C.MarkerStyleValues.None };
+            else if (series.MarkerShape.HasValue || marker.Symbol == null)
+                marker.Symbol = new C.Symbol { Val = MapMarker(series.MarkerShape) };
             if (series.MarkerSize.HasValue) marker.Size = new C.Size { Val = (byte)OfficeChartStyleBounds.ClampNativeMarkerSize(series.MarkerSize.Value) };
-            if (series.Color.HasValue || series.MarkerOutlineColor.HasValue || series.MarkerOutlineWidth.HasValue) {
+            OfficeColor? markerFill = series.Color ?? fallbackColor;
+            if (markerFill.HasValue || series.MarkerOutlineColor.HasValue || series.MarkerOutlineWidth.HasValue) {
                 C.ChartShapeProperties properties = marker.ChartShapeProperties ?? new C.ChartShapeProperties();
-                if (series.Color.HasValue) {
+                if (markerFill.HasValue) {
                     RemoveSharedFillChoices(properties);
-                    properties.AddChild(new A.SolidFill(CreateSharedRgbColor(series.Color.Value)), true);
+                    properties.AddChild(new A.SolidFill(CreateSharedRgbColor(markerFill.Value)), true);
                 }
                 A.Outline outline = properties.GetFirstChild<A.Outline>() ?? new A.Outline();
-                OfficeColor? markerColor = series.MarkerOutlineColor ?? series.Color;
+                OfficeColor? markerColor = series.MarkerOutlineColor ?? markerFill;
                 if (markerColor.HasValue) {
                     RemoveSharedFillChoices(outline);
                     outline.AddChild(new A.SolidFill(CreateSharedRgbColor(markerColor.Value)), true);

@@ -7,6 +7,76 @@ using C = DocumentFormat.OpenXml.Drawing.Charts;
 namespace OfficeIMO.Tests;
 
 public sealed class WordChartLayoutQualificationTests {
+    [Fact]
+    public void Snapshot_RejectsRadarAxisUnitsThatTheRendererCannotDraw() {
+        using var document = WordDocument.Create();
+        WordChart chart = Create(document, OfficeChartKind.Radar);
+        C.ValueAxis axis = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>().Single();
+        axis.AddChild(new C.MajorUnit { Val = 1 }, true);
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsSuppressedLabelsBeyondExplicitValueMaximum() {
+        using var document = WordDocument.Create();
+        WordChart chart = Create(document, OfficeChartKind.ColumnClustered);
+        C.Chart native = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!;
+        C.ValueAxis axis = native.PlotArea!.Elements<C.ValueAxis>().Single();
+        axis.Scaling!.AddChild(new C.MinAxisValue { Val = 0 }, true);
+        axis.Scaling!.AddChild(new C.MaxAxisValue { Val = 1.5 }, true);
+        native.PlotArea.GetFirstChild<C.BarChart>()!
+            .AddChild(new C.DataLabels(new C.ShowValue { Val = true }), true);
+        native.GetFirstChild<C.ShowDataLabelsOverMaximum>()!.Val = true;
+        Assert.True(chart.TryGetOfficeSnapshot(out _));
+        native.GetFirstChild<C.ShowDataLabelsOverMaximum>()!.Val = false;
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Theory]
+    [InlineData(OfficeChartKind.ColumnStacked, 6d, 6d, 10d, false)]
+    [InlineData(OfficeChartKind.ColumnStacked100, 30d, 70d, 1d, true)]
+    public void Snapshot_UsesPlottedStackPositionForSuppressedLabels(
+        OfficeChartKind kind, double first, double second, double maximum, bool projectable) {
+        using var document = WordDocument.Create();
+        WordChart chart = document.AddChart(kind, new OfficeChartData(new[] { "1", "2" }, new[] {
+            new OfficeChartSeries("First", new[] { first, first }),
+            new OfficeChartSeries("Second", new[] { second, second })
+        }), title: "Chart");
+        C.Chart native = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!;
+        C.ValueAxis axis = native.PlotArea!.Elements<C.ValueAxis>().Single();
+        axis.Scaling!.AddChild(new C.MinAxisValue { Val = 0 }, true);
+        axis.Scaling.AddChild(new C.MaxAxisValue { Val = maximum }, true);
+        native.PlotArea.GetFirstChild<C.BarChart>()!
+            .AddChild(new C.DataLabels(new C.ShowValue { Val = true }), true);
+        native.GetFirstChild<C.ShowDataLabelsOverMaximum>()!.Val = false;
+        Assert.Equal(projectable, chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsMajorUnitBeyondRendererTickBudget() {
+        using var document = WordDocument.Create();
+        WordChart chart = Create(document, OfficeChartKind.Line);
+        C.ValueAxis axis = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>().Single();
+        axis.Scaling!.AddChild(new C.MinAxisValue { Val = 0 }, true);
+        axis.Scaling.AddChild(new C.MaxAxisValue { Val = 100 }, true);
+        axis.AddChild(new C.MajorUnit { Val = 25 }, true);
+        Assert.True(chart.TryGetOfficeSnapshot(out _));
+        axis.GetFirstChild<C.MajorUnit>()!.Val = 2;
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
+    [Fact]
+    public void Snapshot_RejectsDerivedMinorTicksBeyondRendererBudget() {
+        using var document = WordDocument.Create();
+        WordChart chart = Create(document, OfficeChartKind.Line);
+        C.ValueAxis axis = chart.ChartPart!.ChartSpace!.Descendants<C.ValueAxis>().Single();
+        axis.Scaling!.AddChild(new C.MinAxisValue { Val = 0 }, true);
+        axis.Scaling.AddChild(new C.MaxAxisValue { Val = 100 }, true);
+        axis.AddChild(new C.MajorUnit { Val = 4 }, true);
+        axis.AddChild(new C.MinorTickMark { Val = C.TickMarkValues.Outside }, true);
+        Assert.False(chart.TryGetOfficeSnapshot(out _));
+    }
+
     [Theory]
     [InlineData(OfficeChartKind.BarClustered)]
     [InlineData(OfficeChartKind.BarStacked)]

@@ -1,5 +1,6 @@
 using OfficeIMO.IWork.Internal;
 using System.Text;
+using System.Threading;
 using System.Xml;
 
 namespace OfficeIMO.IWork;
@@ -8,17 +9,22 @@ namespace OfficeIMO.IWork;
 public sealed partial class IWorkSourceDocument {
     private readonly IWorkReadOptions _options;
     private readonly IWorkObjectIndex _index;
+    private readonly CancellationToken _cancellationToken;
 
     private IWorkSourceDocument(IWorkDocumentKind kind, IWorkPackageData package,
-        IReadOnlyList<IWorkArchiveRecord> records, IWorkReadOptions options) {
+        IReadOnlyList<IWorkArchiveRecord> records, IWorkReadOptions options,
+        CancellationToken cancellationToken) {
         Kind = kind;
         ContainerKind = package.ContainerKind;
+        ContainerLengthBytes = package.ContainerLengthBytes;
         Entries = Array.AsReadOnly(package.Entries.ToArray());
         Records = Array.AsReadOnly(records.ToArray());
         _options = options;
-        _index = new IWorkObjectIndex(Records, options);
-        BuildVersions = Array.AsReadOnly(ReadBuildVersions(Entries).ToArray());
-        Previews = Array.AsReadOnly(ReadPreviews(Entries, options.MaximumDecodedImageBytes).ToArray());
+        _cancellationToken = cancellationToken;
+        _index = new IWorkObjectIndex(Records, options, cancellationToken);
+        BuildVersions = Array.AsReadOnly(ReadBuildVersions(Entries, cancellationToken).ToArray());
+        Previews = Array.AsReadOnly(ReadPreviews(Entries, options.MaximumDecodedImageBytes,
+            cancellationToken).ToArray());
         Diagnostics = Array.AsReadOnly(new[] {
             new IWorkDiagnostic(IWorkDiagnosticSeverity.Information, "IWORK_SOURCE_READ",
                 $"Read {records.Count} IWA payload records from {package.Entries.Count} package entries.")
@@ -29,6 +35,8 @@ public sealed partial class IWorkSourceDocument {
     public IWorkDocumentKind Kind { get; }
     /// <summary>Gets the physical source layout.</summary>
     public IWorkContainerKind ContainerKind { get; }
+    /// <summary>Gets the ZIP byte length, or aggregate physical file bytes captured from a directory bundle before nested expansion.</summary>
+    public long ContainerLengthBytes { get; }
     /// <summary>Gets preserved package entries, including resources and metadata.</summary>
     public IReadOnlyList<IWorkPackageEntry> Entries { get; }
     /// <summary>Gets every preserved IWA payload record, including auxiliary payloads.</summary>
@@ -63,6 +71,39 @@ public sealed partial class IWorkSourceDocument {
         return Create(package, hint: expectedKind, options: resolved, expectedKind: expectedKind);
     }
 
+    /// <summary>Opens a file or directory bundle with cancellation and verifies its application kind.</summary>
+    /// <remarks>The token also governs subsequent semantic projections and destination conversion from this source.</remarks>
+    public static IWorkSourceDocument Open(string path, IWorkDocumentKind expectedKind,
+        IWorkReadOptions? options, CancellationToken cancellationToken) {
+        ValidateDocumentKind(expectedKind, nameof(expectedKind));
+        return OpenPath(path, expectedKind, options, cancellationToken);
+    }
+
+    /// <summary>Opens a file or directory bundle with cancellation and detects its application kind.</summary>
+    /// <remarks>The token also governs subsequent semantic projections and destination conversion from this source.</remarks>
+    public static IWorkSourceDocument Open(string path, IWorkReadOptions? options,
+        CancellationToken cancellationToken) => OpenPath(path, expectedKind: null,
+            options, cancellationToken);
+
+    /// <summary>Opens a caller-owned ZIP stream with cancellation and verifies its application kind.</summary>
+    /// <remarks>The stream remains open. The token also governs subsequent projections and destination conversion.</remarks>
+    public static IWorkSourceDocument Open(Stream stream, IWorkDocumentKind expectedKind,
+        IWorkReadOptions? options, CancellationToken cancellationToken) {
+        ValidateDocumentKind(expectedKind, nameof(expectedKind));
+        IWorkReadOptions resolved = (options ?? new IWorkReadOptions()).Snapshot();
+        IWorkPackageData package = IWorkContainerReader.Read(stream, resolved, cancellationToken);
+        return Create(package, expectedKind, resolved, expectedKind, cancellationToken);
+    }
+
+    /// <summary>Opens a caller-owned ZIP stream with cancellation and detects its application kind.</summary>
+    /// <remarks>The stream remains open. The token also governs subsequent projections and destination conversion.</remarks>
+    public static IWorkSourceDocument Open(Stream stream, IWorkReadOptions? options,
+        CancellationToken cancellationToken) {
+        IWorkReadOptions resolved = (options ?? new IWorkReadOptions()).Snapshot();
+        IWorkPackageData package = IWorkContainerReader.Read(stream, resolved, cancellationToken);
+        return Create(package, hint: null, resolved, expectedKind: null, cancellationToken);
+    }
+
     /// <summary>Opens a ZIP-based iWork stream and detects its application kind.</summary>
     public static IWorkSourceDocument Open(Stream stream, IWorkReadOptions? options = null) {
         IWorkReadOptions resolved = (options ?? new IWorkReadOptions()).Snapshot();
@@ -85,8 +126,27 @@ public sealed partial class IWorkSourceDocument {
         return Open(stream, expectedKind, options);
     }
 
+    /// <summary>Opens package bytes with cancellation and detects the application kind.</summary>
+    /// <remarks>The token also governs subsequent projections and destination conversion.</remarks>
+    public static IWorkSourceDocument Open(byte[] data, IWorkReadOptions? options,
+        CancellationToken cancellationToken) {
+        if (data == null) throw new ArgumentNullException(nameof(data));
+        using var stream = new MemoryStream(data, writable: false);
+        return Open(stream, options, cancellationToken);
+    }
+
+    /// <summary>Opens package bytes with cancellation and verifies the application kind.</summary>
+    /// <remarks>The token also governs subsequent projections and destination conversion.</remarks>
+    public static IWorkSourceDocument Open(byte[] data, IWorkDocumentKind expectedKind,
+        IWorkReadOptions? options, CancellationToken cancellationToken) {
+        if (data == null) throw new ArgumentNullException(nameof(data));
+        using var stream = new MemoryStream(data, writable: false);
+        return Open(stream, expectedKind, options, cancellationToken);
+    }
+
     internal IWorkObjectIndex Index => _index;
     internal IWorkReadOptions Options => _options;
+    internal CancellationToken CancellationToken => _cancellationToken;
 
     internal IWorkConversionReport CreateReport(IWorkProjectionKind projectionKind,
         IReadOnlyList<IWorkDiagnostic> projectionDiagnostics,
@@ -96,32 +156,34 @@ public sealed partial class IWorkSourceDocument {
             throw new ArgumentOutOfRangeException(nameof(projectionKind),
                 "The projection kind is not defined.");
         }
-        IWorkArchiveRecord[] allUnsupported = Records.ToArray();
-        IReadOnlyList<IWorkArchiveRecord> unsupported = _options.PreserveUnsupportedRecords
-            ? allUnsupported
+        IWorkArchiveRecord[] allPreserved = Records.ToArray();
+        IReadOnlyList<IWorkArchiveRecord> preserved = _options.PreserveSourceRecords
+            ? allPreserved
             : Array.Empty<IWorkArchiveRecord>();
         return new IWorkConversionReport(
             Kind,
             projectionKind,
             BuildVersions,
-            unsupported,
+            preserved,
             Diagnostics.Concat(projectionDiagnostics).ToArray(),
             preview,
             Records.Count,
-            allUnsupported.Length,
+            allPreserved.Length,
             reconstructedItemCount);
     }
 
     private static IWorkSourceDocument OpenPath(string path, IWorkDocumentKind? expectedKind,
-        IWorkReadOptions? options) {
+        IWorkReadOptions? options, CancellationToken cancellationToken = default) {
         IWorkReadOptions resolved = (options ?? new IWorkReadOptions()).Snapshot();
-        IWorkPackageData package = IWorkContainerReader.Read(path, resolved);
+        IWorkPackageData package = IWorkContainerReader.Read(path, resolved, cancellationToken);
         IWorkDocumentKind? extensionKind = KindFromExtension(Path.GetExtension(path));
-        return Create(package, expectedKind ?? extensionKind, resolved, expectedKind);
+        return Create(package, expectedKind ?? extensionKind, resolved, expectedKind, cancellationToken);
     }
 
     private static IWorkSourceDocument Create(IWorkPackageData package, IWorkDocumentKind? hint,
-        IWorkReadOptions options, IWorkDocumentKind? expectedKind) {
+        IWorkReadOptions options, IWorkDocumentKind? expectedKind,
+        CancellationToken cancellationToken = default) {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!package.Entries.Any(entry => IWorkArchiveParser.IsIndexArchivePath(entry.Path))) {
             string[] legacyMarkers = { "index.xml", "index.apxl", "index.apxl.gz" };
             if (package.Entries.Any(entry => legacyMarkers.Contains(entry.Path, StringComparer.OrdinalIgnoreCase))) {
@@ -130,12 +192,14 @@ public sealed partial class IWorkSourceDocument {
             throw new InvalidDataException("The package does not contain modern iWork IWA archives.");
         }
 
-        IReadOnlyList<IWorkArchiveRecord> records = IWorkArchiveParser.Parse(package.Entries, options);
-        IWorkDocumentKind detected = DetectKind(records, hint, options);
+        IReadOnlyList<IWorkArchiveRecord> records = IWorkArchiveParser.Parse(package.Entries, options,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        IWorkDocumentKind detected = DetectKind(records, hint, options, cancellationToken);
         if (expectedKind.HasValue && expectedKind.Value != detected) {
             throw new InvalidDataException($"The package is {detected}, not the expected {expectedKind.Value} source.");
         }
-        return new IWorkSourceDocument(detected, package, records, options);
+        return new IWorkSourceDocument(detected, package, records, options, cancellationToken);
     }
 
     private static void ValidateDocumentKind(IWorkDocumentKind kind, string parameterName) {
@@ -148,9 +212,10 @@ public sealed partial class IWorkSourceDocument {
     }
 
     private static IWorkDocumentKind DetectKind(IReadOnlyList<IWorkArchiveRecord> records,
-        IWorkDocumentKind? hint, IWorkReadOptions options) {
+        IWorkDocumentKind? hint, IWorkReadOptions options, CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         bool hasPagesRoot = records.Any(record => record.IsPrimary && record.MessageType == 10000);
-        var index = new IWorkObjectIndex(records, options);
+        var index = new IWorkObjectIndex(records, options, cancellationToken);
         bool hasNumbersRoot = HasNumbersRoot(index, records, options);
         bool hasKeynoteRoot = HasKeynoteRoot(index, records);
         int rootCount = (hasPagesRoot ? 1 : 0) + (hasNumbersRoot ? 1 : 0) + (hasKeynoteRoot ? 1 : 0);
@@ -226,9 +291,17 @@ public sealed partial class IWorkSourceDocument {
         _ => null
     };
 
-    private static IReadOnlyList<string> ReadBuildVersions(IReadOnlyList<IWorkPackageEntry> entries) {
-        IWorkPackageEntry? entry = entries.FirstOrDefault(candidate =>
-            string.Equals(candidate.Path, "Metadata/BuildVersionHistory.plist", StringComparison.OrdinalIgnoreCase));
+    private static IReadOnlyList<string> ReadBuildVersions(IReadOnlyList<IWorkPackageEntry> entries,
+        CancellationToken cancellationToken) {
+        IWorkPackageEntry? entry = null;
+        foreach (IWorkPackageEntry candidate in entries) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.Equals(candidate.Path, "Metadata/BuildVersionHistory.plist",
+                    StringComparison.OrdinalIgnoreCase)) {
+                entry = candidate;
+                break;
+            }
+        }
         if (entry == null) return Array.Empty<string>();
         try {
             using var stream = new MemoryStream(entry.Bytes, writable: false);
@@ -246,7 +319,7 @@ public sealed partial class IWorkSourceDocument {
             bool sawPlist = false;
             bool sawArray = false;
             var values = new List<string>();
-            while (ReadBuildHistoryNode(reader, ref nodeCount, maximumNodes)) {
+            while (ReadBuildHistoryNode(reader, ref nodeCount, maximumNodes, cancellationToken)) {
                 if (reader.Depth > 8) return Array.Empty<string>();
                 if (reader.NodeType != XmlNodeType.Element) continue;
                 if (reader.Depth == 0 && reader.LocalName == "plist" && reader.NamespaceURI.Length == 0
@@ -262,11 +335,13 @@ public sealed partial class IWorkSourceDocument {
                 if (reader.Depth != 2 || reader.LocalName != "string" || reader.NamespaceURI.Length != 0
                     || !sawArray
                     || !TryReadBuildHistoryString(reader, ref nodeCount, maximumNodes,
-                        ref extractedCharacters, maximumCharacters, out string value)) {
+                        ref extractedCharacters, maximumCharacters, cancellationToken,
+                        out string value)) {
                     return Array.Empty<string>();
                 }
                 if (!string.IsNullOrWhiteSpace(value)) values.Add(value);
             }
+            cancellationToken.ThrowIfCancellationRequested();
             return sawPlist && sawArray ? values : Array.Empty<string>();
         } catch (Exception exception) when (exception is XmlException or InvalidOperationException
                 or InvalidDataException or IOException) {
@@ -274,7 +349,9 @@ public sealed partial class IWorkSourceDocument {
         }
     }
 
-    private static bool ReadBuildHistoryNode(XmlReader reader, ref int nodeCount, int maximumNodes) {
+    private static bool ReadBuildHistoryNode(XmlReader reader, ref int nodeCount,
+        int maximumNodes, CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!reader.Read()) return false;
         if (nodeCount >= maximumNodes) throw new InvalidDataException("Build history XML exceeds the node limit.");
         nodeCount++;
@@ -283,12 +360,13 @@ public sealed partial class IWorkSourceDocument {
 
     private static bool TryReadBuildHistoryString(XmlReader reader, ref int nodeCount,
         int maximumNodes, ref long extractedCharacters, long maximumCharacters,
+        CancellationToken cancellationToken,
         out string value) {
         value = string.Empty;
         if (reader.IsEmptyElement) return true;
         var builder = new StringBuilder();
         var buffer = new char[1024];
-        while (ReadBuildHistoryNode(reader, ref nodeCount, maximumNodes)) {
+        while (ReadBuildHistoryNode(reader, ref nodeCount, maximumNodes, cancellationToken)) {
             if (reader.Depth > 8) return false;
             if (reader.NodeType == XmlNodeType.EndElement) {
                 if (reader.Depth != 2 || reader.LocalName != "string" || reader.NamespaceURI.Length != 0) {
@@ -303,6 +381,7 @@ public sealed partial class IWorkSourceDocument {
             }
             int read;
             while ((read = reader.ReadValueChunk(buffer, 0, buffer.Length)) > 0) {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (extractedCharacters > maximumCharacters - read) return false;
                 extractedCharacters += read;
                 builder.Append(buffer, 0, read);
@@ -312,33 +391,41 @@ public sealed partial class IWorkSourceDocument {
     }
 
     private static IReadOnlyList<IWorkPreviewAsset> ReadPreviews(
-        IReadOnlyList<IWorkPackageEntry> entries, long maximumDecodedBytes) {
+        IReadOnlyList<IWorkPackageEntry> entries, long maximumDecodedBytes,
+        CancellationToken cancellationToken) {
         var previews = new List<IWorkPreviewAsset>();
         var recognizedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long remainingDecodedBytes = maximumDecodedBytes;
-        IEnumerable<IWorkPackageEntry> candidates = entries
-            .Where(entry => PreviewMediaType(entry.Path) != null
-                && IsKnownPreviewPath(entry.Path.ToLowerInvariant()))
+        var matches = new List<IWorkPackageEntry>();
+        foreach (IWorkPackageEntry entry in entries) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (PreviewMediaType(entry.Path) != null
+                && IsKnownPreviewPath(entry.Path.ToLowerInvariant())) matches.Add(entry);
+        }
+        IEnumerable<IWorkPackageEntry> candidates = matches
             .OrderBy(entry => PreviewMediaType(entry.Path) == "application/pdf" ? 0 : 1)
             .ThenBy(entry => PreviewRank(entry.Path))
             .ThenByDescending(entry => entry.Bytes.LongLength)
             .ThenBy(entry => entry.Path, StringComparer.OrdinalIgnoreCase)
             .ThenBy(entry => entry.Path, StringComparer.Ordinal);
         foreach (IWorkPackageEntry entry in candidates) {
+            cancellationToken.ThrowIfCancellationRequested();
             string mediaType = PreviewMediaType(entry.Path)!;
             if (recognizedPaths.Contains(entry.Path)
-                || !HasExpectedSignature(entry.Bytes, mediaType)) continue;
+                || !HasExpectedSignature(entry.Bytes, mediaType, cancellationToken)) continue;
             IWorkVisualCoverage coverage = mediaType == "application/pdf"
                 ? IWorkVisualCoverage.FullDocument
                 : IWorkVisualCoverage.FirstPageOrCompositePreview;
             (int? width, int? height) = IWorkImageInfo.Read(
-                entry.Bytes, mediaType, remainingDecodedBytes, out long decodedBytes);
+                entry.Bytes, mediaType, remainingDecodedBytes, out long decodedBytes,
+                cancellationToken);
             if (decodedBytes < 0 || decodedBytes > remainingDecodedBytes) continue;
             remainingDecodedBytes -= decodedBytes;
             if (mediaType != "application/pdf" && (!width.HasValue || !height.HasValue)) continue;
             recognizedPaths.Add(entry.Path);
             previews.Add(new IWorkPreviewAsset(entry.Path, mediaType, coverage, width, height, entry.Bytes));
         }
+        cancellationToken.ThrowIfCancellationRequested();
         return previews
             .OrderBy(preview => preview.MediaType == "application/pdf" ? 0 : 1)
             .ThenBy(preview => PreviewRank(preview.Path))
@@ -375,12 +462,17 @@ public sealed partial class IWorkSourceDocument {
             or "quicklook/thumbnail.png";
     }
 
-    private static bool HasExpectedSignature(byte[] bytes, string mediaType) {
+    private static bool HasExpectedSignature(byte[] bytes, string mediaType,
+        CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
         if (mediaType == "image/jpeg") return bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff;
         if (mediaType == "image/png") {
             byte[] signature = { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a };
             return bytes.Length >= signature.Length && signature.Where((value, index) => bytes[index] != value).Any() == false;
         }
-        return mediaType == "application/pdf" && IWorkPdfInfo.IsComplete(bytes);
+        if (mediaType != "application/pdf") return false;
+        bool complete = IWorkPdfInfo.IsComplete(bytes, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return complete;
     }
 }

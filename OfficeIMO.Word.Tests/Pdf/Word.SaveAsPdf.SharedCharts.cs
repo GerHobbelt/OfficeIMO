@@ -13,6 +13,47 @@ using PdfPigDocument = UglyToad.PdfPig.PdfDocument;
 namespace OfficeIMO.Tests;
 
 public sealed class WordSharedChartPdfTests {
+    [Fact]
+    public void NativeThreeDimensionalPointStyleIsFlattenedForPdf() {
+        using var document = WordDocument.Create();
+        WordChart chart = document.AddChart(OfficeChartKind.Pie, new OfficeChartData(new[] { "A", "B" },
+            new[] { new OfficeChartSeries("Status", new[] { 7d, 3d }) }));
+        C.PlotArea plot = chart.ChartPart!.ChartSpace!.GetFirstChild<C.Chart>()!.PlotArea!;
+        C.PieChart pie = plot.GetFirstChild<C.PieChart>()!;
+        var pie3d = new C.Pie3DChart();
+        foreach (var child in pie.ChildElements) pie3d.Append(child.CloneNode(true));
+        plot.ReplaceChild(pie3d, pie);
+        C.PieChartSeries series = pie3d.GetFirstChild<C.PieChartSeries>()!;
+        var point = new C.DataPoint(new C.Index { Val = 0 });
+        point.AddChild(new C.ChartShapeProperties(new A.Shape3DType(new A.BevelTop())), true);
+        series.AddChild(point, true);
+
+        MethodInfo factory = typeof(WordPdfConverterExtensions).GetMethod("TryCreateNativeWordChartSnapshot",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        object?[] arguments = { chart, null, null };
+        Assert.True((bool)factory.Invoke(null, arguments)!);
+        Assert.IsType<OfficeChartSnapshot>(arguments[1]);
+        Assert.NotEmpty(document.ToPdfBytes(new WordToPdfOptions { IncludePageNumbers = false }));
+    }
+
+    [Theory]
+    [InlineData(OfficeChartKind.Pie)]
+    [InlineData(OfficeChartKind.Doughnut)]
+    public void ExplodedSliceSurvivesNativePdfProjection(OfficeChartKind kind) {
+        using var document = WordDocument.Create();
+        WordChart chart = document.AddChart(kind, new OfficeChartData(new[] { "A", "B" },
+            new[] { new OfficeChartSeries("Status", new[] { 7d, 3d }).WithPointExplosions(new[] { 25, 0 }) }));
+        MethodInfo factory = typeof(WordPdfConverterExtensions).GetMethod("TryCreateNativeWordChartSnapshot",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        object?[] arguments = { chart, null, null };
+        Assert.True((bool)factory.Invoke(null, arguments)!);
+        OfficeChartSnapshot projected = Assert.IsType<OfficeChartSnapshot>(arguments[1]);
+        Assert.Equal(new[] { 25, 0 }, projected.Data.Series.Single().PointExplosions);
+        var options = new WordToPdfOptions { IncludePageNumbers = false };
+        Assert.NotEmpty(document.ToPdfBytes(options));
+        Assert.DoesNotContain(options.Warnings, warning => warning.Code == "NativeBodyChartUnsupported");
+    }
+
     [Theory]
     [InlineData("empty")]
     [InlineData("noFill")]

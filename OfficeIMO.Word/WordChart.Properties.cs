@@ -112,6 +112,8 @@ namespace OfficeIMO.Word {
                             if (overlap.Parent == null) barChart.AddChild(overlap, true);
                         } else {
                             barChart.BarGrouping = null;
+                            if (barChart.GetFirstChild<Overlap>() is Overlap overlap)
+                                overlap.Val = new DocumentFormat.OpenXml.SByteValue((sbyte)0);
                         }
                     }
                 }
@@ -151,6 +153,16 @@ namespace OfficeIMO.Word {
                             }
                         } else {
                             barChart.BarDirection = null;
+                            var plot = chart!.PlotArea!;
+                            if (plot.ChildElements.Count(item => item.LocalName.EndsWith("Chart", StringComparison.Ordinal)) == 1 &&
+                                plot.Elements<CategoryAxis>().Count() == 1 && plot.Elements<ValueAxis>().Count() == 1) {
+                                var category = plot.GetFirstChild<CategoryAxis>()!.GetFirstChild<AxisPosition>();
+                                var numeric = plot.GetFirstChild<ValueAxis>()!.GetFirstChild<AxisPosition>();
+                                if (category != null && numeric != null) {
+                                    category.Val = AxisPositionValues.Bottom;
+                                    numeric.Val = AxisPositionValues.Left;
+                                }
+                            }
                         }
                     }
                 }

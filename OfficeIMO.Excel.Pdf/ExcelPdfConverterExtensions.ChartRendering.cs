@@ -65,7 +65,9 @@ namespace OfficeIMO.Excel.Pdf {
                 PixelsToPoints(snapshot.WidthPixels),
                 PixelsToPoints(snapshot.HeightPixels),
                 options.ChartStyle ?? snapshot.Style,
-                options.ChartLayout ?? (preserveWorksheetLegend ? snapshot.Layout ?? new OfficeChartLayout() : DefaultExcelPdfChartLayout),
+                options.ChartLayout ?? (preserveWorksheetLegend || chartKind is OfficeChartKind.Pie or OfficeChartKind.Doughnut
+                    ? snapshot.Layout ?? new OfficeChartLayout()
+                    : DefaultExcelPdfChartLayout),
                 snapshot.RadialLayout);
         }
 
@@ -101,7 +103,9 @@ namespace OfficeIMO.Excel.Pdf {
                 strokeWidth: series.SeriesLineWidth,
                 strokeDashStyle: series.SeriesLineDashStyle,
                 renderKind: renderKind,
-                axisGroup: series.AxisGroup).WithPointStyles(series.PointStyles);
+                axisGroup: series.AxisGroup)
+                .WithPointStyles(series.PointStyles)
+                .WithPointExplosions(series.PointExplosions);
         }
 
         private static bool TryMapChartKind(ExcelChartType type, out OfficeChartKind kind) {

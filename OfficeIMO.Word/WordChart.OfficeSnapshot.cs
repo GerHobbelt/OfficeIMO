@@ -17,6 +17,9 @@ public partial class WordChart {
         try {
             var chart = _chartPart?.ChartSpace?.GetFirstChild<C.Chart>() ?? _chart;
             if (_chartPart == null || chart == null) return false;
+            // A formula-linked title without a usable cache cannot be rendered
+            // faithfully from the chart part alone.
+            if (OfficeOpenXmlChartTextReader.HasUncachedFormulaTitle(chart)) return false;
             // The shared Drawing palette has no Word color-slot remapping metadata.
             // Preserve the native chart and report unsupported projection rather than
             // resolving theme slots through the unmapped document theme.
@@ -42,8 +45,13 @@ public partial class WordChart {
                 !textReader.TryReadAxisTitleTypeface(chart, OfficeOpenXmlChartTextReader.ReadChartDefaultTypeface(chart), out var axisTitleFont)) return false;
             OfficeChartData officeData = data.ToData();
             snapshot = new OfficeChartSnapshot(ReadDrawingName(), ReadTitle(chart), kind, officeData, GetWidthPoints(), GetHeightPoints(),
-                OfficeOpenXmlChartSeriesReader.ReadStyle(chart, kind, scheme, textStyle), OfficeOpenXmlChartSeriesReader.ReadLayout(chart, kind, officeData, axisTitleFont, scheme),
+                OfficeOpenXmlChartSeriesReader.ReadStyle(_chartPart, chart, kind, scheme, textStyle, data.Categories.Count),
+                OfficeOpenXmlChartSeriesReader.ReadLayout(chart, kind, officeData, axisTitleFont, scheme),
                 bubbleScale, bubbleMode, OfficeOpenXmlChartRadialLayout.Read(chart));
+            if (OfficeChartDrawingRenderer.HasUnsupportedAxisUnitBudget(snapshot)) {
+                snapshot = null!;
+                return false;
+            }
             return true;
         } catch {
             snapshot = null!;

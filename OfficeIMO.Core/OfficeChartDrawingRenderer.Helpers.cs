@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 namespace OfficeIMO.Drawing;
 
@@ -379,6 +380,57 @@ public static partial class OfficeChartDrawingRenderer {
     private static double? GetValueAxisMinorUnit(OfficeChartLayout layout, bool horizontal) =>
         horizontal ? layout.HorizontalAxisMinorUnit : layout.VerticalAxisMinorUnit;
 
+    internal static bool HasUnsupportedAxisUnitBudget(OfficeChartSnapshot snapshot) {
+        if (IsRadarChart(snapshot.ChartKind))
+            return snapshot.Layout.HorizontalAxisMajorUnit.HasValue || snapshot.Layout.HorizontalAxisMinorUnit.HasValue ||
+                snapshot.Layout.VerticalAxisMajorUnit.HasValue || snapshot.Layout.VerticalAxisMinorUnit.HasValue;
+        if (IsPieChart(snapshot.ChartKind) || IsDoughnutChart(snapshot.ChartKind))
+            return false;
+        OfficeChartLayout layout = snapshot.Layout;
+        bool barChart = IsBarChart(snapshot.ChartKind);
+        bool hasSecondary = snapshot.Data.Series.Any(series => series.AxisGroup == OfficeChartAxisGroup.Secondary);
+        ValueRange primary = GetPrimaryValueAxisRange(snapshot, layout, barChart, hasSecondary);
+        if (ExceedsAxisUnitBudget(primary, GetValueAxisMajorUnit(layout, barChart), 32) ||
+            ExceedsMinorAxisUnitBudget(primary, GetValueAxisMajorUnit(layout, barChart),
+                GetValueAxisMinorUnit(layout, barChart), barChart
+                    ? layout.HorizontalAxisMinorTickMark != OfficeChartAxisTickMark.None
+                    : layout.VerticalAxisMinorTickMark != OfficeChartAxisTickMark.None)) return true;
+        if (hasSecondary && layout.SecondaryValueAxis is OfficeChartValueAxisLayout secondary) {
+            var secondaryLayout = new OfficeChartLayout(
+                horizontalAxisMinimum: secondary.Minimum, horizontalAxisMaximum: secondary.Maximum,
+                verticalAxisMinimum: secondary.Minimum, verticalAxisMaximum: secondary.Maximum);
+            ValueRange secondaryRange = ApplyValueAxisScale(
+                GetMixedCartesianValueRange(snapshot, OfficeChartAxisGroup.Secondary),
+                secondaryLayout, horizontal: barChart);
+            if (ExceedsAxisUnitBudget(secondaryRange, secondary.MajorUnit, 32) ||
+                ExceedsMinorAxisUnitBudget(secondaryRange, secondary.MajorUnit,
+                    secondary.MinorUnit, (secondary.MinorTickMark ?? layout.VerticalAxisMinorTickMark) !=
+                        OfficeChartAxisTickMark.None || (secondary.MinorTickMark ?? layout.HorizontalAxisMinorTickMark) !=
+                        OfficeChartAxisTickMark.None)) return true;
+        }
+        if (!IsScatterChart(snapshot.ChartKind)) return false;
+        IReadOnlyList<double> sharedX = GetScatterXValues(snapshot.Data.Categories);
+        List<OfficeChartSeries> series = GetRenderableScatterSeries(snapshot).Select(item => item.Series).ToList();
+        ValueRange horizontal = ApplyValueAxisScale(GetScatterPointRanges(series, sharedX).XRange,
+            layout, horizontal: true);
+        return ExceedsAxisUnitBudget(horizontal, layout.HorizontalAxisMajorUnit, 32) ||
+            ExceedsAxisUnitBudget(horizontal, layout.HorizontalAxisMinorUnit, 96);
+    }
+
+    private static bool ExceedsAxisUnitBudget(ValueRange range, double? unit, int maximumTicks) {
+        if (!unit.HasValue || unit.Value <= 0D) return false;
+        double intervals = (range.Max - range.Min) / unit.Value;
+        return double.IsNaN(intervals) || double.IsInfinity(intervals) ||
+            intervals < 1D || intervals >= maximumTicks;
+    }
+
+    private static bool ExceedsMinorAxisUnitBudget(ValueRange range, double? majorUnit,
+        double? minorUnit, bool automaticWhenVisible) {
+        if (!minorUnit.HasValue && automaticWhenVisible)
+            minorUnit = (majorUnit ?? (range.Max - range.Min) / 4D) / 5D;
+        return ExceedsAxisUnitBudget(range, minorUnit, 96);
+    }
+
     private static IReadOnlyList<double> GetValueAxisMajorTicks(ValueRange range, double? majorUnit) {
         if (!majorUnit.HasValue || majorUnit.Value <= 0D) {
             return new[] {
@@ -395,10 +447,10 @@ public static partial class OfficeChartDrawingRenderer {
             return new[] { range.Min, range.Max };
         }
 
+        if (ExceedsAxisUnitBudget(range, majorUnit, 32))
+            throw new NotSupportedException("The chart major-axis unit exceeds the renderer tick budget.");
+
         int tickCount = (int)Math.Floor(span / majorUnit.Value) + 1;
-        if (tickCount < 2 || tickCount > 32) {
-            return new[] { range.Min, range.Max };
-        }
 
         var ticks = new List<double>(tickCount + 1);
         for (int i = 0; i < tickCount; i++) {
@@ -435,10 +487,10 @@ public static partial class OfficeChartDrawingRenderer {
             return Array.Empty<double>();
         }
 
+        if (ExceedsAxisUnitBudget(range, minorUnit, 96))
+            throw new NotSupportedException("The chart minor-axis unit exceeds the renderer tick budget.");
+
         int tickCount = (int)Math.Floor(span / minorUnit.Value) + 1;
-        if (tickCount < 2 || tickCount > 96) {
-            return Array.Empty<double>();
-        }
 
         var ticks = new List<double>(tickCount);
         for (int i = 0; i < tickCount; i++) {
@@ -480,6 +532,18 @@ public static partial class OfficeChartDrawingRenderer {
 
     private static double GetCategoryPointX(double plotLeft, double step, int categoryIndex, int categoryCount, OfficeChartLayout layout) =>
         plotLeft + step * GetCategorySlotIndex(categoryIndex, categoryCount, layout);
+
+    private static double GetCartesianCategoryPointX(OfficeChartSnapshot snapshot, double plotLeft, double plotWidth,
+        int categoryIndex, int categoryCount, OfficeChartLayout layout) {
+        // A column plot uses category slots. Its line and area companions must
+        // pass through the same slot centers, including on a reversed axis.
+        if (snapshot.Data.Series.Any(series => IsColumnChart(GetEffectiveSeriesKind(snapshot, series)))) {
+            return GetCategorySlotCenterX(plotLeft, plotWidth / categoryCount, categoryIndex, categoryCount, layout);
+        }
+
+        double step = categoryCount > 1 ? plotWidth / (categoryCount - 1) : 0D;
+        return GetCategoryPointX(plotLeft, step, categoryIndex, categoryCount, layout);
+    }
 
     private static ValueRange GetFiniteRange(IReadOnlyList<double> values) {
         bool any = false;

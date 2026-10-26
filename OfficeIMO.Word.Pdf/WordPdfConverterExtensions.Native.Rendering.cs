@@ -270,7 +270,7 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static bool ShouldRenderNativeEmptyParagraphLineBox(WordParagraph paragraph, bool renderSpacingOnlyLineBox) {
-            if (paragraph.FontSize.HasValue ||
+            if (paragraph.FontSizePoints.HasValue ||
                 paragraph.LineSpacingBeforePoints.HasValue ||
                 paragraph.LineSpacingPoints.HasValue ||
                 paragraph.LineSpacing.HasValue) {
@@ -1002,8 +1002,8 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static double? ResolveNativeHeadingDeclaredFontSize(WordParagraph paragraph, NativeParagraphStyleDefaults styleDefaults) {
-            if (paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0D) {
-                return paragraph.FontSize.Value;
+            if (paragraph.FontSizePoints.HasValue && paragraph.FontSizePoints.Value > 0D) {
+                return paragraph.FontSizePoints.Value;
             }
 
             if (styleDefaults.FontSize.HasValue && styleDefaults.FontSize.Value > 0D) {
@@ -1218,8 +1218,8 @@ namespace OfficeIMO.Word.Pdf {
                 characterStyleDefaults.Baseline ??
                 styleDefaults.Baseline ??
                 tableRunStyleDefaults.Baseline);
-            double? fontSize = paragraph.FontSize.HasValue && paragraph.FontSize.Value > 0
-                ? paragraph.FontSize.Value
+            double? fontSize = paragraph.FontSizePoints.HasValue && paragraph.FontSizePoints.Value > 0
+                ? paragraph.FontSizePoints.Value
                 : characterStyleDefaults.FontSize ?? styleDefaults.FontSize ?? tableRunStyleDefaults.FontSize;
             PdfCore.PdfStandardFont? font = ResolveNativeTextRunFont(paragraph, fallback, characterStyleDefaults, styleDefaults, tableRunStyleDefaults, resolvedNativeDefaults, nativeFontMap);
             string? fontFamily = ResolveNativeTextRunFontFamily(paragraph, fallback, characterStyleDefaults, styleDefaults, tableRunStyleDefaults, resolvedNativeDefaults, nativeFontMap);
@@ -1238,6 +1238,7 @@ namespace OfficeIMO.Word.Pdf {
             if (underline == null) return null;
             W.UnderlineValues value = underline.Val?.Value ?? W.UnderlineValues.Single;
             if (value == W.UnderlineValues.None) return OfficeTextDecorationStyle.None;
+            if (value == W.UnderlineValues.Words) return OfficeTextDecorationStyle.Words;
             if (value == W.UnderlineValues.Double || value == W.UnderlineValues.WavyDouble) return OfficeTextDecorationStyle.Double;
             if (value == W.UnderlineValues.Dotted || value == W.UnderlineValues.DottedHeavy) return OfficeTextDecorationStyle.Dotted;
             if (value == W.UnderlineValues.Wave || value == W.UnderlineValues.WavyHeavy) return OfficeTextDecorationStyle.Wavy;

@@ -5,6 +5,161 @@ namespace OfficeIMO.Tests;
 
 public sealed class DrawingChartRadialLayoutTests {
     [Theory]
+    [InlineData(OfficeChartKind.Pie, false)]
+    [InlineData(OfficeChartKind.Pie, true)]
+    [InlineData(OfficeChartKind.Doughnut, false)]
+    [InlineData(OfficeChartKind.Doughnut, true)]
+    public void EmptyOutsideLabelSelectionKeepsCompactRadialGeometry(
+        OfficeChartKind kind, bool filtered) {
+        var data = new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Values", new[] { 2d, 1d })
+        });
+        var plain = new OfficeChartSnapshot("", null, kind, data, 140, 120,
+            layout: new OfficeChartLayout(showLegend: false));
+        var emptyOutside = new OfficeChartSnapshot("", null, kind, data, 140, 120,
+            layout: new OfficeChartLayout(showLegend: false, showDataLabels: true,
+                showDataLabelCategoryNames: filtered,
+                dataLabelPosition: OfficeChartDataLabelPosition.OutsideEnd,
+                dataLabelSeriesIndexes: filtered ? Array.Empty<int>() : null));
+        OfficeDrawing expected = OfficeChartDrawingRenderer.Render(plain);
+        OfficeDrawing actual = OfficeChartDrawingRenderer.Render(emptyOutside);
+        Assert.Equal(expected.Shapes.Select(shape => (shape.X, shape.Y,
+                shape.Shape.Width, shape.Shape.Height)),
+            actual.Shapes.Select(shape => (shape.X, shape.Y,
+                shape.Shape.Width, shape.Shape.Height)));
+    }
+
+    [Theory]
+    [InlineData(OfficeChartKind.Pie)]
+    [InlineData(OfficeChartKind.Doughnut)]
+    public void FiniteExtremeSlicesKeepGeometryAndPercentLabels(OfficeChartKind kind) {
+        var data = new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Values", new[] { 1e308, 1e308 })
+        });
+        var layout = new OfficeChartLayout(showLegend: false, showDataLabels: true,
+            showDataLabelPercentages: true);
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("", null,
+            kind, data, 360, 240, layout: layout));
+        OfficeDrawingShape[] slices = drawing.Shapes.Where(shape =>
+            shape.Shape.Kind == OfficeShapeKind.Polygon).ToArray();
+        Assert.Equal(2, slices.Length);
+        Assert.All(slices, slice => Assert.True(slice.Shape.Width > 50D &&
+            slice.Shape.Height > 50D, "Each equal finite slice should cover half the radial plot."));
+        Assert.Equal(2, drawing.Elements.OfType<OfficeDrawingText>()
+            .Count(label => label.Text == "50%"));
+    }
+
+    [Theory]
+    [InlineData(OfficeChartKind.Pie)]
+    [InlineData(OfficeChartKind.Doughnut)]
+    public void OutsideLabelsUseLeadersAndDoNotOverlapOnEitherSide(OfficeChartKind kind) {
+        string[] categories = Enumerable.Range(0, 12).Select(index => $"Cat{index}").ToArray();
+        var data = new OfficeChartData(categories, new[] {
+            new OfficeChartSeries("Values", Enumerable.Repeat(1d, categories.Length).ToArray())
+        });
+        var layout = new OfficeChartLayout(showLegend: false, showDataLabels: true,
+            showDataLabelCategoryNames: true, dataLabelPosition: OfficeChartDataLabelPosition.OutsideEnd);
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("", null,
+            kind, data, 420, 300, layout: layout));
+        OfficeDrawingText[] labels = drawing.Elements.OfType<OfficeDrawingText>()
+            .Where(text => text.Text.StartsWith("Cat", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(categories.Length, labels.Length);
+        Assert.Equal(categories.Length * 2, drawing.Shapes.Count(shape =>
+            shape.Shape.Kind == OfficeShapeKind.Line));
+        Assert.True(drawing.Shapes.Count(shape => shape.Shape.Kind == OfficeShapeKind.Line &&
+            shape.Shape.Height < .01D) >= categories.Length);
+        foreach (OfficeDrawingText label in labels) {
+            Assert.InRange(label.X, 0, drawing.Width - label.Width);
+            Assert.InRange(label.Y, 0, drawing.Height - label.Height);
+        }
+        double centerX = drawing.Width / 2D;
+        foreach (OfficeDrawingText[] side in new[] {
+            labels.Where(label => label.X + label.Width / 2D < centerX).OrderBy(label => label.Y).ToArray(),
+            labels.Where(label => label.X + label.Width / 2D >= centerX).OrderBy(label => label.Y).ToArray()
+        })
+            for (int index = 1; index < side.Length; index++)
+                Assert.True(side[index].Y >= side[index - 1].Y + side[index - 1].Height + 1D);
+    }
+
+    [Fact]
+    public void OutsideLabelsShrinkPieBeforeEnteringLabelGutters() {
+        var data = new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Values", new[] { 1d, 1d })
+        });
+        var layout = new OfficeChartLayout(showLegend: false, showDataLabels: true,
+            showDataLabelCategoryNames: true, dataLabelPosition: OfficeChartDataLabelPosition.OutsideEnd);
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("", null,
+            OfficeChartKind.Pie, data, 200, 240, layout: layout));
+        OfficeDrawingText[] labels = drawing.Elements.OfType<OfficeDrawingText>()
+            .Where(text => text.Text is "A" or "B").ToArray();
+        Assert.Equal(2, labels.Length);
+        OfficeDrawingShape[] slices = drawing.Shapes.Where(shape => shape.Shape.Kind == OfficeShapeKind.Polygon).ToArray();
+        double left = slices.SelectMany(slice => slice.Shape.Points.Select(point => slice.X + point.X)).Min();
+        double right = slices.SelectMany(slice => slice.Shape.Points.Select(point => slice.X + point.X)).Max();
+        Assert.Contains(labels, label => label.X + label.Width < left);
+        Assert.Contains(labels, label => label.X > right);
+    }
+
+    [Fact]
+    public void OutsideLabelsRejectCanvasThatCannotFitEveryLabel() {
+        string[] categories = Enumerable.Range(0, 30).Select(index => $"Item{index}").ToArray();
+        var data = new OfficeChartData(categories, new[] {
+            new OfficeChartSeries("Values", Enumerable.Repeat(1d, categories.Length).ToArray())
+        });
+        var layout = new OfficeChartLayout(showLegend: false, showDataLabels: true,
+            showDataLabelCategoryNames: true, dataLabelPosition: OfficeChartDataLabelPosition.OutsideEnd);
+        Assert.Throws<NotSupportedException>(() => OfficeChartDrawingRenderer.Render(
+            new OfficeChartSnapshot("", null, OfficeChartKind.Pie, data, 300, 100, layout: layout)));
+    }
+
+    [Fact]
+    public void MultiRingOutsideLabelsRequireLeadersToBeDisabled() {
+        var data = new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Inner", new[] { 1d, 2d }),
+            new OfficeChartSeries("Outer", new[] { 2d, 1d })
+        });
+        var layout = new OfficeChartLayout(showLegend: false, showDataLabels: true,
+            showDataLabelCategoryNames: true, dataLabelPosition: OfficeChartDataLabelPosition.OutsideEnd);
+        var snapshot = new OfficeChartSnapshot("", null, OfficeChartKind.Doughnut, data, 420, 300,
+            layout: layout);
+        Assert.Throws<NotSupportedException>(() => OfficeChartDrawingRenderer.Render(snapshot));
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("", null,
+            OfficeChartKind.Doughnut, data, 420, 300,
+            layout: layout.WithDataLabelLeaderLines(false)));
+        Assert.Equal(4, drawing.Elements.OfType<OfficeDrawingText>()
+            .Count(text => text.Text is "A" or "B"));
+    }
+
+    [Fact]
+    public void MultiRingOutsideLabelsAllowLeadersWhenOnlyOuterRingIsLabeled() {
+        var data = new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Inner", new[] { 1d, 2d }),
+            new OfficeChartSeries("Outer", new[] { 2d, 1d })
+        });
+        var layout = new OfficeChartLayout(showLegend: false, showDataLabels: true,
+            showDataLabelCategoryNames: true, dataLabelPosition: OfficeChartDataLabelPosition.OutsideEnd,
+            dataLabelSeriesIndexes: new[] { 1 });
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("", null,
+            OfficeChartKind.Doughnut, data, 420, 300, layout: layout));
+        Assert.Equal(4, drawing.Shapes.Count(shape => shape.Shape.Kind == OfficeShapeKind.Line));
+    }
+
+    [Fact]
+    public void OutsideLabelsUsePaintedChartBackgroundForContrast() {
+        var data = new OfficeChartData(new[] { "A", "B" }, new[] {
+            new OfficeChartSeries("Values", new[] { 1d, 1d })
+        });
+        var style = new OfficeChartStyle(backgroundColor: OfficeColor.White,
+            plotAreaBackgroundColor: OfficeColor.Black);
+        var layout = new OfficeChartLayout(showLegend: false, showDataLabels: true,
+            showDataLabelCategoryNames: true, dataLabelPosition: OfficeChartDataLabelPosition.OutsideEnd);
+        OfficeDrawing drawing = OfficeChartDrawingRenderer.Render(new OfficeChartSnapshot("", null,
+            OfficeChartKind.Pie, data, 420, 300, style, layout));
+        Assert.All(drawing.Elements.OfType<OfficeDrawingText>()
+            .Where(text => text.Text is "A" or "B"), text => Assert.Equal(OfficeColor.Black, text.Color));
+    }
+
+    [Theory]
     [InlineData(OfficeChartKind.Pie)]
     [InlineData(OfficeChartKind.Doughnut)]
     [InlineData(OfficeChartKind.Radar)]

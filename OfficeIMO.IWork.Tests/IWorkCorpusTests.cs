@@ -48,12 +48,12 @@ public sealed class IWorkCorpusTests {
         Assert.Equal("hello pages", pages.Paragraphs[0]);
         Assert.Contains(pages.Paragraphs, paragraph => paragraph.Contains(
             "second paragraph with some words", StringComparison.Ordinal));
-        Assert.True(report.TotalRecordCount >= report.UnsupportedRecords.Count);
-        Assert.NotEmpty(report.UnsupportedRecords);
+        Assert.True(report.TotalRecordCount >= report.PreservedRecords.Count);
+        Assert.NotEmpty(report.PreservedRecords);
         Assert.True(report.HasLoss);
         Assert.Contains(report.FidelityDiagnostics, diagnostic =>
-            diagnostic.Code == "IWORK_UNPROJECTED_RECORDS"
-            && diagnostic.LossKind == OfficeConversionLossKind.Omission);
+            diagnostic.Code == "IWORK_RECORD_FIDELITY_UNASSESSED"
+            && diagnostic.LossKind == OfficeConversionLossKind.Unassessed);
     }
 
     [Fact]
@@ -216,6 +216,41 @@ public sealed class IWorkCorpusTests {
         Assert.Equal("image/png", image.MediaType);
         Assert.Equal(1000, image.PixelWidth);
         Assert.Equal(520, image.PixelHeight);
+    }
+
+    [Fact]
+    public void Pages_resolves_rich_text_table_cells_from_the_independent_corpus() {
+        IWorkPagesProjection pages = IWorkSourceDocument.Open(
+            Fixture("picodocs/sample-v14.4.pages")).ReadPages();
+        IWorkTable table = pages.Tables[0];
+
+        string?[][] expected = {
+            new[] { "Feature", "Expected import", "Sample value", "Notes" },
+            new[] { "Paragraph", "Text + style", "Heading 1", "Preserve reading order" },
+            new[] { "Image", "Binary asset", "PNG 1000×520", "Alt text may or may not survive conversion" },
+            new[] { "Hyperlink", "URL target", "https://developer.apple.com", "External link relationship" },
+            new[] { "Empty cell", null, null, "Importer should not crash" }
+        };
+        for (int row = 1; row <= expected.Length; row++) {
+            for (int column = 1; column <= expected[row - 1].Length; column++) {
+                Assert.Equal(expected[row - 1][column - 1], table.GetCell(row, column)?.DisplayText);
+            }
+        }
+        Assert.Equal("Column A", pages.Tables[1].GetCell(1, 1)?.DisplayText);
+        Assert.Equal("Column F", pages.Tables[1].GetCell(1, 6)?.DisplayText);
+        Assert.Equal("Item 1", pages.Tables[2].GetCell(2, 1)?.DisplayText);
+        Assert.Equal("Date", pages.Tables[2].GetCell(1, 2)?.DisplayText);
+        Assert.DoesNotContain(pages.Tables.SelectMany(candidate => candidate.Cells),
+            cell => cell.Kind == IWorkCellKind.Text && cell.DisplayText.Length == 0);
+        IWorkTableCell[] richCells = pages.Tables.SelectMany(candidate => candidate.Cells)
+            .Where(cell => cell.RichText != null).ToArray();
+        Assert.NotEmpty(richCells);
+        Assert.All(richCells, cell => Assert.Equal(cell.DisplayText, cell.RichText!.PlainText));
+        IWorkTextRun headerRun = Assert.Single(Assert.Single(
+            table.GetCell(1, 1)!.RichText!.Paragraphs).Runs);
+        Assert.Equal("Feature", headerRun.Text);
+        Assert.True(headerRun.Style.Bold);
+        Assert.Equal(10.5d, headerRun.Style.FontSizePoints);
     }
 
     [Fact]
@@ -392,12 +427,12 @@ public sealed class IWorkCorpusTests {
     [Fact]
     public void Can_disable_unsupported_record_reporting_without_discarding_the_source_records() {
         IWorkSourceDocument source = IWorkSourceDocument.Open(Fixture("nim-iwork/simple.pages"),
-            new IWorkReadOptions { PreserveUnsupportedRecords = false });
+            new IWorkReadOptions { PreserveSourceRecords = false });
         IWorkConversionReport report = source.ReadPages().CreateConversionReport(IWorkProjectionKind.EditableReconstruction);
 
         Assert.NotEmpty(source.Records);
-        Assert.Empty(report.UnsupportedRecords);
-        Assert.True(report.UnsupportedRecordCount > 0);
+        Assert.Empty(report.PreservedRecords);
+        Assert.True(report.PreservedRecordCount > 0);
         Assert.True(report.HasLoss);
         IWorkArchiveRecord populated = source.Records.First(record => record.PayloadLength > 0);
         byte original = populated.GetPayload()[0];

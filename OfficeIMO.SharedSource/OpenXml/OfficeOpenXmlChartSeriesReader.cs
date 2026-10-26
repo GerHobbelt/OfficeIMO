@@ -12,13 +12,16 @@ namespace OfficeIMO.OpenXml.Internal {
     /// <summary>Reads cached series into the shared model without format-specific chart types.</summary>
     internal static partial class OfficeOpenXmlChartSeriesReader {
         internal sealed class Series {
-            internal Series(uint sourceIndex, OfficeChartSeries data, bool hasUnsupportedAppearance = false, uint? sourceOrder = null) {
-                SourceIndex = sourceIndex; Data = data; HasUnsupportedAppearance = hasUnsupportedAppearance; SourceOrder = sourceOrder;
+            internal Series(uint sourceIndex, OfficeChartSeries data, bool hasUnsupportedAppearance = false,
+                uint? sourceOrder = null, bool hasAutomaticColor = false) {
+                SourceIndex = sourceIndex; Data = data; HasUnsupportedAppearance = hasUnsupportedAppearance;
+                SourceOrder = sourceOrder; HasAutomaticColor = hasAutomaticColor;
             }
             internal uint SourceIndex { get; }
             internal uint? SourceOrder { get; }
             internal OfficeChartSeries Data { get; }
             internal bool HasUnsupportedAppearance { get; }
+            internal bool HasAutomaticColor { get; }
         }
 
         internal sealed class Result {
@@ -203,8 +206,12 @@ namespace OfficeIMO.OpenXml.Internal {
             unsupported |= !filled && connectLine && markerFill.HasValue &&
                 (!stroke.HasValue || showMarkers && stroke.Value != markerFill.Value);
             OfficeColor? seriesColor = filled ? fill : !connectLine && showMarkers ? markerFill ?? stroke ?? fill : stroke ?? fill;
+            // Native automatic series colours depend on chart style, theme and c:idx.
+            // A static Graphite palette guess cannot preserve that appearance.
+            unsupported |= !forDataUpdate && seriesColor == null &&
+                kind is not OfficeChartKind.Pie and not OfficeChartKind.Doughnut;
             bool unsupportedPoints = pointOverrides.Any(point => point.Index?.Val?.Value is uint index && index < values.Count &&
-                (point.GetFirstChild<C.Marker>() != null || point.ChartShapeProperties != null &&
+                (OfficeOpenXmlChartPointStyles.HasUnsupportedPointContent(point) || point.ChartShapeProperties != null &&
                     !OfficeOpenXmlChartPointStyles.IsSupported(point.ChartShapeProperties, scheme, flatThreeDimensional)));
             unsupported |= unsupportedPoints;
             // Unsupported appearance blocks static export, but update-only readers still need
@@ -220,8 +227,15 @@ namespace OfficeIMO.OpenXml.Internal {
                 markerOutlineColor: markerOutlineColor, markerOutlineWidth: markerOutlineWidth,
                 strokeWidth: width, strokeDashStyle: ReadDash(outline), renderKind: kind, axisGroup: axisGroup)
                 .WithPointStyles(styles);
+            if (kind is OfficeChartKind.Pie or OfficeChartKind.Doughnut) {
+                if (OfficeOpenXmlChartExplosions.TryRead(element, pointOverrides, values.Count,
+                    out int[]? explosions))
+                    data = data.WithPointExplosions(explosions);
+                else unsupported = true;
+            }
             return new Series(element.GetFirstChild<C.Index>()?.Val?.Value ?? (uint)fallbackIndex, data, unsupported,
-                element.GetFirstChild<C.Order>()?.Val?.Value);
+                element.GetFirstChild<C.Order>()?.Val?.Value,
+                OfficeOpenXmlChartWriter.HasAutomaticSeriesColor(element));
         }
 
         private static OfficeStrokeDashStyle? ReadDash(A.Outline? outline) => outline?.GetFirstChild<A.PresetDash>()?.Val?.InnerText switch {

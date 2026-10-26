@@ -97,13 +97,17 @@ public sealed class IWorkPagesProjection {
     /// <summary>Gets whether the supported editable document structure was recovered completely.</summary>
     public bool HasEditableContent => _supportsEditableReconstruction;
 
+    /// <summary>Gets whether bounded source content is available for an explicitly partial editable conversion.</summary>
+    public bool HasRecoverableContent => Body.Paragraphs.Count > 0 || Drawables.Count > 0;
+
     /// <summary>Creates a conversion report for an OfficeIMO semantic-owner projection.</summary>
     public IWorkConversionReport CreateConversionReport(IWorkProjectionKind kind, IWorkPreviewAsset? preview = null) =>
         CreateConversionReport(kind, preview, Array.Empty<IWorkDiagnostic>());
 
     internal IWorkConversionReport CreateConversionReport(IWorkProjectionKind kind,
-        IWorkPreviewAsset? preview, IReadOnlyList<IWorkDiagnostic> additionalDiagnostics) {
-        ValidateReportRequest(kind, preview);
+        IWorkPreviewAsset? preview, IReadOnlyList<IWorkDiagnostic> additionalDiagnostics,
+        bool allowPartialEditableReconstruction = false) {
+        ValidateReportRequest(kind, preview, allowPartialEditableReconstruction);
         return _source.CreateReport(kind, Diagnostics.Concat(additionalDiagnostics).ToArray(), preview,
             kind == IWorkProjectionKind.VisualFallback
                 ? 0
@@ -114,8 +118,10 @@ public sealed class IWorkPagesProjection {
                     + Tables.Count + Tables.Sum(table => table.Cells.Count));
     }
 
-    private void ValidateReportRequest(IWorkProjectionKind kind, IWorkPreviewAsset? preview) {
-        if (kind == IWorkProjectionKind.EditableReconstruction && !HasEditableContent) {
+    private void ValidateReportRequest(IWorkProjectionKind kind, IWorkPreviewAsset? preview,
+        bool allowPartialEditableReconstruction) {
+        if (kind == IWorkProjectionKind.EditableReconstruction && !HasEditableContent
+            && !(allowPartialEditableReconstruction && HasRecoverableContent)) {
             throw new InvalidOperationException("Editable Pages content was not recovered.");
         }
         if (kind == IWorkProjectionKind.VisualFallback && preview == null) {
@@ -127,8 +133,11 @@ public sealed class IWorkPagesProjection {
 public sealed partial class IWorkSourceDocument {
     /// <summary>Reads a Pages package into a bounded semantic source projection.</summary>
     public IWorkPagesProjection ReadPages() {
+        _cancellationToken.ThrowIfCancellationRequested();
         if (Kind != IWorkDocumentKind.Pages) throw new InvalidOperationException($"The source is {Kind}, not Pages.");
-        return IWorkPagesReader.Read(this);
+        IWorkPagesProjection projection = IWorkPagesReader.Read(this);
+        _cancellationToken.ThrowIfCancellationRequested();
+        return projection;
     }
 }
 
@@ -144,7 +153,8 @@ internal static class IWorkPagesReader {
 
     internal static IWorkPagesProjection Read(IWorkSourceDocument source) {
         var diagnostics = new List<IWorkDiagnostic>();
-        IWorkTextContent bodyContent = new(Array.Empty<IWorkTextParagraph>(), isComplete: false);
+        IWorkTextContent bodyContent = new(Array.Empty<IWorkTextParagraph>(),
+            isComplete: false, isTextComplete: false);
         var sections = new List<IWorkPagesSection>();
         var textBoxes = new List<IWorkTextBox>();
         var images = new List<IWorkImageAsset>();
@@ -206,7 +216,7 @@ internal static class IWorkPagesReader {
                     body.EntryPath, body.Identifier));
             } else {
                 bodyContent = IWorkTextReader.Read(index, body, projectionBudget);
-                if (!bodyContent.IsComplete) MarkTextIncomplete(body, diagnostics, ref supportsEditableReconstruction);
+                if (!bodyContent.IsComplete) MarkTextIncomplete(body, diagnostics, ref supportsEditableReconstruction, bodyContent);
                 int maximumSectionCount = bodyContent.Paragraphs.Count(paragraph =>
                     paragraph.BreakKind == IWorkParagraphBreakKind.Section) + 1;
                 ReadHeadersAndFooters(index, body, sections, projectionBudget, diagnostics,
@@ -279,7 +289,7 @@ internal static class IWorkPagesReader {
                 text = IWorkTextReader.Read(index, storage, projectionBudget);
                 textCache.Add(storage.Identifier, text);
             }
-            if (!text.IsComplete) MarkTextIncomplete(storage, diagnostics, ref supportsEditableReconstruction);
+            if (!text.IsComplete) MarkTextIncomplete(storage, diagnostics, ref supportsEditableReconstruction, text);
             IWorkWireMessage? drawable = IWorkDrawingReader.DrawableMessage(index, shape,
                 out bool drawableComplete);
             if (!drawableComplete) {
@@ -699,7 +709,7 @@ internal static class IWorkPagesReader {
                 textCache.Add(storage.Identifier, text);
             }
             if (text == null) throw new InvalidDataException("The cached Pages text content is unavailable.");
-            if (!text.IsComplete) MarkTextIncomplete(storage, diagnostics, ref supportsEditableReconstruction);
+            if (!text.IsComplete) MarkTextIncomplete(storage, diagnostics, ref supportsEditableReconstruction, text);
             if (text.PlainText.Length == 0) continue;
             if (reused) projectionBudget.AddTextContentUse(text, includeCharacters: true);
             destination.Add(text);
@@ -721,12 +731,14 @@ internal static class IWorkPagesReader {
     }
 
     private static void MarkTextIncomplete(IWorkArchiveRecord storage,
-        List<IWorkDiagnostic> diagnostics, ref bool supportsEditableReconstruction) {
+        List<IWorkDiagnostic> diagnostics, ref bool supportsEditableReconstruction,
+        IWorkTextContent? content = null) {
         supportsEditableReconstruction = false;
-        if (diagnostics.Any(diagnostic => diagnostic.Code == "IWORK_PAGES_TEXT_UNSUPPORTED")) return;
+        if (diagnostics.Any(diagnostic => diagnostic.Code == "IWORK_PAGES_TEXT_UNSUPPORTED"
+            && diagnostic.RecordIdentifier == storage.Identifier)) return;
         diagnostics.Add(new IWorkDiagnostic(IWorkDiagnosticSeverity.Warning,
             "IWORK_PAGES_TEXT_UNSUPPORTED",
-            "A Pages text storage contains an invalid UTF-8 run; editable reconstruction is incomplete.",
+            IWorkTextDiagnostics.Describe(content) + " Complete editable reconstruction is unavailable.",
             storage.EntryPath, storage.Identifier));
     }
 

@@ -499,19 +499,21 @@ Snapshots preserve chart and plot surfaces, primary axes and gridlines, radial g
 uniform body fonts, separate chart-title and axis-title fonts, uniform text size, style and
 colour for titles, legends and axes, and basic data-label content,
 separator, number format, and position. Mixed body fonts, per-point or series-specific labels,
-outside or best-fit radial leader lines, unsupported effects, and unrepresented outlines return false
+best-fit radial leader lines, unsupported radial label positions, unsupported effects, and unrepresented outlines return false
 without changing the native document. Native authoring remains available for these charts.
+Outside-end radial leader lines are supported when they can be placed without crossing another doughnut ring.
 Deleted axes suppress their lines, and primary tick-label placement and automatic/minimum/maximum
 axis crossing are preserved where the renderer supports them; automatic zero crossing through a negative
 value range and maximum crossing on horizontal bars are rejected. Nonstandard axis arrangements,
 title shape fills or unsupported legend fills,
-manual title layouts, unsupported numeric formats, exploded slices, and nondefault bar spacing
+manual title layouts, unsupported numeric formats, and nondefault bar spacing
 require a richer projection and return false. Analytical overlays, sparse, empty, unequal or nonnumeric value caches,
 time-scaled date axes, inverted negative bars, unresolved native style presets, per-entry legend text,
 multiline, rotated or aligned text layouts, chart data tables, hierarchical categories, visible secondary category axes,
 category-label skipping, offsets or non-centered alignment, rounded chart frames, non-box bar shapes,
 bar connector lines, chart drawing overlays, nondefault cross-between geometry, and nonidentity Word color-scheme mappings also reject projection. Visible-only
 charts reject hidden rows or columns in their referenced workbook ranges; unrelated hidden cells do not affect the snapshot. Literal charts remain supported.
+Pie and doughnut snapshots preserve supported per-slice explosion offsets in native charts and static exports.
 Header and footer charts use relationships owned
 by their containing story, including when the same relationship ID exists in the document body.
 

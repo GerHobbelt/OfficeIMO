@@ -16,7 +16,7 @@ namespace OfficeIMO.OpenXml.Internal {
                     title.GetFirstChild<C.Layout>()?.GetFirstChild<C.ManualLayout>() != null ||
                     title.GetFirstChild<C.Overlay>() is C.Overlay overlay && overlay.Val?.Value != false) == true)
                 throw new NotSupportedException("Manual or overlaid axis-title layouts and top-right legends cannot be projected.");
-            var labels = ReadLabels(chart);
+            var labels = ReadLabels(chart, scheme);
             var defaultText = ReadNativeText(chart, chart, scheme);
             var legendText = ReadNativeText(chart, chart.GetFirstChild<C.Legend>(), scheme);
             var axisText = ReadUniformNativeText(chart, TextAxes(chart), scheme);
@@ -104,10 +104,14 @@ namespace OfficeIMO.OpenXml.Internal {
                 vertical = categoryAxis;
             }
             return new OfficeChartLayout(overlayLegend: legend?.GetFirstChild<C.Overlay>() is C.Overlay overlay && overlay.Val?.Value != false,
-                legendFontSize: legendText.Size, legendFontStyle: legendText.Style,
-                axisLabelFontSize: axisText.Size, axisTextFontStyle: axisText.Style,
+                legendFontSize: legendText.Size, legendFontFamily: legendText.Family,
+                legendFontStyle: legendText.Style,
+                axisLabelFontSize: axisText.Size, axisTextFontFamily: axisText.Family,
+                axisTextFontStyle: axisText.Style,
                 axisTitleFontSize: axisTitleText.Size, axisTitleFontStyle: axisTitleText.Style,
-                dataLabelFontSize: defaultText.Size, dataLabelFontStyle: defaultText.Style,
+                dataLabelFontSize: labels.FontSize ?? defaultText.Size,
+                dataLabelFontFamily: labels.FontFamily ?? defaultText.Family,
+                dataLabelFontStyle: labels.FontStyle ?? defaultText.Style,
                 overlayTitle: chart.GetFirstChild<C.Title>()?.GetFirstChild<C.Overlay>() is C.Overlay title && title.Val?.Value != false,
                 showLegend: legend != null, legendPosition: sharedPosition, hiddenCategoryLegendIndexes: hidden,
                 showDataLabels: labels.Visible, showDataLabelValues: labels.Values, showDataLabelCategoryNames: labels.Categories,
@@ -138,7 +142,8 @@ namespace OfficeIMO.OpenXml.Internal {
                 verticalAxisMinorTickMark: ReadLayoutTick(vertical?.GetFirstChild<C.MinorTickMark>()?.Val?.Value),
                 reverseCategoryAxis: categoryAxis is not C.ValueAxis && categoryAxis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>()?.Val?.Value == C.OrientationValues.MaxMin,
                 categoryAxisOrientationSpecified: categoryAxis is not C.ValueAxis && categoryAxis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>() != null)
-                .WithSecondaryValueAxis(OfficeOpenXmlChartSecondaryAxis.Read(plot));
+                .WithSecondaryValueAxis(OfficeOpenXmlChartSecondaryAxis.Read(plot))
+                .WithDataLabelLeaderLines(labels.LeaderLines);
         }
 
         private static void QualifySecondaryLayout(C.PlotArea? plot) {

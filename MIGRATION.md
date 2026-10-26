@@ -9,6 +9,23 @@ This guide contains version-to-version changes that require application code, pa
 
 OfficeIMO 3.4 completes the document-lifecycle, conversion, and PDF API cleanup. Upgrade every OfficeIMO package in an application to the same `3.4.x` version and perform a clean restore after changing versions.
 
+## Reader capability schema version 6
+
+Reader capability manifests use schema version 6 and add `SupportsDirectoryBundle`.
+Applications that validate capability schema versions must accept version 6.
+Directory-package handlers register `ReadDirectoryBundle`; ordinary path handlers
+continue to accept files. The document-result schema remains version 8.
+
+## Reader document schema version 8
+
+`OfficeDocumentReadResult` now emits schema version 8. This version adds
+`ReaderInputKind.IWork` and the neutral `OfficeDocumentFormat.IWork` for Pages,
+Numbers, and Keynote input. Applications that
+validate `schemaVersion`, use the packaged JSON Schema, generate transport
+bindings, or switch exhaustively over either enum must accept version 8
+and the new members. Load the current schema through
+`OfficeDocumentReadResultSchema.GetJsonSchema()` rather than pinning version 7.
+
 ## Default PDF Latin ligatures
 
 `PdfOptions.TextShapingMode` now defaults to `OpenTypeLigatures`. Supported
@@ -871,6 +888,10 @@ Before restoring 3.3, remove any `PackageReference` or `ProjectReference` to `Of
 | Keynote | `OfficeIMO.PowerPoint.IWork` | `IWorkSourceDocument.Open(...).ToPowerPointPresentation[Result](...)` |
 
 Reading and conversion now have separate options. Keep package and projection limits in `IWorkReadOptions`; move `IWorkReadOptions.ImportMode` to `IWorkConversionOptions.Mode`, whose enum is `IWorkConversionMode`. The destination result types are `PagesToWordResult`, `NumbersToExcelResult`, and `KeynoteToPowerPointResult`, and the shared report is `IWorkConversionReport`. They use the common conversion vocabulary: `Value`, `Report`, `HasLoss`, `RequireValue()`, and `RequireNoLoss()`. Static path and stream conveniences remain available as `ConvertPagesToWord*`, `ConvertNumbersToExcel*`, and `ConvertKeynoteToPowerPoint*`.
+
+Source-record accounting now uses `IWorkConversionReport.PreservedRecords`, `PreservedRecordCount`, and `IWorkReadOptions.PreserveSourceRecords` in place of the former `UnsupportedRecords`, `UnsupportedRecordCount`, and `PreserveUnsupportedRecords` names. The list includes consumed and auxiliary records; it does not count omitted content. Replace checks for `IWORK_UNPROJECTED_RECORDS` with `IWORK_RECORD_FIDELITY_UNASSESSED`, whose category is `OfficeConversionLossKind.Unassessed`. Strict no-loss policies still reject unassessed fidelity. Add this category to exhaustive diagnostic displays or policy switches.
+
+Partial editable reconstruction and worksheet-name normalization require explicit options. Applications that cannot accept a first-page or composite visual fallback should set `RequireCompleteVisualCoverage = true`; this setting rejects fallback unless full-document coverage is known.
 
 Applications that only use Word, Excel, or PowerPoint need no iWork package and no code change.
 

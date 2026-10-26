@@ -168,9 +168,19 @@ namespace OfficeIMO.Word {
         /// Get or sets the image's file name
         /// </summary>
         public string? FileName {
-            get => _vmlShape != null ? _imagePart?.Uri.ToString().Split('/').LastOrDefault() : GetPicture()?.NonVisualPictureProperties?.NonVisualDrawingProperties?.Name;
+            get {
+                if (_vmlShape == null) return GetPicture()?.NonVisualPictureProperties?.NonVisualDrawingProperties?.Name;
+                string? title = _vmlImageData?.Title?.Value;
+                return !string.IsNullOrWhiteSpace(title)
+                    ? title
+                    : _imagePart?.Uri.ToString().Split('/').LastOrDefault();
+            }
             set {
                 if (value == null) throw new ArgumentNullException(nameof(value));
+                if (_vmlShape != null) {
+                    if (_vmlImageData != null) _vmlImageData.Title = value;
+                    return;
+                }
                 var drawingProperties = GetPicture()?.NonVisualPictureProperties?.NonVisualDrawingProperties;
                 if (drawingProperties != null) {
                     drawingProperties.Name = value;
@@ -183,7 +193,12 @@ namespace OfficeIMO.Word {
         /// </summary>
         public string? Description {
             get => _vmlShape != null ? _vmlShape.GetAttributes().FirstOrDefault(attribute => attribute.LocalName == "alt").Value : GetDocProperties()?.Description;
-            set => GetWritableDocProperties()?.Description = value;
+            set {
+                if (_vmlShape != null) {
+                    if (string.IsNullOrEmpty(value)) _vmlShape.RemoveAttribute("alt", "");
+                    else _vmlShape.SetAttribute(new OpenXmlAttribute("", "alt", "", value));
+                } else GetWritableDocProperties()?.Description = value;
+            }
         }
 
         /// <summary>

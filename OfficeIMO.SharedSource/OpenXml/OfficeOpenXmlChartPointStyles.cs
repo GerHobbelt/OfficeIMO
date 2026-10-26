@@ -20,6 +20,7 @@ internal static class OfficeOpenXmlChartPointStyles {
     }
 
     internal static bool IsSupported(C.ChartShapeProperties properties, A.ColorScheme? scheme, bool flattenThreeDimensional = false) {
+        if (properties.HasAttributes) return false;
         foreach (OpenXmlElement child in properties.ChildElements) {
             if (child is A.EffectList && !child.HasChildren && !child.HasAttributes) continue;
             if (child is A.Shape3DType && !child.HasChildren && !child.HasAttributes) continue;
@@ -62,6 +63,34 @@ internal static class OfficeOpenXmlChartPointStyles {
         outline.Alignment != null && outline.Alignment.Value != A.PenAlignmentValues.Center ||
         outline.CompoundLineType != null && outline.CompoundLineType.Value != A.CompoundLineValues.Single;
 
+    internal static bool HasUnsupportedPointContent(C.DataPoint point) {
+        foreach (OpenXmlElement child in point.ChildElements) {
+            if (child is C.Index or C.ChartShapeProperties) continue;
+            if (child is C.Explosion && point.Parent is C.PieChartSeries) continue;
+            if (child is C.Marker marker && !marker.HasAttributes &&
+                marker.ChildElements.All(markerChild => markerChild is C.ChartShapeProperties) &&
+                (marker.ChartShapeProperties == null || point.ChartShapeProperties is not C.ChartShapeProperties direct ||
+                    !direct.HasChildren && !direct.HasAttributes)) continue;
+            if (child is C.InvertIfNegative invert && invert.Val?.Value == false) continue;
+            if (child is C.Bubble3D bubble && bubble.Val?.Value == false) continue;
+            if (child is C.ExtensionList extensions && HasOnlyUniqueIdMetadata(extensions)) continue;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool HasOnlyUniqueIdMetadata(C.ExtensionList extensions) {
+        if (extensions.ChildElements.Count != 1 || extensions.FirstChild is not C.Extension extension ||
+            extension.Uri?.Value != "{C3380CC4-5D6E-409C-BE32-E72D297353CC}" ||
+            extension.ChildElements.Count != 1 || extension.FirstChild is not OpenXmlElement uniqueId ||
+            uniqueId.LocalName != "uniqueId" ||
+            uniqueId.NamespaceUri != "http://schemas.microsoft.com/office/drawing/2014/chart" ||
+            uniqueId.HasChildren) return false;
+        var attributes = uniqueId.GetAttributes();
+        return attributes.Count == 1 && attributes[0].LocalName == "val" &&
+            attributes[0].NamespaceUri.Length == 0 && Guid.TryParse(attributes[0].Value, out _);
+    }
+
     internal static IReadOnlyList<OfficeChartPointStyle?>? Read(OpenXmlElement series, int count, A.ColorScheme? scheme) =>
         Read(GetBoundedPoints(series), count, scheme, series.Parent?.LocalName.EndsWith("3DChart", StringComparison.Ordinal) == true);
 
@@ -70,13 +99,9 @@ internal static class OfficeOpenXmlChartPointStyles {
         foreach (C.DataPoint point in points) {
             uint? index = point.Index?.Val?.Value;
             if (!index.HasValue || index.Value >= (uint)count) continue;
-            C.Marker? pointMarker = point.GetFirstChild<C.Marker>();
-            if (pointMarker != null && (pointMarker.HasAttributes ||
-                pointMarker.ChildElements.Any(child => child is not C.ChartShapeProperties) ||
-                pointMarker.ChartShapeProperties != null &&
-                point.GetFirstChild<C.ChartShapeProperties>()?.HasChildren == true))
-                throw new System.IO.InvalidDataException("The native point marker has an unprojected appearance.");
-            C.ChartShapeProperties? properties = pointMarker?.ChartShapeProperties ??
+            if (HasUnsupportedPointContent(point))
+                throw new System.IO.InvalidDataException("The native point record contains unsupported appearance or behavior.");
+            C.ChartShapeProperties? properties = point.GetFirstChild<C.Marker>()?.ChartShapeProperties ??
                 point.GetFirstChild<C.ChartShapeProperties>();
             if (properties == null) continue;
             if (!IsSupported(properties, scheme, flattenThreeDimensional))
@@ -130,7 +155,7 @@ internal static class OfficeOpenXmlChartPointStyles {
         if (style?.OutlineWidth > 1584) throw new ArgumentOutOfRangeException(nameof(style), "Native chart outlines cannot exceed 1584 points.");
         if (!SupportsDataPoints(series))
             throw new NotSupportedException("Point styles are not supported by this native chart series.");
-        C.DataPoint? point = series.Elements<C.DataPoint>().FirstOrDefault(item => item.Index?.Val?.Value == index);
+        C.DataPoint? point = GetBoundedPoints(series).FirstOrDefault(item => item.Index?.Val?.Value == index);
         if (point == null && style == null && !legacyColor.HasValue) return;
         ApplyPointCore(series, index, style, legacyColor, point, FindPointAnchor(series));
     }
@@ -152,6 +177,10 @@ internal static class OfficeOpenXmlChartPointStyles {
             if (anchor != null) series.InsertBefore(point, anchor);
             else series.Append(point);
         }
+        ApplyPointStyle(point, style, legacyColor);
+    }
+
+    private static void ApplyPointStyle(C.DataPoint point, OfficeChartPointStyle? style, OfficeColor? legacyColor) {
         C.Marker? pointMarker = point.GetFirstChild<C.Marker>();
         OpenXmlCompositeElement styleOwner = pointMarker?.GetFirstChild<C.ChartShapeProperties>() != null
             ? pointMarker : point;
@@ -161,7 +190,7 @@ internal static class OfficeOpenXmlChartPointStyles {
             : point.GetFirstChild<C.ChartShapeProperties>();
         if (competing != null) {
             ClearPointAppearance(competing);
-            if (!competing.HasChildren) competing.Remove();
+            if (!competing.HasChildren && !competing.HasAttributes) competing.Remove();
         }
         ClearPointAppearance(properties);
         if (style?.NoFill == true) properties.AddChild(new A.NoFill(), true);
@@ -184,8 +213,8 @@ internal static class OfficeOpenXmlChartPointStyles {
             });
             properties.AddChild(outline, true);
         }
-        if (properties.Parent == null && properties.HasChildren) styleOwner.AddChild(properties, true);
-        else if (!properties.HasChildren && properties.Parent != null) properties.Remove();
+        if (properties.Parent == null && (properties.HasChildren || properties.HasAttributes)) styleOwner.AddChild(properties, true);
+        else if (!properties.HasChildren && !properties.HasAttributes && properties.Parent != null) properties.Remove();
     }
 
     private static void ClearPointAppearance(C.ChartShapeProperties properties) {

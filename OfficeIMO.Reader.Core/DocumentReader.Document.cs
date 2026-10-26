@@ -17,9 +17,7 @@ internal static partial class DocumentReaderEngine {
     /// <param name="cancellationToken">Cancellation token.</param>
     public static OfficeDocumentReadResult ReadDocument(string path, ReaderOptions? options = null, CancellationToken cancellationToken = default) {
         if (path == null) throw new ArgumentNullException(nameof(path));
-        if (Directory.Exists(path)) {
-            throw new IOException($"'{path}' is a directory. Use {nameof(ReadFolder)}(...) to ingest directories.");
-        }
+        if (Directory.Exists(path)) return ReadDirectoryBundle(path, options, cancellationToken);
         if (!File.Exists(path)) throw new FileNotFoundException($"File '{path}' doesn't exist.", path);
 
         ReaderOptions opt = NormalizeOptions(options);
@@ -262,7 +260,9 @@ internal static partial class DocumentReaderEngine {
     private static string? BuildChunkDocumentMarkdown(IReadOnlyList<ReaderChunk> chunks) {
         return JoinChunkMarkdown(
             chunks,
-            static (chunk, _) => string.IsNullOrWhiteSpace(chunk.Markdown) ? chunk.Text : chunk.Markdown);
+            static (chunk, _) => chunk.ContinuesPreviousChunk && chunk.Markdown == string.Empty
+                ? null
+                : string.IsNullOrWhiteSpace(chunk.Markdown) ? chunk.Text : chunk.Markdown);
     }
 
     private static string? JoinChunkMarkdown(

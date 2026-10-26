@@ -10,7 +10,7 @@ using OfficeIMO.Excel.Utilities;
 
 namespace OfficeIMO.Excel {
     public sealed partial class ExcelChart {
-        private OfficeChartStyle? CreateImageExportStyle() {
+        private OfficeChartStyle? CreateImageExportStyle(int radialPointCount) {
             C.ChartSpace? chartSpace = GetChartPart().ChartSpace;
             if (chartSpace == null) {
                 return null;
@@ -69,7 +69,13 @@ namespace OfficeIMO.Excel {
             bool showValueGridLines = HasImageExportMajorGridlines(valueAxis);
             bool showCategoryMinorGridLines = HasImageExportMinorGridlines(categoryAxis);
             bool showValueMinorGridLines = HasImageExportMinorGridlines(valueAxis);
-            if (chartFill == null &&
+            C.PieChartSeries? radialSeries = ChartType is ExcelChartType.Pie or ExcelChartType.Doughnut
+                ? plotArea?.Descendants<C.PieChartSeries>().FirstOrDefault() : null;
+            OfficeColor[]? radialPalette = radialSeries == null ? null :
+                OfficeOpenXmlThemeColorResolver.ReadRadialPalette(GetChartPart(), radialSeries,
+                    radialPointCount, workbookPart.ThemePart?.Theme?.ThemeElements?.ColorScheme,
+                    useSpreadsheetDefaultTheme: true);
+            if (radialPalette == null && chartFill == null &&
                 chartLine == null &&
                 plotFill == null &&
                 plotLine == null &&
@@ -113,7 +119,7 @@ namespace OfficeIMO.Excel {
                 return null;
             }
 
-            var style = new OfficeChartStyle(
+            var style = new OfficeChartStyle(palette: radialPalette,
                 showBackground: !hasNoChartFill,
                 backgroundColor: chartFill,
                 borderColor: chartLine,
@@ -170,7 +176,27 @@ namespace OfficeIMO.Excel {
                 return null;
             }
 
-            C.DataLabels? dataLabels = plotArea.Descendants<C.DataLabels>().FirstOrDefault(HasAnyVisibleDataLabelPart);
+            C.DataLabels[] visibleLabels = plotArea.Descendants<C.DataLabels>()
+                .Where(HasAnyVisibleDataLabelPart).ToArray();
+            C.DataLabels? dataLabels = visibleLabels.FirstOrDefault();
+            int[]? radialLabelSeriesIndexes = null;
+            OpenXmlCompositeElement? radialChart = (OpenXmlCompositeElement?)plotArea.GetFirstChild<C.PieChart>() ??
+                plotArea.GetFirstChild<C.DoughnutChart>();
+            C.DataLabels? chartLevelRadialLabels = radialChart?.GetFirstChild<C.DataLabels>();
+            if (radialChart != null &&
+                (chartLevelRadialLabels == null || !HasAnyVisibleDataLabelPart(chartLevelRadialLabels))) {
+                C.PieChartSeries[] nativeSeries = radialChart.Elements<C.PieChartSeries>()
+                    .OrderBy(series => series.GetFirstChild<C.Index>()?.Val?.Value ?? uint.MaxValue).ToArray();
+                int[] labeled = nativeSeries.Select((series, index) => (series, index))
+                    .Where(item => item.series.GetFirstChild<C.DataLabels>() is C.DataLabels labels &&
+                        HasAnyVisibleDataLabelPart(labels))
+                    .Select(item => item.index).ToArray();
+                if (labeled.Length > 0 && labeled.Length < nativeSeries.Length)
+                    radialLabelSeriesIndexes = labeled;
+            }
+            if (radialChart != null && visibleLabels.Skip(1).Any(labels =>
+                !string.Equals(labels.OuterXml, dataLabels?.OuterXml, StringComparison.Ordinal)))
+                throw new NotSupportedException("Different radial data-label layouts cannot be projected by one shared layout.");
             C.Legend? legend = chart.GetFirstChild<C.Legend>();
             C.Title? title = chart.GetFirstChild<C.Title>();
             OfficeChartValueAxisLayout? secondaryValueAxis = ReadImageExportSecondaryValueAxis(plotArea);
@@ -290,6 +316,7 @@ namespace OfficeIMO.Excel {
                 showDataLabelPercentages: IsEnabled(dataLabels?.GetFirstChild<C.ShowPercent>()),
                 showDataLabelCategoryNames: IsEnabled(dataLabels?.GetFirstChild<C.ShowCategoryName>()),
                 showDataLabelSeriesNames: IsEnabled(dataLabels?.GetFirstChild<C.ShowSeriesName>()),
+                dataLabelSeriesIndexes: radialLabelSeriesIndexes,
                 dataLabelSeparator: dataLabels?.GetFirstChild<C.Separator>()?.Text,
                 legendFontSize: legendFontSize,
                 legendFontFamily: legendFontFamily,
@@ -341,19 +368,23 @@ namespace OfficeIMO.Excel {
                 showValueAxisLabels: showValueAxisLabels,
                 connectScatterPoints: connectScatterPoints,
                 overlayTitle: IsEnabled(title?.GetFirstChild<C.Overlay>()))
-                .WithSecondaryValueAxis(secondaryValueAxis);
+                .WithSecondaryValueAxis(secondaryValueAxis)
+                .WithDataLabelLeaderLines(IsEnabled(dataLabels?.GetFirstChild<C.ShowLeaderLines>()));
         }
 
         private OfficeChartValueAxisLayout? ReadImageExportSecondaryValueAxis(C.PlotArea plotArea) {
             var axis = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.Resolve(plotArea);
-            OfficeChartValueAxisLayout? native = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.Read(plotArea);
-            if (axis == null || native == null) return null;
+            if (axis == null) return null;
             string? numberFormat = GetImageExportAxisNumberFormat(axis);
+            OfficeChartValueAxisLayout? native = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.Read(
+                plotArea, () => numberFormat ?? "General");
+            if (native == null) return null;
             if (numberFormat != null && !IsSimpleSupportedImageExportAxisNumberFormat(numberFormat))
                 throw new NotSupportedException("The secondary axis number format cannot be rendered.");
-            return new OfficeChartValueAxisLayout(native.Minimum, native.Maximum, native.MajorUnit,
+            var resolved = new OfficeChartValueAxisLayout(native.Minimum, native.Maximum, native.MajorUnit,
                 native.MinorUnit, numberFormat, native.MajorTickMark,
-                native.MinorTickMark).WithTitle(native.Title);
+                native.MinorTickMark);
+            return native.Title == null ? resolved : resolved.WithTitle(native.Title);
         }
 
         private static ExcelChartData ApplyImageExportSeriesStyles(ChartPart chartPart, ExcelChartData data, WorkbookPart workbookPart) {
@@ -374,7 +405,8 @@ namespace OfficeIMO.Excel {
             for (int i = 0; i < data.Series.Count; i++) {
                 ExcelChartSeries current = data.Series[i];
                 if (styles.TryGetValue(i, out ImageExportSeriesStyle? style)) {
-                    series.Add(current.WithImageExportStyle(style.SeriesColorArgb, style.SeriesLineWidth, style.SeriesLineDashStyle, style.PointColorArgb, style.ShowMarkers, style.ConnectLine, style.MarkerSize, style.MarkerShape, style.MarkerOutlineColorArgb, style.MarkerOutlineWidth).WithPointStyles(style.PointStyles));
+                    series.Add(current.WithImageExportStyle(style.SeriesColorArgb, style.SeriesLineWidth, style.SeriesLineDashStyle, style.PointColorArgb, style.ShowMarkers, style.ConnectLine, style.MarkerSize, style.MarkerShape, style.MarkerOutlineColorArgb, style.MarkerOutlineWidth)
+                        .WithPointStyles(style.PointStyles).WithPointExplosions(style.PointExplosions));
                     changed = true;
                 } else {
                     series.Add(current);
@@ -417,8 +449,15 @@ namespace OfficeIMO.Excel {
                 style.MarkerOutlineWidth = GetImageExportMarkerOutlineWidth(marker);
                 string? markerFill = GetImageExportMarkerFillColor(marker, workbookPart);
                 style.PointColorArgb = GetImageExportPointColors(series, valueCount, markerFill, workbookPart);
-                style.PointStyles = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartPointStyles.Read(series,
-                    valueCount, workbookPart.ThemePart?.Theme?.ThemeElements?.ColorScheme);
+                var pointOverrides = OfficeOpenXmlChartPointStyles.GetBoundedPoints(series);
+                style.PointStyles = OfficeOpenXmlChartPointStyles.Read(pointOverrides, valueCount,
+                    workbookPart.ThemePart?.Theme?.ThemeElements?.ColorScheme);
+                if (series is C.PieChartSeries) {
+                    if (!OfficeOpenXmlChartExplosions.TryRead(series, pointOverrides, valueCount,
+                        out int[]? explosions))
+                        throw new NotSupportedException("The native pie or doughnut point explosion cannot be rendered.");
+                    style.PointExplosions = explosions;
+                }
 
                 if (style.HasAny && !styles.ContainsKey(index)) {
                     styles.Add(index, style);
@@ -725,7 +764,12 @@ namespace OfficeIMO.Excel {
                     source));
             }
 
-            if (chartSpace.Descendants<C.LeaderLines>().Any()) {
+            if (chartSpace.Descendants<C.LeaderLines>().Any(lines => lines.HasChildren || lines.HasAttributes ||
+                lines.Ancestors().FirstOrDefault(element => element is C.PieChart or C.DoughnutChart) == null ||
+                lines.Parent is not C.DataLabels labels ||
+                labels.GetFirstChild<C.DataLabelPosition>()?.Val?.Value != C.DataLabelPositionValues.OutsideEnd ||
+                labels.GetFirstChild<C.ShowLeaderLines>() is not C.ShowLeaderLines showLeaderLines ||
+                showLeaderLines.Val?.Value == false)) {
                 diagnostics.Add(ExcelImageExportDiagnosticClassifier.Create(
                     OfficeImageExportDiagnosticSeverity.Warning,
                     ExcelImageExportDiagnosticCodes.ChartDataLabelLeaderLinesUnsupported,
@@ -1512,6 +1556,8 @@ namespace OfficeIMO.Excel {
 
             internal IReadOnlyList<OfficeChartPointStyle?>? PointStyles { get; set; }
 
+            internal IReadOnlyList<int>? PointExplosions { get; set; }
+
             internal bool ShowMarkers { get; set; } = true;
 
             internal bool? ConnectLine { get; set; }
@@ -1524,7 +1570,7 @@ namespace OfficeIMO.Excel {
 
             internal double? MarkerOutlineWidth { get; set; }
 
-            internal bool HasAny => PointStyles != null || SeriesColorArgb != null || SeriesLineWidth != null || SeriesLineDashStyle != null || PointColorArgb != null || !ShowMarkers || ConnectLine.HasValue || MarkerSize != null || MarkerShape != null || MarkerOutlineColorArgb != null || MarkerOutlineWidth != null;
+            internal bool HasAny => PointStyles != null || PointExplosions != null || SeriesColorArgb != null || SeriesLineWidth != null || SeriesLineDashStyle != null || PointColorArgb != null || !ShowMarkers || ConnectLine.HasValue || MarkerSize != null || MarkerShape != null || MarkerOutlineColorArgb != null || MarkerOutlineWidth != null;
         }
     }
 }

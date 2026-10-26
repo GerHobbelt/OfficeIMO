@@ -11,6 +11,11 @@ namespace OfficeIMO.OpenXml.Internal;
 internal sealed class OfficeOpenXmlChartTextReader {
     private readonly A.FontScheme? _scheme;
     internal OfficeOpenXmlChartTextReader(A.FontScheme? scheme) => _scheme = scheme;
+
+    internal static bool HasUncachedFormulaTitle(C.Chart chart) =>
+        chart.Descendants<C.Title>().Any(title => title.GetFirstChild<C.ChartText>()?
+            .GetFirstChild<C.StringReference>() is C.StringReference reference &&
+            reference.Formula != null && string.IsNullOrWhiteSpace(reference.StringCache?.InnerText));
         internal bool TryReadSharedTextStyle(C.Chart chart,
             out OfficeChartStyle? style) {
             string? chartDefaultTypeface = ReadChartDefaultTypeface(chart);
@@ -196,13 +201,9 @@ internal sealed class OfficeOpenXmlChartTextReader {
                 or C.DataTable or C.TrendlineLabel) {
                 return true;
             }
-            if (element is not C.DataLabels labels) return false;
-            return labels.GetFirstChild<C.ShowValue>()?.Val?.Value == true
-                || labels.GetFirstChild<C.ShowCategoryName>()?.Val?.Value == true
-                || labels.GetFirstChild<C.ShowSeriesName>()?.Val?.Value == true
-                || labels.GetFirstChild<C.ShowPercent>()?.Val?.Value == true
-                || labels.GetFirstChild<C.ShowBubbleSize>()?.Val?.Value == true
-                || labels.GetFirstChild<C.ShowLegendKey>()?.Val?.Value == true;
+            // Data labels have their own layout font and may legitimately differ
+            // from the legend and axes without changing the shared body font.
+            return false;
         }
 
         private static bool IsThemeFontToken(string? typeface) =>

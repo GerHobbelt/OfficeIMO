@@ -96,8 +96,15 @@ namespace OfficeIMO.PowerPoint {
                     return false;
                 }
 
+                if (!forDataUpdate && OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartTextReader
+                        .HasUncachedFormulaTitle(chart)) {
+                    snapshot = null!;
+                    return false;
+                }
+
                 if (!forDataUpdate) {
-                    OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.QualifyLinearProjection(plotArea);
+                    OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.QualifyLinearProjection(plotArea,
+                        resolveSourceLinkedFormats: true);
                     OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.QualifyTypefaceOnlyTitleAppearance(plotArea);
                 }
 
@@ -132,7 +139,7 @@ namespace OfficeIMO.PowerPoint {
                         return false;
                     }
 
-                    snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate);
+                    snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate, colorScheme: colorScheme);
                     return true;
                 }
 
@@ -144,7 +151,7 @@ namespace OfficeIMO.PowerPoint {
                         return false;
                     }
 
-                    snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate);
+                    snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate, colorScheme: colorScheme);
                     return true;
                 }
 
@@ -156,7 +163,7 @@ namespace OfficeIMO.PowerPoint {
                         return false;
                     }
 
-                    snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate);
+                    snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate, colorScheme: colorScheme);
                     return true;
                 }
 
@@ -167,7 +174,7 @@ namespace OfficeIMO.PowerPoint {
                         return false;
                     }
 
-                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Radar, data, forDataUpdate: forDataUpdate);
+                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Radar, data, forDataUpdate: forDataUpdate, colorScheme: colorScheme);
                     return true;
                 }
 
@@ -178,7 +185,7 @@ namespace OfficeIMO.PowerPoint {
                         return false;
                     }
 
-                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Scatter, data, forDataUpdate: forDataUpdate);
+                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Scatter, data, forDataUpdate: forDataUpdate, colorScheme: colorScheme);
                     return true;
                 }
 
@@ -207,7 +214,7 @@ namespace OfficeIMO.PowerPoint {
                             ? OfficeChartBubbleSizeMode.Width
                             : OfficeChartBubbleSizeMode.Area;
                     snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Bubble, data,
-                        bubbleSizeMode, bubbleScale, forDataUpdate);
+                        bubbleSizeMode, bubbleScale, forDataUpdate, colorScheme);
                     return true;
                 }
 
@@ -218,7 +225,8 @@ namespace OfficeIMO.PowerPoint {
                         return false;
                     }
 
-                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Pie, data, forDataUpdate: forDataUpdate);
+                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Pie, data,
+                        forDataUpdate: forDataUpdate, colorScheme: colorScheme);
                     return true;
                 }
 
@@ -229,7 +237,8 @@ namespace OfficeIMO.PowerPoint {
                         return false;
                     }
 
-                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Doughnut, data, forDataUpdate: forDataUpdate);
+                    snapshot = CreateSnapshot(chart, PowerPointChartSnapshotKind.Doughnut, data,
+                        forDataUpdate: forDataUpdate, colorScheme: colorScheme);
                     return true;
                 }
 
@@ -269,7 +278,7 @@ namespace OfficeIMO.PowerPoint {
                 .ChildElements.OfType<OpenXmlCompositeElement>()
                 .Where(element => element.LocalName == "ser"), kind, colorScheme, forDataUpdate: forDataUpdate);
             if (data == null) return false;
-            snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate);
+            snapshot = CreateSnapshot(chart, kind, data, forDataUpdate: forDataUpdate, colorScheme: colorScheme);
             return true;
         }
 
@@ -319,6 +328,7 @@ namespace OfficeIMO.PowerPoint {
             OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSeriesReader.ValidatePlotBudget(plotArea, PowerPointUtils.MaximumSharedChartPoints);
             var axisGroups = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartAxisGroups.Create(plotArea);
             var referencedAxes = new Dictionary<OfficeChartAxisGroup, (uint Category, uint Value)>();
+            var stackedLayers = new HashSet<(PowerPointChartSnapshotKind Kind, OfficeChartAxisGroup AxisGroup)>();
             foreach (OpenXmlCompositeElement layer in plotArea.ChildElements.OfType<OpenXmlCompositeElement>()
                          .Where(element => element is C.BarChart or C.LineChart or C.AreaChart)) {
                 OpenXmlCompositeElement?[] axes = layer.Elements<C.AxisId>()
@@ -328,6 +338,13 @@ namespace OfficeIMO.PowerPoint {
                     category.AxisId?.Val?.Value is not uint categoryId || value.AxisId?.Val?.Value is not uint valueId)
                     return false;
                 OfficeChartAxisGroup group = axisGroups.Read(layer);
+                PowerPointChartSnapshotKind layerKind = layer switch {
+                    C.BarChart bar => GetBarChartSnapshotKind(bar),
+                    C.LineChart line => GetLineChartSnapshotKind(line),
+                    C.AreaChart area => GetAreaChartSnapshotKind(area),
+                    _ => throw new InvalidOperationException()
+                };
+                if (IsStackedChartKind(layerKind) && !stackedLayers.Add((layerKind, group))) return false;
                 if (referencedAxes.TryGetValue(group, out var prior) &&
                     (prior.Category != categoryId || prior.Value != valueId)) return false;
                 referencedAxes[group] = (categoryId, valueId);
@@ -405,7 +422,8 @@ namespace OfficeIMO.PowerPoint {
 
             if (series.Where(item => item.SourceOrder.HasValue).GroupBy(item => item.SourceOrder).Any(group => group.Count() > 1)) return false;
             snapshot = CreateSnapshot(chart, parts[0].Kind, new PowerPointChartData(categories,
-                series.OrderBy(item => item.SourceOrder ?? uint.MaxValue)), forDataUpdate: forDataUpdate);
+                series.OrderBy(item => item.SourceOrder ?? uint.MaxValue)), forDataUpdate: forDataUpdate,
+                colorScheme: colorScheme);
             return true;
         }
 
@@ -423,10 +441,17 @@ namespace OfficeIMO.PowerPoint {
             kind == PowerPointChartSnapshotKind.StackedBar ||
             kind == PowerPointChartSnapshotKind.StackedBar100;
 
+        private static bool IsStackedChartKind(PowerPointChartSnapshotKind kind) => kind is
+            PowerPointChartSnapshotKind.StackedColumn or PowerPointChartSnapshotKind.StackedColumn100 or
+            PowerPointChartSnapshotKind.StackedBar or PowerPointChartSnapshotKind.StackedBar100 or
+            PowerPointChartSnapshotKind.StackedLine or PowerPointChartSnapshotKind.StackedLine100 or
+            PowerPointChartSnapshotKind.StackedArea or PowerPointChartSnapshotKind.StackedArea100;
+
         private PowerPointChartSnapshot CreateSnapshot(C.Chart chart,
             PowerPointChartSnapshotKind kind, PowerPointChartData data,
             OfficeChartBubbleSizeMode bubbleSizeMode = OfficeChartBubbleSizeMode.Area,
-            double bubbleScalePercent = 100D, bool forDataUpdate = false) {
+            double bubbleScalePercent = 100D, bool forDataUpdate = false,
+            A.ColorScheme? colorScheme = null) {
             HashSet<uint> hiddenLegendSeries = GetHiddenLegendSeriesIndexes(chart);
             bool hasLegend = chart.GetFirstChild<C.Legend>() != null;
             for (int seriesIndex = 0; seriesIndex < data.Series.Count; seriesIndex++) {
@@ -438,6 +463,32 @@ namespace OfficeIMO.PowerPoint {
                     !hiddenLegendSeries.Contains(legendIndex);
             }
 
+            OfficeChartStyle style = ReadSharedTextStyle(chart) ?? OfficeChartStyle.Default;
+            OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSeriesReader.LabelLayout? radialLabels =
+                !forDataUpdate && kind != PowerPointChartSnapshotKind.Bubble
+                    ? OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSeriesReader.ReadLabels(chart, colorScheme)
+                    : null;
+            if (radialLabels?.TextColor is OfficeColor labelColor)
+                style = style.WithDataLabelTextColor(labelColor);
+            // Advanced groups use the flat cached-data projection. Their native
+            // text and surfaces are outside the qualified 2-D style contract.
+            if (!forDataUpdate &&
+                (chart.PlotArea?.GetFirstChild<C.RadarChart>() != null ||
+                 chart.PlotArea?.GetFirstChild<C.PieChart>() != null ||
+                 chart.PlotArea?.GetFirstChild<C.DoughnutChart>() != null) &&
+                kind is PowerPointChartSnapshotKind.Radar or PowerPointChartSnapshotKind.Pie or
+                    PowerPointChartSnapshotKind.Doughnut)
+                style = OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSeriesReader.ReadStyle(
+                    GetChartPart(), chart, PowerPointChartSnapshotMapper.MapKind(kind), colorScheme,
+                    style, data.Categories.Count);
+            if (!forDataUpdate && (kind is PowerPointChartSnapshotKind.Pie or PowerPointChartSnapshotKind.Doughnut)) {
+                C.PieChartSeries? radialSeries = chart.PlotArea?.Descendants<C.PieChartSeries>().FirstOrDefault();
+                OfficeColor[]? palette = radialSeries == null ? null :
+                    OfficeIMO.OpenXml.Internal.OfficeOpenXmlThemeColorResolver.ReadRadialPalette(
+                        GetChartPart(), radialSeries, data.Categories.Count, colorScheme,
+                        requireQualifiedPalette: true);
+                if (palette != null) style = style.WithPalette(palette);
+            }
             return new PowerPointChartSnapshot(
                 Name ?? string.Empty,
                 ReadTitle(chart),
@@ -447,13 +498,14 @@ namespace OfficeIMO.PowerPoint {
                 HeightPoints,
                 bubbleSizeMode,
                 bubbleScalePercent,
-                ReadChartLayout(chart, kind, forDataUpdate),
-                ReadSharedTextStyle(chart),
+                ReadChartLayout(chart, kind, forDataUpdate, radialLabels),
+                style,
                 OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartRadialLayout.Read(chart));
         }
 
         private OfficeChartLayout ReadChartLayout(
-            C.Chart chart, PowerPointChartSnapshotKind kind, bool forDataUpdate) {
+            C.Chart chart, PowerPointChartSnapshotKind kind, bool forDataUpdate,
+            OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSeriesReader.LabelLayout? radialLabels) {
             C.Legend? legend = chart.GetFirstChild<C.Legend>();
             C.LegendPositionValues? nativePosition =
                 legend?.GetFirstChild<C.LegendPosition>()?.Val?.Value;
@@ -511,9 +563,9 @@ namespace OfficeIMO.PowerPoint {
                 horizontalAxisTitle = ReadAxisTitle(horizontalAxis);
                 verticalAxisTitle = ReadAxisTitle(verticalAxis);
                 horizontalAxisNumberFormat =
-                    ReadAxisNumberFormat(horizontalAxis);
+                    ReadAxisNumberFormat(horizontalAxis, forDataUpdate);
                 verticalAxisNumberFormat =
-                    ReadAxisNumberFormat(verticalAxis);
+                    ReadAxisNumberFormat(verticalAxis, forDataUpdate);
                 horizontalMajorTickMark = ReadAxisTickMark(
                     horizontalAxis.GetFirstChild<C.MajorTickMark>()?
                         .Val?.Value);
@@ -570,12 +622,12 @@ namespace OfficeIMO.PowerPoint {
                         ? null
                         : ReadAxisTitle(positionedVerticalAxis);
                     if (positionedHorizontalAxis != null) {
-                        horizontalAxisNumberFormat = ReadAxisNumberFormat(positionedHorizontalAxis);
+                        horizontalAxisNumberFormat = ReadAxisNumberFormat(positionedHorizontalAxis, forDataUpdate);
                         horizontalMajorTickMark = ReadAxisTickMark(positionedHorizontalAxis.GetFirstChild<C.MajorTickMark>()?.Val?.Value);
                         horizontalMinorTickMark = ReadAxisTickMark(positionedHorizontalAxis.GetFirstChild<C.MinorTickMark>()?.Val?.Value);
                     }
                     if (positionedVerticalAxis != null) {
-                        verticalAxisNumberFormat = ReadAxisNumberFormat(positionedVerticalAxis);
+                        verticalAxisNumberFormat = ReadAxisNumberFormat(positionedVerticalAxis, forDataUpdate);
                         verticalMajorTickMark = ReadAxisTickMark(positionedVerticalAxis.GetFirstChild<C.MajorTickMark>()?.Val?.Value);
                         verticalMinorTickMark = ReadAxisTickMark(positionedVerticalAxis.GetFirstChild<C.MinorTickMark>()?.Val?.Value);
                     }
@@ -596,14 +648,38 @@ namespace OfficeIMO.PowerPoint {
                     scale?.GetFirstChild<C.Orientation>()?.Val?.Value == C.OrientationValues.MaxMin))
                 throw new NotSupportedException("The numeric axes cannot be projected on a linear forward scale.");
             if (primaryValueAxis != null) {
-                if (horizontalValue) horizontalAxisNumberFormat = ReadAxisNumberFormat(primaryValueAxis);
-                else verticalAxisNumberFormat = ReadAxisNumberFormat(primaryValueAxis);
+                if (horizontalValue) horizontalAxisNumberFormat = ReadAxisNumberFormat(primaryValueAxis, forDataUpdate);
+                else verticalAxisNumberFormat = ReadAxisNumberFormat(primaryValueAxis, forDataUpdate);
             }
+
+            OpenXmlCompositeElement? logicalCategoryAxis = primaryCategoryAxis ?? horizontalNumericAxis;
+            OpenXmlCompositeElement? logicalValueAxis = primaryValueAxis ?? verticalNumericAxis;
+            OpenXmlCompositeElement? physicalHorizontalAxis = horizontalValue ? logicalValueAxis : logicalCategoryAxis;
+            OpenXmlCompositeElement? physicalVerticalAxis = horizontalValue ? logicalCategoryAxis : logicalValueAxis;
+            horizontalMajorTickMark = ReadAxisTickMark(physicalHorizontalAxis?.GetFirstChild<C.MajorTickMark>()?.Val?.Value);
+            horizontalMinorTickMark = ReadAxisTickMark(physicalHorizontalAxis?.GetFirstChild<C.MinorTickMark>()?.Val?.Value);
+            verticalMajorTickMark = ReadAxisTickMark(physicalVerticalAxis?.GetFirstChild<C.MajorTickMark>()?.Val?.Value);
+            verticalMinorTickMark = ReadAxisTickMark(physicalVerticalAxis?.GetFirstChild<C.MinorTickMark>()?.Val?.Value);
+            if (!forDataUpdate && kind == PowerPointChartSnapshotKind.Radar &&
+                logicalCategoryAxis?.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>()?.Val?.Value ==
+                    C.OrientationValues.MaxMin)
+                throw new NotSupportedException("Reversed radar categories cannot be projected.");
 
             return new OfficeChartLayout(overlayLegend: overlay,
                 overlayTitle: overlayTitle,
                 showLegend: legend != null,
                 legendPosition: position,
+                showDataLabels: radialLabels?.Visible == true,
+                showDataLabelValues: radialLabels?.Values == true,
+                showDataLabelCategoryNames: radialLabels?.Categories == true,
+                showDataLabelSeriesNames: radialLabels?.SeriesNames == true,
+                showDataLabelPercentages: radialLabels?.Percentages == true,
+                dataLabelSeparator: radialLabels?.Separator,
+                dataLabelNumberFormat: radialLabels?.NumberFormat,
+                dataLabelPosition: radialLabels?.Position ?? OfficeChartDataLabelPosition.BestFit,
+                dataLabelFontSize: radialLabels?.FontSize,
+                dataLabelFontFamily: radialLabels?.FontFamily,
+                dataLabelFontStyle: radialLabels?.FontStyle,
                 categoryAxisTitle: horizontalAxisTitle,
                 valueAxisTitle: verticalAxisTitle,
                 horizontalAxisNumberFormat: horizontalAxisNumberFormat,
@@ -620,9 +696,27 @@ namespace OfficeIMO.PowerPoint {
                 verticalAxisMajorTickMark: verticalMajorTickMark,
                 horizontalAxisMinorTickMark: horizontalMinorTickMark,
                 verticalAxisMinorTickMark: verticalMinorTickMark,
+                showCategoryAxis: !IsHiddenAxis(logicalCategoryAxis),
+                showValueAxis: !IsHiddenAxis(logicalValueAxis),
+                showCategoryAxisLabels: !HasHiddenTickLabels(logicalCategoryAxis),
+                showValueAxisLabels: !HasHiddenTickLabels(logicalValueAxis),
+                horizontalAxisTickLabelPosition: ReadAxisTickLabelPosition(physicalHorizontalAxis),
+                verticalAxisTickLabelPosition: ReadAxisTickLabelPosition(physicalVerticalAxis),
+                horizontalAxisCrossingPosition: ReadAxisCrossing(physicalVerticalAxis),
+                verticalAxisCrossingPosition: ReadAxisCrossing(physicalHorizontalAxis),
+                reverseCategoryAxis: logicalCategoryAxis is C.CategoryAxis or C.DateAxis &&
+                    logicalCategoryAxis.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>()?.Val?.Value ==
+                        C.OrientationValues.MaxMin,
+                categoryAxisOrientationSpecified: logicalCategoryAxis is C.CategoryAxis or C.DateAxis &&
+                    logicalCategoryAxis.GetFirstChild<C.Scaling>()?.GetFirstChild<C.Orientation>() != null,
+                fillRadarSeries: plotArea?.GetFirstChild<C.RadarChart>()?.RadarStyle?.Val?.Value ==
+                    C.RadarStyleValues.Filled,
                 axisTitleFontFamily: axisTitleFont)
                 .WithSecondaryValueAxis(forDataUpdate ? null :
-                    OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.Read(plotArea));
+                    OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSecondaryAxis.Read(plotArea,
+                        () => OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartAxisNumberFormats
+                            .ResolveSourceLinkedGeneral(GetChartPart())))
+                .WithDataLabelLeaderLines(radialLabels?.LeaderLines == true);
         }
 
         private static OfficeChartAxisTickMark ReadAxisTickMark(
@@ -635,14 +729,45 @@ namespace OfficeIMO.PowerPoint {
                         ? OfficeChartAxisTickMark.Cross
                         : OfficeChartAxisTickMark.None;
 
+        private static bool IsHiddenAxis(OpenXmlCompositeElement? axis) =>
+            axis?.GetFirstChild<C.Delete>() is C.Delete deleted && deleted.Val?.Value != false;
+
+        private static bool HasHiddenTickLabels(OpenXmlCompositeElement? axis) =>
+            axis?.GetFirstChild<C.TickLabelPosition>()?.Val?.Value == C.TickLabelPositionValues.None;
+
+        private static OfficeChartAxisTickLabelPosition ReadAxisTickLabelPosition(
+            OpenXmlCompositeElement? axis) {
+            C.TickLabelPositionValues? value = axis?.GetFirstChild<C.TickLabelPosition>()?.Val?.Value;
+            if (value == C.TickLabelPositionValues.High) return OfficeChartAxisTickLabelPosition.High;
+            if (value == C.TickLabelPositionValues.Low) return OfficeChartAxisTickLabelPosition.Low;
+            if (value == C.TickLabelPositionValues.None) return OfficeChartAxisTickLabelPosition.None;
+            return OfficeChartAxisTickLabelPosition.NextTo;
+        }
+
+        private static OfficeChartAxisCrossingPosition ReadAxisCrossing(
+            OpenXmlCompositeElement? axis) {
+            C.CrossesValues? value = axis?.GetFirstChild<C.Crosses>()?.Val?.Value;
+            if (value == C.CrossesValues.Maximum) return OfficeChartAxisCrossingPosition.Maximum;
+            if (value == C.CrossesValues.Minimum) return OfficeChartAxisCrossingPosition.Minimum;
+            return OfficeChartAxisCrossingPosition.AutoZero;
+        }
+
         private static string? ReadAxisTitle(OpenXmlCompositeElement axis) =>
             ReadChartText(
                 axis.GetFirstChild<C.Title>()?.GetFirstChild<C.ChartText>());
 
-        private static string? ReadAxisNumberFormat(C.ValueAxis axis) {
-            if (axis.GetFirstChild<C.NumberingFormat>()?.SourceLinked?.Value != true &&
+        private string? ReadAxisNumberFormat(C.ValueAxis axis, bool forDataUpdate) {
+            if (forDataUpdate) return null;
+            if ((axis.GetFirstChild<C.NumberingFormat>()?.SourceLinked?.Value != true ||
+                    GetChartPart().ChartSpace?.GetFirstChild<C.ExternalData>() == null) &&
                 OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartSeriesReader.HasUnsupportedSharedAxisNumberFormat(axis))
                 throw new NotSupportedException("The native axis number format cannot be projected.");
+            if (axis.GetFirstChild<C.NumberingFormat>()?.SourceLinked?.Value == true) {
+                ChartPart part = GetChartPart();
+                if (part.ChartSpace?.GetFirstChild<C.ExternalData>() != null)
+                    return OfficeIMO.OpenXml.Internal.OfficeOpenXmlChartAxisNumberFormats
+                        .ResolveSourceLinkedGeneral(part);
+            }
             string? format = axis.GetFirstChild<C.NumberingFormat>()?
                 .FormatCode?.Value;
             return string.IsNullOrWhiteSpace(format) ? null : format;
@@ -720,7 +845,8 @@ namespace OfficeIMO.PowerPoint {
                     SourceIndex = item.SourceIndex,
                     SourceOrder = item.SourceOrder,
                     SharedAppearance = item.Data,
-                    HasUnsupportedSharedAppearance = item.HasUnsupportedAppearance
+                    HasUnsupportedSharedAppearance = item.HasUnsupportedAppearance,
+                    HasAutomaticSeriesColor = item.HasAutomaticColor
                 }));
 
         private static OfficeColor? ReadSeriesColor(OpenXmlCompositeElement seriesElement, PowerPointChartSnapshotKind? chartKind, A.ColorScheme? colorScheme) {
