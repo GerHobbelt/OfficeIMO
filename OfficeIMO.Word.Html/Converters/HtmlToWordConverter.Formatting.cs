@@ -53,7 +53,7 @@ namespace OfficeIMO.Word.Html {
             internal string? BackgroundBackdropColorHex { get; set; }
             internal bool PreserveHighlightOverBackground { get; set; }
             internal bool Marked { get; set; }
-            internal CapsStyle? Caps { get; set; }
+            internal WordCapsStyle? Caps { get; set; }
             internal int? LetterSpacing { get; set; }
             internal TextTransform Transform { get; set; }
             internal WhiteSpaceMode? WhiteSpace { get; set; }
@@ -74,10 +74,15 @@ namespace OfficeIMO.Word.Html {
 
         private static ICssStyleDeclaration ParseInlineDeclaration(string? styleText) {
             try {
-                return _inlineParser.ParseDeclaration(styleText ?? string.Empty);
+                var declaration = _inlineParser.ParseDeclaration(styleText ?? string.Empty);
+                if (declaration != null) {
+                    return declaration;
+                }
             } catch (Exception) {
-                return _inlineParser.ParseDeclaration(string.Empty);
             }
+
+            return _inlineParser.ParseDeclaration(string.Empty)
+                ?? throw new InvalidOperationException("Unable to create an empty CSS declaration.");
         }
 
         private static string GetInlinePropertyValue(ICssStyleDeclaration declaration, string? styleText, string propertyName) {
@@ -215,7 +220,7 @@ namespace OfficeIMO.Word.Html {
                     continue;
                 }
                 if (IsGenericFont(trimmed)) {
-                    var resolved = FontResolver.Resolve(trimmed);
+                    var resolved = WordFontResolver.Resolve(trimmed);
                     if (!string.IsNullOrEmpty(resolved)) {
                         return resolved;
                     }
@@ -255,7 +260,7 @@ namespace OfficeIMO.Word.Html {
             if (parsed.LineHeight.HasValue) {
                 paragraph.LineSpacing = parsed.LineHeight.Value;
                 if (parsed.LineHeightRule.HasValue) {
-                    paragraph.LineSpacingRule = parsed.LineHeightRule.Value;
+                    paragraph.LineSpacingRule = parsed.LineHeightRule.Value.ToOfficeEnum();
                 }
             }
 
@@ -310,7 +315,7 @@ namespace OfficeIMO.Word.Html {
             }
 
             if (alignment.HasValue) {
-                paragraph.ParagraphAlignment = alignment;
+                paragraph.ParagraphAlignment = alignment.Value.ToOfficeEnum();
             }
             if (applyVerticalBoxSpacing) {
                 int before = (marginTop ?? 0) + (paddingTop ?? 0);
@@ -427,7 +432,7 @@ namespace OfficeIMO.Word.Html {
                 if (string.IsNullOrEmpty(segment)) {
                     return;
                 }
-                var run = paragraph.AddFormattedText(segment, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting));
+                var run = paragraph.AddFormattedText(segment, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting)?.ToOfficeEnum());
                 ApplyFormatting(run, formatting, options);
                 return;
             }
@@ -437,12 +442,12 @@ namespace OfficeIMO.Word.Html {
                 if (match.Index > lastIndex) {
                     var segment = text.Substring(lastIndex, match.Index - lastIndex);
                     segment = ApplyTextTransform(segment, formatting.Transform);
-                    var run = paragraph.AddFormattedText(segment, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting));
+                    var run = paragraph.AddFormattedText(segment, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting)?.ToOfficeEnum());
                     ApplyFormatting(run, formatting, options);
                 }
                 var display = ApplyTextTransform(match.Value, formatting.Transform);
                 if (!Uri.TryCreate(match.Value, UriKind.Absolute, out var uri) || IsInvalidResolvedHref(uri, options)) {
-                    var run = paragraph.AddFormattedText(display, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting));
+                    var run = paragraph.AddFormattedText(display, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting)?.ToOfficeEnum());
                     ApplyFormatting(run, formatting, options);
                 } else {
                     var linkRun = paragraph.AddHyperLink(display, uri);
@@ -453,7 +458,7 @@ namespace OfficeIMO.Word.Html {
             if (lastIndex < text.Length) {
                 var segment = text.Substring(lastIndex);
                 segment = ApplyTextTransform(segment, formatting.Transform);
-                var run = paragraph.AddFormattedText(segment, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting));
+                var run = paragraph.AddFormattedText(segment, formatting.Bold, formatting.Italic, GetUnderlineValue(formatting)?.ToOfficeEnum());
                 ApplyFormatting(run, formatting, options);
             }
         }
@@ -482,12 +487,12 @@ namespace OfficeIMO.Word.Html {
         private void ApplyFormatting(WordParagraph run, TextFormatting formatting, HtmlToWordOptions options) {
             if (formatting.Bold) run.SetBold();
             if (formatting.Italic) run.SetItalic();
-            if (formatting.Underline) run.SetUnderline(GetUnderlineValue(formatting) ?? UnderlineValues.Single);
+            if (formatting.Underline) run.SetUnderline((GetUnderlineValue(formatting) ?? UnderlineValues.Single).ToOfficeEnum());
             if (formatting.Strike) run.SetStrike();
             if (formatting.Superscript) run.SetSuperScript();
             if (formatting.Subscript) run.SetSubScript();
             if (!string.IsNullOrEmpty(formatting.ColorHex)) run.SetColorHex(formatting.ColorHex!);
-            if (formatting.Highlight.HasValue) run.SetHighlight(formatting.Highlight.Value);
+            if (formatting.Highlight.HasValue) run.SetHighlight(formatting.Highlight.Value.ToOfficeEnum());
             ApplyTextBackground(run, formatting, options);
             if (formatting.FontSize.HasValue) run.SetFontSize(formatting.FontSize.Value);
             if (formatting.Caps.HasValue) run.SetCapsStyle(formatting.Caps.Value);
@@ -563,9 +568,9 @@ namespace OfficeIMO.Word.Html {
 
             var fontVariant = GetInlinePropertyValue(declaration, styleText, "font-variant").ToLowerInvariant();
             if (fontVariant == "small-caps") {
-                formatting.Caps = CapsStyle.SmallCaps;
+                formatting.Caps = WordCapsStyle.SmallCaps;
             } else if (fontVariant == "normal") {
-                formatting.Caps = CapsStyle.None;
+                formatting.Caps = WordCapsStyle.None;
             }
 
             var va = GetInlinePropertyValue(declaration, styleText, "vertical-align").ToLowerInvariant();
@@ -661,7 +666,7 @@ namespace OfficeIMO.Word.Html {
                 if (t == "italic" || t == "oblique") {
                     formatting.Italic = true;
                 } else if (t == "small-caps") {
-                    formatting.Caps = CapsStyle.SmallCaps;
+                    formatting.Caps = WordCapsStyle.SmallCaps;
                 } else if (t == "bold" || t == "bolder") {
                     formatting.Bold = true;
                 } else if (int.TryParse(t, out int weight)) {
@@ -750,9 +755,8 @@ namespace OfficeIMO.Word.Html {
         }
 
         private string MergeStyles(string? parentStyle, IElement childElement) {
-            var parser = new CssParser();
-            var parent = parser.ParseDeclaration(parentStyle ?? string.Empty);
-            var child = parser.ParseDeclaration(childElement.GetAttribute("style") ?? string.Empty);
+            var parent = ParseInlineDeclaration(parentStyle);
+            var child = ParseInlineDeclaration(childElement.GetAttribute("style"));
             Dictionary<string, (string Value, Priority Specificity, bool Important, int Order)> direct =
                 CollectCssDeclarations(childElement, inheritedOnly: false);
             if (_injectedInheritedCssProperties.TryGetValue(childElement, out HashSet<string>? existingInjected)) {

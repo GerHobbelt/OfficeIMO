@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory)]
     [string] $FeedPath,
 
-    [string] $Version = '3.1.0',
+    [string] $Version = '3.2.1',
 
     [switch] $KeepWorkingDirectory
 )
@@ -115,6 +115,29 @@ try {
         $metadata
     }
 
+    $expectedDirectDependencies = @{
+        'OfficeIMO.Html' = @('OfficeIMO.Core')
+        'OfficeIMO.Html.Rtf' = @('OfficeIMO.Core', 'OfficeIMO.Html', 'OfficeIMO.Rtf')
+        'OfficeIMO.Mhtml' = @('OfficeIMO.Core', 'OfficeIMO.Email', 'OfficeIMO.Html')
+        'OfficeIMO.Email.Image' = @('OfficeIMO.Core', 'OfficeIMO.Email', 'OfficeIMO.Html', 'OfficeIMO.Html.Rtf')
+        'OfficeIMO.Mhtml.Pdf' = @('OfficeIMO.Core', 'OfficeIMO.Html.Pdf', 'OfficeIMO.Mhtml', 'OfficeIMO.Pdf')
+        'OfficeIMO.Reader.Html' = @('OfficeIMO.Html', 'OfficeIMO.Markdown.Html', 'OfficeIMO.Reader.Core')
+        'OfficeIMO.Reader.Email' = @('OfficeIMO.Email', 'OfficeIMO.Mhtml', 'OfficeIMO.Reader.Core', 'OfficeIMO.Reader.Html')
+        'OfficeIMO.Reader.Epub' = @('OfficeIMO.Epub', 'OfficeIMO.Reader.Core', 'OfficeIMO.Reader.Html')
+        'OfficeIMO.Visio.Pdf' = @('OfficeIMO.Core', 'OfficeIMO.Pdf', 'OfficeIMO.Visio')
+    }
+    foreach ($entry in $expectedDirectDependencies.GetEnumerator()) {
+        $metadata = $packageMetadata | Where-Object { $_.Id -eq $entry.Key }
+        if ($null -eq $metadata) {
+            throw "Dependency contract package '$($entry.Key)' was not packed."
+        }
+        $actual = @($metadata.OfficeIMODependencies.Id | Sort-Object -Unique)
+        $expected = @($entry.Value | Sort-Object -Unique)
+        if (($actual -join '|') -ne ($expected -join '|')) {
+            throw "Package '$($entry.Key)' OfficeIMO dependencies were '$($actual -join ', ')'; expected '$($expected -join ', ')'."
+        }
+    }
+
     $toolPackages = @(
         [pscustomobject]@{
             Id = 'OfficeIMO.Tool'
@@ -131,6 +154,10 @@ try {
     $nugetConfigPath = Join-Path $workingPath 'NuGet.Config'
     $packagesPath = Join-Path $workingPath 'packages'
     $toolPath = Join-Path $workingPath 'tool'
+    $visioPdfWorkingPath = Join-Path $workingPath 'visio-pdf'
+    New-Item -ItemType Directory -Path $visioPdfWorkingPath | Out-Null
+    $visioPdfProjectPath = Join-Path $visioPdfWorkingPath 'OfficeIMO.Visio.Pdf.ReleaseConsumer.csproj'
+    $visioPdfProgramPath = Join-Path $visioPdfWorkingPath 'VisioPdfProgram.cs'
 
     $packageReferences = $libraryPackageIds | ForEach-Object {
         '    <PackageReference Include="' +
@@ -152,8 +179,142 @@ try {
     )
     $projectXml = $projectXmlLines -join [Environment]::NewLine
     Set-Content -LiteralPath $projectPath -Value $projectXml -Encoding utf8
-    Set-Content -LiteralPath $programPath -Value (
-        'Console.WriteLine("OfficeIMO 3.0 aggregate package consumer loaded.");') -Encoding utf8
+    $programSource = @"
+using System.Data.Common;
+using OfficeIMO.CSV;
+using OfficeIMO.Excel;
+using OfficeIMO.Excel.Csv;
+using OfficeIMO.Visio;
+using OfficeIMO.Word;
+
+internal static class Program
+{
+    public static async Task Main()
+    {
+        string workingPath = Path.Combine(
+            Path.GetTempPath(),
+            "officeimo-release-api-smoke-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workingPath);
+        try
+        {
+            string csvPath = Path.Combine(workingPath, "input.csv");
+            File.WriteAllText(csvPath, "Value" + Environment.NewLine + "Alpha" + Environment.NewLine);
+            using (DbDataReader csvReader = OpenCsv(csvPath))
+            {
+                if (!csvReader.Read() || !string.Equals(csvReader["Value"]?.ToString(), "Alpha", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Packed OfficeIMO.CSV reader failed its runtime smoke.");
+                }
+            }
+            if (!string.Equals(ReadCsvRows(csvPath).Single().Value, "Alpha", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Packed OfficeIMO.CSV typed mapping failed its runtime smoke.");
+            }
+
+            string adapterExcelPath = Path.Combine(workingPath, "csv-import.xlsx");
+            CsvDocument csv = CsvDocument.Load(csvPath);
+            using (ExcelDocument imported = csv.ToExcelDocument(new ExcelCsvImportOptions
+            {
+                SheetName = "Data",
+                CreateTable = false
+            }))
+            {
+                string roundTripCsv = imported["Data"].ToCsv();
+                if (!roundTripCsv.Contains("Alpha", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Packed OfficeIMO.Excel.Csv round trip failed its runtime smoke.");
+                }
+                imported.Save(adapterExcelPath);
+            }
+
+            string excelPath = Path.Combine(workingPath, "report.xlsx");
+            using (ExcelDocument excel = CreateExcel(excelPath))
+            {
+                excel.Save();
+            }
+            using (DbDataReader excelReader = OpenExcel(excelPath))
+            {
+                if (!excelReader.Read() || !string.Equals(excelReader["Value"]?.ToString(), "Alpha", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Packed OfficeIMO.Excel reader failed its runtime smoke.");
+                }
+            }
+
+            string wordPath = Path.Combine(workingPath, "report.docx");
+            using (WordDocument word = CreateWord(wordPath))
+            {
+                word.Save();
+            }
+            using (WordDocument loadedWord = WordDocument.Load(wordPath))
+            {
+                if (!loadedWord.Paragraphs.Any(paragraph => paragraph.Text.Contains("OfficeIMO.Word fluent API.", StringComparison.Ordinal)))
+                {
+                    throw new InvalidOperationException("Packed OfficeIMO.Word fluent API failed its runtime smoke.");
+                }
+            }
+
+            string visioPath = Path.Combine(workingPath, "diagram.vsdx");
+            VisioDocument visio = VisioDocument.Create(visioPath);
+            visio.AddPage("Page-1");
+            visio.Save();
+            VisioDocument loadedVisio = await LoadVisioAsync(visioPath, options: null, cancellationToken: default);
+            if (loadedVisio.Pages.Count != 1)
+            {
+                throw new InvalidOperationException("Packed OfficeIMO.Visio async load failed its runtime smoke.");
+            }
+
+            Console.WriteLine("OfficeIMO $Version aggregate package runtime smoke passed.");
+        }
+        finally
+        {
+            Directory.Delete(workingPath, recursive: true);
+        }
+    }
+
+    private static DbDataReader OpenCsv(string path) =>
+        CsvDocument.OpenDataReader(path);
+
+    private static IEnumerable<ReleaseRow> ReadCsvRows(string path) =>
+        CsvDocument.Load(path).RowsAs<ReleaseRow>();
+
+    private static DbDataReader OpenExcel(string path) =>
+        ExcelDocument.OpenDataReader(path, new ExcelReadOptions { SheetName = "Data" });
+
+    private static IEnumerable<ReleaseRow> ReadExcelRows(ExcelSheet sheet) =>
+        sheet.RowsAs<ReleaseRow>();
+
+    private static ExcelDocument CreateExcel(string path)
+    {
+        ExcelDocument document = ExcelDocument.Create(path);
+        return document.AsFluent()
+            .Sheet("Data", sheet => sheet
+                .Cell(1, 1, "Value")
+                .Cell(2, 1, "Alpha"))
+            .End();
+    }
+
+    private static WordDocument CreateWord(string path)
+    {
+        WordDocument document = WordDocument.Create(path);
+        return document.AsFluent()
+            .H1("Package smoke")
+            .Paragraph(paragraph => paragraph.Text("OfficeIMO.Word fluent API."))
+            .End();
+    }
+
+    private static Task<VisioDocument> LoadVisioAsync(
+        string path,
+        VisioLoadOptions? options,
+        CancellationToken cancellationToken) =>
+        VisioDocument.LoadAsync(path, options, cancellationToken);
+
+    private sealed class ReleaseRow
+    {
+        public string? Value { get; set; }
+    }
+}
+"@
+    Set-Content -LiteralPath $programPath -Value $programSource -Encoding utf8
 
     $sourceMappings = $packageIds | ForEach-Object {
         '      <package pattern="' +
@@ -185,6 +346,69 @@ try {
     Invoke-DotNet restore $projectPath --configfile $nugetConfigPath --packages $packagesPath --no-cache --force-evaluate
     Invoke-DotNet build $projectPath --configuration Release --no-restore
     Invoke-DotNet run --project $projectPath --configuration Release --no-build
+
+    $visioPdfProjectXml = @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net472;net8.0;net10.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="VisioPdfProgram.cs" />
+    <PackageReference Include="OfficeIMO.Visio.Pdf" Version="[$Version]" />
+  </ItemGroup>
+</Project>
+"@
+    Set-Content -LiteralPath $visioPdfProjectPath -Value $visioPdfProjectXml -Encoding utf8
+    $visioPdfProgramSource = @"
+using OfficeIMO.Visio;
+using OfficeIMO.Visio.Pdf;
+
+string[] readerAssemblies = Directory.GetFiles(
+    AppContext.BaseDirectory,
+    "OfficeIMO.Reader*.dll",
+    SearchOption.TopDirectoryOnly);
+if (readerAssemblies.Length != 0)
+{
+    throw new InvalidOperationException(
+        "OfficeIMO.Visio.Pdf restored Reader assemblies: " +
+        string.Join(", ", readerAssemblies.Select(Path.GetFileName)));
+}
+
+string workingPath = Path.Combine(
+    Path.GetTempPath(),
+    "officeimo-visio-pdf-smoke-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(workingPath);
+try
+{
+    string visioPath = Path.Combine(workingPath, "diagram.vsdx");
+    string pdfPath = Path.Combine(workingPath, "diagram.pdf");
+    VisioDocument document = VisioDocument.Create(visioPath);
+    document.AddPage("Page-1");
+    document.Save();
+
+    document.SaveAsPdf(pdfPath).RequireSuccess();
+    if (!File.Exists(pdfPath) || new FileInfo(pdfPath).Length == 0)
+    {
+        throw new InvalidOperationException("Packed OfficeIMO.Visio.Pdf produced no PDF output.");
+    }
+
+    Console.WriteLine("OfficeIMO.Visio.Pdf package smoke passed without Reader assemblies.");
+}
+finally
+{
+    Directory.Delete(workingPath, recursive: true);
+}
+"@
+    Set-Content -LiteralPath $visioPdfProgramPath -Value $visioPdfProgramSource -Encoding utf8
+    Invoke-DotNet restore $visioPdfProjectPath --configfile $nugetConfigPath --packages $packagesPath --no-cache --force-evaluate
+    Invoke-DotNet build $visioPdfProjectPath --configuration Release --no-restore
+    Invoke-DotNet run --project $visioPdfProjectPath --configuration Release --framework net8.0 --no-build
+
     foreach ($toolPackage in $toolPackages) {
         Invoke-DotNet tool install $toolPackage.Id --version $Version --tool-path $toolPath --configfile $nugetConfigPath --no-cache
         $toolExecutable = Join-Path $toolPath $toolPackage.Executable

@@ -9,6 +9,7 @@ namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
         private const int DirectSequentialCellWriteLimit = 16;
         private const int DirectCellValuesLinearHeaderDuplicateCheckLimit = 32;
+        private const int DirectCellValuesCompactReferenceCellThreshold = 4_096;
         private const int DirectCellValuesFlatSnapshotCellLimit = 500_000;
 
         /// <summary>
@@ -17,7 +18,7 @@ namespace OfficeIMO.Excel {
         /// <param name="cells">Collection of cell coordinates and values.</param>
         /// <param name="mode">Optional execution mode override.</param>
         /// <param name="ct">Cancellation token.</param>
-        public void CellValues(IEnumerable<(int Row, int Column, object Value)> cells, ExecutionMode? mode = null, CancellationToken ct = default) {
+        public void CellValues(IEnumerable<(int Row, int Column, object Value)> cells, ExcelExecutionMode? mode = null, CancellationToken ct = default) {
             if (cells is null) {
                 throw new ArgumentNullException(nameof(cells));
             }
@@ -42,7 +43,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (appendSaveCandidate == null
-                && mode == ExecutionMode.Parallel
+                && mode == ExcelExecutionMode.Parallel
                 && TryCreateDirectCellValuesAppendCandidate(list, out DirectCellValuesSaveCandidate? appendCandidate)) {
                 appendSaveCandidate = appendCandidate;
             }

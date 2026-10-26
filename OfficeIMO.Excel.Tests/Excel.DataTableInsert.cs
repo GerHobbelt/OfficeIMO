@@ -257,7 +257,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var tables = document.GetTables().OrderBy(table => table.SheetIndex).ToList();
                 Assert.Equal(new[] { "Sales_2026", "Sales_20262" }, tables.Select(table => table.Name).ToArray());
             }
@@ -485,7 +485,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("175", GetCellText(spreadsheet, worksheetPart, "B5"));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
                 Assert.Equal("A1:B5", document.Sheets[0].GetTableRange("SalesTable"));
             }
@@ -579,7 +579,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("200", GetCellText(spreadsheet, worksheetPart, "B3"));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
 
@@ -705,7 +705,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(1, 2, "Column2");
                 sheet.CellValue(2, 1, "first");
                 sheet.CellValue(2, 2, "second");
-                sheet.AddTable("A1:B2", true, "ColumnNamedSales", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                sheet.AddTable("A1:B2", true, "ColumnNamedSales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
 
                 var append = new DataTable();
                 append.Columns.Add("Column2", typeof(string));

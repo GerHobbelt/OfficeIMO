@@ -16,14 +16,9 @@ internal static partial class HtmlReaderAdapter {
         ReaderOptions effective = readerOptions ?? new ReaderOptions();
         ReaderInputLimits.EnforceFileSize(htmlPath, effective.MaxInputBytes);
         SourceMetadata source = BuildSourceMetadataFromPath(htmlPath, effective.ComputeHashes);
-        if (IsMhtmlSource(htmlPath)) {
-            MhtmlDocument archive = MhtmlDocument.Load(htmlPath, CreateMhtmlReaderOptions(effective),
-                cancellationToken: cancellationToken);
-            return BuildHtmlDocumentResult(archive.Html, source, effective,
-                PrepareMhtmlHtmlOptions(htmlOptions, archive), cancellationToken, archive);
-        }
         using var stream = new FileStream(htmlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        string html = ReadAllText(stream, cancellationToken);
+        ReaderHtmlOptions effectiveHtmlOptions = ReaderHtmlOptionsCloner.CloneOrDefault(htmlOptions);
+        string html = ReadAllText(stream, effectiveHtmlOptions.InputEncoding, cancellationToken);
         return BuildHtmlDocumentResult(html, source, effective, htmlOptions, cancellationToken);
     }
 
@@ -37,13 +32,9 @@ internal static partial class HtmlReaderAdapter {
         Stream parseStream = ReaderInputLimits.EnsureSeekableReadStream(htmlStream, effective.MaxInputBytes, cancellationToken, out bool ownsParseStream);
         try {
             UpdateSourceMetadataFromSeekableStream(source, parseStream, effective.ComputeHashes);
-            MhtmlDocument? archive = IsMhtmlSource(logicalSourceName)
-                ? LoadMhtml(parseStream, effective, cancellationToken)
-                : null;
-            string html = archive?.Html ?? ReadAllText(parseStream, cancellationToken);
-            return BuildHtmlDocumentResult(html, source, effective,
-                archive == null ? htmlOptions : PrepareMhtmlHtmlOptions(htmlOptions, archive),
-                cancellationToken, archive);
+            ReaderHtmlOptions effectiveHtmlOptions = ReaderHtmlOptionsCloner.CloneOrDefault(htmlOptions);
+            string html = ReadAllText(parseStream, effectiveHtmlOptions.InputEncoding, cancellationToken);
+            return BuildHtmlDocumentResult(html, source, effective, htmlOptions, cancellationToken);
         } finally {
             if (ownsParseStream) parseStream.Dispose();
         }
@@ -57,6 +48,13 @@ internal static partial class HtmlReaderAdapter {
         string logicalSourceName = string.IsNullOrWhiteSpace(sourceName) ? "document.html" : sourceName.Trim();
         SourceMetadata source = BuildSourceMetadataFromHtmlString(logicalSourceName, html, effective.ComputeHashes);
         return BuildHtmlDocumentResult(html, source, effective, htmlOptions, cancellationToken);
+    }
+
+    internal static OfficeDocumentReadResult ReadContentDocument(string html, SourceMetadata source, ReaderOptions readerOptions, ReaderHtmlOptions? htmlOptions, CancellationToken cancellationToken) {
+        if (html == null) throw new ArgumentNullException(nameof(html));
+        if (source == null) throw new ArgumentNullException(nameof(source));
+        if (readerOptions == null) throw new ArgumentNullException(nameof(readerOptions));
+        return BuildHtmlDocumentResult(html, source, readerOptions, htmlOptions, cancellationToken);
     }
 
     /// <summary>Reads an HTML file into the shared rich document JSON envelope.</summary>
@@ -75,8 +73,7 @@ internal static partial class HtmlReaderAdapter {
     }
 
     private static OfficeDocumentReadResult BuildHtmlDocumentResult(string html, SourceMetadata source,
-        ReaderOptions readerOptions, ReaderHtmlOptions? htmlOptions, CancellationToken cancellationToken,
-        MhtmlDocument? archive = null) {
+        ReaderOptions readerOptions, ReaderHtmlOptions? htmlOptions, CancellationToken cancellationToken) {
         ReaderHtmlOptions effectiveHtmlOptions = ReaderHtmlOptionsCloner.CloneOrDefault(htmlOptions);
         HtmlToMarkdownOptions projectionOptions = effectiveHtmlOptions.HtmlToMarkdownOptions ?? HtmlToMarkdownOptions.CreateOfficeIMOProfile();
         bool hasProjectionFilters = projectionOptions.ExcludeSelectors.Count > 0 || projectionOptions.ElementFilters.Count > 0;
@@ -99,14 +96,13 @@ internal static partial class HtmlReaderAdapter {
         }
         ReaderChunk[] chunks = ReadContent(projectedHtml, source, readerOptions, chunkHtmlOptions, cancellationToken).ToArray();
         HtmlProjection projection = ProjectHtml(logical, source.Path, readerOptions.MaxTableRows, projectionOptions, cancellationToken);
-        if (archive != null) MergeMhtmlResources(projection, archive, source.Path);
         var documentSource = new OfficeDocumentSource {
             Path = source.Path,
             SourceId = source.SourceId,
             SourceHash = source.SourceHash,
             LastWriteUtc = source.LastWriteUtc,
             LengthBytes = source.LengthBytes,
-            Title = FindHtmlMetadata(logical.Root, "title", null) ?? archive?.Subject,
+            Title = FindHtmlMetadata(logical.Root, "title", null),
             Author = FindHtmlMetadata(logical.Root, "meta", "author"),
             Subject = FindHtmlMetadata(logical.Root, "meta", "description"),
             Keywords = FindHtmlMetadata(logical.Root, "meta", "keywords")
@@ -116,7 +112,6 @@ internal static partial class HtmlReaderAdapter {
             ReaderInputKind.Html,
             documentSource,
             new[] { "officeimo.reader.html.rich-v5", "officeimo.html.logical-document" }
-                .Concat(archive == null ? Array.Empty<string>() : new[] { "officeimo.html.mhtml" })
                 .Concat(logical.Capabilities.Select(static capability => "officeimo.html." + capability)),
             projection.Assets);
         result.Html = projectedHtml;
@@ -126,7 +121,6 @@ internal static partial class HtmlReaderAdapter {
         result.Forms = projection.Forms;
         result.Visuals = projection.Visuals;
         result.Metadata = BuildHtmlMetadata(logical, projection);
-        if (archive != null) result.Diagnostics = result.Diagnostics.Concat(MapMhtmlDiagnostics(archive, source.Path)).ToArray();
         return result;
     }
 
@@ -308,13 +302,17 @@ internal static partial class HtmlReaderAdapter {
         if (!hasValue && string.Equals(node.Name, "textarea", StringComparison.OrdinalIgnoreCase)) {
             value = GetHtmlNodeText(node);
         } else if (!hasValue && string.Equals(node.Name, "select", StringComparison.OrdinalIgnoreCase)) {
-            HtmlLogicalNode[] options = EnumerateHtmlOptions(node).ToArray();
-            HtmlLogicalNode[] selected = options.Where(option => option.Attributes.ContainsKey("selected")).ToArray();
-            if (selected.Length == 0 && options.Length > 0) selected = new[] { options[0] };
+            HtmlLogicalOption[] options = EnumerateHtmlOptions(node).ToArray();
+            HtmlLogicalOption[] selected = options.Where(option => option.Node.Attributes.ContainsKey("selected")).ToArray();
+            bool multiple = node.Attributes.ContainsKey("multiple");
+            if (!multiple) {
+                HtmlLogicalOption? effective = selected.LastOrDefault() ?? options.FirstOrDefault(option => !option.IsDisabled);
+                selected = effective == null ? Array.Empty<HtmlLogicalOption>() : new[] { effective };
+            }
             value = string.Join("\n", selected.Select(option =>
-                option.Attributes.TryGetValue("value", out string? optionValue) && !string.IsNullOrWhiteSpace(optionValue)
+                option.Node.Attributes.TryGetValue("value", out string? optionValue)
                     ? optionValue
-                    : GetHtmlNodeText(option)));
+                    : HtmlFormControlSemantics.NormalizeOptionText(GetHtmlNodeText(option.Node))));
         }
         if (string.Equals(kind, "checkbox", StringComparison.OrdinalIgnoreCase)
             || string.Equals(kind, "radio", StringComparison.OrdinalIgnoreCase)) {
@@ -334,14 +332,33 @@ internal static partial class HtmlReaderAdapter {
         };
     }
 
-    private static IEnumerable<HtmlLogicalNode> EnumerateHtmlOptions(HtmlLogicalNode node) {
+    private static IEnumerable<HtmlLogicalOption> EnumerateHtmlOptions(
+        HtmlLogicalNode node,
+        bool disabledByOptGroup = false) {
         foreach (HtmlLogicalNode child in node.Children) {
+            bool childDisabledByOptGroup = disabledByOptGroup
+                || string.Equals(child.Name, "optgroup", StringComparison.OrdinalIgnoreCase)
+                    && child.Attributes.ContainsKey("disabled");
             if (child.Kind == HtmlLogicalNodeKind.FormControl &&
                 string.Equals(child.Name, "option", StringComparison.OrdinalIgnoreCase)) {
-                yield return child;
+                yield return new HtmlLogicalOption(
+                    child,
+                    child.Attributes.ContainsKey("disabled") || childDisabledByOptGroup);
             }
-            foreach (HtmlLogicalNode descendant in EnumerateHtmlOptions(child)) yield return descendant;
+            foreach (HtmlLogicalOption descendant in EnumerateHtmlOptions(child, childDisabledByOptGroup)) {
+                yield return descendant;
+            }
         }
+    }
+
+    private sealed class HtmlLogicalOption {
+        internal HtmlLogicalOption(HtmlLogicalNode node, bool isDisabled) {
+            Node = node;
+            IsDisabled = isDisabled;
+        }
+
+        internal HtmlLogicalNode Node { get; }
+        internal bool IsDisabled { get; }
     }
 
     private static string BuildHtmlTableBlockText(ReaderTable table) {
@@ -478,8 +495,8 @@ internal static partial class HtmlReaderAdapter {
     }
 
     private static string GetHtmlNodeText(HtmlLogicalNode node) {
-        if (!string.IsNullOrWhiteSpace(node.Text)) return node.Text;
-        return string.Join(" ", Descendants(node, HtmlLogicalNodeKind.Text).Select(static child => child.Text).Where(static text => !string.IsNullOrWhiteSpace(text)));
+        if (node.Text.Length > 0) return node.Text;
+        return string.Join(" ", Descendants(node, HtmlLogicalNodeKind.Text).Select(static child => child.Text).Where(static text => text.Length > 0));
     }
 
     private static string GetHtmlNodeAccessibleText(HtmlLogicalNode node) {
@@ -527,7 +544,7 @@ internal static partial class HtmlReaderAdapter {
         Path = path, SourceBlockIndex = blockIndex, SourceBlockKind = kind, BlockAnchor = anchor, TableIndex = tableIndex
     };
 
-    private static string ComputeHtmlHash(byte[] bytes) {
+    internal static string ComputeHtmlHash(byte[] bytes) {
         using var sha = SHA256.Create();
         return string.Concat(sha.ComputeHash(bytes).Select(static value => value.ToString("x2", CultureInfo.InvariantCulture)));
     }
@@ -559,18 +576,18 @@ internal static partial class HtmlReaderAdapter {
             bool reversed = list.Attributes.ContainsKey("reversed");
             int value = reversed ? items.Length : 1;
             if (list.Attributes.TryGetValue("start", out string? startValue)
-                && int.TryParse(startValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedStart)) {
+                && HtmlIntegerSemantics.TryParseInteger(startValue, out int parsedStart)) {
                 value = parsedStart;
             }
             list.Attributes.TryGetValue("type", out string? markerType);
             int step = reversed ? -1 : 1;
             foreach (HtmlLogicalNode item in items) {
                 if (item.Attributes.TryGetValue("value", out string? itemValue)
-                    && int.TryParse(itemValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedValue)) {
+                    && HtmlIntegerSemantics.TryParseInteger(itemValue, out int parsedValue)) {
                     value = parsedValue;
                 }
                 markers[item] = FormatOrderedMarker(value, markerType) + ".";
-                value += step;
+                value = HtmlIntegerSemantics.AdvanceSaturating(value, step);
             }
             return new HtmlListProjectionContext(markers);
         }

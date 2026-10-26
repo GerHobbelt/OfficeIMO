@@ -12,6 +12,7 @@ namespace OfficeIMO.Excel {
         private long _maxInputBytes = 512L * 1024L * 1024L;
         private int _schemaSampleRows = 1_024;
         private int _maxXlsbCells = 4_000_000;
+        private int _maxXlsbLogicalRows = 1_048_576;
 
         /// <summary>
         /// Gets or sets the worksheet exposed by <see cref="ExcelDocument.OpenDataReader(string, ExcelReadOptions?)"/>.
@@ -53,7 +54,7 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        /// <summary>Maximum workbook bytes buffered by <see cref="ExcelDocumentReader"/>. Default: 512 MiB.</summary>
+        /// <summary>Maximum workbook bytes buffered by the Excel reader APIs. Default: 512 MiB.</summary>
         public long MaxInputBytes {
             get => _maxInputBytes;
             set {
@@ -92,6 +93,21 @@ namespace OfficeIMO.Excel {
             }
         }
 
+        /// <summary>
+        /// Maximum logical rows emitted across one XLSB workbook data-reader operation. Default: 1,048,576.
+        /// Sparse row gaps consume this aggregate budget just like populated rows.
+        /// </summary>
+        public int MaxXlsbLogicalRows {
+            get => _maxXlsbLogicalRows;
+            set {
+                if (value <= 0) {
+                    throw new ArgumentOutOfRangeException(nameof(value), "XLSB logical-row limit must be greater than zero.");
+                }
+
+                _maxXlsbLogicalRows = value;
+            }
+        }
+
         /// <summary>Maximum cells materialized by one dense range read. Default: 1,000,000.</summary>
         public long MaxRangeCells { get; set; } = 1_000_000L;
 
@@ -102,7 +118,7 @@ namespace OfficeIMO.Excel {
         /// Execution policy used to decide Sequential vs Parallel conversion.
         /// Reuses the writer-side policy for symmetry.
         /// </summary>
-        public OfficeIMO.Excel.ExecutionPolicy Execution { get; } = new();
+        public OfficeIMO.Excel.ExcelExecutionPolicy Execution { get; } = new();
 
         /// <summary>
         /// Use cached formula results when present; otherwise returns the formula string.
@@ -164,6 +180,12 @@ namespace OfficeIMO.Excel {
         public Func<object, Type, CultureInfo, (bool ok, object? value)>? TypeConverter { get; set; }
 
         /// <summary>
+        /// Gets or sets whether typed mapping failures may include source values.
+        /// Defaults to <see cref="DataMappingErrorValuePolicy.Include"/> for compatibility.
+        /// </summary>
+        public DataMappingErrorValuePolicy MappingErrorValuePolicy { get; set; } = DataMappingErrorValuePolicy.Include;
+
+        /// <summary>
         /// Maximum number of entries loaded from the workbook shared-string table.
         /// This protects readers from malformed workbooks that advertise or contain
         /// unbounded shared-string tables.
@@ -223,6 +245,25 @@ namespace OfficeIMO.Excel {
         internal ExcelReadOptions WithCancellationToken(CancellationToken cancellationToken) {
             var clone = (ExcelReadOptions)MemberwiseClone();
             clone.CancellationToken = cancellationToken;
+            return clone;
+        }
+
+        internal ExcelReadOptions ForSheet(string sheetName, string? a1Range, CancellationToken cancellationToken) {
+            var clone = (ExcelReadOptions)MemberwiseClone();
+            clone.SheetName = sheetName;
+            clone.SheetIndex = null;
+            clone.A1Range = a1Range;
+            clone.CancellationToken = cancellationToken;
+            return clone;
+        }
+
+        internal ExcelReadOptions ForSheet(
+            string sheetName,
+            string? a1Range,
+            bool hasHeaderRow,
+            CancellationToken cancellationToken) {
+            ExcelReadOptions clone = ForSheet(sheetName, a1Range, cancellationToken);
+            clone.HasHeaderRow = hasHeaderRow;
             return clone;
         }
     }

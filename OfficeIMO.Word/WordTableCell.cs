@@ -15,6 +15,8 @@ namespace OfficeIMO.Word {
 
         internal TableCell _tableCell;
         internal TableCellProperties? _tableCellProperties;
+        private TableCellProperties? CurrentTableCellProperties =>
+            _tableCellProperties = _tableCell.TableCellProperties;
 
         /// <summary>
         /// Gets all <see cref="WordParagraph"/> instances contained in the cell.
@@ -43,9 +45,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or Sets Horizontal Merge for a Table Cell
         /// </summary>
-        public MergedCellValues? HorizontalMerge {
+        public WordCellMerge? HorizontalMerge {
             get {
-                return _tableCellProperties?.HorizontalMerge?.Val?.Value;
+                return CurrentTableCellProperties?.HorizontalMerge?.Val?.Value.ToOfficeEnum();
             }
             set {
                 AddTableCellProperties();
@@ -53,7 +55,7 @@ namespace OfficeIMO.Word {
                     _tableCellProperties!.HorizontalMerge?.Remove();
                 } else {
                     _tableCellProperties!.HorizontalMerge ??= new HorizontalMerge();
-                    _tableCellProperties.HorizontalMerge.Val = value.Value;
+                    _tableCellProperties.HorizontalMerge.Val = value.Value.ToOpenXml();
                     NormalizeTableCellPropertiesOrder();
                 }
             }
@@ -62,9 +64,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or Sets Vertical Merge for a Table Cell
         /// </summary>
-        public MergedCellValues? VerticalMerge {
+        public WordCellMerge? VerticalMerge {
             get {
-                return _tableCellProperties?.VerticalMerge?.Val?.Value;
+                return CurrentTableCellProperties?.VerticalMerge?.Val?.Value.ToOfficeEnum();
             }
             set {
                 AddTableCellProperties();
@@ -72,7 +74,7 @@ namespace OfficeIMO.Word {
                     _tableCellProperties!.VerticalMerge?.Remove();
                 } else {
                     _tableCellProperties!.VerticalMerge ??= new VerticalMerge();
-                    _tableCellProperties.VerticalMerge.Val = value.Value;
+                    _tableCellProperties.VerticalMerge.Val = value.Value.ToOpenXml();
                     NormalizeTableCellPropertiesOrder();
                 }
             }
@@ -83,7 +85,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         public bool HasHorizontalMerge {
             get {
-                return _tableCellProperties?.HorizontalMerge != null;
+                return CurrentTableCellProperties?.HorizontalMerge != null;
             }
         }
 
@@ -92,7 +94,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         public bool HasVerticalMerge {
             get {
-                return _tableCellProperties?.VerticalMerge != null;
+                return CurrentTableCellProperties?.VerticalMerge != null;
             }
         }
 
@@ -101,12 +103,12 @@ namespace OfficeIMO.Word {
         /// </summary>
         public int ColumnSpan {
             get {
-                int? gridSpan = _tableCellProperties?.GetFirstChild<GridSpan>()?.Val?.Value;
+                int? gridSpan = CurrentTableCellProperties?.GetFirstChild<GridSpan>()?.Val?.Value;
                 if (gridSpan.HasValue && gridSpan.Value > 1) {
                     return gridSpan.Value;
                 }
 
-                if (HorizontalMerge != MergedCellValues.Restart) {
+                if (HorizontalMerge != WordCellMerge.Restart) {
                     return 1;
                 }
 
@@ -118,7 +120,7 @@ namespace OfficeIMO.Word {
 
                 int span = 1;
                 for (int index = columnIndex + 1; index < cells.Count; index++) {
-                    if (cells[index].HorizontalMerge != MergedCellValues.Continue) {
+                    if (cells[index].HorizontalMerge != WordCellMerge.Continue) {
                         break;
                     }
 
@@ -134,7 +136,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         public int RowSpan {
             get {
-                if (VerticalMerge != MergedCellValues.Restart) {
+                if (VerticalMerge != WordCellMerge.Restart) {
                     return 1;
                 }
 
@@ -153,7 +155,7 @@ namespace OfficeIMO.Word {
                 int span = 1;
                 for (int index = rowIndex + 1; index < rows.Count; index++) {
                     List<WordTableCell> rowCells = rows[index].Cells;
-                    if (columnIndex >= rowCells.Count || rowCells[columnIndex].VerticalMerge != MergedCellValues.Continue) {
+                    if (columnIndex >= rowCells.Count || rowCells[columnIndex].VerticalMerge != WordCellMerge.Continue) {
                         break;
                     }
 
@@ -250,15 +252,15 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Get or set the background pattern of a cell
         /// </summary>
-        public ShadingPatternValues? ShadingPattern {
+        public WordShadingPattern? ShadingPattern {
             get {
-                return _tableCellProperties?.Shading?.Val?.Value;
+                return _tableCellProperties?.Shading?.Val?.Value.ToOfficeEnum();
             }
             set {
                 AddTableCellProperties();
                 if (value != null) {
                     _tableCellProperties!.Shading ??= new Shading();
-                    _tableCellProperties.Shading.Val = value.Value;
+                    _tableCellProperties.Shading.Val = value.Value.ToOpenXml();
                     NormalizeTableCellPropertiesOrder();
                 } else {
                     _tableCellProperties?.Shading?.Remove();
@@ -337,15 +339,15 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets cell width type
         /// </summary>
-        public TableWidthUnitValues? WidthType {
+        public WordTableWidthUnit? WidthType {
             get {
-                return _tableCellProperties?.TableCellWidth?.Type?.Value;
+                return _tableCellProperties?.TableCellWidth?.Type?.Value.ToOfficeEnum();
             }
             set {
                 AddTableCellProperties();
                 if (value != null) {
                     _tableCellProperties!.TableCellWidth ??= new TableCellWidth();
-                    _tableCellProperties.TableCellWidth.Type = value.Value;
+                    _tableCellProperties.TableCellWidth.Type = value.Value.ToOpenXml();
                     NormalizeTableCellPropertiesOrder();
                 } else {
                     _tableCellProperties?.TableCellWidth?.Remove();
@@ -356,15 +358,15 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets text direction in a Table Cell
         /// </summary>
-        public TextDirectionValues? TextDirection {
+        public WordTextDirection? TextDirection {
             get {
-                return _tableCellProperties?.TextDirection?.Val?.Value;
+                return _tableCellProperties?.TextDirection?.Val?.Value.ToOfficeEnum();
             }
             set {
                 AddTableCellProperties();
                 if (value != null) {
                     _tableCellProperties!.TextDirection ??= new TextDirection();
-                    _tableCellProperties.TextDirection.Val = value.Value;
+                    _tableCellProperties.TextDirection.Val = value.Value.ToOpenXml();
                     NormalizeTableCellPropertiesOrder();
                 } else {
                     _tableCellProperties?.TextDirection?.Remove();
@@ -375,15 +377,15 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets cell vertical alignment in a Table Cell
         /// </summary>
-        public TableVerticalAlignmentValues? VerticalAlignment {
+        public WordTableVerticalAlignment? VerticalAlignment {
             get {
-                return _tableCellProperties?.TableCellVerticalAlignment?.Val?.Value;
+                return _tableCellProperties?.TableCellVerticalAlignment?.Val?.Value.ToOfficeEnum();
             }
             set {
                 AddTableCellProperties();
                 if (value != null) {
                     _tableCellProperties!.TableCellVerticalAlignment ??= new TableCellVerticalAlignment();
-                    _tableCellProperties.TableCellVerticalAlignment.Val = value.Value;
+                    _tableCellProperties.TableCellVerticalAlignment.Val = value.Value.ToOpenXml();
                     NormalizeTableCellPropertiesOrder();
                 } else {
                     _tableCellProperties?.TableCellVerticalAlignment?.Remove();
@@ -667,6 +669,7 @@ namespace OfficeIMO.Word {
             _wordTable = wordTable;
             _wordTableRow = wordTableRow;
             _document = document;
+            wordTableRow.TrackCell(this);
         }
 
         /// <summary>
@@ -695,10 +698,14 @@ namespace OfficeIMO.Word {
         /// Ensure that TableCellProperties exist for current cell
         /// </summary>
         internal void AddTableCellProperties() {
-            if (_tableCell.TableCellProperties == null) {
-                _tableCell.InsertAt(new TableCellProperties(), 0);
+            _tableCellProperties = GetOrCreateTableCellProperties(_tableCell);
+        }
+
+        private static TableCellProperties GetOrCreateTableCellProperties(TableCell cell) {
+            if (cell.TableCellProperties == null) {
+                cell.InsertAt(new TableCellProperties(), 0);
             }
-            _tableCellProperties = _tableCell.TableCellProperties!;
+            return cell.TableCellProperties!;
         }
 
         internal void NormalizeTableCellPropertiesOrder() {
@@ -738,6 +745,7 @@ namespace OfficeIMO.Word {
         /// <param name="copyParagraphs"></param>
         public void MergeHorizontally(int cellsCount, bool copyParagraphs = false) {
             var temporaryCell = _tableCell;
+            var currentCell = _tableCell;
             AddTableCellProperties();
             _tableCellProperties!.HorizontalMerge = new HorizontalMerge {
                 Val = MergedCellValues.Restart
@@ -745,29 +753,29 @@ namespace OfficeIMO.Word {
             NormalizeTableCellPropertiesOrder();
 
             for (int i = 0; i < cellsCount; i++) {
-                var nextCell = _tableCell.NextSibling<TableCell>();
+                var nextCell = currentCell.NextSibling<TableCell>();
                 if (nextCell != null) {
-                    _tableCell = nextCell;
-                    AddTableCellProperties();
+                    currentCell = nextCell;
+                    TableCellProperties nextCellProperties = GetOrCreateTableCellProperties(nextCell);
                     if (copyParagraphs) {
-                        var paragraphs = _tableCell.ChildElements.OfType<Paragraph>();
+                        var paragraphs = nextCell.ChildElements.OfType<Paragraph>().ToList();
                         foreach (var paragraph in paragraphs) {
                             paragraph.Remove();
                             temporaryCell.Append(paragraph);
                         }
-                        _tableCell.Append(new Paragraph());
+                        nextCell.Append(new Paragraph());
                     } else {
-                        var paragraphs = _tableCell.ChildElements.OfType<Paragraph>();
+                        var paragraphs = nextCell.ChildElements.OfType<Paragraph>().ToList();
                         foreach (var paragraph in paragraphs) {
                             paragraph.Remove();
                         }
-                        _tableCell.Append(new Paragraph());
+                        nextCell.Append(new Paragraph());
                     }
 
-                    _tableCell.TableCellProperties!.HorizontalMerge = new HorizontalMerge {
+                    nextCellProperties.HorizontalMerge = new HorizontalMerge {
                         Val = MergedCellValues.Continue
                     };
-                    NormalizeTableCellPropertiesOrder();
+                    NormalizeTableCellPropertiesOrder(nextCellProperties);
                 }
             }
 
@@ -780,12 +788,12 @@ namespace OfficeIMO.Word {
         public void SplitHorizontally(int cellsCount) {
             AddTableCellProperties();
             _tableCellProperties!.HorizontalMerge?.Remove();
+            var currentCell = _tableCell;
             for (int i = 0; i < cellsCount; i++) {
-                var nextCell = _tableCell.NextSibling<TableCell>();
+                var nextCell = currentCell.NextSibling<TableCell>();
                 if (nextCell != null) {
-                    _tableCell = nextCell;
-                    AddTableCellProperties();
-                    _tableCellProperties!.HorizontalMerge?.Remove();
+                    currentCell = nextCell;
+                    GetOrCreateTableCellProperties(nextCell).HorizontalMerge?.Remove();
                 }
             }
         }
@@ -812,27 +820,26 @@ namespace OfficeIMO.Word {
                         var tableCells = tableRow.ChildElements.OfType<TableCell>().ToList();
                         if (indexOfCell < tableCells.Count) {
                             var nextCell = tableCells[indexOfCell];
-                            _tableCell = nextCell;
-                            AddTableCellProperties();
+                            TableCellProperties nextCellProperties = GetOrCreateTableCellProperties(nextCell);
                             if (copyParagraphs) {
-                                var paragraphs = _tableCell.ChildElements.OfType<Paragraph>();
+                                var paragraphs = nextCell.ChildElements.OfType<Paragraph>().ToList();
                                 foreach (var paragraph in paragraphs) {
                                     paragraph.Remove();
                                     temporaryCell.Append(paragraph);
                                 }
-                                _tableCell.Append(new Paragraph());
+                                nextCell.Append(new Paragraph());
                             } else {
-                                var paragraphs = _tableCell.ChildElements.OfType<Paragraph>();
+                                var paragraphs = nextCell.ChildElements.OfType<Paragraph>().ToList();
                                 foreach (var paragraph in paragraphs) {
                                     paragraph.Remove();
                                 }
-                                _tableCell.Append(new Paragraph());
+                                nextCell.Append(new Paragraph());
                             }
 
-                            _tableCellProperties!.VerticalMerge = new VerticalMerge {
+                            nextCellProperties.VerticalMerge = new VerticalMerge {
                                 Val = MergedCellValues.Continue
                             };
-                            NormalizeTableCellPropertiesOrder();
+                            NormalizeTableCellPropertiesOrder(nextCellProperties);
                         }
                     }
                 }
@@ -857,9 +864,7 @@ namespace OfficeIMO.Word {
                     if (tableRow != null && indexOfCell >= 0) {
                         var tableCells = tableRow.ChildElements.OfType<TableCell>().ToList();
                         if (indexOfCell < tableCells.Count) {
-                            _tableCell = tableCells[indexOfCell];
-                            AddTableCellProperties();
-                            _tableCellProperties!.VerticalMerge?.Remove();
+                            GetOrCreateTableCellProperties(tableCells[indexOfCell]).VerticalMerge?.Remove();
                         }
                     }
                 }

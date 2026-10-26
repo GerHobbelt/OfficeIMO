@@ -1,6 +1,6 @@
 #nullable enable
 
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using System.Collections;
 using System.Data;
 using System.Globalization;
@@ -26,6 +26,7 @@ public sealed partial class CsvDocument
     private Encoding _encoding;
     private CsvColumnCountMismatchPolicy _columnCountMismatchPolicy;
     private string[]? _dateTimeFormats;
+    private DataMappingErrorValuePolicy _mappingErrorValuePolicy;
     private CsvSchema? _schema;
     private bool _rowsAreParsedStringsOnly;
 
@@ -41,7 +42,14 @@ public sealed partial class CsvDocument
         _columnCountMismatchPolicy = CsvColumnCountMismatchPolicy.Strict;
     }
 
-    private CsvDocument(CsvLoadMode mode, char delimiter, CultureInfo culture, Encoding encoding, CsvColumnCountMismatchPolicy columnCountMismatchPolicy, string[]? dateTimeFormats = null)
+    private CsvDocument(
+        CsvLoadMode mode,
+        char delimiter,
+        CultureInfo culture,
+        Encoding encoding,
+        CsvColumnCountMismatchPolicy columnCountMismatchPolicy,
+        string[]? dateTimeFormats = null,
+        DataMappingErrorValuePolicy mappingErrorValuePolicy = DataMappingErrorValuePolicy.Include)
     {
         _mode = mode;
         _delimiter = delimiter;
@@ -49,6 +57,7 @@ public sealed partial class CsvDocument
         _encoding = encoding;
         _columnCountMismatchPolicy = columnCountMismatchPolicy;
         _dateTimeFormats = dateTimeFormats;
+        _mappingErrorValuePolicy = mappingErrorValuePolicy;
     }
 
     /// <summary>
@@ -138,7 +147,7 @@ public sealed partial class CsvDocument
 
         options ??= new CsvSaveOptions();
 
-        using var objectWriter = new CsvObjectWriter(writer, options, leaveOpen: true);
+        using var objectWriter = new CsvRowWriter(writer, options, leaveOpen: true);
         var wroteAny = false;
         foreach (var item in items)
         {
@@ -201,7 +210,7 @@ public sealed partial class CsvDocument
         CsvSaveOptions options,
         CancellationToken cancellationToken)
     {
-        using var objectWriter = new CsvObjectWriter(writer, options, leaveOpen: true);
+        using var objectWriter = new CsvRowWriter(writer, options, leaveOpen: true);
         objectWriter.WriteDataReader(reader, cancellationToken);
     }
 
@@ -344,6 +353,9 @@ public sealed partial class CsvDocument
     /// Gets the configured date/time formats used by typed conversions.
     /// </summary>
     public IReadOnlyList<string>? DateTimeFormats => _dateTimeFormats;
+
+    /// <summary>Gets how source values are represented in schema and row-mapping failures.</summary>
+    public DataMappingErrorValuePolicy MappingErrorValuePolicy => _mappingErrorValuePolicy;
 
     /// <summary>
     /// Saves the document to the specified path.
@@ -621,6 +633,13 @@ public sealed partial class CsvDocument
         return this;
     }
 
+    /// <summary>Sets whether schema and row-mapping failures may include source values.</summary>
+    public CsvDocument WithMappingErrorValuePolicy(DataMappingErrorValuePolicy policy)
+    {
+        _mappingErrorValuePolicy = policy;
+        return this;
+    }
+
     /// <summary>
     /// Sets the encoding used for file operations.
     /// </summary>
@@ -825,7 +844,7 @@ public sealed partial class CsvDocument
     /// <summary>
     /// Forces a streaming document to materialize into memory, enabling transformations.
     /// </summary>
-    public CsvDocument Materialize()
+    internal CsvDocument Materialize()
     {
         if (_mode == CsvLoadMode.InMemory)
         {

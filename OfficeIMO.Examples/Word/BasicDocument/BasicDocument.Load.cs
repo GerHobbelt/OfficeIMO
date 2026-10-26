@@ -13,16 +13,16 @@ namespace OfficeIMO.Examples.Word {
             string filePath = System.IO.Path.Combine(templatesPath, "Hamlet.docx");
 
             using (WordDocument document = WordDocument.Load(filePath)) {
-                Console.WriteLine($"Footnotes position: {document.FootnoteProperties?.FootnotePosition?.Val}");
-                Console.WriteLine($"Endnotes position: {document.EndnoteProperties?.EndnotePosition?.Val}");
-                Console.WriteLine($"Footnotes start: {document.FootnoteProperties?.NumberingStart?.Val}");
-                Console.WriteLine($"Endnotes restart: {document.EndnoteProperties?.NumberingRestart?.Val}");
+                Console.WriteLine($"Footnotes position: {document.FootnoteSettings.Position}");
+                Console.WriteLine($"Endnotes position: {document.EndnoteSettings.Position}");
+                Console.WriteLine($"Footnotes start: {document.FootnoteSettings.StartNumber}");
+                Console.WriteLine($"Endnotes restart: {document.EndnoteSettings.NumberingRestart}");
 
-                document.AddFootnoteProperties(position: FootnotePositionValues.PageBottom,
-                                            restartNumbering: RestartNumberValues.EachSection,
+                document.AddFootnoteProperties(position: WordFootnotePosition.PageBottom,
+                                            restartNumbering: WordNoteNumberRestart.EachSection,
                                             startNumber: 1);
-                document.AddEndnoteProperties(position: EndnotePositionValues.SectionEnd,
-                                            restartNumbering: RestartNumberValues.EachSection,
+                document.AddEndnoteProperties(position: WordEndnotePosition.SectionEnd,
+                                            restartNumbering: WordNoteNumberRestart.EachSection,
                                             startNumber: 1);
 
                 Console.WriteLine("----");

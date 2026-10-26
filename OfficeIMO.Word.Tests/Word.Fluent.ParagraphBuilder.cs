@@ -50,7 +50,7 @@ namespace OfficeIMO.Tests {
                     .Paragraph(p => p.Text("Before").Tab().Text("After"))
                     .Paragraph(p => p.Link("https://example.com", "Example", true))
                     .Paragraph(p => p.Text("Line1").Break().Text("Line2"))
-                    .Paragraph(p => p.Align(HorizontalAlignment.Right).Text("Aligned"))
+                    .Paragraph(p => p.Align(WordParagraphAlignment.Right).Text("Aligned"))
                     .End()
                     .Save();
             }
@@ -60,7 +60,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(document.Paragraphs[3].IsHyperLink);
                 Assert.Equal("https://example.com/", document.Paragraphs[3].Hyperlink?.Uri?.ToString());
                 Assert.True(document.Paragraphs[5].IsBreak);
-                Assert.Equal(JustificationValues.Right, document.Paragraphs.Last().ParagraphAlignment);
+                Assert.Equal(WordParagraphAlignment.Right, document.Paragraphs.Last().ParagraphAlignment);
             }
         }
 
@@ -76,7 +76,7 @@ namespace OfficeIMO.Tests {
             }
 
             using (var document = WordDocument.Load(filePath)) {
-                Assert.Equal(JustificationValues.Both, document.Paragraphs.Last().ParagraphAlignment);
+                Assert.Equal(WordParagraphAlignment.Both, document.Paragraphs.Last().ParagraphAlignment);
             }
         }
 
@@ -88,7 +88,7 @@ namespace OfficeIMO.Tests {
                 document.AsFluent()
                     .Paragraph(p => p.Text("Border and shading")
                         .Border(b => {
-                            b.LeftStyle = BorderValues.Thick;
+                            b.LeftStyle = WordBorderStyle.Thick;
                             b.LeftColor = Color.Blue;
                             b.LeftSize = 24;
                         })
@@ -96,9 +96,9 @@ namespace OfficeIMO.Tests {
                     .End();
 
                 var paragraph = document.Paragraphs[0];
-                Assert.Equal(BorderValues.Thick, paragraph.Borders.LeftStyle);
+                Assert.Equal(WordBorderStyle.Thick, paragraph.Borders.LeftStyle);
                 Assert.Equal(Color.Blue.ToRgbHex(), paragraph.Borders.LeftColor!.Value.ToRgbHex());
-                Assert.Equal(24U, paragraph.Borders.LeftSize!.Value);
+                Assert.Equal(24U, paragraph.Borders.LeftSize);
                 Assert.Equal(Color.LightGray.ToRgbHex(), paragraph.ShadingFillColorHex);
             }
         }

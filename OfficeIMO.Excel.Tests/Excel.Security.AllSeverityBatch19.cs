@@ -3,7 +3,7 @@ using OfficeIMO.Excel;
 using OfficeIMO.Excel.Xlsb;
 using OfficeIMO.Excel.Xlsb.Write;
 using Xunit;
-using ExcelTableStyle = OfficeIMO.Excel.TableStyle;
+using ExcelTableStyle = OfficeIMO.Excel.ExcelTableStyle;
 
 namespace OfficeIMO.Tests;
 
@@ -76,6 +76,36 @@ public partial class Excel {
                 new Dictionary<string, byte[]>(),
                 maxPartBytes: 1_024,
                 maxPackageBytes: 128 * 1_024));
+        Assert.Contains("configured rewrite limit", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Batch19_XlsbRewriteRejectsUnsafeAddedPartName() {
+        byte[] source = CreateMinimalXlsbPackage();
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => XlsbNativePackageWriter.RewritePackage(
+                source,
+                new Dictionary<string, byte[]> { ["../outside.rels"] = Array.Empty<byte>() },
+                maxPartBytes: 1_024,
+                maxPackageBytes: 128 * 1_024));
+
+        Assert.Contains("not safe", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Batch19_XlsbRewriteChargesAddedPartAgainstBudget() {
+        byte[] source = CreateMinimalXlsbPackage();
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => XlsbNativePackageWriter.RewritePackage(
+                source,
+                new Dictionary<string, byte[]> {
+                    ["xl/worksheets/_rels/sheet1.bin.rels"] = new byte[2_048]
+                },
+                maxPartBytes: 1_024,
+                maxPackageBytes: 128 * 1_024));
+
         Assert.Contains("configured rewrite limit", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

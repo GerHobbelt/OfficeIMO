@@ -42,9 +42,9 @@ namespace OfficeIMO.Excel {
                     range,
                     hasHeader: true,
                     requestedTableName,
-                    TableStyle.TableStyleMedium2,
+                    ExcelTableStyle.TableStyleMedium2,
                     includeAutoFilter: true,
-                    validationMode: TableNameValidationMode.Strict,
+                    validationMode: ExcelTableNameValidationMode.Strict,
                     headerNames: columns);
 
                 connectionId = GetNextPowerQueryConnectionId();
@@ -111,8 +111,7 @@ namespace OfficeIMO.Excel {
 
         /// <summary>Lists query-backed worksheet tables that have a resolvable native query-table relationship.</summary>
         public IReadOnlyList<ExcelQueryBackedTableInfo> GetQueryBackedTables() {
-            MaterializeDeferredDataSetImport();
-            return Locking.ExecuteRead(EnsureLock(), () => {
+            return ExecuteReadAfterMaterializing(() => {
                 IReadOnlyDictionary<uint, (string Name, string Command)> connections = ReadNativeQueryConnections();
                 var results = new List<ExcelQueryBackedTableInfo>();
                 foreach (ExcelSheet sheet in BuildSheetsWithoutCaching()) {

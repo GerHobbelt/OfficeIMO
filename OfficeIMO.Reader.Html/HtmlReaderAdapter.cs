@@ -54,14 +54,9 @@ internal static partial class HtmlReaderAdapter {
         var parseStream = ReaderInputLimits.EnsureSeekableReadStream(htmlStream, effectiveReaderOptions.MaxInputBytes, cancellationToken, out var ownsParseStream);
         try {
             UpdateSourceMetadataFromSeekableStream(source, parseStream, effectiveReaderOptions.ComputeHashes);
-            MhtmlDocument? archive = IsMhtmlSource(source.Path)
-                ? LoadMhtml(parseStream, effectiveReaderOptions, cancellationToken)
-                : null;
-            string html = archive?.Html ?? ReadAllText(parseStream, cancellationToken);
-            ReaderHtmlOptions? effectiveHtmlOptions = archive == null
-                ? htmlOptions
-                : PrepareMhtmlHtmlOptions(htmlOptions, archive);
-            foreach (var chunk in ReadContent(html, source, effectiveReaderOptions, effectiveHtmlOptions, cancellationToken)) {
+            ReaderHtmlOptions effectiveHtmlOptions = ReaderHtmlOptionsCloner.CloneOrDefault(htmlOptions);
+            string html = ReadAllText(parseStream, effectiveHtmlOptions.InputEncoding, cancellationToken);
+            foreach (var chunk in ReadContent(html, source, effectiveReaderOptions, htmlOptions, cancellationToken)) {
                 yield return chunk;
             }
         } finally {
@@ -88,7 +83,7 @@ internal static partial class HtmlReaderAdapter {
         }
     }
 
-    private static IEnumerable<ReaderChunk> ReadContent(string html, SourceMetadata source, ReaderOptions effective, ReaderHtmlOptions? htmlOptions, CancellationToken cancellationToken) {
+    internal static IEnumerable<ReaderChunk> ReadContent(string html, SourceMetadata source, ReaderOptions effective, ReaderHtmlOptions? htmlOptions, CancellationToken cancellationToken) {
         var effectiveHtmlOptions = ReaderHtmlOptionsCloner.CloneOrDefault(htmlOptions);
         int maxChars = effective.MaxChars > 0 ? effective.MaxChars : 8_000;
         var logicalSourceName = source.Path;
@@ -272,10 +267,12 @@ internal static partial class HtmlReaderAdapter {
         return parts;
     }
 
-    private static string ReadAllText(Stream stream, CancellationToken cancellationToken) {
+    private static string ReadAllText(Stream stream, Encoding? explicitEncoding, CancellationToken cancellationToken) {
         var sb = new StringBuilder();
         var buffer = new char[16 * 1024];
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 16 * 1024, leaveOpen: true);
+        Stream input = HtmlTextEncodingResolver.PrepareHtmlStream(stream, explicitEncoding, out Encoding encoding);
+        if (stream.CanSeek) stream.Position = 0;
+        using var reader = new StreamReader(input, encoding, detectEncodingFromByteOrderMarks: explicitEncoding == null, bufferSize: 16 * 1024, leaveOpen: true);
 
         while (true) {
             cancellationToken.ThrowIfCancellationRequested();
@@ -428,7 +425,7 @@ internal static partial class HtmlReaderAdapter {
         return ComputeSha256Hex(data);
     }
 
-    private static SourceMetadata BuildSourceMetadataFromPath(string path, bool computeHash) {
+    internal static SourceMetadata BuildSourceMetadataFromPath(string path, bool computeHash) {
         var normalizedPath = NormalizePathForId(path);
         var sourceId = BuildSourceId(normalizedPath);
 
@@ -462,7 +459,7 @@ internal static partial class HtmlReaderAdapter {
         };
     }
 
-    private static void UpdateSourceMetadataFromSeekableStream(SourceMetadata source, Stream stream, bool computeHash) {
+    internal static void UpdateSourceMetadataFromSeekableStream(SourceMetadata source, Stream stream, bool computeHash) {
         if (source == null) throw new ArgumentNullException(nameof(source));
         if (stream == null) throw new ArgumentNullException(nameof(stream));
 
@@ -536,7 +533,7 @@ internal static partial class HtmlReaderAdapter {
         return sb.ToString();
     }
 
-    private static string BuildSourceId(string sourceKey) {
+    internal static string BuildSourceId(string sourceKey) {
         var normalized = sourceKey ?? string.Empty;
         if (Path.DirectorySeparatorChar == '\\') {
             normalized = normalized.ToLowerInvariant();
@@ -574,7 +571,7 @@ internal static partial class HtmlReaderAdapter {
         public IReadOnlyList<string>? Warnings { get; }
     }
 
-    private sealed class SourceMetadata {
+    internal sealed class SourceMetadata {
         public string Path { get; set; } = string.Empty;
         public string SourceId { get; set; } = string.Empty;
         public string? SourceHash { get; set; }

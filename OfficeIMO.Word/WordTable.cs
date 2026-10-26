@@ -1,4 +1,5 @@
 using DocumentFormat.OpenXml.Wordprocessing;
+using System.Runtime.CompilerServices;
 
 namespace OfficeIMO.Word {
     /// <summary>
@@ -107,10 +108,10 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the horizontal alignment of the table within the page.
         /// </summary>
-        public TableRowAlignmentValues? Alignment {
+        public WordTableAlignment? Alignment {
             get {
                 if (_tableProperties != null && _tableProperties.TableJustification != null) {
-                    return _tableProperties.TableJustification.Val?.Value;
+                    return _tableProperties.TableJustification.Val?.Value.ToOfficeEnum();
                 }
 
                 return null;
@@ -121,7 +122,7 @@ namespace OfficeIMO.Word {
                     _tableProperties.TableJustification = new TableJustification();
                 }
                 if (value != null) {
-                    _tableProperties.TableJustification.Val = value.Value;
+                    _tableProperties.TableJustification.Val = value.Value.ToOpenXml();
                 } else {
                     _tableProperties.TableJustification.Remove();
                 }
@@ -131,10 +132,10 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the unit type used by the <see cref="Width"/> property.
         /// </summary>
-        public TableWidthUnitValues? WidthType {
+        public WordTableWidthUnit? WidthType {
             get {
                 if (_tableProperties != null && _tableProperties.TableWidth != null) {
-                    return _tableProperties.TableWidth.Type?.Value;
+                    return _tableProperties.TableWidth.Type?.Value.ToOfficeEnum();
                 }
 
                 return null;
@@ -144,14 +145,14 @@ namespace OfficeIMO.Word {
                 if (_tableProperties!.TableWidth == null) {
                     if (value.HasValue) {
                         _tableProperties.TableWidth = new TableWidth() {
-                            Type = value.Value,
-                            Width = value.Value == TableWidthUnitValues.Auto ? "0" : "5000"
+                            Type = value.Value.ToOpenXml(),
+                            Width = value.Value == WordTableWidthUnit.Auto ? "0" : "5000"
                         };
                     }
                 } else {
                     if (value.HasValue) {
-                        _tableProperties.TableWidth.Type = value.Value;
-                        if (value.Value == TableWidthUnitValues.Auto) {
+                        _tableProperties.TableWidth.Type = value.Value.ToOpenXml();
+                        if (value.Value == WordTableWidthUnit.Auto) {
                             _tableProperties.TableWidth.Width = "0";
                         }
                     } else {
@@ -189,29 +190,6 @@ namespace OfficeIMO.Word {
                 }
                 // Grid depends on overall width (for pct columns)
                 if (!_suppressGridRefresh) { try { RefreshTblGridFromColumnWidths(); } catch { } }
-            }
-        }
-
-        /// <summary>
-        /// Gets or sets layout of a table
-        /// </summary>
-        public TableLayoutValues? LayoutType {
-            get {
-                if (_tableProperties != null && _tableProperties.TableLayout != null) {
-                    return _tableProperties.TableLayout.Type?.Value;
-                }
-                return TableLayoutValues.Autofit;
-            }
-            set {
-                CheckTableProperties();
-                if (_tableProperties!.TableLayout == null) {
-                    _tableProperties.TableLayout = new TableLayout();
-                }
-                if (value != null) {
-                    _tableProperties.TableLayout.Type = value;
-                } else {
-                    _tableProperties.TableLayout.Remove();
-                }
             }
         }
 
@@ -281,11 +259,10 @@ namespace OfficeIMO.Word {
         /// </summary>
         public List<WordTableRow> Rows {
             get {
-                var list = new List<WordTableRow>();
+                var list = new List<WordTableRow>(_table.ChildElements.Count);
 
                 foreach (TableRow row in _table.ChildElements.OfType<TableRow>()) {
-                    WordTableRow tableRow = new WordTableRow(this, row, _document);
-                    list.Add(tableRow);
+                    list.Add(GetOrCreateRow(row, initializeCells: true));
                 }
 
                 return list;
@@ -310,6 +287,23 @@ namespace OfficeIMO.Word {
         }
 
         internal Table _table;
+        private readonly ConditionalWeakTable<TableRow, WordTableRow> _rowCache = new();
+
+        internal void TrackRow(WordTableRow row) {
+            if (!_rowCache.TryGetValue(row._tableRow, out _)) {
+                _rowCache.Add(row._tableRow, row);
+            }
+        }
+
+        private WordTableRow GetOrCreateRow(TableRow row, bool initializeCells) {
+            if (_rowCache.TryGetValue(row, out WordTableRow? cachedRow)) {
+                return cachedRow;
+            }
+
+            var wordRow = new WordTableRow(this, row, _document, initializeCells);
+            _rowCache.Add(row, wordRow);
+            return wordRow;
+        }
 
         internal TableProperties? _tableProperties {
             get {
@@ -412,7 +406,7 @@ namespace OfficeIMO.Word {
 
             if (initializeChildren) {
                 foreach (TableRow row in table.ChildElements.OfType<TableRow>().ToList()) {
-                    new WordTableRow(this, row, document);
+                    GetOrCreateRow(row, initializeCells: true);
                 }
             }
 
@@ -479,7 +473,7 @@ namespace OfficeIMO.Word {
         /// <param name="rows">Number of rows.</param>
         /// <param name="columns">Number of columns.</param>
         /// <param name="tableStyle">Style applied to the table.</param>
-        public WordTable(WordDocument document, TableCell wordTableCell, int rows, int columns, WordTableStyle tableStyle) {
+        internal WordTable(WordDocument document, TableCell wordTableCell, int rows, int columns, WordTableStyle tableStyle) {
             _document = document;
 
             _table = GenerateTable(document, rows, columns, tableStyle);

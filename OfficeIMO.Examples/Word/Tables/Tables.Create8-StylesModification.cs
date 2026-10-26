@@ -17,7 +17,7 @@ namespace OfficeIMO.Examples.Word {
             string filePath = System.IO.Path.Combine(folderPath, "Document with Tables8_StyleModification.docx");
             using (WordDocument document = WordDocument.Create(filePath)) {
                 var paragraph = document.AddParagraph("Basic paragraph");
-                paragraph.ParagraphAlignment = JustificationValues.Center;
+                paragraph.ParagraphAlignment = WordParagraphAlignment.Center;
                 document.AddParagraph();
 
                 WordTable wordTable = document.AddTable(3, 4, WordTableStyle.PlainTable1);
@@ -56,20 +56,18 @@ namespace OfficeIMO.Examples.Word {
                 styleDetails2.MarginDefaultRightWidth = 150;
 
                 // Add custom borders
-                TableBorders borders = new TableBorders(
-                    new TopBorder() { Val = BorderValues.Single, Size = 24 },
-                    new BottomBorder() { Val = BorderValues.Double, Size = 24 },
-                    new LeftBorder() { Val = BorderValues.Single, Size = 24 },
-                    new RightBorder() { Val = BorderValues.Single, Size = 24 },
-                    new InsideHorizontalBorder() { Val = BorderValues.Single, Size = 12 },
-                    new InsideVerticalBorder() { Val = BorderValues.Single, Size = 12 }
-                );
-                styleDetails2.TableBorders = borders;
+                styleDetails2.SetCustomBorders(
+                    topStyle: WordBorderStyle.Single, topSize: 24,
+                    bottomStyle: WordBorderStyle.Double, bottomSize: 24,
+                    leftStyle: WordBorderStyle.Single, leftSize: 24,
+                    rightStyle: WordBorderStyle.Single, rightSize: 24,
+                    insideHStyle: WordBorderStyle.Single, insideHSize: 12,
+                    insideVStyle: WordBorderStyle.Single, insideVSize: 12);
 
                 wordTable2.Rows[0].Cells[2].Borders.TopColor = Color.Red;
                 wordTable2.Rows[0].Cells[2].Borders.BottomColor = Color.Green;
                 wordTable2.Rows[0].Cells[2].Borders.TopSize = 24;
-                wordTable2.Rows[0].Cells[2].Borders.TopStyle = BorderValues.Single;
+                wordTable2.Rows[0].Cells[2].Borders.TopStyle = WordBorderStyle.Single;
 
                 Console.WriteLine("\nSecond table settings:");
                 Console.WriteLine("Table style: " + wordTable2.Style);

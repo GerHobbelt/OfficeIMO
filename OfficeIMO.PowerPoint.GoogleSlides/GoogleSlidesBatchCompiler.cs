@@ -1,4 +1,5 @@
 using OfficeIMO.GoogleWorkspace;
+using OfficeIMO.Drawing;
 using OfficeIMO.PowerPoint;
 using A = DocumentFormat.OpenXml.Drawing;
 
@@ -256,16 +257,16 @@ namespace OfficeIMO.PowerPoint.GoogleSlides {
         private static bool TryMapShape(PowerPointAutoShape shape, out string slidesShapeType) =>
             TryMapShape(shape.ShapeType, out slidesShapeType);
 
-        private static bool TryMapShape(A.ShapeTypeValues? shapeType, out string slidesShapeType) {
-            if (shapeType == A.ShapeTypeValues.Rectangle) slidesShapeType = "RECTANGLE";
-            else if (shapeType == A.ShapeTypeValues.RoundRectangle) slidesShapeType = "ROUND_RECTANGLE";
-            else if (shapeType == A.ShapeTypeValues.Ellipse) slidesShapeType = "ELLIPSE";
-            else if (shapeType == A.ShapeTypeValues.Triangle) slidesShapeType = "TRIANGLE";
-            else if (shapeType == A.ShapeTypeValues.RightTriangle) slidesShapeType = "RIGHT_TRIANGLE";
-            else if (shapeType == A.ShapeTypeValues.Parallelogram) slidesShapeType = "PARALLELOGRAM";
-            else if (shapeType == A.ShapeTypeValues.Trapezoid) slidesShapeType = "TRAPEZOID";
-            else if (shapeType == A.ShapeTypeValues.Diamond) slidesShapeType = "DIAMOND";
-            else if (shapeType == A.ShapeTypeValues.RightArrow) slidesShapeType = "RIGHT_ARROW";
+        private static bool TryMapShape(OfficePresetShapeType? shapeType, out string slidesShapeType) {
+            if (shapeType == OfficePresetShapeType.Rectangle) slidesShapeType = "RECTANGLE";
+            else if (shapeType == OfficePresetShapeType.RoundRectangle) slidesShapeType = "ROUND_RECTANGLE";
+            else if (shapeType == OfficePresetShapeType.Ellipse) slidesShapeType = "ELLIPSE";
+            else if (shapeType == OfficePresetShapeType.Triangle) slidesShapeType = "TRIANGLE";
+            else if (shapeType == OfficePresetShapeType.RightTriangle) slidesShapeType = "RIGHT_TRIANGLE";
+            else if (shapeType == OfficePresetShapeType.Parallelogram) slidesShapeType = "PARALLELOGRAM";
+            else if (shapeType == OfficePresetShapeType.Trapezoid) slidesShapeType = "TRAPEZOID";
+            else if (shapeType == OfficePresetShapeType.Diamond) slidesShapeType = "DIAMOND";
+            else if (shapeType == OfficePresetShapeType.RightArrow) slidesShapeType = "RIGHT_ARROW";
             else {
                 slidesShapeType = string.Empty;
                 return false;

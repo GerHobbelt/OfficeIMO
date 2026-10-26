@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using OfficeIMO.Drawing;
+using OfficeIMO.Data;
 using OfficeIMO.PowerPoint;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
@@ -51,12 +52,12 @@ namespace OfficeIMO.Examples.PowerPoint {
             intro.FontSize = 18;
             intro.Color = "1F4E79";
             slide1.BackgroundColor = "F7F7F7";
-            slide1.Transition = SlideTransition.Fade;
+            slide1.Transition = PowerPointSlideTransition.Fade;
 
             // Slide 2: highlights with image
             PowerPointSlide slide2 = presentation.AddSlide();
             slide2.AddTitle("Highlights", titleBox);
-            slide2.Transition = SlideTransition.PushLeft;
+            slide2.Transition = PowerPointSlideTransition.PushLeft;
             PowerPointTextBox highlights = slide2.AddTextBox("This slide demonstrates:", leftColumn);
             highlights.TextAutoFit = PowerPointTextAutoFit.Normal;
             highlights.SetTextMarginsCm(0.3, 0.2, 0.3, 0.2);
@@ -87,14 +88,14 @@ namespace OfficeIMO.Examples.PowerPoint {
                 PowerPointTextBox placeholder = slide2.AddTextBox("(image placeholder)", mediaBox);
                 placeholder.FillColor = "F3F3F3";
                 placeholder.OutlineColor = "CCCCCC";
-                placeholder.TextVerticalAlignment = A.TextAnchoringTypeValues.Center;
+                placeholder.TextVerticalAlignment = PowerPointTextVerticalAlignment.Center;
                 placeholder.ApplyTextStyle(PowerPointTextStyle.Body.WithColor("777777"));
             }
 
             // Slide 3: KPI table
             PowerPointSlide slide3 = presentation.AddSlide();
             slide3.AddTitle("KPI Table", titleBox);
-            slide3.Transition = SlideTransition.Wipe;
+            slide3.Transition = PowerPointSlideTransition.Wipe;
             PowerPointTable kpiTable = slide3.AddTableCm(
                 kpis,
                 o => {
@@ -112,14 +113,14 @@ namespace OfficeIMO.Examples.PowerPoint {
             for (int c = 0; c < kpiTable.Columns; c++) {
                 PowerPointTableCell header = kpiTable.GetCell(0, c);
                 header.Bold = true;
-                header.HorizontalAlignment = A.TextAlignmentTypeValues.Center;
-                header.VerticalAlignment = A.TextAnchoringTypeValues.Center;
+                header.HorizontalAlignment = PowerPointTextAlignment.Center;
+                header.VerticalAlignment = PowerPointTextVerticalAlignment.Center;
             }
 
             // Slide 4: KPI chart
             PowerPointSlide slide4 = presentation.AddSlide();
             slide4.AddTitle("KPI Chart", titleBox);
-            slide4.Transition = SlideTransition.CombHorizontal;
+            slide4.Transition = PowerPointSlideTransition.CombHorizontal;
             OfficeChartData chartData = new OfficeChartData(
                 kpis.Select(k => k.Metric),
                 new[] {
@@ -133,7 +134,7 @@ namespace OfficeIMO.Examples.PowerPoint {
                 bodyBox.WidthCm,
                 bodyBox.HeightCm);
             chart.SetTitle("Current vs Target")
-                .SetLegend(C.LegendPositionValues.Right)
+                .SetLegend(OfficeChartLegendPosition.Right)
                 .SetDataLabels(showValue: true)
                 .SetCategoryAxisTitle("Metric")
                 .SetValueAxisTitle("Score");

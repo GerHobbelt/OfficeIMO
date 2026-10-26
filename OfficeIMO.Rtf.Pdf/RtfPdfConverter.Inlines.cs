@@ -10,7 +10,7 @@ internal static partial class RtfPdfConverter {
 
         PdfCore.PdfAlign align = RtfPdfMapping.ToPdfAlign(paragraph.Alignment);
         PdfCore.PdfParagraphStyle? style = RtfPdfMapping.ToPdfParagraphStyle(document, paragraph);
-        List<PdfCore.TextRun> pendingRuns = new List<PdfCore.TextRun>();
+        List<PdfCore.PdfTextRun> pendingRuns = new List<PdfCore.PdfTextRun>();
         bool emitted = false;
         AppendListMarker(paragraph, pendingRuns, state);
 
@@ -25,7 +25,7 @@ internal static partial class RtfPdfConverter {
                     pdf.PageBreak();
                     break;
                 case RtfBreak:
-                    pendingRuns.Add(PdfCore.TextRun.LineBreak());
+                    pendingRuns.Add(PdfCore.PdfTextRun.LineBreak());
                     break;
                 case RtfField field:
                     AppendParagraphRuns(
@@ -67,15 +67,15 @@ internal static partial class RtfPdfConverter {
         }
     }
 
-    private static void FlushParagraph(PdfCore.PdfDocument pdf, List<PdfCore.TextRun> runs, PdfCore.PdfAlign align, PdfCore.PdfParagraphStyle? style) {
-        List<PdfCore.TextRun> snapshot = runs.Count == 0
-            ? new List<PdfCore.TextRun> { PdfCore.TextRun.Normal(string.Empty) }
-            : new List<PdfCore.TextRun>(runs);
+    private static void FlushParagraph(PdfCore.PdfDocument pdf, List<PdfCore.PdfTextRun> runs, PdfCore.PdfAlign align, PdfCore.PdfParagraphStyle? style) {
+        List<PdfCore.PdfTextRun> snapshot = runs.Count == 0
+            ? new List<PdfCore.PdfTextRun> { PdfCore.PdfTextRun.Normal(string.Empty) }
+            : new List<PdfCore.PdfTextRun>(runs);
         runs.Clear();
         pdf.Paragraph(paragraph => paragraph.Runs(snapshot), align, style: style);
     }
 
-    private static void AppendParagraphRuns(RtfDocument document, RtfParagraph paragraph, List<PdfCore.TextRun> runs, RtfPdfSaveOptions options, PdfRenderState state, bool collectNotes = true, string? inheritedLinkUri = null, string? inheritedLinkDestinationName = null, string? inheritedLinkContents = null) {
+    private static void AppendParagraphRuns(RtfDocument document, RtfParagraph paragraph, List<PdfCore.PdfTextRun> runs, RtfPdfSaveOptions options, PdfRenderState state, bool collectNotes = true, string? inheritedLinkUri = null, string? inheritedLinkDestinationName = null, string? inheritedLinkContents = null) {
         AppendListMarker(paragraph, runs, state);
         foreach (IRtfInline inline in paragraph.Inlines) {
             switch (inline) {
@@ -83,7 +83,7 @@ internal static partial class RtfPdfConverter {
                     AppendRun(document, run, runs, options, state, collectNotes, inheritedLinkUri, inheritedLinkDestinationName, inheritedLinkContents);
                     break;
                 case RtfBreak:
-                    runs.Add(PdfCore.TextRun.LineBreak());
+                    runs.Add(PdfCore.PdfTextRun.LineBreak());
                     break;
                 case RtfField field:
                     string? fieldLinkUri = field.Hyperlink?.ToString();
@@ -113,7 +113,7 @@ internal static partial class RtfPdfConverter {
         }
     }
 
-    private static void AppendRun(RtfDocument document, RtfRun run, List<PdfCore.TextRun> runs, RtfPdfSaveOptions options, PdfRenderState state, bool collectNotes = true, string? inheritedLinkUri = null, string? inheritedLinkDestinationName = null, string? inheritedLinkContents = null) {
+    private static void AppendRun(RtfDocument document, RtfRun run, List<PdfCore.PdfTextRun> runs, RtfPdfSaveOptions options, PdfRenderState state, bool collectNotes = true, string? inheritedLinkUri = null, string? inheritedLinkDestinationName = null, string? inheritedLinkContents = null) {
         if (run.Hidden && !options.IncludeHiddenText) {
             AddConversionWarning(
                 options,
@@ -125,6 +125,8 @@ internal static partial class RtfPdfConverter {
                 });
             return;
         }
+
+        ReportUnsupportedRunFormatting(run, options);
 
         string text = run.Text ?? string.Empty;
         if (collectNotes && run.Note != null) {
@@ -143,7 +145,7 @@ internal static partial class RtfPdfConverter {
         string? linkDestinationName = run.Hyperlink == null && linkUri == null ? inheritedLinkDestinationName : null;
         string? linkContents = (linkUri != null || linkDestinationName != null) && run.Hyperlink == null ? inheritedLinkContents : null;
 
-        runs.Add(new PdfCore.TextRun(
+        runs.Add(new PdfCore.PdfTextRun(
             text,
             bold: run.Bold,
             underline: run.Underline,
@@ -159,6 +161,41 @@ internal static partial class RtfPdfConverter {
             backgroundColor: background));
     }
 
+    private static void ReportUnsupportedRunFormatting(RtfRun run, RtfPdfSaveOptions options) {
+        var features = new List<string>();
+        if (run.Hidden && options.IncludeHiddenText) features.Add("hidden-visibility");
+        if ((run.UnderlineStyle != RtfUnderlineStyle.None && run.UnderlineStyle != RtfUnderlineStyle.Single)
+            || run.UnderlineColorIndex.HasValue) features.Add("underline-style-or-color");
+        if (run.DoubleStrike) features.Add("double-strike");
+        if (run.Outline || run.Shadow || run.Emboss || run.Imprint || run.CapsStyle != RtfCapsStyle.None) {
+            features.Add("text-effects");
+        }
+        if (run.HighlightColorIndex.HasValue && run.CharacterBackgroundColorIndex.HasValue) {
+            features.Add("overlapping-background-colors");
+        }
+        if (run.CharacterShadingForegroundColorIndex.HasValue || run.CharacterShadingPatternPercent.HasValue
+            || run.CharacterShadingPattern != RtfShadingPattern.None) features.Add("character-shading");
+        if (run.CharacterBorder.HasAnyValue) features.Add("character-border");
+        if (run.CharacterSpacingTwips.HasValue || run.CharacterScalePercent.HasValue || run.KerningHalfPoints.HasValue
+            || run.CharacterOffsetHalfPoints.HasValue) features.Add("character-metrics");
+        if (run.StyleId.HasValue || run.Direction.HasValue || run.LanguageId.HasValue) {
+            features.Add("style-direction-or-language");
+        }
+        if (run.RevisionKind != RtfRevisionKind.None || run.RevisionAuthorIndex.HasValue
+            || run.RevisionTimestampValue.HasValue || run.CharacterRevisionSaveId.HasValue
+            || run.InsertionRevisionSaveId.HasValue || run.DeletionRevisionSaveId.HasValue) {
+            features.Add("revision-metadata");
+        }
+        if (features.Count == 0) return;
+        AddConversionWarning(
+            options,
+            "RunFormattingFlattened",
+            "Run",
+            "RTF run formatting outside the PDF text-run subset was flattened.",
+            RtfConversionAction.Flattened,
+            new Dictionary<string, string> { ["Features"] = string.Join(",", features) });
+    }
+
     private static string? GetFieldLinkDestinationName(RtfField field) {
         if (field.Hyperlink != null || string.IsNullOrWhiteSpace(field.HyperlinkField?.SubAddress)) {
             return null;
@@ -167,13 +204,13 @@ internal static partial class RtfPdfConverter {
         return field.HyperlinkField!.SubAddress;
     }
 
-    private static void AppendPlainText(string text, List<PdfCore.TextRun> runs) {
+    private static void AppendPlainText(string text, List<PdfCore.PdfTextRun> runs) {
         if (!string.IsNullOrEmpty(text)) {
-            runs.Add(PdfCore.TextRun.Normal(text));
+            runs.Add(PdfCore.PdfTextRun.Normal(text));
         }
     }
 
-    private static void AppendGeneratedText(RtfGeneratedText generatedText, List<PdfCore.TextRun> runs, PdfRenderState state, bool collectNotes = true) {
+    private static void AppendGeneratedText(RtfGeneratedText generatedText, List<PdfCore.PdfTextRun> runs, PdfRenderState state, bool collectNotes = true) {
         string text = generatedText.ToPlainText();
         if (collectNotes && generatedText.Note != null) {
             state.AddNote(generatedText.Note, text);
@@ -182,10 +219,10 @@ internal static partial class RtfPdfConverter {
         AppendPlainText(text, runs);
     }
 
-    private static void AppendListMarker(RtfParagraph paragraph, List<PdfCore.TextRun> runs, PdfRenderState state) {
+    private static void AppendListMarker(RtfParagraph paragraph, List<PdfCore.PdfTextRun> runs, PdfRenderState state) {
         string? marker = GetListMarker(paragraph, state);
         if (marker != null && marker.Length > 0) {
-            runs.Add(PdfCore.TextRun.Normal(marker));
+            runs.Add(PdfCore.PdfTextRun.Normal(marker));
         }
     }
 

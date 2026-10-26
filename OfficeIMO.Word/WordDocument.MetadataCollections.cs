@@ -2,7 +2,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.Word.Fluent;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -122,20 +122,25 @@ namespace OfficeIMO.Word {
         /// </summary>
         internal Stream? OriginalStream { get; set; }
 
+        private WordSettings? _settings;
+
         /// <summary>
-        /// Provides access to document settings.
+        /// Provides access to document settings. A missing settings part is created on first use.
         /// </summary>
-        public WordSettings Settings { get; internal set; } = null!;
+        public WordSettings Settings {
+            get => _settings ??= new WordSettings(this);
+            internal set => _settings = value;
+        }
 
         /// <summary>
         /// Manages application related properties.
         /// </summary>
-        public ApplicationProperties ApplicationProperties { get; internal set; } = null!;
+        public WordApplicationProperties ApplicationProperties { get; internal set; } = null!;
 
         /// <summary>
         /// Provides access to built-in document properties.
         /// </summary>
-        public BuiltinDocumentProperties BuiltinDocumentProperties { get; internal set; } = null!;
+        public WordBuiltinDocumentProperties BuiltinDocumentProperties { get; internal set; } = null!;
 
         private WordCoverPageProperties? _coverPageProperties;
 

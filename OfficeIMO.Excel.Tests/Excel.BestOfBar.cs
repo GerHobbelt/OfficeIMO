@@ -5,7 +5,7 @@ using DocumentFormat.OpenXml.Validation;
 using OfficeIMO.Excel;
 using Xunit;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
-using ExcelTableStyle = OfficeIMO.Excel.TableStyle;
+using ExcelTableStyle = OfficeIMO.Excel.ExcelTableStyle;
 
 namespace OfficeIMO.Tests {
     public partial class Excel {
@@ -115,7 +115,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelWorkbookWriteReservationInfo reservation = document.GetWriteReservation();
 
                 Assert.True(reservation.Exists);
@@ -190,7 +190,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Equal("Id", document.Sheets[0].CellAt(1, 1).GetValue<string>());
                 Assert.Equal(2500D, document.Sheets[0].CellAt(2501, 1).GetValue<double>());
                 Assert.Empty(document.ValidateOpenXml());

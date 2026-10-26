@@ -1,4 +1,4 @@
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 namespace OfficeIMO.Rtf;
 
 internal static class RtfBytePreservingEncoding {
@@ -96,5 +96,13 @@ internal static class RtfBytePreservingEncoding {
         }
 
         return bytes;
+    }
+
+    internal static bool CanEncode(string rtf) {
+        if (rtf == null) throw new ArgumentNullException(nameof(rtf));
+        for (int index = 0; index < rtf.Length; index++) {
+            if (rtf[index] > byte.MaxValue) return false;
+        }
+        return true;
     }
 }

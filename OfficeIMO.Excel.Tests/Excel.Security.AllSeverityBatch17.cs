@@ -22,7 +22,7 @@ public partial class Excel {
 
         sourceStream.Position = 0;
         using ExcelDocument sourceDocument = ExcelDocument.Load(sourceStream, new ExcelLoadOptions {
-            AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly
+            AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly
         });
         using ExcelDocument target = ExcelDocument.Create(new MemoryStream());
         target.AddWorksheet("Existing");
@@ -96,7 +96,7 @@ public partial class Excel {
     public void ConversionSaveOptionsPreserveTheTemporaryPackageLimit() {
         var options = new ExcelSaveOptions { MaxTemporaryPackageBytes = 1_024 };
 
-        ExcelSaveOptions copy = options.WithLossPolicy(ExcelConversionLossPolicy.Allow);
+        ExcelSaveOptions copy = options.WithLossPolicy(OfficeConversionLossPolicy.Allow);
 
         Assert.Equal(1_024, copy.MaxTemporaryPackageBytes);
     }

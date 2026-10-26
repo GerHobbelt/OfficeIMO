@@ -53,8 +53,15 @@ namespace OfficeIMO.Word {
             if (format == OfficeImageExportFormat.Svg) {
                 List<OfficeImageExportDiagnostic> diagnostics = new List<OfficeImageExportDiagnostic>(snapshot.Diagnostics);
                 var fallbackCodec = new OfficeRasterImageFallbackCodec(options.ImageCodec, diagnostics, "Word document");
-                byte[] svg = OfficeDrawingSvgExporter.ToSvgBytes(drawing, options.Scale, OfficeSvgSizeUnit.Pixel, fallbackCodec);
-                return options.EnsureAccepted(new OfficeImageExportResult(format, ScaledWidth(drawing, options), ScaledHeight(drawing, options), svg, "Page " + (options.PageIndex + 1), "Word document", diagnostics));
+                double scale = options.GetEffectiveScale(drawing.Width, drawing.Height);
+                byte[] svg = OfficeDrawingSvgExporter.ToSvgBytes(
+                    drawing,
+                    scale,
+                    OfficeSvgSizeUnit.Pixel,
+                    fallbackCodec,
+                    resourceIdPrefix: null,
+                    cancellationToken);
+                return options.EnsureAccepted(new OfficeImageExportResult(format, ScaledWidth(drawing, scale), ScaledHeight(drawing, scale), svg, "Page " + (options.PageIndex + 1), "Word document", diagnostics));
             }
 
             if (format.IsRaster()) {
@@ -248,7 +255,7 @@ namespace OfficeIMO.Word {
                     fragments,
                     cancellationToken,
                     cancellationCheckpoint);
-            IReadOnlyDictionary<WordParagraph, (int Level, string Marker)> listMarkers = DocumentTraversal.BuildListMarkers(document);
+            IReadOnlyDictionary<WordParagraph, (int Level, string Marker)> listMarkers = WordDocumentTraversal.BuildListMarkers(document);
             IReadOnlyList<WordSectionBodyElement> bodyEntries = GetSectionBodyElementEntries(
                 document,
                 sectionIndex,
@@ -334,8 +341,8 @@ namespace OfficeIMO.Word {
             CancellationToken cancellationToken = default,
             Action<WordImageCancellationCheckpoint>? cancellationCheckpoint = null) {
             WordMargins? margins = section?.Margins;
-            double left = ToPoints(margins?.Left?.Value, DefaultMarginPoints);
-            double right = ToPoints(margins?.Right?.Value, DefaultMarginPoints);
+            double left = ToPoints(margins?.Left, DefaultMarginPoints);
+            double right = ToPoints(margins?.Right, DefaultMarginPoints);
             double top = Math.Min(drawing.Height, Math.Max(0D, contentTop ?? ToPoints(margins?.Top, DefaultMarginPoints)));
             double bottom = ToPoints(margins?.Bottom, DefaultMarginPoints);
             double contentWidth = Math.Max(1D, drawing.Width - left - right);
@@ -639,7 +646,7 @@ namespace OfficeIMO.Word {
                 ResolveParagraphTextColor(paragraph, colorScheme),
                 paragraph.Bold,
                 paragraph.Italic,
-                paragraph.Underline.HasValue && paragraph.Underline.Value != UnderlineValues.None,
+                paragraph.Underline.HasValue && paragraph.Underline.Value != WordUnderlineStyle.None,
                 paragraph.FontFamily ?? "Calibri",
                 paragraph.Strike || paragraph.DoubleStrike,
                 ResolveRunBackgroundColor(paragraph, colorScheme));
@@ -655,7 +662,7 @@ namespace OfficeIMO.Word {
                 style |= OfficeFontStyle.Italic;
             }
 
-            if (paragraph.Underline.HasValue && paragraph.Underline.Value != UnderlineValues.None) {
+            if (paragraph.Underline.HasValue && paragraph.Underline.Value != WordUnderlineStyle.None) {
                 style |= OfficeFontStyle.Underline;
             }
 
@@ -666,21 +673,21 @@ namespace OfficeIMO.Word {
             return new OfficeFontInfo(paragraph.FontFamily ?? "Calibri", paragraph.FontSize ?? 11, style);
         }
 
-        private static OfficeTextAlignment MapTextAlignment(JustificationValues? alignment) {
-            if (alignment == JustificationValues.Center) {
+        private static OfficeTextAlignment MapTextAlignment(WordParagraphAlignment? alignment) {
+            if (alignment == WordParagraphAlignment.Center) {
                 return OfficeTextAlignment.Center;
             }
 
-            if (alignment == JustificationValues.Right || alignment == JustificationValues.End) {
+            if (alignment == WordParagraphAlignment.Right || alignment == WordParagraphAlignment.End) {
                 return OfficeTextAlignment.Right;
             }
 
-            if (alignment == JustificationValues.Both ||
-                alignment == JustificationValues.Distribute ||
-                alignment == JustificationValues.ThaiDistribute ||
-                alignment == JustificationValues.HighKashida ||
-                alignment == JustificationValues.MediumKashida ||
-                alignment == JustificationValues.LowKashida) {
+            if (alignment == WordParagraphAlignment.Both ||
+                alignment == WordParagraphAlignment.Distribute ||
+                alignment == WordParagraphAlignment.ThaiDistribute ||
+                alignment == WordParagraphAlignment.HighKashida ||
+                alignment == WordParagraphAlignment.MediumKashida ||
+                alignment == WordParagraphAlignment.LowKashida) {
                 return OfficeTextAlignment.Justify;
             }
 
@@ -760,8 +767,8 @@ namespace OfficeIMO.Word {
 
         private static (double Width, double Height) GetPageSizePoints(WordSection? section) {
             WordPageSizes? pageSettings = section?.PageSettings;
-            double width = ToPoints(pageSettings?.Width?.Value, DefaultPageWidthPoints);
-            double height = ToPoints(pageSettings?.Height?.Value, DefaultPageHeightPoints);
+            double width = ToPoints(pageSettings?.Width, DefaultPageWidthPoints);
+            double height = ToPoints(pageSettings?.Height, DefaultPageHeightPoints);
             return (Math.Max(1D, width), Math.Max(1D, height));
         }
 
@@ -875,11 +882,11 @@ namespace OfficeIMO.Word {
             return false;
         }
 
-        private static int ScaledWidth(OfficeDrawing drawing, WordImageExportOptions options) =>
-            Math.Max(1, (int)Math.Ceiling(drawing.Width * options.Scale));
+        private static int ScaledWidth(OfficeDrawing drawing, double scale) =>
+            Math.Max(1, (int)Math.Ceiling(drawing.Width * scale));
 
-        private static int ScaledHeight(OfficeDrawing drawing, WordImageExportOptions options) =>
-            Math.Max(1, (int)Math.Ceiling(drawing.Height * options.Scale));
+        private static int ScaledHeight(OfficeDrawing drawing, double scale) =>
+            Math.Max(1, (int)Math.Ceiling(drawing.Height * scale));
 
         private static int UnscaledWidth(OfficeDrawing drawing) =>
             Math.Max(1, (int)Math.Ceiling(drawing.Width));

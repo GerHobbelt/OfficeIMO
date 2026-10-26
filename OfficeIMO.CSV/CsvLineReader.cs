@@ -9,18 +9,52 @@ namespace OfficeIMO.CSV;
 internal sealed partial class CsvLineReader : IDisposable
 {
     private const int DefaultBufferSize = 32 * 1024;
+    private const int MaximumReadRequestSize = 256 * 1024;
 #if NET8_0_OR_GREATER
     private const int UnquotedDelimiterIndexCapacity = 64;
     private const int QuotedPrefixReuseMinimumDelimiterCount = 4;
+    private static readonly System.Runtime.Intrinsics.Vector256<byte> CsvCommaVector =
+        System.Runtime.Intrinsics.Vector256.Create((byte)',');
+    private static readonly System.Runtime.Intrinsics.Vector256<byte> CsvQuoteVector =
+        System.Runtime.Intrinsics.Vector256.Create((byte)'"');
+    private static readonly System.Runtime.Intrinsics.Vector256<byte> CsvCarriageReturnVector =
+        System.Runtime.Intrinsics.Vector256.Create((byte)'\r');
+    private static readonly System.Runtime.Intrinsics.Vector256<byte> CsvLineFeedVector =
+        System.Runtime.Intrinsics.Vector256.Create((byte)'\n');
 #endif
     private readonly TextReader _reader;
-    private readonly char[] _buffer;
+    private char[] _buffer;
     private readonly CancellationToken _cancellationToken;
     private int _position;
     private int _length;
     private bool _endOfReader;
+    private bool _skipLineFeedAfterCarriageReturn;
 
     internal char[] Buffer => _buffer;
+
+    internal int PhysicalLineSeparatorsConsumed { get; private set; }
+
+    internal bool TryGrowFilledBuffer(int minimumCapacity)
+    {
+        if (minimumCapacity <= _buffer.Length || _length < _buffer.Length)
+        {
+            return false;
+        }
+
+        char[] replacement = ArrayPool<char>.Shared.Rent(minimumCapacity);
+        int remaining = _length - _position;
+        if (remaining > 0)
+        {
+            Array.Copy(_buffer, _position, replacement, 0, remaining);
+        }
+
+        char[] previous = _buffer;
+        _buffer = replacement;
+        _position = 0;
+        _length = remaining;
+        ArrayPool<char>.Shared.Return(previous);
+        return true;
+    }
 
     public CsvLineReader(TextReader reader, CancellationToken cancellationToken)
     {
@@ -60,7 +94,7 @@ internal sealed partial class CsvLineReader : IDisposable
 
 #if NET8_0_OR_GREATER
         if (!trim &&
-            delimiter <= byte.MaxValue &&
+            CanUseAvx2PackedDelimiter(delimiter) &&
             System.Runtime.Intrinsics.X86.Avx2.IsSupported &&
             TryReadUnquotedRecordOrLineAvx2(delimiter, fields, out line, out separator, out var readResult))
         {
@@ -128,7 +162,25 @@ internal sealed partial class CsvLineReader : IDisposable
         }
 
         if (!trim &&
-            delimiter <= byte.MaxValue &&
+            delimiter < byte.MaxValue &&
+            System.Runtime.Intrinsics.X86.Avx512BW.IsSupported &&
+            TryReadUnquotedFieldSpansOrLineAvx512(
+                delimiter,
+                allowEmpty,
+                emitFields,
+                recordIndex,
+                projectedFieldVisitor,
+                ref fieldVisitor,
+                out fieldCount,
+                out isEmptyRecord,
+                out separator,
+                out var avx512ReadResult))
+        {
+            return avx512ReadResult;
+        }
+
+        if (!trim &&
+            CanUseAvx2PackedDelimiter(delimiter) &&
             System.Runtime.Intrinsics.X86.Avx2.IsSupported &&
             TryReadUnquotedFieldSpansOrLineAvx2(
                 delimiter,
@@ -202,7 +254,7 @@ internal sealed partial class CsvLineReader : IDisposable
         }
         else
         {
-            ConsumeLineSeparator(_buffer[newlineIndex], out separator);
+            ConsumeLineSeparator(_buffer[newlineIndex], out separator, deferLineFeedRead: true);
         }
 
         return CsvLineReadResult.UnquotedRecord;
@@ -317,10 +369,7 @@ internal sealed partial class CsvLineReader : IDisposable
         Span<int> delimiterIndexes = stackalloc int[UnquotedDelimiterIndexCapacity];
         var delimiterCount = 0;
         var pos = start;
-        var delimiterVector = System.Runtime.Intrinsics.Vector256.Create((byte)delimiter);
-        var quoteVector = System.Runtime.Intrinsics.Vector256.Create((byte)'"');
-        var carriageReturnVector = System.Runtime.Intrinsics.Vector256.Create((byte)'\r');
-        var lineFeedVector = System.Runtime.Intrinsics.Vector256.Create((byte)'\n');
+        var delimiterVector = CreateDelimiterVector(delimiter);
 
         while (pos <= end)
         {
@@ -334,11 +383,11 @@ internal sealed partial class CsvLineReader : IDisposable
             var delimiterMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
                 System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, delimiterVector));
             var quoteMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
-                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, quoteVector));
+                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, CsvQuoteVector));
             var carriageReturnMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
-                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, carriageReturnVector));
+                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, CsvCarriageReturnVector));
             var lineFeedMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
-                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, lineFeedVector));
+                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, CsvLineFeedVector));
             var terminalMask = quoteMask | carriageReturnMask | lineFeedMask;
 
             if (terminalMask != 0)
@@ -469,7 +518,7 @@ internal sealed partial class CsvLineReader : IDisposable
 
                 if (emit)
                 {
-                    fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, length));
+                    VisitFieldRange(ref fieldVisitor, recordIndex, fieldIndex, _buffer, fieldStart, length);
                 }
 
                 fieldIndex++;
@@ -484,7 +533,13 @@ internal sealed partial class CsvLineReader : IDisposable
 
             if (emit)
             {
-                fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, unprojectedFinalLength));
+                VisitFieldRange(
+                    ref fieldVisitor,
+                    recordIndex,
+                    fieldIndex,
+                    _buffer,
+                    fieldStart,
+                    unprojectedFinalLength);
             }
 
             return fieldIndex + 1;
@@ -505,7 +560,7 @@ internal sealed partial class CsvLineReader : IDisposable
 
             if (emit && CsvFieldSpanProjection.ShouldVisitField(projectedFieldVisitor, recordIndex, fieldIndex))
             {
-                fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, length));
+                VisitFieldRange(ref fieldVisitor, recordIndex, fieldIndex, _buffer, fieldStart, length);
             }
 
             fieldIndex++;
@@ -520,7 +575,7 @@ internal sealed partial class CsvLineReader : IDisposable
 
         if (emit && CsvFieldSpanProjection.ShouldVisitField(projectedFieldVisitor, recordIndex, fieldIndex))
         {
-            fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, finalLength));
+            VisitFieldRange(ref fieldVisitor, recordIndex, fieldIndex, _buffer, fieldStart, finalLength);
         }
 
         return fieldIndex + 1;
@@ -540,6 +595,20 @@ internal sealed partial class CsvLineReader : IDisposable
         var fieldIndex = 0;
         var fieldStart = start;
         firstFieldLength = 0;
+        if (emit
+            && projectedFieldVisitor is null
+            && typeof(TVisitor) == typeof(CsvParser.CsvDataReaderStreamRowVisitor))
+        {
+            ref CsvParser.CsvDataReaderStreamRowVisitor streamVisitor = ref
+                System.Runtime.CompilerServices.Unsafe.As<TVisitor, CsvParser.CsvDataReaderStreamRowVisitor>(
+                    ref fieldVisitor);
+            streamVisitor.VisitFieldRanges(_buffer, start, end, delimiterIndexes);
+            firstFieldLength = delimiterIndexes.Length == 0
+                ? end - start
+                : delimiterIndexes[0] - start;
+            return delimiterIndexes.Length + 1;
+        }
+
         if (projectedFieldVisitor is null)
         {
             foreach (var delimiterIndex in delimiterIndexes)
@@ -552,7 +621,7 @@ internal sealed partial class CsvLineReader : IDisposable
 
                 if (emit)
                 {
-                    fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, length));
+                    VisitFieldRange(ref fieldVisitor, recordIndex, fieldIndex, _buffer, fieldStart, length);
                 }
 
                 fieldIndex++;
@@ -567,7 +636,13 @@ internal sealed partial class CsvLineReader : IDisposable
 
             if (emit)
             {
-                fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, unprojectedFinalLength));
+                VisitFieldRange(
+                    ref fieldVisitor,
+                    recordIndex,
+                    fieldIndex,
+                    _buffer,
+                    fieldStart,
+                    unprojectedFinalLength);
             }
 
             return fieldIndex + 1;
@@ -583,7 +658,7 @@ internal sealed partial class CsvLineReader : IDisposable
 
             if (emit && CsvFieldSpanProjection.ShouldVisitField(projectedFieldVisitor, recordIndex, fieldIndex))
             {
-                fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, length));
+                VisitFieldRange(ref fieldVisitor, recordIndex, fieldIndex, _buffer, fieldStart, length);
             }
 
             fieldIndex++;
@@ -598,12 +673,35 @@ internal sealed partial class CsvLineReader : IDisposable
 
         if (emit && CsvFieldSpanProjection.ShouldVisitField(projectedFieldVisitor, recordIndex, fieldIndex))
         {
-            fieldVisitor.VisitField(recordIndex, fieldIndex, _buffer.AsSpan(fieldStart, finalLength));
+            VisitFieldRange(ref fieldVisitor, recordIndex, fieldIndex, _buffer, fieldStart, finalLength);
         }
 
         return fieldIndex + 1;
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static void VisitFieldRange<TVisitor>(
+        ref TVisitor fieldVisitor,
+        int recordIndex,
+        int fieldIndex,
+        char[] buffer,
+        int start,
+        int length)
+        where TVisitor : struct, ICsvFieldSpanVisitor
+    {
+        if (typeof(TVisitor) == typeof(CsvParser.CsvDataReaderStreamRowVisitor))
+        {
+            ref CsvParser.CsvDataReaderStreamRowVisitor streamVisitor = ref
+                System.Runtime.CompilerServices.Unsafe.As<TVisitor, CsvParser.CsvDataReaderStreamRowVisitor>(
+                    ref fieldVisitor);
+            streamVisitor.VisitFieldRange(recordIndex, fieldIndex, buffer, start, length);
+            return;
+        }
+
+        fieldVisitor.VisitField(recordIndex, fieldIndex, buffer.AsSpan(start, length));
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private bool TryReadUnquotedFieldSpansOrLineAvx2<TVisitor>(
         char delimiter,
         bool allowEmpty,
@@ -632,10 +730,7 @@ internal sealed partial class CsvLineReader : IDisposable
         Span<int> delimiterIndexes = stackalloc int[UnquotedDelimiterIndexCapacity];
         var delimiterCount = 0;
         var pos = start;
-        var delimiterVector = System.Runtime.Intrinsics.Vector256.Create((byte)delimiter);
-        var quoteVector = System.Runtime.Intrinsics.Vector256.Create((byte)'"');
-        var carriageReturnVector = System.Runtime.Intrinsics.Vector256.Create((byte)'\r');
-        var lineFeedVector = System.Runtime.Intrinsics.Vector256.Create((byte)'\n');
+        var delimiterVector = CreateDelimiterVector(delimiter);
 
         while (pos <= end)
         {
@@ -649,11 +744,11 @@ internal sealed partial class CsvLineReader : IDisposable
             var delimiterMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
                 System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, delimiterVector));
             var quoteMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
-                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, quoteVector));
+                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, CsvQuoteVector));
             var carriageReturnMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
-                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, carriageReturnVector));
+                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, CsvCarriageReturnVector));
             var lineFeedMask = (uint)System.Runtime.Intrinsics.X86.Avx2.MoveMask(
-                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, lineFeedVector));
+                System.Runtime.Intrinsics.X86.Avx2.CompareEqual(packedBytes, CsvLineFeedVector));
             var terminalMask = quoteMask | carriageReturnMask | lineFeedMask;
 
             if (terminalMask != 0)
@@ -702,7 +797,7 @@ internal sealed partial class CsvLineReader : IDisposable
                     out var firstFieldLength);
                 isEmptyRecord = fieldCount == 1 && firstFieldLength == 0;
                 _position = newlineIndex;
-                ConsumeLineSeparator(_buffer[newlineIndex], out separator);
+                ConsumeLineSeparator(_buffer[newlineIndex], out separator, deferLineFeedRead: true);
                 readResult = CsvLineReadResult.UnquotedRecord;
                 return true;
             }
@@ -718,6 +813,7 @@ internal sealed partial class CsvLineReader : IDisposable
         return false;
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static bool AddDelimiterIndexes(uint delimiterMask, int chunkStart, Span<int> delimiterIndexes, ref int delimiterCount)
     {
         while (delimiterMask != 0)
@@ -734,6 +830,16 @@ internal sealed partial class CsvLineReader : IDisposable
 
         return true;
     }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static bool CanUseAvx2PackedDelimiter(char delimiter) =>
+        delimiter > byte.MinValue && delimiter < byte.MaxValue;
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static System.Runtime.Intrinsics.Vector256<byte> CreateDelimiterVector(char delimiter) =>
+        delimiter == ','
+            ? CsvCommaVector
+            : System.Runtime.Intrinsics.Vector256.Create((byte)delimiter);
 
     private void VisitFieldSpan<TVisitor>(
         int start,
@@ -775,11 +881,19 @@ internal sealed partial class CsvLineReader : IDisposable
         return line;
     }
 
-    private void ConsumeLineSeparator(char newline, out string separator)
+    private void ConsumeLineSeparator(char newline, out string separator, bool deferLineFeedRead = false)
     {
         _position++;
+        PhysicalLineSeparatorsConsumed++;
         if (newline == '\r')
         {
+            if (deferLineFeedRead && _position >= _length && !_endOfReader)
+            {
+                _skipLineFeedAfterCarriageReturn = true;
+                separator = "\r";
+                return;
+            }
+
             separator = ConsumeLineFeedAfterCarriageReturn() ? "\r\n" : "\r";
         }
         else
@@ -817,26 +931,40 @@ internal sealed partial class CsvLineReader : IDisposable
     private bool EnsureBuffered()
     {
         _cancellationToken.ThrowIfCancellationRequested();
-        if (_position < _length)
+        while (true)
         {
-            return true;
-        }
+            if (_position < _length)
+            {
+                if (_skipLineFeedAfterCarriageReturn)
+                {
+                    _skipLineFeedAfterCarriageReturn = false;
+                    if (_buffer[_position] == '\n')
+                    {
+                        _position++;
+                        if (_position >= _length)
+                        {
+                            continue;
+                        }
+                    }
+                }
 
-        if (_endOfReader)
-        {
-            return false;
-        }
+                return true;
+            }
 
-        _length = _reader.Read(_buffer, 0, _buffer.Length);
-        _cancellationToken.ThrowIfCancellationRequested();
-        _position = 0;
-        if (_length > 0)
-        {
-            return true;
-        }
+            if (_endOfReader)
+            {
+                _skipLineFeedAfterCarriageReturn = false;
+                return false;
+            }
 
-        _endOfReader = true;
-        return false;
+            _length = _reader.Read(_buffer, 0, Math.Min(MaximumReadRequestSize, _buffer.Length));
+            _cancellationToken.ThrowIfCancellationRequested();
+            _position = 0;
+            if (_length == 0)
+            {
+                _endOfReader = true;
+            }
+        }
     }
 
 #if NET8_0_OR_GREATER
@@ -856,7 +984,10 @@ internal sealed partial class CsvLineReader : IDisposable
 
         _position = 0;
         _length = remaining;
-        var read = _reader.Read(_buffer, remaining, _buffer.Length - remaining);
+        var read = _reader.Read(
+            _buffer,
+            remaining,
+            Math.Min(MaximumReadRequestSize, _buffer.Length - remaining));
         _cancellationToken.ThrowIfCancellationRequested();
         if (read == 0)
         {

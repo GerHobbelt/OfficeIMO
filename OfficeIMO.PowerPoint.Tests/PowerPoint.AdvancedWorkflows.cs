@@ -181,14 +181,14 @@ namespace OfficeIMO.Tests {
                     presentation.Save();
                 }
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     PowerPointSmartArt[] diagrams = presentation.Slides[0].SmartArts.ToArray();
                     Assert.Equal(3, diagrams.Length);
                     Assert.Equal(new[] { "Discover", "Design", "Deliver" }, diagrams[0].GetNodeTexts());
                     Assert.Equal(new[] { "Plan", "Run", "Learn", "Adapt" }, diagrams[2].GetNodeTexts());
                     var validation = presentation.ValidateDocument();
                     Assert.True(validation.Count == 0, string.Join(Environment.NewLine,
-                        validation.Select(error => error.Description + " | " + error.Path?.XPath)));
+                        validation.Select(error => error.Description + " | " + error.Path)));
                 }
             } finally {
                 if (File.Exists(path)) File.Delete(path);
@@ -704,7 +704,7 @@ namespace OfficeIMO.Tests {
             control.AddSlide().AddTitle("Filtered thumbnail");
             withPicture.AddSlide().AddTitle("Filtered thumbnail");
             withPicture.Slides[0].AddPicture(new MemoryStream(PdfPngTestImages.CreateRgbPng(255, 0, 0)),
-                OfficeIMO.PowerPoint.ImagePartType.Png, PowerPointUnits.FromPoints(72), PowerPointUnits.FromPoints(72),
+                OfficeIMO.Drawing.OfficeImageFormat.Png, PowerPointUnits.FromPoints(72), PowerPointUnits.FromPoints(72),
                 PowerPointUnits.FromPoints(180), PowerPointUnits.FromPoints(120));
 
             var controlOptions = new PowerPointPdfSaveOptions { PageLayout = layout };
@@ -742,7 +742,7 @@ namespace OfficeIMO.Tests {
                     Assert.Equal(PowerPointSignatureMutationAction.Blocked, blocked.Report.Action);
 
                     presentation.SignatureMutationPolicy =
-                        PowerPointSignatureMutationPolicy.RemoveInvalidatedSignatures;
+                        OfficeSignatureMutationPolicy.RemoveInvalidatedSignatures;
                     presentation.Save();
                     Assert.Equal(PowerPointSignatureMutationAction.Removed,
                         presentation.LastSignatureReport!.Action);
@@ -766,7 +766,7 @@ namespace OfficeIMO.Tests {
                 AddSyntheticSignature(path);
 
                 PowerPointPresentation edited = PowerPointPresentation.Load(path,
-                    new PowerPointLoadOptions { PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose });
+                    new PowerPointLoadOptions { PersistenceMode = OfficeIMO.DocumentPersistenceMode.SaveOnDispose });
                 edited.Slides[0].AddTextBox("Must not persist");
                 PowerPointSignedPresentationMutationException blocked =
                     Assert.Throws<PowerPointSignedPresentationMutationException>(() => edited.Dispose());
@@ -775,7 +775,7 @@ namespace OfficeIMO.Tests {
                 using (PresentationDocument signed = PresentationDocument.Open(path, false)) {
                     Assert.NotNull(signed.DigitalSignatureOriginPart);
                 }
-                using PowerPointPresentation reopened = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using PowerPointPresentation reopened = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 Assert.DoesNotContain(reopened.Slides[0].TextBoxes,
                     textBox => textBox.Text == "Must not persist");
             } finally {
@@ -793,7 +793,7 @@ namespace OfficeIMO.Tests {
                 }
                 AddSyntheticSignature(path);
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Load(path, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     Assert.True(presentation.InspectSignatures().HasSignatureMetadata);
                     Assert.Equal("Signed inspection", presentation.Slides[0].TextBoxes.First().Text);
                 }

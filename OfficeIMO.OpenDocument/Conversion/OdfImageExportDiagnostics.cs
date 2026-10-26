@@ -14,10 +14,10 @@ public static class OdfImageExportDiagnostics {
         var diagnostics = new List<OfficeImageExportDiagnostic>();
         foreach (OdfConversionMapping mapping in report.Mappings) {
             if (mapping.Status == OdfConversionMappingStatus.Converted) continue;
-            OfficeImageExportLossKind lossKind =
+            OfficeConversionLossKind lossKind =
                 mapping.Status == OdfConversionMappingStatus.Approximated
-                    ? OfficeImageExportLossKind.Approximation
-                    : OfficeImageExportLossKind.Omission;
+                    ? OfficeConversionLossKind.Approximation
+                    : OfficeConversionLossKind.Omission;
             string message = string.IsNullOrWhiteSpace(mapping.Message)
                 ? $"{mapping.Count} {mapping.Feature} item(s) were {mapping.Status.ToString().ToLowerInvariant()} " +
                   $"while converting {report.SourceFormat} to {report.TargetFormat} for image export."
@@ -45,15 +45,7 @@ public static class OdfImageExportDiagnostics {
             conversionDiagnostics.Count + result.Diagnostics.Count);
         diagnostics.AddRange(conversionDiagnostics);
         diagnostics.AddRange(result.Diagnostics);
-        return new OfficeImageExportResult(
-            result.Format,
-            result.Width,
-            result.Height,
-            result.Bytes,
-            result.Name,
-            result.Source,
-            diagnostics,
-            result.SavedPath);
+        return result.WithDiagnostics(diagnostics.AsReadOnly());
     }
 
     private static string CreateCode(OdfConversionMapping mapping) {

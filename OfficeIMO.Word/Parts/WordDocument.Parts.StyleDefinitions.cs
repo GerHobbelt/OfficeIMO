@@ -10,13 +10,13 @@ namespace OfficeIMO.Word {
         private static void AddTableStyles(Styles styles, bool overrideExisting) {
             var listOfTableStyles = global::OfficeIMO.Internal.EnumCompat.GetValues<WordTableStyle>();
             foreach (var style in listOfTableStyles) {
-                var definition = WordTableStyles.GetStyleDefinition(style);
-                var existing = styles.OfType<Style>().FirstOrDefault(s => s.StyleId?.Value == definition.StyleId?.Value);
+                string? styleId = WordTableStyles.GetStyle(style).Val?.Value;
+                var existing = styles.OfType<Style>().FirstOrDefault(s => s.StyleId?.Value == styleId);
                 if (existing == null) {
-                    styles.Append((Style)definition.CloneNode(true));
+                    styles.Append(WordTableStyles.GetStyleDefinition(style));
                 } else if (overrideExisting) {
                     existing.Remove();
-                    styles.Append((Style)definition.CloneNode(true));
+                    styles.Append(WordTableStyles.GetStyleDefinition(style));
                 }
             }
         }
@@ -192,7 +192,7 @@ namespace OfficeIMO.Word {
             // TODO: load all styles to document, probably we should load those in use
             var listOfStyles = global::OfficeIMO.Internal.EnumCompat.GetValues<WordParagraphStyles>();
             foreach (var style in listOfStyles) {
-                var styleDef = WordParagraphStyle.GetStyleDefinition(style);
+                var styleDef = WordParagraphStyle.GetOpenXmlStyleDefinition(style);
                 if (styleDef != null) {
                     styles1.Append(styleDef);
                 }

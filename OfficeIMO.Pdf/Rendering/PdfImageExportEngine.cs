@@ -119,6 +119,7 @@ internal static class PdfImageExportEngine {
 
         cancellationToken.ThrowIfCancellationRequested();
         if (format == OfficeImageExportFormat.Svg) {
+            effective.Scale = effective.GetEffectiveScale(drawing.Width, drawing.Height);
             drawing = AddBackground(drawing, effective.BackgroundColor);
             byte[] svg = OfficeDrawingSvgExporter.ToSvgBytes(
                 drawing,
@@ -240,9 +241,9 @@ internal static class PdfImageExportEngine {
                 diagnostic.Message,
                 diagnosticSource,
                 diagnostic.SupportLevel switch {
-                    PdfRenderSupportLevel.Simplified => OfficeImageExportLossKind.Approximation,
-                    PdfRenderSupportLevel.Unsupported => OfficeImageExportLossKind.Omission,
-                    _ => OfficeImageExportLossKind.None
+                    PdfRenderSupportLevel.Simplified => OfficeConversionLossKind.Approximation,
+                    PdfRenderSupportLevel.Unsupported => OfficeConversionLossKind.Omission,
+                    _ => OfficeConversionLossKind.None
                 }));
         }
         return diagnostics;

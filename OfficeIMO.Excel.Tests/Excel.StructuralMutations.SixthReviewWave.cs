@@ -63,7 +63,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(1, 1, "A");
             sheet.CellValue(2, 1, 1);
             sheet.CellValue(3, 1, 2);
-            sheet.AddTable("A1:A3", true, "Sales", OfficeIMO.Excel.TableStyle.TableStyleMedium2);
+            sheet.AddTable("A1:A3", true, "Sales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2);
             sheet.Range("B2:C2").Merge();
 
             Assert.Throws<InvalidOperationException>(() =>
@@ -98,7 +98,7 @@ namespace OfficeIMO.Tests {
             X14.SparklineGroup group = Assert.Single(sheet.WorksheetPart.Worksheet.Descendants<X14.SparklineGroup>());
             group.Type = null;
 
-            Assert.Equal(0, sheet.SetSparklineType("D1", X14.SparklineTypeValues.Line));
+            Assert.Equal(0, sheet.SetSparklineType("D1", ExcelSparklineType.Line));
             Assert.Single(sheet.WorksheetPart.Worksheet.Descendants<X14.SparklineGroup>());
             Assert.Equal(2, sheet.GetSparklines().Count);
         }

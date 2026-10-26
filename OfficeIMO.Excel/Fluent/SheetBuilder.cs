@@ -4,6 +4,8 @@ using System.Globalization;
 using System.Data;
 using System.Reflection;
 using System.Text;
+using OfficeIMO.Data;
+using OfficeIMO.Spreadsheet;
 using OfficeColor = OfficeIMO.Drawing.OfficeColor;
 
 namespace OfficeIMO.Excel.Fluent {
@@ -59,27 +61,49 @@ namespace OfficeIMO.Excel.Fluent {
             var options = new ObjectFlattenerOptions();
             configure?.Invoke(options);
             if (options.MaxRows <= 0) throw new ArgumentOutOfRangeException(nameof(options.MaxRows));
+            options.MaxColumns = Math.Min(options.MaxColumns, A1.MaxColumns);
             int maximumDataRows = Math.Min(options.MaxRows, Math.Max(0, A1.MaxRows - _currentRow));
-
-            var rows = MaterializeRowsBounded(data, maximumDataRows);
-            if (rows.Count == 0) return this;
-
             int startRow = _currentRow;
-            if (configure == null && TryRowsFromSimpleFastPath(rows, startRow)) {
+            if (configure == null && !ObjectDictionaryAdapter.IsDictionaryType(typeof(T))) {
+                RowsFromSimpleTypePlan typePlan = GetRowsFromSimpleTypePlan(typeof(T));
+                if (typePlan.CanUseDirectSave) {
+                    EnsureRowsFromColumnLimit(typePlan.Headers.Length, options.MaxColumns);
+                    int maximumSimpleRows = GetRowsFromMaximumRowsForCellLimit(
+                        maximumDataRows,
+                        typePlan.Headers.Length,
+                        options.MaxCells);
+                    IReadOnlyList<T> simpleRows = MaterializeRowsBounded(
+                        data,
+                        maximumSimpleRows,
+                        typePlan.Headers.Length,
+                        options.MaxCells);
+                    if (simpleRows.Count == 0) return this;
+                    if (TryRowsFromSimpleFastPath(simpleRows, startRow, options)) return this;
+                }
+            }
+
+            if (maximumDataRows == 0) {
+                using IEnumerator<T> enumerator = data.GetEnumerator();
+                if (enumerator.MoveNext()) {
+                    throw new InvalidDataException("RowsFrom exceeds the 0-row worksheet boundary.");
+                }
                 return this;
             }
-
+            options.MaxRows = maximumDataRows;
             var flattener = new ObjectFlattener();
-            var paths = options.Columns?.ToList() ?? flattener.GetPaths(typeof(T), options);
-            if (options.Columns != null) {
-                paths = flattener.ResolvePaths(paths, options);
-            }
+            ObjectTableProjection projection = flattener.FlattenRows(
+                data,
+                options,
+                "RowsFrom",
+                headerRowCount: 1,
+                enforceEmptyProjectionLimits: false);
+            if (projection.Rows.Count == 0) return this;
+            IReadOnlyList<string> paths = projection.Columns;
             var headers = BuildTransformedHeaders(paths, options);
 
-            var rowValues = new List<object?[]>(rows.Count);
+            var rowValues = new List<object?[]>(projection.Rows.Count);
             int dataRows = 0;
-            foreach (var item in rows) {
-                var dict = flattener.Flatten(item, options);
+            foreach (Dictionary<string, object?> dict in projection.Rows) {
                 if (options.CollectionMode == CollectionMode.ExpandRows) {
                     var collectionPath = paths.FirstOrDefault(p => dict.TryGetValue(p, out var val) && val is IEnumerable && val is not string);
                     if (collectionPath != null && dict[collectionPath] is IEnumerable coll) {
@@ -91,7 +115,9 @@ namespace OfficeIMO.Excel.Fluent {
                             collectionPath,
                             coll,
                             maximumDataRows - dataRows,
-                            options.MaxCollectionItems);
+                            options.MaxCollectionItems,
+                            options.MaxCells,
+                            dataRows);
                         continue;
                     }
                 }
@@ -99,6 +125,7 @@ namespace OfficeIMO.Excel.Fluent {
                 if (dataRows >= maximumDataRows) {
                     throw new InvalidDataException($"RowsFrom exceeds the {maximumDataRows}-row materialization limit.");
                 }
+                EnsureRowsFromCellLimit(dataRows + 1, paths.Count, options.MaxCells);
                 rowValues.Add(ProjectRowsFromValues(paths, dict, options.DefaultValues));
                 dataRows++;
             }
@@ -123,9 +150,14 @@ namespace OfficeIMO.Excel.Fluent {
             return this;
         }
 
-        private static IReadOnlyList<T> MaterializeRowsBounded<T>(IEnumerable<T> data, int maximumRows) {
+        private static IReadOnlyList<T> MaterializeRowsBounded<T>(
+            IEnumerable<T> data,
+            int maximumRows,
+            int cellColumnCount,
+            long maximumCells) {
             if (data is IReadOnlyList<T> rows) {
                 if (rows.Count > maximumRows) {
+                    EnsureRowsFromCellLimit(rows.Count, cellColumnCount, maximumCells);
                     throw new InvalidDataException($"RowsFrom exceeds the {maximumRows}-row materialization limit.");
                 }
                 return rows;
@@ -134,11 +166,21 @@ namespace OfficeIMO.Excel.Fluent {
             var materialized = new List<T>(Math.Min(maximumRows, 4096));
             foreach (T item in data) {
                 if (materialized.Count >= maximumRows) {
+                    EnsureRowsFromCellLimit(materialized.Count + 1, cellColumnCount, maximumCells);
                     throw new InvalidDataException($"RowsFrom exceeds the {maximumRows}-row materialization limit.");
                 }
                 materialized.Add(item);
             }
             return materialized;
+        }
+
+        private static int GetRowsFromMaximumRowsForCellLimit(
+            int maximumRows,
+            int columnCount,
+            long maximumCells) {
+            if (columnCount <= 0) return maximumRows;
+            long cellBoundedRows = Math.Max(0L, maximumCells / columnCount - 1L);
+            return (int)Math.Min(maximumRows, cellBoundedRows);
         }
 
         private static int AddExpandedRowsFromCollection(
@@ -149,7 +191,9 @@ namespace OfficeIMO.Excel.Fluent {
             string collectionPath,
             IEnumerable collection,
             int maximumRows,
-            int maximumCollectionItems) {
+            int maximumCollectionItems,
+            long maximumCells,
+            int existingRows) {
             int added = 0;
             foreach (object? element in collection) {
                 if (added >= maximumCollectionItems) {
@@ -158,6 +202,7 @@ namespace OfficeIMO.Excel.Fluent {
                 if (added >= maximumRows) {
                     throw new InvalidDataException($"RowsFrom nested expansion exceeds the configured row materialization limit.");
                 }
+                EnsureRowsFromCellLimit(existingRows + added + 1, paths.Count, maximumCells);
                 rowValues.Add(ProjectRowsFromValues(paths, values, defaultValues, collectionPath, element));
                 added++;
             }
@@ -166,6 +211,7 @@ namespace OfficeIMO.Excel.Fluent {
                 if (maximumRows <= 0) {
                     throw new InvalidDataException("RowsFrom nested expansion exceeds the configured row materialization limit.");
                 }
+                EnsureRowsFromCellLimit(existingRows + 1, paths.Count, maximumCells);
                 rowValues.Add(ProjectRowsFromValues(paths, values, defaultValues: null));
                 return 1;
             }
@@ -197,7 +243,7 @@ namespace OfficeIMO.Excel.Fluent {
             return projected;
         }
 
-        private bool TryRowsFromSimpleFastPath<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] T>(IReadOnlyList<T> rows, int startRow) {
+        private bool TryRowsFromSimpleFastPath<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] T>(IReadOnlyList<T> rows, int startRow, ObjectFlattenerOptions options) {
             if (Sheet == null) {
                 return false;
             }
@@ -207,6 +253,8 @@ namespace OfficeIMO.Excel.Fluent {
                 return false;
             }
 
+            EnsureRowsFromColumnLimit(typePlan.Headers.Length, options.MaxColumns);
+            EnsureRowsFromCellLimit(rows.Count, typePlan.Headers.Length, options.MaxCells);
             var directRows = MaterializeSimpleRowsFromProperties(typePlan, rows, out var columnTypes);
             int tableEndRow = startRow + rows.Count;
             string[] headers = typePlan.Headers;
@@ -223,11 +271,26 @@ namespace OfficeIMO.Excel.Fluent {
             return true;
         }
 
+        private static void EnsureRowsFromCellLimit(int dataRowCount, int columnCount, long maximumCells) {
+            long projectedCells = ((long)dataRowCount + 1L) * columnCount;
+            if (projectedCells > maximumCells) {
+                throw new InvalidDataException(
+                    $"RowsFrom exceeds the {maximumCells}-cell materialization limit.");
+            }
+        }
+
+        internal static void EnsureRowsFromColumnLimit(int columnCount, int maximumColumns) {
+            if (columnCount > maximumColumns) {
+                throw new InvalidDataException(
+                    $"RowsFrom exceeds the {maximumColumns}-column materialization limit.");
+            }
+        }
+
         /// <summary>Adds a table over the last added block (from RowsFrom) using the specified name.</summary>
-        public SheetBuilder Table(string name, Action<TableBuilder>? configure = null) {
+        public SheetBuilder Table(string name, Action<ExcelTableBuilder>? configure = null) {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
             if (string.IsNullOrEmpty(_lastRange)) throw new InvalidOperationException("RowsFrom must be called before Table");
-            var builder = new TableBuilder(Sheet);
+            var builder = new ExcelTableBuilder(Sheet);
             configure?.Invoke(builder);
             builder.Build(_lastRange!, name);
             return this;
@@ -289,12 +352,18 @@ namespace OfficeIMO.Excel.Fluent {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
             if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentNullException(nameof(reference));
 
-            var parts = reference.Split(':');
-            var start = parts[0];
-            var end = parts.Length > 1 ? parts[1] : parts[0];
-
-            var (fromRow, fromCol) = ParseCellReference(start);
-            var (toRow, toCol) = ParseCellReference(end);
+            SpreadsheetRangeReference syntax = SpreadsheetRangeReference.Parse(reference, SpreadsheetAddressDialect.ExcelA1);
+            if (!syntax.Start.IsCell || !(syntax.End ?? syntax.Start).IsCell) {
+                throw new ArgumentException("Range must contain cell endpoints.", nameof(reference));
+            }
+            if (syntax.Start.SheetName != null || syntax.End?.SheetName != null) {
+                throw new ArgumentException("Range must not qualify a different worksheet.", nameof(reference));
+            }
+            SpreadsheetCellReference end = syntax.End ?? syntax.Start;
+            int fromRow = checked((int)syntax.Start.Row!.Value);
+            int fromCol = syntax.Start.Column!.Value;
+            int toRow = checked((int)end.Row!.Value);
+            int toCol = end.Column!.Value;
 
             var builder = new RangeBuilder(Sheet, fromRow, fromCol, toRow, toCol);
             action(builder);
@@ -310,11 +379,11 @@ namespace OfficeIMO.Excel.Fluent {
         }
 
         /// <summary>Adds and configures a table via the table builder.</summary>
-        public SheetBuilder Table(Action<TableBuilder> action) {
+        public SheetBuilder Table(Action<ExcelTableBuilder> action) {
             if (Sheet == null) throw new InvalidOperationException("Sheet not initialized");
-            var builder = new TableBuilder(Sheet);
+            var builder = new ExcelTableBuilder(Sheet);
             action(builder);
-            // Note: The TableBuilder will handle AutoFilter conflicts internally
+            // Note: The ExcelTableBuilder will handle AutoFilter conflicts internally
             return this;
         }
 
@@ -480,7 +549,8 @@ namespace OfficeIMO.Excel.Fluent {
         private static RowsFromSimpleTypePlan CreateRowsFromSimpleTypePlan(Type type) {
             var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(property => property.GetIndexParameters().Length == 0 && property.GetMethod != null)
-                .OrderBy(property => property.MetadataToken)
+                .OrderBy(ObjectFlattener.GetMetadataOrder)
+                .ThenBy(property => property.Name, StringComparer.Ordinal)
                 .ToArray();
             if (properties.Length == 0 || properties.Any(property => !IsRowsFromDirectSaveScalarType(property.PropertyType))) {
                 return RowsFromSimpleTypePlan.NotSupported;
@@ -756,18 +826,11 @@ namespace OfficeIMO.Excel.Fluent {
         }
 
         private static (int Row, int Column) ParseCellReference(string reference) {
-            int i = 0;
-            int col = 0;
-            while (i < reference.Length && char.IsLetter(reference[i])) {
-                col = col * 26 + (char.ToUpperInvariant(reference[i]) - 'A' + 1);
-                i++;
+            SpreadsheetRangeReference syntax = SpreadsheetRangeReference.Parse(reference, SpreadsheetAddressDialect.ExcelA1);
+            if (syntax.End != null || !syntax.Start.IsCell || syntax.Start.SheetName != null) {
+                throw new ArgumentException("Cell reference must identify one cell on the current worksheet.", nameof(reference));
             }
-            if (col == 0 || i >= reference.Length) throw new ArgumentException("Invalid cell reference", nameof(reference));
-            var rowPart = reference.Substring(i);
-            if (!int.TryParse(rowPart, out int row) || row <= 0) {
-                throw new ArgumentException("Invalid cell reference", nameof(reference));
-            }
-            return (row, col);
+            return (checked((int)syntax.Start.Row!.Value), syntax.Start.Column!.Value);
         }
 
         private sealed class RowsFromSimpleTypePlan {

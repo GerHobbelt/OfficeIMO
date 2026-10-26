@@ -248,13 +248,13 @@ namespace OfficeIMO.Tests {
             using (PowerPointPresentation source =
                    PowerPointPresentation.Create()) {
                 PowerPointSlide slide = source.AddSlide(
-                    P.SlideLayoutValues.Blank);
+                    PowerPointSlideLayoutType.Blank);
                 PowerPointTextBox text = slide.AddTextBoxPoints(
                     "Accessible text", 20, 20, 140, 35);
                 text.Name = "Summary object";
                 text.Description = "Summary alternative text";
                 PowerPointPicture picture = slide.AddPicture(
-                    new MemoryStream(image), ImagePartType.Png,
+                    new MemoryStream(image), OfficeIMO.Drawing.OfficeImageFormat.Png,
                     PowerPointUnits.FromPoints(20),
                     PowerPointUnits.FromPoints(70),
                     PowerPointUnits.FromPoints(90),
@@ -270,11 +270,11 @@ namespace OfficeIMO.Tests {
                 connector.Name = "Trend connector";
                 connector.Description = "Connects the summary to detail";
                 PowerPointAutoShape child = slide.AddShapePoints(
-                    A.ShapeTypeValues.Rectangle, 190, 20, 70, 45);
+                    OfficePresetShapeType.Rectangle, 190, 20, 70, 45);
                 child.Name = "Grouped child";
                 child.Description = "Child description";
                 PowerPointAutoShape secondChild = slide.AddShapePoints(
-                    A.ShapeTypeValues.Ellipse, 205, 75, 45, 35);
+                    OfficePresetShapeType.Ellipse, 205, 75, 45, 35);
                 secondChild.Name = "Second grouped child";
                 secondChild.Description = "Second child description";
                 PowerPointGroupShape group = slide.GroupShapes(
@@ -322,8 +322,8 @@ namespace OfficeIMO.Tests {
             using PowerPointPresentation source =
                 PowerPointPresentation.Create();
             PowerPointAutoShape shape = source.AddSlide(
-                    P.SlideLayoutValues.Blank)
-                .AddShapePoints(A.ShapeTypeValues.Rectangle,
+                    PowerPointSlideLayoutType.Blank)
+                .AddShapePoints(OfficePresetShapeType.Rectangle,
                     20, 20, 100, 60);
             shape.Title = "Concise modern title";
 

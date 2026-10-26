@@ -12,8 +12,9 @@ internal static partial class CsvParser
     /// Pull-based row source over the existing bounded streaming parser. Field spans point at
     /// the reusable line buffer and are materialized only when a caller requests a string.
     /// </summary>
-    internal sealed class CsvStreamDataReaderRowSource : ICsvDataReaderTextRowSource
+    internal sealed class CsvStreamDataReaderRowSource : ICsvDataReaderHeaderRowSource, ICsvDataReaderPositionSource
     {
+        private const int LargeDataReaderBufferSize = 128 * 1024;
         private readonly TextReader _reader;
         private readonly CsvLineReader _lineReader;
         private readonly CsvLoadOptions _options;
@@ -24,11 +25,18 @@ internal static partial class CsvParser
         private readonly Queue<CsvLine> _pendingLines = new();
         private readonly List<string> _quotedFields = new(32);
         private CsvDataReaderStreamRowVisitor _visitor;
-        private int _lineNumber = 1;
+        private readonly int _physicalLineOffset;
+        private int _lineNumber;
         private int _emittedRecordCount;
+        private int? _currentPhysicalLineNumber;
+        private int? _currentPhysicalEndLineNumber;
         private bool _disposed;
 
-        internal CsvStreamDataReaderRowSource(TextReader reader, CsvLoadOptions options)
+        internal CsvStreamDataReaderRowSource(
+            TextReader reader,
+            CsvLoadOptions options,
+            int initialEmittedRecordCount = 0,
+            int physicalLineOffset = 0)
         {
             _reader = reader ?? throw new ArgumentNullException(nameof(reader));
             _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -38,20 +46,45 @@ internal static partial class CsvParser
             _allowEmpty = options.AllowEmptyLines;
             _lineReader = new CsvLineReader(reader, options.CancellationToken);
             _visitor = new CsvDataReaderStreamRowVisitor(_lineReader.Buffer);
+            _emittedRecordCount = initialEmittedRecordCount;
+            _physicalLineOffset = physicalLineOffset;
+            _lineNumber = physicalLineOffset + 1;
         }
 
         internal int FieldCount => _visitor.FieldCount;
 
-        internal void SetSourceColumnCount(int sourceColumnCount) =>
+        int ICsvDataReaderHeaderRowSource.FieldCount => _visitor.FieldCount;
+
+        int? ICsvDataReaderPositionSource.CurrentPhysicalLineNumber => _currentPhysicalLineNumber;
+
+        int? ICsvDataReaderPositionSource.CurrentPhysicalEndLineNumber => _currentPhysicalEndLineNumber;
+
+        internal void SetSourceColumnCount(int sourceColumnCount)
+        {
+            if (_lineReader.TryGrowFilledBuffer(LargeDataReaderBufferSize))
+            {
+                _visitor.SetBuffer(_lineReader.Buffer);
+            }
+
             _visitor.SetSourceColumnCount(sourceColumnCount);
+        }
+
+        void ICsvDataReaderHeaderRowSource.SetSourceColumnCount(int sourceColumnCount) =>
+            SetSourceColumnCount(sourceColumnCount);
 
         public bool Read()
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _visitor.Reset();
+            _currentPhysicalLineNumber = null;
+            _currentPhysicalEndLineNumber = null;
             while (true)
             {
                 ThrowIfCancellationRequested(_options);
+                bool recordStartedFromPendingLine = _pendingLines.Count > 0;
+                int recordStartLineNumber = recordStartedFromPendingLine
+                    ? _pendingLines.Peek().PhysicalLineNumber
+                    : _physicalLineOffset + _lineReader.PhysicalLineSeparatorsConsumed + 1;
                 string? fastLine = null;
                 string lineSeparator;
                 CsvLineReadResult readResult;
@@ -87,6 +120,10 @@ internal static partial class CsvParser
                         _emittedRecordCount++;
                         ReportProgress(_options, _emittedRecordCount, _lineNumber - 1);
                         _visitor.Complete(fieldCount, _options.ColumnCountMismatchPolicy);
+                        _currentPhysicalLineNumber = recordStartLineNumber;
+                        _currentPhysicalEndLineNumber = GetCurrentPhysicalEndLineNumber(
+                            recordStartLineNumber,
+                            recordStartedFromPendingLine);
                         return true;
                     }
                 }
@@ -132,6 +169,10 @@ internal static partial class CsvParser
                     _emittedRecordCount++;
                     ReportProgress(_options, _emittedRecordCount, _lineNumber - 1);
                     _visitor.Complete(fields.Length, _options.ColumnCountMismatchPolicy);
+                    _currentPhysicalLineNumber = recordStartLineNumber;
+                    _currentPhysicalEndLineNumber = GetCurrentPhysicalEndLineNumber(
+                        recordStartLineNumber,
+                        recordStartedFromPendingLine);
                     return true;
                 }
 
@@ -175,13 +216,30 @@ internal static partial class CsvParser
                 _emittedRecordCount++;
                 ReportProgress(_options, _emittedRecordCount, _lineNumber - 1);
                 _visitor.Complete(_quotedFields.Count, _options.ColumnCountMismatchPolicy);
+                _currentPhysicalLineNumber = recordStartLineNumber;
+                _currentPhysicalEndLineNumber = GetCurrentPhysicalEndLineNumber(
+                    recordStartLineNumber,
+                    recordStartedFromPendingLine);
                 return true;
             }
         }
 
+        private int GetCurrentPhysicalEndLineNumber(
+            int recordStartLineNumber,
+            bool recordStartedFromPendingLine) => Math.Max(
+                recordStartLineNumber,
+                recordStartedFromPendingLine
+                    ? _lineNumber - 1
+                    : Math.Max(
+                        _lineNumber - 1,
+                        _physicalLineOffset + _lineReader.PhysicalLineSeparatorsConsumed));
+
         public ReadOnlySpan<char> GetSpan(int ordinal) => _visitor.GetSpan(ordinal);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public string GetString(int ordinal) => _visitor.GetString(ordinal);
+
+        public bool IsMissing(int ordinal) => _visitor.IsMissing(ordinal);
 
         public bool IsNull(int ordinal, string? nullValue) =>
             nullValue is not null
@@ -219,9 +277,9 @@ internal static partial class CsvParser
         }
     }
 
-    private struct CsvDataReaderStreamRowVisitor : ICsvFieldSpanVisitor
+    internal struct CsvDataReaderStreamRowVisitor : ICsvFieldSpanVisitor
     {
-        private readonly char[] _buffer;
+        private char[] _buffer;
         private static readonly string[] SingleCharacterStrings = CreateSingleCharacterStrings();
         private int[] _starts;
         private int[] _lengths;
@@ -243,6 +301,11 @@ internal static partial class CsvParser
 
         internal int SourceColumnCount { get; private set; }
 
+        internal void SetBuffer(char[] buffer)
+        {
+            _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
+        }
+
         internal void SetSourceColumnCount(int sourceColumnCount)
         {
             if (sourceColumnCount < 0)
@@ -262,8 +325,11 @@ internal static partial class CsvParser
 
         public void VisitField(int recordIndex, int fieldIndex, ReadOnlySpan<char> value)
         {
-            EnsureCapacity(fieldIndex + 1);
-            FieldCount = Math.Max(FieldCount, fieldIndex + 1);
+            if ((uint)fieldIndex >= (uint)_starts.Length)
+            {
+                EnsureCapacity(fieldIndex + 1);
+            }
+            FieldCount = fieldIndex + 1;
             _lengths[fieldIndex] = value.Length;
             if (_nextVisitIsUnescapedScratch)
             {
@@ -280,6 +346,50 @@ internal static partial class CsvParser
             _materialized[fieldIndex] = null;
         }
 
+        public void VisitFieldRange(
+            int recordIndex,
+            int fieldIndex,
+            char[] buffer,
+            int start,
+            int length)
+        {
+            if ((uint)fieldIndex >= (uint)_starts.Length)
+            {
+                EnsureCapacity(fieldIndex + 1);
+            }
+            FieldCount = fieldIndex + 1;
+            _starts[fieldIndex] = start;
+            _lengths[fieldIndex] = length;
+            _materialized[fieldIndex] = null;
+            _nextVisitIsUnescapedScratch = false;
+        }
+
+        internal void VisitFieldRanges(
+            char[] buffer,
+            int start,
+            int end,
+            ReadOnlySpan<int> delimiterIndexes)
+        {
+            int fieldCount = delimiterIndexes.Length + 1;
+            EnsureCapacity(fieldCount);
+            int fieldStart = start;
+            for (int fieldIndex = 0; fieldIndex < delimiterIndexes.Length; fieldIndex++)
+            {
+                int delimiterIndex = delimiterIndexes[fieldIndex];
+                _starts[fieldIndex] = fieldStart;
+                _lengths[fieldIndex] = delimiterIndex - fieldStart;
+                _materialized[fieldIndex] = null;
+                fieldStart = delimiterIndex + 1;
+            }
+
+            int finalFieldIndex = fieldCount - 1;
+            _starts[finalFieldIndex] = fieldStart;
+            _lengths[finalFieldIndex] = end - fieldStart;
+            _materialized[finalFieldIndex] = null;
+            _nextVisitIsUnescapedScratch = false;
+            FieldCount = fieldCount;
+        }
+
         public bool TryVisitEscapedField(
             int recordIndex,
             int fieldIndex,
@@ -292,8 +402,11 @@ internal static partial class CsvParser
 
         public void VisitFieldValue(int recordIndex, int fieldIndex, string value)
         {
-            EnsureCapacity(fieldIndex + 1);
-            FieldCount = Math.Max(FieldCount, fieldIndex + 1);
+            if ((uint)fieldIndex >= (uint)_starts.Length)
+            {
+                EnsureCapacity(fieldIndex + 1);
+            }
+            FieldCount = fieldIndex + 1;
             _starts[fieldIndex] = -1;
             _lengths[fieldIndex] = value.Length;
             _materialized[fieldIndex] = value;
@@ -335,6 +448,7 @@ internal static partial class CsvParser
                 : materialized.AsSpan();
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal string GetString(int ordinal)
         {
             ValidateOrdinal(ordinal);
@@ -381,6 +495,7 @@ internal static partial class CsvParser
             return _lengths[ordinal] < 0;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ValidateOrdinal(int ordinal)
         {
             int maximum = SourceColumnCount > 0 ? SourceColumnCount : FieldCount;

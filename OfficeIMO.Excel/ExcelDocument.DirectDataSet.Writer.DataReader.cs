@@ -12,28 +12,39 @@ namespace OfficeIMO.Excel {
                 CancellationToken ct) {
                 DirectStylePlan stylePlan = DirectStylePlan.Create(model);
                 DirectColumnWritePlan[] columnWritePlans = CreateColumnWritePlans(model, stylePlan, ct);
-                using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
-                WriteContentTypes(archive, model.Sheets, includeSharedStrings: false);
-                WriteTextEntry(archive, "_rels/.rels",
-                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-                    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
-                    "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>" +
-                    "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>" +
-                    "</Relationships>");
-                WriteCoreProperties(archive);
-                WriteAppProperties(archive);
-                WriteWorkbook(archive, model);
-                WriteWorkbookRelationships(archive, model.Sheets.Count, includeSharedStrings: false);
-                WriteStyles(archive, stylePlan);
-                return WriteDataReaderWorksheet(
+                using var positionReportingDestination = stream.CanSeek
+                    ? null
+                    : new ExcelPositionReportingWriteStream(stream);
+                Stream packageDestination = positionReportingDestination ?? stream;
+                using var archive = new ZipArchive(packageDestination, ZipArchiveMode.Create, leaveOpen: true);
+                WritePackagePreamble(archive, model, stylePlan, includeSharedStrings: false);
+                DirectDataSetSheetModel sheet = model.Sheets[0];
+                int rowCount = WriteDataReaderWorksheet(
                     archive,
-                    model.Sheets[0],
+                    sheet,
                     reader,
                     model.DateTimeOffsetWriteStrategy,
                     model.DateSystem,
                     columnWritePlans[0],
                     ct);
+                if (sheet.HasTable) {
+                    string sheetIndexText = InvariantNumberText.Get(sheet.Index);
+                    WriteTextEntry(
+                        archive,
+                        "xl/worksheets/_rels/sheet" + sheetIndexText + ".xml.rels",
+                        "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+                        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table" + sheetIndexText + ".xml\"/>" +
+                        "</Relationships>");
+                    string range = ExcelSheet.BuildObjectExportRange(
+                        1,
+                        sheet.Table.ColumnCount,
+                        rowCount,
+                        sheet.IncludeHeaders);
+                    WriteTable(archive, sheet, range);
+                }
+
+                return rowCount;
             }
 
             private static int WriteDataReaderWorksheet(
@@ -46,7 +57,7 @@ namespace OfficeIMO.Excel {
                 CancellationToken ct) {
                 var entry = archive.CreateEntry("xl/worksheets/sheet1.xml", CompressionLevel.Fastest);
                 using var stream = entry.Open();
-                using var writer = new StreamWriter(stream, Utf8NoBom, XmlWriterBufferSize);
+                using var writer = new PooledUtf8TextWriter(stream, Utf8NoBom, XmlWriterBufferSize);
 
                 writer.Write("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
                 writer.Write("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheetData>");
@@ -75,6 +86,12 @@ namespace OfficeIMO.Excel {
                 bool canCancel = ct.CanBeCanceled;
                 bool useBulkRead = ExcelSheet.CanUseBulkDataReaderValues(reader);
                 object?[] values = new object?[columnCount];
+                CompactDataReaderRowWriter? typedRowWriter = !sheet.IncludeCellReferences
+                    && columnWritePlan.ValueStyleColumns == null
+                    ? GetCompactDataReaderRowWriter(
+                        columnWritePlan.CellValueKinds,
+                        GetDataReaderNullableColumns(reader, columnCount))
+                    : null;
                 while (reader.Read()) {
                     if (canCancel) {
                         ct.ThrowIfCancellationRequested();
@@ -83,8 +100,18 @@ namespace OfficeIMO.Excel {
                         throw new InvalidOperationException("Data reader export exceeds the maximum worksheet row count.");
                     }
 
-                    ExcelSheet.FillDataReaderValues(reader, values, columnCount, ref useBulkRead);
-                    if (sheet.IncludeCellReferences) {
+                    if (typedRowWriter != null) {
+                        typedRowWriter(
+                            writer,
+                            reader,
+                            columnWritePlan.StyleAttributes,
+                            dateTimeOffsetWriteStrategy,
+                            dateSystem);
+                    } else {
+                        ExcelSheet.FillDataReaderValues(reader, values, columnCount, ref useBulkRead);
+                    }
+
+                    if (typedRowWriter == null && sheet.IncludeCellReferences) {
                         WriteReferencedDataReaderRow(
                             writer,
                             values,
@@ -94,7 +121,7 @@ namespace OfficeIMO.Excel {
                             sheet.UseCellValueNumberFormats,
                             dateTimeOffsetWriteStrategy,
                             dateSystem);
-                    } else {
+                    } else if (typedRowWriter == null) {
                         WriteCompactDataReaderRow(
                             writer,
                             values,
@@ -106,7 +133,12 @@ namespace OfficeIMO.Excel {
                     rowCount++;
                 }
 
-                writer.Write("</sheetData></worksheet>");
+                writer.Write("</sheetData>");
+                if (sheet.HasTable) {
+                    writer.Write("<tableParts count=\"1\"><tablePart r:id=\"rId1\"/></tableParts>");
+                }
+
+                writer.Write("</worksheet>");
                 return rowCount;
             }
 

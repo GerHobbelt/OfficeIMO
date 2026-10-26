@@ -11,8 +11,12 @@ public sealed class PdfReadLimits {
     internal const int DefaultMaxDecodedTextCharacters = 10_000_000;
     internal const int DefaultMaxNameTreeNodes = 100_000;
     internal const int DefaultMaxNameTreeDepth = 128;
+    internal const int DefaultMaxJavaScriptBytes = 4_000_000;
+    internal const int DefaultMaxJavaScripts = 10_000;
+    internal const long DefaultMaxTotalJavaScriptBytes = 32L * 1024L * 1024L;
     internal const int DefaultMaxAttachments = 100_000;
     internal const long DefaultMaxTotalAttachmentBytes = 256L * 1024L * 1024L;
+    internal const int DefaultMaxType3GlyphInvocationsPerPage = 1_000_000;
 
     /// <summary>Creates default parser budgets that callers can customize without changing another options instance.</summary>
     public static PdfReadLimits Default => new PdfReadLimits();
@@ -74,6 +78,15 @@ public sealed class PdfReadLimits {
     /// <summary>Maximum nested PDF name-tree depth. Default: 128.</summary>
     public int MaxNameTreeDepth { get; init; } = DefaultMaxNameTreeDepth;
 
+    /// <summary>Maximum decoded source bytes retained for one document-level JavaScript action. Default: 4,000,000.</summary>
+    public int MaxJavaScriptBytes { get; init; } = DefaultMaxJavaScriptBytes;
+
+    /// <summary>Maximum named document-level JavaScript entries discovered in one PDF. Default: 10,000.</summary>
+    public int MaxJavaScripts { get; init; } = DefaultMaxJavaScripts;
+
+    /// <summary>Maximum aggregate decoded source bytes retained for document-level JavaScript. Default: 32 MiB.</summary>
+    public long MaxTotalJavaScriptBytes { get; init; } = DefaultMaxTotalJavaScriptBytes;
+
     /// <summary>Maximum attachment records discovered across name trees, associated files, and annotations. Default: 100,000.</summary>
     public int MaxAttachments { get; init; } = DefaultMaxAttachments;
 
@@ -86,6 +99,9 @@ public sealed class PdfReadLimits {
     /// <summary>Maximum annotations declared on one page. Default: 100,000.</summary>
     public int MaxAnnotationsPerPage { get; init; } = 100_000;
 
+    /// <summary>Maximum named color-space resources inspected on one page. Default: 4,096.</summary>
+    public int MaxColorSpaceResourcesPerPage { get; init; } = 4_096;
+
     /// <summary>Maximum operators parsed from one page or form content stream. Default: 1,000,000.</summary>
     public int MaxContentOperations { get; init; } = DefaultMaxContentOperations;
 
@@ -94,6 +110,9 @@ public sealed class PdfReadLimits {
 
     /// <summary>Maximum nested lexical arrays/dictionaries or form XObjects while parsing page content. Default: 128.</summary>
     public int MaxContentNestingDepth { get; init; } = DefaultMaxContentNestingDepth;
+
+    /// <summary>Maximum Type 3 glyph programs invoked while rendering one page, including nested forms. Default: 1,000,000.</summary>
+    public int MaxType3GlyphInvocationsPerPage { get; init; } = DefaultMaxType3GlyphInvocationsPerPage;
 
     internal PdfReadLimits WithMinimumInputBytes(long minimumInputBytes) {
         return new PdfReadLimits {
@@ -116,13 +135,18 @@ public sealed class PdfReadLimits {
             MaxFormFieldDepth = MaxFormFieldDepth,
             MaxNameTreeNodes = MaxNameTreeNodes,
             MaxNameTreeDepth = MaxNameTreeDepth,
+            MaxJavaScriptBytes = MaxJavaScriptBytes,
+            MaxJavaScripts = MaxJavaScripts,
+            MaxTotalJavaScriptBytes = MaxTotalJavaScriptBytes,
             MaxAttachments = MaxAttachments,
             MaxTotalAttachmentBytes = MaxTotalAttachmentBytes,
             MaxFormFieldAppearanceStates = MaxFormFieldAppearanceStates,
             MaxAnnotationsPerPage = MaxAnnotationsPerPage,
+            MaxColorSpaceResourcesPerPage = MaxColorSpaceResourcesPerPage,
             MaxContentOperations = MaxContentOperations,
             MaxContentOperands = MaxContentOperands,
-            MaxContentNestingDepth = MaxContentNestingDepth
+            MaxContentNestingDepth = MaxContentNestingDepth,
+            MaxType3GlyphInvocationsPerPage = MaxType3GlyphInvocationsPerPage
         };
     }
 
@@ -171,15 +195,22 @@ public sealed class PdfReadLimits {
         ValidatePositive(MaxFormFieldDepth, nameof(MaxFormFieldDepth), "Maximum form-field depth must be positive.");
         ValidatePositive(MaxNameTreeNodes, nameof(MaxNameTreeNodes), "Maximum name-tree nodes must be positive.");
         ValidatePositive(MaxNameTreeDepth, nameof(MaxNameTreeDepth), "Maximum name-tree depth must be positive.");
+        ValidatePositive(MaxJavaScriptBytes, nameof(MaxJavaScriptBytes), "Maximum document JavaScript bytes must be positive.");
+        ValidatePositive(MaxJavaScripts, nameof(MaxJavaScripts), "Maximum document JavaScript entries must be positive.");
+        if (MaxTotalJavaScriptBytes <= 0L) {
+            throw new ArgumentOutOfRangeException(nameof(MaxTotalJavaScriptBytes), MaxTotalJavaScriptBytes, "Maximum aggregate document JavaScript bytes must be positive.");
+        }
         ValidatePositive(MaxAttachments, nameof(MaxAttachments), "Maximum attachments must be positive.");
         if (MaxTotalAttachmentBytes <= 0L) {
             throw new ArgumentOutOfRangeException(nameof(MaxTotalAttachmentBytes), MaxTotalAttachmentBytes, "Maximum aggregate attachment bytes must be positive.");
         }
         ValidatePositive(MaxFormFieldAppearanceStates, nameof(MaxFormFieldAppearanceStates), "Maximum form-field appearance states must be positive.");
         ValidatePositive(MaxAnnotationsPerPage, nameof(MaxAnnotationsPerPage), "Maximum annotations per page must be positive.");
+        ValidatePositive(MaxColorSpaceResourcesPerPage, nameof(MaxColorSpaceResourcesPerPage), "Maximum color-space resources per page must be positive.");
         ValidatePositive(MaxContentOperations, nameof(MaxContentOperations), "Maximum content operations must be positive.");
         ValidatePositive(MaxContentOperands, nameof(MaxContentOperands), "Maximum content operands must be positive.");
         ValidatePositive(MaxContentNestingDepth, nameof(MaxContentNestingDepth), "Maximum content nesting depth must be positive.");
+        ValidatePositive(MaxType3GlyphInvocationsPerPage, nameof(MaxType3GlyphInvocationsPerPage), "Maximum Type 3 glyph invocations per page must be positive.");
     }
 
     private static void ValidatePositive(int value, string parameterName, string message) {

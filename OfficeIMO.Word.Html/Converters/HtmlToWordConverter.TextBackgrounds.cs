@@ -46,14 +46,14 @@ namespace OfficeIMO.Word.Html {
                 return;
             }
 
-            run.SetHighlight(highlight.Value);
+            run.SetHighlight(highlight.Value.ToOfficeEnum());
             if (!exact) {
                 AddDiagnostic(
                     options,
                     "TextBackgroundColorApproximated",
                     "CSS text background color was approximated to the nearest Word highlight color.",
                     "background-color",
-                    lossKind: HtmlConversionLossKind.Approximation);
+                    lossKind: OfficeConversionLossKind.Approximation);
             }
         }
 

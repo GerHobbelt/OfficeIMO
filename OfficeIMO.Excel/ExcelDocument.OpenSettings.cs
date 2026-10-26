@@ -3,7 +3,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Validation;
 using OfficeIMO.Excel.Utilities;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using System.IO.Packaging;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,17 +28,7 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        private static OpenSettings CreateOpenSettings(OpenSettings? openSettings) {
-            if (openSettings is null) {
-                return new OpenSettings { AutoSave = false };
-            }
-
-            return new OpenSettings {
-                AutoSave = false,
-                CompatibilityLevel = openSettings.CompatibilityLevel,
-                MarkupCompatibilityProcessSettings = openSettings.MarkupCompatibilityProcessSettings,
-                MaxCharactersInPart = openSettings.MaxCharactersInPart,
-            };
-        }
+        private static OpenSettings CreateOpenSettings(OfficeOpenXmlLoadSettings? openSettings) =>
+            openSettings.ToOpenXml();
     }
 }

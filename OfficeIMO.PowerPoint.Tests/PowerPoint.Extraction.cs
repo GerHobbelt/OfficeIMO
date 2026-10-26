@@ -31,7 +31,7 @@ namespace OfficeIMO.Tests {
 
                 AppendNotesParagraph(filePath, "Second note paragraph");
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     PowerPointExtractChunk chunk = presentation.ExtractMarkdownChunks(
                         sourcePath: filePath).Single();
 
@@ -69,7 +69,7 @@ namespace OfficeIMO.Tests {
                     presentation.Save();
                 }
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     PowerPointExtractChunk chunk = presentation.ExtractMarkdownChunks(
                         new PowerPointExtractionExtensions.PowerPointExtractOptions {
                             IncludeNotes = false,
@@ -127,7 +127,7 @@ namespace OfficeIMO.Tests {
             list.SetBullets(new[] { "Parent bullet" });
             list.AddBullets(new[] { "Nested bullet" }, level: 1);
             list.AddNumberedList(new[] { "Third item", "Fourth item" },
-                A.TextAutoNumberSchemeValues.AlphaLowerCharacterParenR,
+                PowerPointNumberingScheme.AlphaLowerCharacterParenR,
                 startAt: 3);
             PowerPointParagraph closing = list.AddParagraph("Closing paragraph");
             closing.ClearBullet();
@@ -137,7 +137,7 @@ namespace OfficeIMO.Tests {
 
             PowerPointTextBox wideNumber = slide.AddTextBox(string.Empty);
             wideNumber.SetNumberedList(new[] { "Hundredth item" },
-                A.TextAutoNumberSchemeValues.ArabicPeriod, startAt: 100);
+                PowerPointNumberingScheme.ArabicPeriod, startAt: 100);
             wideNumber.AddBullets(new[] { "Arrow child" }, level: 1,
                 bulletChar: '\u2192');
 
@@ -191,16 +191,16 @@ namespace OfficeIMO.Tests {
             text.SetNumberedList(new[] { "Before one", "Before two" });
             text.AddParagraph("Plain boundary").ClearBullet();
             PowerPointParagraph restarted = text.AddParagraph("After one");
-            restarted.SetNumbered(A.TextAutoNumberSchemeValues.ArabicPeriod);
+            restarted.SetNumbered(PowerPointNumberingScheme.ArabicPeriod);
             PowerPointParagraph parentOne = text.AddParagraph("Parent one");
-            parentOne.SetNumbered(A.TextAutoNumberSchemeValues.ArabicPeriod);
+            parentOne.SetNumbered(PowerPointNumberingScheme.ArabicPeriod);
             PowerPointParagraph childOne = text.AddParagraph("Child one");
-            childOne.SetNumbered(A.TextAutoNumberSchemeValues.ArabicPeriod);
+            childOne.SetNumbered(PowerPointNumberingScheme.ArabicPeriod);
             childOne.Level = 1;
             PowerPointParagraph parentTwo = text.AddParagraph("Parent two");
-            parentTwo.SetNumbered(A.TextAutoNumberSchemeValues.ArabicPeriod);
+            parentTwo.SetNumbered(PowerPointNumberingScheme.ArabicPeriod);
             PowerPointParagraph childTwo = text.AddParagraph("Child restart");
-            childTwo.SetNumbered(A.TextAutoNumberSchemeValues.ArabicPeriod);
+            childTwo.SetNumbered(PowerPointNumberingScheme.ArabicPeriod);
             childTwo.Level = 1;
 
             string markdown = presentation.ExtractMarkdownChunks()

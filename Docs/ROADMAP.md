@@ -14,20 +14,25 @@ Deliberately bounded compatibility contracts are not backlog by themselves. A pr
 - [ ] Add reproducible correctness, file-size, elapsed-time, peak-memory, allocation, cancellation, and deterministic-output evidence for representative workloads on every supported operating system.
 - [ ] Add shared conversion reports and strict no-loss policies wherever an adapter can simplify, omit, rasterize, or preserve unsupported content.
 
+## PDF engine and conversion fidelity
+
+- [ ] Complete managed rendering for remaining difficult Type 3 glyph programs (including raster-image glyph resources), remaining ICC and content-paint color spaces, advanced pattern resources, transparency groups, masks, and optional-content interactions. Require producer fixtures, per-page diagnostics, and raster plus semantic proof before removing a limitation.
+- [ ] Expand native Word, Excel, and PowerPoint reference corpora around DrawingML, SmartArt, chart variants, floating and grouped objects, headers and footers, print layout, and theme inheritance. Keep each improvement in the shared Drawing or PDF owner when more than one adapter needs it.
+- [ ] Add exact-artifact external validation lanes for every supported PDF/A-2, PDF/A-3, PDF/A-4, PDF/UA-1, PDF/UA-2, Factur-X, and ZUGFeRD profile across representative generated artifacts and at least one independent producer corpus.
+- [ ] Extend PDF-to-Office hybrid reconstruction beyond detected tables with bounded positioned text, image, and vector layers that remain visibly aligned while reports distinguish editable, visual-only, approximated, and omitted content.
+- [ ] Publish optional provider adapters for OCR and other heavyweight engines only where the provider contract, resource limits, provenance, and warning merge are stable; keep `OfficeIMO.Pdf` dependency-light.
+- [ ] Evaluate an explicit XFA inspection or conversion product only with licensed specification coverage, hostile-input limits, external fixtures, and a fail-closed migration path to AcroForm or static visual output. Do not execute XFA in the core reader.
+- [ ] Expand the static HTML-to-PDF standards corpus for fragmentation, paged media, typography, SVG effects, and resource policy. Keep browser JavaScript and interactive state outside the managed static-renderer claim unless a separate browser-backed adapter owns them.
+
 ## Security and protected content
 
 - [ ] Add interoperable ODF encryption/decryption only after an external producer corpus, explicit password and key policy, and fail-safe preservation evidence are available.
 
-## PowerPoint and Visio
+## Document-format depth
 
-- [ ] Broaden imported-chart editing and image/PDF export fidelity across advanced chart families, with explicit diagnostics for producer-specific content that remains preservation-only.
-- [ ] Expand editable SmartArt coverage only where imported layout and connection topology can be represented without changing diagram meaning; preserve or reject unsupported topologies explicitly.
-- [ ] Extend typed animation timeline authoring and editing beyond the currently supported shape, text, and chart effects while preserving unsupported sequences losslessly.
-- [ ] Deepen typed media and OLE editing for linked and embedded audio, video, playback metadata, and package payloads while continuing to preserve unsupported content.
-- [ ] Extend typed Visio editing for advanced nested containers, deeper swimlane metadata and automatic lane assignment, and richer threaded comment and author workflows.
-- [ ] Complete advanced Visio resize-to-content and broader whole-diagram relayout and polish for dense imported diagrams.
-- [ ] Add typed Visio APIs for data graphics, legends, and additional high-value ShapeSheet sections and formulas while continuing to preserve unmodeled package content explicitly.
-- [ ] Prove Visio template, stencil, and macro-enabled package variants with representative load, reader, and conversion fixtures before advertising them beyond the current `.vsdx` boundary.
+- [ ] Extend Excel/ODS conversion beyond the current typed formula, value, annotation, number-format, and validation subsets to date/time/custom-formula validations, conditional formatting, charts, pivot tables, and producer-backed advanced style fidelity.
+- [ ] Add recursive typed ODT and ODP inline syntax with inherited-style resolution so nested spans and hyperlinks can convert without the current explicit flattening approximation.
+- [ ] Expand Word/ODT and PowerPoint/ODP conversion for fields, notes, section/master-specific layout, advanced drawing geometry, media, and animation timing with producer fixtures and strict loss evidence.
 
 ## Completion rule
 

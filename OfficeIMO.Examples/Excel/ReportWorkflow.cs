@@ -38,7 +38,7 @@ namespace OfficeIMO.Examples.Excel {
                 });
                 document.Calculate();
 
-                sheet.AddTable("A2:D4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.TableStyle.TableStyleMedium4);
+                sheet.AddTable("A2:D4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium4);
                 sheet.AddChartFromRange("A2:D4", row: 6, column: 1, widthPixels: 420, heightPixels: 240,
                     type: ExcelChartType.ColumnClustered, title: "Revenue and Margin");
                 sheet.AddPivotTable(
@@ -46,7 +46,7 @@ namespace OfficeIMO.Examples.Excel {
                     destinationCell: "F2",
                     name: "RevenuePivot",
                     rowFields: new[] { "Region" },
-                    dataFields: new[] { new ExcelPivotDataField("Revenue", DataConsolidateFunctionValues.Sum, "Total Revenue") },
+                    dataFields: new[] { new ExcelPivotDataField("Revenue", ExcelPivotDataFunction.Sum, "Total Revenue") },
                     pivotStyleName: "PivotStyleMedium9");
 
                 OfficeImageExportResult preview = sheet.Range("A1:J20").ExportImage(OfficeImageExportFormat.Png);

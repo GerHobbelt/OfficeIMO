@@ -152,18 +152,18 @@ namespace OfficeIMO.Word {
         /// For <see cref="HeaderFooterValues.First"/> and <see cref="HeaderFooterValues.Even"/>, this toggles
         /// the appropriate section option which provisions the corresponding parts and settings.
         /// </summary>
-        public WordHeader GetOrCreateHeader(HeaderFooterValues type) {
-            if (type == HeaderFooterValues.Default) {
+        public WordHeader GetOrCreateHeader(WordHeaderFooterType type) {
+            if (type == WordHeaderFooterType.Default) {
                 if (Header.Default == null) AddHeadersAndFooters();
                 return Header.Default ?? throw new InvalidOperationException("Failed to create default header.");
             }
 
-            if (type == HeaderFooterValues.First) {
+            if (type == WordHeaderFooterType.First) {
                 if (Header.First == null) DifferentFirstPage = true;
                 return Header.First ?? throw new InvalidOperationException("Failed to create first-page header.");
             }
 
-            if (type == HeaderFooterValues.Even) {
+            if (type == WordHeaderFooterType.Even) {
                 if (Header.Even == null) DifferentOddAndEvenPages = true;
                 return Header.Even ?? throw new InvalidOperationException("Failed to create even-page header.");
             }
@@ -175,18 +175,18 @@ namespace OfficeIMO.Word {
         /// Returns an existing footer of the requested <paramref name="type"/> or creates it if missing.
         /// Behavior mirrors <see cref="GetOrCreateHeader"/>.
         /// </summary>
-        public WordFooter GetOrCreateFooter(HeaderFooterValues type) {
-            if (type == HeaderFooterValues.Default) {
+        public WordFooter GetOrCreateFooter(WordHeaderFooterType type) {
+            if (type == WordHeaderFooterType.Default) {
                 if (Footer.Default == null) AddHeadersAndFooters();
                 return Footer.Default ?? throw new InvalidOperationException("Failed to create default footer.");
             }
 
-            if (type == HeaderFooterValues.First) {
+            if (type == WordHeaderFooterType.First) {
                 if (Footer.First == null) DifferentFirstPage = true;
                 return Footer.First ?? throw new InvalidOperationException("Failed to create first-page footer.");
             }
 
-            if (type == HeaderFooterValues.Even) {
+            if (type == WordHeaderFooterType.Even) {
                 if (Footer.Even == null) DifferentOddAndEvenPages = true;
                 return Footer.Even ?? throw new InvalidOperationException("Failed to create even-page footer.");
             }
@@ -236,8 +236,8 @@ namespace OfficeIMO.Word {
         /// <param name="size">Line width.</param>
         /// <param name="space">Line spacing.</param>
         /// <returns>The paragraph containing the line.</returns>
-        public WordParagraph AddHorizontalLine(BorderValues? lineType = null, OfficeIMO.Drawing.OfficeColor? color = null, uint size = 12, uint space = 1) {
-            lineType ??= BorderValues.Single;
+        public WordParagraph AddHorizontalLine(WordBorderStyle? lineType = null, OfficeIMO.Drawing.OfficeColor? color = null, uint size = 12, uint space = 1) {
+            lineType ??= WordBorderStyle.Single;
             return this.AddParagraph("").AddHorizontalLine(lineType.Value, color, size, space);
         }
 
@@ -280,7 +280,7 @@ namespace OfficeIMO.Word {
         /// <param name="text">Initial text inside the text box.</param>
         /// <param name="wrapTextImage">Wrapping style.</param>
         /// <returns>The created <see cref="WordTextBox"/>.</returns>
-        public WordTextBox AddTextBox(string text, WrapTextImage wrapTextImage = WrapTextImage.Square) {
+        public WordTextBox AddTextBox(string text, WordImageTextWrapping wrapTextImage = WordImageTextWrapping.Square) {
             return AddParagraph(newRun: true).AddTextBox(text, wrapTextImage);
         }
 
@@ -314,7 +314,7 @@ namespace OfficeIMO.Word {
         /// <param name="strokeColor">Stroke color specified as a hex string (for example, <c>#RRGGBB</c>).</param>
         /// <param name="strokeWeightPt">Stroke weight in points.</param>
         /// <param name="arcSize">Rounded corner size expressed as a fraction between 0 and 1.</param>
-        public WordShape AddShape(ShapeType shapeType, double widthPt, double heightPt,
+        public WordShape AddShape(WordShapeType shapeType, double widthPt, double heightPt,
             string fillColor = "#FFFFFF", string strokeColor = "#000000", double strokeWeightPt = 1, double arcSize = 0.25) {
             return AddParagraph(newRun: true).AddShape(shapeType, widthPt, heightPt, fillColor, strokeColor, strokeWeightPt, arcSize);
         }
@@ -322,7 +322,7 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Adds a VML shape to the section using <see cref="OfficeIMO.Drawing.OfficeColor"/> values.
         /// </summary>
-        public WordShape AddShape(ShapeType shapeType, double widthPt, double heightPt,
+        public WordShape AddShape(WordShapeType shapeType, double widthPt, double heightPt,
             OfficeIMO.Drawing.OfficeColor fillColor, OfficeIMO.Drawing.OfficeColor strokeColor, double strokeWeightPt = 1, double arcSize = 0.25) {
             return AddShape(shapeType, widthPt, heightPt, fillColor.ToRgbHex(), strokeColor.ToRgbHex(), strokeWeightPt, arcSize);
         }
@@ -333,7 +333,7 @@ namespace OfficeIMO.Word {
         /// <param name="shapeType">Type of shape to create.</param>
         /// <param name="widthPt">Width in points.</param>
         /// <param name="heightPt">Height in points.</param>
-        public WordShape AddShapeDrawing(ShapeType shapeType, double widthPt, double heightPt) {
+        public WordShape AddShapeDrawing(WordShapeType shapeType, double widthPt, double heightPt) {
             return AddParagraph(newRun: true).AddShapeDrawing(shapeType, widthPt, heightPt);
         }
 
@@ -342,7 +342,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="type">Layout type of the SmartArt.</param>
         /// <returns>The created <see cref="WordSmartArt"/>.</returns>
-        public WordSmartArt AddSmartArt(SmartArtType type) {
+        public WordSmartArt AddSmartArt(WordSmartArtType type) {
             var paragraph = AddParagraph(newRun: true);
             var smartArt = new WordSmartArt(_document, paragraph, type);
             return smartArt;
@@ -356,9 +356,9 @@ namespace OfficeIMO.Word {
         /// <param name="restartNumbering">Restart numbering option.</param>
         /// <param name="startNumber">Starting number.</param>
         /// <returns>The current section.</returns>
-        public WordSection AddFootnoteProperties(NumberFormatValues? numberingFormat = null,
-            FootnotePositionValues? position = null,
-            RestartNumberValues? restartNumbering = null,
+        public WordSection AddFootnoteProperties(WordNumberFormat? numberingFormat = null,
+            WordFootnotePosition? position = null,
+            WordNoteNumberRestart? restartNumbering = null,
             int? startNumber = null) {
             var props = _sectionProperties.GetFirstChild<FootnoteProperties>();
             if (props == null) {
@@ -372,15 +372,15 @@ namespace OfficeIMO.Word {
             props.RemoveAllChildren<NumberingStart>();
 
             if (numberingFormat != null) {
-                props.Append(new NumberingFormat() { Val = numberingFormat });
+                props.Append(new NumberingFormat() { Val = numberingFormat.Value.ToOpenXml() });
             }
 
             if (position != null) {
-                props.Append(new FootnotePosition() { Val = position });
+                props.Append(new FootnotePosition() { Val = position.Value.ToOpenXml() });
             }
 
             if (restartNumbering != null) {
-                props.Append(new NumberingRestart() { Val = restartNumbering });
+                props.Append(new NumberingRestart() { Val = restartNumbering.Value.ToOpenXml() });
             }
 
             if (startNumber != null) {
@@ -398,9 +398,9 @@ namespace OfficeIMO.Word {
         /// <param name="restartNumbering">Restart numbering option.</param>
         /// <param name="startNumber">Starting number.</param>
         /// <returns>The current section.</returns>
-        public WordSection AddEndnoteProperties(NumberFormatValues? numberingFormat = null,
-            EndnotePositionValues? position = null,
-            RestartNumberValues? restartNumbering = null,
+        public WordSection AddEndnoteProperties(WordNumberFormat? numberingFormat = null,
+            WordEndnotePosition? position = null,
+            WordNoteNumberRestart? restartNumbering = null,
             int? startNumber = null) {
             var props = _sectionProperties.GetFirstChild<EndnoteProperties>();
             if (props == null) {
@@ -414,15 +414,15 @@ namespace OfficeIMO.Word {
             props.RemoveAllChildren<NumberingStart>();
 
             if (numberingFormat != null) {
-                props.Append(new NumberingFormat() { Val = numberingFormat });
+                props.Append(new NumberingFormat() { Val = numberingFormat.Value.ToOpenXml() });
             }
 
             if (position != null) {
-                props.Append(new EndnotePosition() { Val = position });
+                props.Append(new EndnotePosition() { Val = position.Value.ToOpenXml() });
             }
 
             if (restartNumbering != null) {
-                props.Append(new NumberingRestart() { Val = restartNumbering });
+                props.Append(new NumberingRestart() { Val = restartNumbering.Value.ToOpenXml() });
             }
 
             if (startNumber != null) {
@@ -438,14 +438,14 @@ namespace OfficeIMO.Word {
         /// <param name="startNumber">Starting page number.</param>
         /// <param name="format">Number format.</param>
         /// <returns>The current section.</returns>
-        public WordSection AddPageNumbering(int? startNumber = null, NumberFormatValues? format = null) {
+        public WordSection AddPageNumbering(int? startNumber = null, WordNumberFormat? format = null) {
             var existing = _sectionProperties.GetFirstChild<PageNumberType>();
             existing?.Remove();
 
             if (startNumber != null || format != null) {
                 var pageNumberType = new PageNumberType();
                 if (format != null) {
-                    pageNumberType.Format = format;
+                    pageNumberType.Format = format.Value.ToOpenXml();
                 }
                 if (startNumber != null) {
                     pageNumberType.Start = startNumber.Value;

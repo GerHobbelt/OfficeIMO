@@ -8,7 +8,7 @@ using A = DocumentFormat.OpenXml.Drawing;
 namespace OfficeIMO.PowerPoint {
     internal static partial class PowerPointDesignExtensions {
         internal static void AddMetrics(PowerPointSlide slide, PowerPointDesignTheme theme, IReadOnlyList<PowerPointMetric> metrics,
-            double leftCm, double topCm, double widthCm, double heightCm) {
+            double leftCm, double topCm, double widthCm, double heightCm, string? textColor = null) {
             if (metrics.Count == 0) {
                 return;
             }
@@ -22,18 +22,19 @@ namespace OfficeIMO.PowerPoint {
             double labelHeight = Math.Max(0.32, heightCm - labelTopOffset);
             int valueFontSize = heightCm < 1.6 ? 24 : 29;
             int labelFontSize = heightCm < 1.6 ? 8 : 9;
+            string resolvedTextColor = textColor ?? theme.AccentContrastColor;
             for (int i = 0; i < count; i++) {
                 PowerPointMetric metric = metrics[i];
                 PowerPointLayoutBox box = boxes[i];
                 int resolvedValueFontSize = ResolveMetricValueFontSize(metric.Value, box.WidthCm, valueFontSize);
                 PowerPointTextBox value = AddText(slide, metric.Value, box.LeftCm, box.TopCm, box.WidthCm, valueHeight,
                     resolvedValueFontSize,
-                    theme.AccentContrastColor, theme.HeadingFontName, bold: true);
+                    resolvedTextColor, theme.HeadingFontName, bold: true);
                 CenterText(value);
                 int resolvedLabelFontSize = ResolveMetricLabelFontSize(metric.Label, box.WidthCm, labelFontSize);
                 PowerPointTextBox label = AddText(slide, metric.Label, box.LeftCm, box.TopCm + labelTopOffset,
                     box.WidthCm, labelHeight, resolvedLabelFontSize,
-                    theme.AccentContrastColor, theme.BodyFontName, bold: true);
+                    resolvedTextColor, theme.BodyFontName, bold: true);
                 CenterText(label);
             }
         }
@@ -116,7 +117,7 @@ namespace OfficeIMO.PowerPoint {
 
         private static void AddVisualDashboardPlaceholder(PowerPointSlide slide, PowerPointDesignTheme theme,
             double leftCm, double topCm, double widthCm, double heightCm) {
-            PowerPointAutoShape glow = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, leftCm + widthCm * 0.08,
+            PowerPointAutoShape glow = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, leftCm + widthCm * 0.08,
                 topCm, widthCm * 0.42, heightCm, "Case Study Visual Wash");
             glow.FillColor = theme.Accent2Color;
             glow.FillTransparency = 68;
@@ -157,7 +158,7 @@ namespace OfficeIMO.PowerPoint {
 
         private static void AddVisualCollagePlaceholder(PowerPointSlide slide, PowerPointDesignTheme theme,
             double leftCm, double topCm, double widthCm, double heightCm) {
-            PowerPointAutoShape wash = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, leftCm + widthCm * 0.58,
+            PowerPointAutoShape wash = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, leftCm + widthCm * 0.58,
                 topCm, widthCm * 0.24, heightCm, "Visual Collage Wash");
             wash.FillColor = theme.Accent2Color;
             wash.FillTransparency = 62;
@@ -204,7 +205,7 @@ namespace OfficeIMO.PowerPoint {
                 label.OutlineColor = theme.AccentLightColor;
             }
 
-            PowerPointAutoShape plate = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, leftCm + widthCm * 0.20,
+            PowerPointAutoShape plate = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, leftCm + widthCm * 0.20,
                 topCm + heightCm * 0.14, widthCm * 0.50, heightCm * 0.72, "Visual Diagram Plate");
             plate.FillColor = theme.AccentColor;
             plate.FillTransparency = 82;
@@ -345,7 +346,7 @@ namespace OfficeIMO.PowerPoint {
         private static void AddVisualTile(PowerPointSlide slide, PowerPointDesignTheme theme,
             double leftCm, double topCm, double widthCm, double heightCm, string name, string fillColor,
             int fillTransparency) {
-            PowerPointAutoShape tile = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, leftCm, topCm, widthCm, heightCm, name);
+            PowerPointAutoShape tile = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, leftCm, topCm, widthCm, heightCm, name);
             tile.FillColor = fillColor;
             tile.FillTransparency = fillTransparency;
             tile.OutlineColor = theme.AccentLightColor;

@@ -34,7 +34,7 @@ namespace OfficeIMO.Tests {
             AddPictureShape(handoutPart,
                 handoutPart.HandoutMaster!.CommonSlideData!.ShapeTree!,
                 imageBytes, 102U, 600000L);
-            presentation.AddSlide(P.SlideLayoutValues.Blank);
+            presentation.AddSlide(PowerPointSlideLayoutType.Blank);
 
             LegacyPptWritePreflightReport preflight = presentation
                 .AnalyzeLegacyPptWrite();
@@ -75,7 +75,7 @@ namespace OfficeIMO.Tests {
             using PowerPointPresentation presentation =
                 PowerPointPresentation.Create();
             PowerPointSlide slide = presentation.AddSlide(
-                P.SlideLayoutValues.Blank);
+                PowerPointSlideLayoutType.Blank);
             PowerPointTable sourceTable = slide.AddTable(2, 2);
             sourceTable.GetCell(0, 0).Text = "Merged master";
             sourceTable.MergeCells(0, 0, 0, 1);
@@ -101,7 +101,7 @@ namespace OfficeIMO.Tests {
 
             byte[] bytes = presentation.ToBytes(PowerPointFileFormat.Ppt,
                 new PowerPointSaveOptions {
-                    LossPolicy = PowerPointConversionLossPolicy.Allow
+                    LossPolicy = OfficeConversionLossPolicy.Allow
                 });
             LegacyPptPresentation binary = LegacyPptPresentation.Load(bytes);
             Assert.Contains(Assert.Single(binary.Masters).Shapes,
@@ -125,7 +125,7 @@ namespace OfficeIMO.Tests {
             SlideMasterPart masterPart = presentation.OpenXmlDocument
                 .PresentationPart!.SlideMasterParts.Single();
             int layoutIndex = presentation.GetLayoutIndex(
-                P.SlideLayoutValues.Blank);
+                PowerPointSlideLayoutType.Blank);
             SlideLayoutPart layoutPart = masterPart.SlideLayoutParts
                 .ElementAt(layoutIndex);
             AddPictureShape(layoutPart,
@@ -167,7 +167,7 @@ namespace OfficeIMO.Tests {
                     imageBytes, 100U, 250000L);
                 picture.NonVisualPictureProperties!
                     .NonVisualDrawingProperties!.Hidden = true;
-                source.AddSlide(P.SlideLayoutValues.Blank);
+                source.AddSlide(PowerPointSlideLayoutType.Blank);
                 sourceBytes = source.ToBytes(PowerPointFileFormat.Ppt);
             }
             LegacyPptPresentation original = LegacyPptPresentation.Load(
@@ -226,13 +226,13 @@ namespace OfficeIMO.Tests {
             SlideMasterPart masterPart = presentation.OpenXmlDocument
                 .PresentationPart!.SlideMasterParts.Single();
             int unusedLayoutIndex = presentation.GetLayoutIndex(
-                P.SlideLayoutValues.Title);
+                PowerPointSlideLayoutType.Title);
             SlideLayoutPart unusedLayout = masterPart.SlideLayoutParts
                 .ElementAt(unusedLayoutIndex);
             AddPictureShape(unusedLayout,
                 unusedLayout.SlideLayout!.CommonSlideData!.ShapeTree!,
                 imageBytes, 100U, 350000L);
-            presentation.AddSlide(P.SlideLayoutValues.Blank);
+            presentation.AddSlide(PowerPointSlideLayoutType.Blank);
 
             LegacyPptWritePreflightReport preflight = presentation
                 .AnalyzeLegacyPptWrite();
@@ -254,7 +254,7 @@ namespace OfficeIMO.Tests {
             SlideMasterPart masterPart = presentation.OpenXmlDocument
                 .PresentationPart!.SlideMasterParts.Single();
             int layoutIndex = presentation.GetLayoutIndex(
-                P.SlideLayoutValues.Blank);
+                PowerPointSlideLayoutType.Blank);
             SlideLayoutPart layout = masterPart.SlideLayoutParts
                 .ElementAt(layoutIndex);
             AddPictureShape(layout,
@@ -281,7 +281,7 @@ namespace OfficeIMO.Tests {
             SlideMasterPart masterPart = presentation.OpenXmlDocument
                 .PresentationPart!.SlideMasterParts.Single();
             int layoutIndex = presentation.GetLayoutIndex(
-                P.SlideLayoutValues.Blank);
+                PowerPointSlideLayoutType.Blank);
             SlideLayoutPart layout = masterPart.SlideLayoutParts
                 .ElementAt(layoutIndex);
             P.Picture layoutPicture = AddPictureShape(layout,
@@ -291,7 +291,7 @@ namespace OfficeIMO.Tests {
             PowerPointSlide slide = presentation.AddSlide(0, layoutIndex);
             using var image = new MemoryStream(imageBytes, writable: false);
             P.Picture slidePicture = (P.Picture)slide.AddPicture(image,
-                OfficeIMO.PowerPoint.ImagePartType.Png,
+                OfficeIMO.Drawing.OfficeImageFormat.Png,
                 450000L, 300000L, 800000L, 600000L)
                 .Element;
             AddPicturePlaceholder(slidePicture, 7U);
@@ -317,7 +317,7 @@ namespace OfficeIMO.Tests {
             picture.NonVisualPictureProperties!
                 .ApplicationNonVisualDrawingProperties!
                 .Append(new A.AudioFromFile { Link = "rIdMissingAudio" });
-            presentation.AddSlide(P.SlideLayoutValues.Blank);
+            presentation.AddSlide(PowerPointSlideLayoutType.Blank);
 
             LegacyPptWritePreflightReport preflight = presentation
                 .AnalyzeLegacyPptWrite();
@@ -340,7 +340,7 @@ namespace OfficeIMO.Tests {
             picture.NonVisualPictureProperties!
                 .NonVisualPictureDrawingProperties!
                 .GetFirstChild<A.PictureLocks>()!.NoResize = true;
-            presentation.AddSlide(P.SlideLayoutValues.Blank);
+            presentation.AddSlide(PowerPointSlideLayoutType.Blank);
 
             LegacyPptWritePreflightReport preflight = presentation
                 .AnalyzeLegacyPptWrite();

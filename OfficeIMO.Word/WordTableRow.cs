@@ -1,4 +1,5 @@
 using DocumentFormat.OpenXml.Wordprocessing;
+using System.Runtime.CompilerServices;
 
 namespace OfficeIMO.Word {
     /// <summary>
@@ -19,9 +20,12 @@ namespace OfficeIMO.Word {
         /// wrappers are created without ensuring tcPr, avoiding DOM mutations on read.
         /// </summary>
         public List<WordTableCell> GetCells(bool readOnly = false) {
-            var list = new List<WordTableCell>();
-            foreach (TableCell cell in _tableRow.ChildElements.OfType<TableCell>().ToList()) {
-                var wordCell = new WordTableCell(_document, _wordTable, this, cell, ensureCellProperties: !readOnly);
+            var list = new List<WordTableCell>(_tableRow.ChildElements.Count);
+            foreach (TableCell cell in _tableRow.ChildElements.OfType<TableCell>()) {
+                WordTableCell wordCell = GetOrCreateCell(cell, ensureCellProperties: !readOnly);
+                if (!readOnly) {
+                    wordCell.AddTableCellProperties();
+                }
                 list.Add(wordCell);
             }
             return list;
@@ -142,6 +146,23 @@ namespace OfficeIMO.Word {
 
         private readonly WordTable _wordTable;
         private readonly WordDocument _document;
+        private readonly ConditionalWeakTable<TableCell, WordTableCell> _cellCache = new();
+
+        internal void TrackCell(WordTableCell cell) {
+            if (!_cellCache.TryGetValue(cell._tableCell, out _)) {
+                _cellCache.Add(cell._tableCell, cell);
+            }
+        }
+
+        private WordTableCell GetOrCreateCell(TableCell cell, bool ensureCellProperties) {
+            if (_cellCache.TryGetValue(cell, out WordTableCell? cachedCell)) {
+                return cachedCell;
+            }
+
+            var wordCell = new WordTableCell(_document, _wordTable, this, cell, ensureCellProperties);
+            _cellCache.Add(cell, wordCell);
+            return wordCell;
+        }
 
         /// <summary>
         /// Gets the table that owns this row.
@@ -159,6 +180,7 @@ namespace OfficeIMO.Word {
             _tableRow = tableRow;
             _document = document;
             _wordTable = wordTable;
+            wordTable.TrackRow(this);
 
         }
         /// <summary>
@@ -167,7 +189,7 @@ namespace OfficeIMO.Word {
         /// <param name="wordTable">The parent <see cref="WordTable"/>.</param>
         /// <param name="row">The underlying Open XML table row.</param>
         /// <param name="document">The parent <see cref="WordDocument"/>.</param>
-        public WordTableRow(WordTable wordTable, TableRow row, WordDocument document) : this(wordTable, row, document, initializeCells: true) {
+        internal WordTableRow(WordTable wordTable, TableRow row, WordDocument document) : this(wordTable, row, document, initializeCells: true) {
         }
 
         internal WordTableRow(WordTable wordTable, TableRow row, WordDocument document, bool initializeCells) {
@@ -177,7 +199,7 @@ namespace OfficeIMO.Word {
 
             if (initializeCells) {
                 foreach (TableCell cell in row.ChildElements.OfType<TableCell>()) {
-                    new WordTableCell(document, wordTable, this, cell);
+                    GetOrCreateCell(cell, ensureCellProperties: true);
                 }
             }
         }
@@ -249,7 +271,7 @@ namespace OfficeIMO.Word {
 
             var firstCell = rows[startIndex].Cells[cellIndex];
             firstCell.AddTableCellProperties();
-            firstCell.VerticalMerge = MergedCellValues.Restart;
+            firstCell.VerticalMerge = WordCellMerge.Restart;
             var targetCell = firstCell._tableCell;
 
             for (int i = 0; i < rowsToMerge; i++) {
@@ -275,7 +297,7 @@ namespace OfficeIMO.Word {
                     cell._tableCell.Append(new Paragraph());
                 }
 
-                cell.VerticalMerge = MergedCellValues.Continue;
+                cell.VerticalMerge = WordCellMerge.Continue;
             }
         }
 

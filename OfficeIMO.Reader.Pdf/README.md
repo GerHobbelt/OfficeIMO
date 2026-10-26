@@ -1,9 +1,9 @@
-# OfficeIMO.Reader.Pdf - PDF reader and normalized PDF projection
+# OfficeIMO.Reader.Pdf - PDF reader and compatibility projection bridge
 
 [![nuget version](https://img.shields.io/nuget/v/OfficeIMO.Reader.Pdf)](https://www.nuget.org/packages/OfficeIMO.Reader.Pdf)
 [![nuget downloads](https://img.shields.io/nuget/dt/OfficeIMO.Reader.Pdf?label=nuget%20downloads)](https://www.nuget.org/packages/OfficeIMO.Reader.Pdf)
 
-`OfficeIMO.Reader.Pdf` is the selective PDF bridge over `OfficeIMO.Reader.Core` and `OfficeIMO.Pdf`. It reads PDF artifacts into the normalized Reader model and can project any normalized `OfficeDocumentReadResult` back into a searchable PDF through explicit loss policies. It does not pull Word, Excel, PowerPoint, Email, or the all-adapters composition package.
+`OfficeIMO.Reader.Pdf` reads PDF artifacts into the normalized Reader model. For existing Reader workflows it also contains a thin compatibility bridge that maps an `OfficeDocumentReadResult` into the dependency-free `OfficeDocumentModel`; the actual output policy and PDF composition are owned by `OfficeIMO.Pdf`. It does not pull Word, Excel, PowerPoint, Email, or the all-adapters composition package.
 
 ## Install
 
@@ -80,14 +80,14 @@ using OfficeIMO.Reader;
 
 OfficeDocumentReadResult normalized = reader.ReadDocument("manual.pdf");
 PdfDocumentConversionResult conversion = normalized.ToPdfDocumentResult(
-    new ReaderPdfProjectionOptions {
-        PagePolicy = ReaderPdfPagePolicy.PreserveSourcePages,
-        AssetPolicy = ReaderPdfAssetPolicy.EmbedSupportedImages,
+    new PdfProjectionOptions {
+        PagePolicy = PdfProjectionPagePolicy.PreserveSourcePages,
+        AssetPolicy = PdfProjectionAssetPolicy.EmbedSupportedImages,
         RasterDecodeOptions = new OfficeRasterDecodeOptions {
             AnimationPolicy = OfficeRasterAnimationPolicy.RejectAnimated
         },
-        LinkPolicy = ReaderPdfLinkPolicy.PreserveUriLinks,
-        FormPolicy = ReaderPdfFormPolicy.RenderCurrentValues
+        LinkPolicy = PdfProjectionLinkPolicy.PreserveUriLinks,
+        FormPolicy = PdfProjectionFormPolicy.RenderCurrentValues
     });
 
 PdfSaveResult save = conversion.Save("normalized-manual.pdf");
@@ -101,7 +101,7 @@ Office, and other Reader adapters without taking dependencies on those packages.
 Source diagnostics are merged with PDF generation diagnostics. Email attachment,
 EPUB resource/pagination, and Visio preview/semantic fallback decisions are
 recorded explicitly. Page-scoped and document-scoped normalized collections are
-reconciled by the shared Reader identities, so aggregate resources are retained
+reconciled by the neutral model identities, so aggregate resources are retained
 without repeating page content. The Drawing raster policy is used for selected
 GIF frames and animation rejection; selecting a frame emits loss evidence rather
 than silently flattening animation. This does not advertise a direct format
@@ -157,6 +157,6 @@ var chunks = reader.ReadFolder("KnowledgeBase", new ReaderFolderOptions {
 ## Dependency footprint
 
 - **External:** None beyond the dependencies of its OfficeIMO format packages.
-- **OfficeIMO:** `OfficeIMO.Reader.Core`, `OfficeIMO.Drawing`, and the first-party `OfficeIMO.Pdf` engine own normalized content, raster compatibility, PDF parsing/generation, assets, and diagnostics.
+- **OfficeIMO:** `OfficeIMO.Reader.Core`, `OfficeIMO.Core`, and the first-party `OfficeIMO.Pdf` engine own normalized content, raster compatibility, PDF parsing/generation, assets, and diagnostics.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

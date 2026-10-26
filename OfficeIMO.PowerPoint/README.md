@@ -17,8 +17,8 @@ dotnet add package OfficeIMO.PowerPoint
 ## Quick start
 
 ```csharp
-using OfficeIMO.PowerPoint;
 using OfficeIMO.Drawing;
+using OfficeIMO.PowerPoint;
 
 using var presentation = PowerPointPresentation.Create("deck.pptx");
 presentation.SlideSize.SetPreset(PowerPointSlideSizePreset.Screen16x9);
@@ -30,7 +30,7 @@ var body = slide.AddTextBox("Generated without PowerPoint automation.");
 body.SetPositionCm(2, 2);
 body.SetSizeCm(18, 2);
 
-slide.Transition = SlideTransition.Fade;
+slide.Transition = PowerPointSlideTransition.Fade;
 presentation.Save();
 ```
 
@@ -117,7 +117,7 @@ Imported binary files use a preservation-aware writer: no-op saves can retain th
 representable edits append compatible records, and unrelated or unknown records and streams remain intact.
 Saving blocks on known loss by default. Tables, charts, and SmartArt can be converted to deterministic static
 PNG visuals only after the caller accepts the reported loss with
-`new PowerPointSaveOptions { LossPolicy = PowerPointConversionLossPolicy.Allow }`. Features with no safe
+`new PowerPointSaveOptions { LossPolicy = OfficeConversionLossPolicy.Allow }`. Features with no safe
 binary representation are blocked rather than silently omitted.
 
 The versioned capability catalog is the source of truth for import, fresh binary authoring, binary round-trip,
@@ -168,6 +168,27 @@ supplied `IOfficeSecurityProvider` for OPC creation and cryptographic validation
 - Supports encrypted Open XML and RC4 CryptoAPI binary presentation save/load workflows.
 - Uses Open XML directly, making it suitable for services, build agents, desktop apps, and automation hosts.
 
+### Imported charts, SmartArt, timelines, media, and OLE
+
+Imported 3-D bar, line, area, and pie charts, of-pie charts, stock charts, and
+surface charts support in-place data updates when their referenced caches and
+embedded workbook can be changed consistently. `InspectImportedContent()`
+reports the native family and export boundary. Image and PDF export use an
+explicit 2-D semantic projection for these families; producer-specific storage
+or chart groups that do not have a safe model remain preservation-only.
+
+`PowerPointSmartArt.TryGetTopology(...)` exposes text, sibling order, and parent
+connections only when the imported layout can be represented safely.
+`UpdateTopology(...)` rejects node creation/deletion, cycles, and connections
+that would change the meaning of the supported SmartArt family.
+
+Slides can append motion, rotation, and command timeline actions without
+rebuilding an imported timing tree. Actions can be edited or removed by native
+timing ID. Linked and embedded audio/video expose playback, trim, fade, target,
+and payload controls; linked and embedded OLE objects expose their appropriate
+URI or package-payload controls. Unmodeled timing and package content remains in
+the source package unless a caller explicitly targets a supported node.
+
 ## Runnable samples
 
 ```powershell
@@ -200,15 +221,15 @@ agenda.AddBullets(new[] { "Intro", "KPIs", "Next steps" });
 ### Images and SVGs
 
 ```csharp
+using OfficeIMO.Drawing;
 using OfficeIMO.PowerPoint;
-using PowerPointImagePartType = OfficeIMO.PowerPoint.ImagePartType;
 
 slide.AddPicture("logo.png",
     PowerPointUnits.FromCentimeters(23), PowerPointUnits.FromCentimeters(1.2),
     PowerPointUnits.FromCentimeters(5), PowerPointUnits.FromCentimeters(2));
 
 using var logo = File.OpenRead("logo.png");
-slide.AddPicture(logo, PowerPointImagePartType.Png,
+slide.AddPicture(logo, OfficeImageFormat.Png,
     PowerPointUnits.FromCentimeters(2), PowerPointUnits.FromCentimeters(2),
     PowerPointUnits.FromCentimeters(5), PowerPointUnits.FromCentimeters(2));
 
@@ -285,7 +306,7 @@ slide.AddChartCm(OfficeChartKind.ColumnClustered, chartData,
     .SetTitle("Quarterly performance")
     .SetCategoryAxisTitle("Quarter")
     .SetValueAxisTitle("Value")
-    .SetLegend(LegendPositionValues.Bottom)
+    .SetLegend(OfficeChartLegendPosition.Bottom)
     .SetChartAreaStyle(fillColor: "FFFFFF", lineColor: "D9E2F3")
     .SetPlotAreaStyle(fillColor: "F8FAFC", lineColor: "D9E2F3");
 
@@ -335,7 +356,7 @@ var mix = new OfficeChartData(
 slide.AddChartCm(OfficeChartKind.Doughnut, mix,
         leftCm: 15.2, topCm: 3.0, widthCm: 8.0, heightCm: 8.0)
     .SetTitle("Revenue mix")
-    .SetLegend(LegendPositionValues.Right);
+    .SetLegend(OfficeChartLegendPosition.Right);
 ```
 
 ### Table and chart together
@@ -371,7 +392,7 @@ var segmentChart = new OfficeChartData(
 dashboard.AddChartCm(OfficeChartKind.Line, segmentChart,
         leftCm: 12.2, topCm: 3.0, widthCm: 12.0, heightCm: 6.5)
     .SetTitle("Segment trend")
-    .SetLegend(LegendPositionValues.Bottom);
+    .SetLegend(OfficeChartLegendPosition.Bottom);
 
 record SegmentRow(string Segment, int Q1, int Q2, int Q3, int Q4);
 ```
@@ -576,11 +597,14 @@ byte[] jpeg = slide.ToJpeg(new PowerPointImageExportOptions {
 
 presentation.ToImages()
     .ForSlideRange(1, 3)
+    .IncludeCharts()
+    .IncludeTables()
+    .FitWithin(1600, 900)
     .AsWebp()
     .Save("slide-previews");
 ```
 
-PowerPoint owns slide semantics and scene construction; `OfficeIMO.Drawing` owns the common raster encoders. `SaveAsJpeg`, `SaveAsTiff`, and `SaveAsWebp` remain thin wrappers over the shared export builder.
+PowerPoint owns slide semantics and scene construction; `OfficeIMO.Drawing` owns sizing and the common raster encoders. The fluent builder can include or exclude backgrounds, pictures, auto shapes, SmartArt, text boxes, tables, charts, hidden shapes, and hidden slides. `SaveAsJpeg`, `SaveAsTiff`, and `SaveAsWebp` remain thin wrappers over the shared export builder.
 
 ## Adjacent packages
 
@@ -604,7 +628,7 @@ PowerPoint owns slide semantics and scene construction; `OfficeIMO.Drawing` owns
 ## Dependency footprint
 
 - **External:** Open XML SDK for `.pptx` package mechanics. Microsoft BCL compatibility packages are used on older targets.
-- **OfficeIMO:** `OfficeIMO.Drawing`. The presentation model, composition system, inspection, encryption workflow, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
+- **OfficeIMO:** `OfficeIMO.Core`. The presentation model, composition system, inspection, encryption workflow, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
 - **Security:** Open XML, legacy binary, and VBA signature carriers are inspected and signed-presentation mutations fail safely without a cryptographic dependency. OPC and VBA creation and cryptographic validation accept an explicit `IOfficeSecurityProvider`; `OfficeIMO.Security` is not pulled transitively.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

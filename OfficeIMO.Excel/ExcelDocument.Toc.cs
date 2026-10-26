@@ -41,9 +41,9 @@ namespace OfficeIMO.Excel {
 
             // Header
             int headerRow = r;
-            toc.Cell(headerRow, 1, "Sheet"); toc.CellBold(headerRow, 1, true); toc.CellBackground(headerRow, 1, "#F2F2F2");
-            toc.Cell(headerRow, 2, "Details"); toc.CellBold(headerRow, 2, true); toc.CellBackground(headerRow, 2, "#F2F2F2");
-            if (includeNamedRanges) { toc.Cell(headerRow, 3, "Named Ranges"); toc.CellBold(headerRow, 3, true); toc.CellBackground(headerRow, 3, "#F2F2F2"); }
+            toc.Cell(headerRow, 1, "Sheet");
+            toc.Cell(headerRow, 2, "Details");
+            if (includeNamedRanges) toc.Cell(headerRow, 3, "Named Ranges");
             r++;
 
             var rowsStart = r;
@@ -54,7 +54,7 @@ namespace OfficeIMO.Excel {
                 if (withHyperlinks) toc.SetInternalLink(r, 1, sh, "A1", sh.Name); else toc.Cell(r, 1, sh.Name);
 
                 // Details: Used range and size
-                string used = sh.GetUsedRangeA1();
+                string used = sh.UsedRangeA1;
                 try {
                     var (r1, c1, r2, c2) = A1.ParseRange(used);
                     int rows = System.Math.Max(0, r2 - r1 + 1);
@@ -79,10 +79,20 @@ namespace OfficeIMO.Excel {
             }
             int rowsEnd = r - 1;
 
-            if (styled && rowsEnd >= rowsStart) {
-                string endCol = includeNamedRanges ? "C" : "B";
-                string tableRange = $"A{headerRow}:{endCol}{rowsEnd}";
-                toc.AddTable(tableRange, hasHeader: true, name: "TOC_Items", style: TableStyle.TableStyleMedium2, includeAutoFilter: true);
+            if (styled) {
+                int endColumn = includeNamedRanges ? 3 : 2;
+                if (rowsEnd >= rowsStart) {
+                    string endCol = includeNamedRanges ? "C" : "B";
+                    string tableRange = $"A{headerRow}:{endCol}{rowsEnd}";
+                    toc.AddTable(tableRange, hasHeader: true, name: "TOC_Items", style: ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
+                } else {
+                    // With no data rows there is no table to own the header appearance.
+                    // Keep the styled contract explicit and readable for this empty state.
+                    for (int column = 1; column <= endColumn; column++) {
+                        toc.CellBold(headerRow, column, true);
+                        toc.CellBackground(headerRow, column, "#F2F2F2");
+                    }
+                }
                 try { toc.Freeze(topRows: headerRow, leftCols: 0); } catch { }
                 toc.AutoFitColumns();
             }

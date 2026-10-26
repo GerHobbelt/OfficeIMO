@@ -231,7 +231,7 @@ namespace OfficeIMO.Word.Html {
                             } else {
                                 paragraph = AddParagraphInScope(section, cell, headerFooter);
                             }
-                            paragraph.Style = HeadingStyleMapper.GetHeadingStyleForLevel(level);
+                            paragraph.Style = WordHeadingStyleMapper.GetHeadingStyleForLevel(level);
                             var fmt = formatting;
                             ApplySpanStyles(element, ref fmt);
                             var props = ApplyParagraphStyleFromCss(paragraph, element);
@@ -534,13 +534,13 @@ namespace OfficeIMO.Word.Html {
                             currentParagraph ??= AddParagraphInScope(section, cell, headerFooter);
                             var fmt = formatting;
                             ApplySpanStyles(element, ref fmt);
-                            var open = currentParagraph.AddFormattedText(options.QuotePrefix, fmt.Bold, fmt.Italic, GetUnderlineValue(fmt));
+                            var open = currentParagraph.AddFormattedText(options.QuotePrefix, fmt.Bold, fmt.Italic, GetUnderlineValue(fmt)?.ToOfficeEnum());
                             ApplyFormatting(open, fmt, options);
                             open.SetCharacterStyleId("HtmlQuote");
                             foreach (var child in element.ChildNodes) {
                                 ProcessNode(child, doc, section, options, currentParagraph, listStack, fmt, cell, headerFooter, headingList);
                             }
-                            var close = currentParagraph.AddFormattedText(options.QuoteSuffix, fmt.Bold, fmt.Italic, GetUnderlineValue(fmt));
+                            var close = currentParagraph.AddFormattedText(options.QuoteSuffix, fmt.Bold, fmt.Italic, GetUnderlineValue(fmt)?.ToOfficeEnum());
                             ApplyFormatting(close, fmt, options);
                             close.SetCharacterStyleId("HtmlQuote");
                             break;
@@ -642,7 +642,7 @@ namespace OfficeIMO.Word.Html {
                     case "tt": {
                             var fmt = formatting;
                             ApplySpanStyles(element, ref fmt);
-                            var mono = FontResolver.Resolve("monospace");
+                            var mono = WordFontResolver.Resolve("monospace");
                             if (!string.IsNullOrEmpty(mono)) {
                                 fmt.FontFamily = mono;
                             }
@@ -805,7 +805,7 @@ namespace OfficeIMO.Word.Html {
                                     if (!string.IsNullOrEmpty(title)) {
                                         linkAnchor.Tooltip = title;
                                     }
-                                    if (!string.IsNullOrEmpty(target) && Enum.TryParse<TargetFrame>(target, true, out var frame)) {
+                                    if (!string.IsNullOrEmpty(target) && Enum.TryParse<WordHyperlinkTargetFrame>(target, true, out var frame)) {
                                         linkAnchor.TargetFrame = frame;
                                     }
                                 }
@@ -865,7 +865,7 @@ namespace OfficeIMO.Word.Html {
                                     if (!string.IsNullOrEmpty(title)) {
                                         link.Tooltip = title;
                                     }
-                                    if (!string.IsNullOrEmpty(target) && Enum.TryParse<TargetFrame>(target, true, out var frame)) {
+                                    if (!string.IsNullOrEmpty(target) && Enum.TryParse<WordHyperlinkTargetFrame>(target, true, out var frame)) {
                                         link.TargetFrame = frame;
                                     }
                                 }
@@ -1020,7 +1020,7 @@ namespace OfficeIMO.Word.Html {
 
             var orientationValue = element.GetAttribute("data-page-orientation");
             if (TryParsePageOrientation(orientationValue, out var orientation)) {
-                section.PageOrientation = orientation;
+                section.PageOrientation = orientation.ToOfficeEnum();
             }
 
             if (TryGetUInt32Attribute(element, "data-page-width-twips", out var width)) {

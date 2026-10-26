@@ -27,7 +27,7 @@ namespace OfficeIMO.Excel {
             }
         }
 
-        private static void AddUnsupportedHeaderFooterImages(ExcelSheet.HeaderFooterSnapshot headerFooter, string sheetName, ref int count, List<string> details) {
+        private static void AddUnsupportedHeaderFooterImages(ExcelSheet.ExcelHeaderFooterSnapshot headerFooter, string sheetName, ref int count, List<string> details) {
             AddUnsupportedHeaderFooterImage(headerFooter.HeaderLeftImage, sheetName, "header left", ref count, details);
             AddUnsupportedHeaderFooterImage(headerFooter.HeaderCenterImage, sheetName, "header center", ref count, details);
             AddUnsupportedHeaderFooterImage(headerFooter.HeaderRightImage, sheetName, "header right", ref count, details);
@@ -36,7 +36,7 @@ namespace OfficeIMO.Excel {
             AddUnsupportedHeaderFooterImage(headerFooter.FooterRightImage, sheetName, "footer right", ref count, details);
         }
 
-        private static void AddUnsupportedHeaderFooterImage(ExcelSheet.HeaderFooterImageSnapshot? image, string sheetName, string location, ref int count, List<string> details) {
+        private static void AddUnsupportedHeaderFooterImage(ExcelSheet.ExcelHeaderFooterImageSnapshot? image, string sheetName, string location, ref int count, List<string> details) {
             if (image == null || IsPdfSupportedHeaderFooterImage(image, out string reason)) {
                 return;
             }
@@ -290,14 +290,39 @@ namespace OfficeIMO.Excel {
             return snapshot.Data.Categories.Count > 0 && snapshot.Data.Series.Count > 0;
         }
 
-        private static bool HasMixedPdfChartTypes(ExcelChartSnapshot snapshot) {
-            foreach (ExcelChartSeries series in snapshot.Data.Series) {
-                if (series.ChartType.HasValue && series.ChartType.Value != snapshot.ChartType) {
-                    return true;
-                }
+        private static List<string> GetPdfUnsupportedComboChartDetails(ExcelChartSnapshot snapshot, string sheetName) {
+            var details = new List<string>();
+            bool hasMixedSeries = snapshot.Data.Series.Any(series =>
+                series.ChartType.HasValue && series.ChartType.Value != snapshot.ChartType);
+            if (!hasMixedSeries) {
+                return details;
             }
 
-            return false;
+            if (!ExcelRangeImageRenderer.TryMapSeriesRenderKind(snapshot.ChartType, out _, out _)) {
+                details.Add($"{sheetName}: combo-chart base type {snapshot.ChartType} is not Cartesian ({GetChartDisplayName(snapshot)})");
+                return details;
+            }
+
+            foreach (ExcelChartSeries series in snapshot.Data.Series) {
+                ExcelChartType effectiveType = series.ChartType ?? snapshot.ChartType;
+                if (effectiveType == snapshot.ChartType) {
+                    continue;
+                }
+
+                if (ExcelRangeImageRenderer.TryMapCompatibleComboSeriesRenderKind(
+                        snapshot.ChartType,
+                        effectiveType,
+                        out _,
+                        out _,
+                        out string? unsupportedReason)) {
+                    continue;
+                }
+
+                details.Add(
+                    $"{sheetName}: combo-chart series '{series.Name}' uses unsupported type {effectiveType}: {unsupportedReason} ({GetChartDisplayName(snapshot)})");
+            }
+
+            return details;
         }
 
         private static string GetSafeChartDisplayName(ExcelChart chart) {
@@ -360,7 +385,7 @@ namespace OfficeIMO.Excel {
             return true;
         }
 
-        private static bool IsPdfSupportedHeaderFooterImage(ExcelSheet.HeaderFooterImageSnapshot image, out string reason) {
+        private static bool IsPdfSupportedHeaderFooterImage(ExcelSheet.ExcelHeaderFooterImageSnapshot image, out string reason) {
             if (!IsPdfSupportedImageContentType(image.ContentType)) {
                 reason = $"content type '{image.ContentType}' is not supported by the first-party PDF image writer.";
                 return false;

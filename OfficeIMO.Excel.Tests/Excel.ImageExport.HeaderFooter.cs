@@ -31,6 +31,34 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelWorksheet_PageSlicedSvgFitIncludesFinalHeaderFooterBands() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("Report");
+            FillPageBreakGrid(sheet);
+            sheet.SetHeaderFooter(headerCenter: "Confidential", footerRight: "Draft");
+            sheet.AddManualRowPageBreak(2, save: false);
+
+            IReadOnlyList<OfficeImageExportResult> results = sheet.ExportImages(
+                OfficeImageExportFormat.Svg,
+                new ExcelWorksheetImageExportOptions {
+                    Range = "A1:AZ4",
+                    SplitByManualPageBreaks = true,
+                    ShowGridlines = false,
+                    MaximumOutputWidth = 120,
+                    MaximumOutputHeight = 120
+                });
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, result => {
+                Assert.True(result.Width <= 120);
+                Assert.True(result.Height <= 120);
+            });
+            string svg = Encoding.UTF8.GetString(results[1].Bytes);
+            Assert.Contains(">Confidential<", svg);
+            Assert.Contains(">Draft<", svg);
+        }
+
+        [Fact]
         public void ExcelWorksheet_SvgHeaderFooterDoesNotSerializeClippedTextOrOversizedFontNames() {
             using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
             ExcelSheet sheet = document.AddWorksheet("Report");
@@ -499,8 +527,8 @@ namespace OfficeIMO.Tests {
             ExcelSheet sheet = document.AddWorksheet("Report");
             FillPageBreakGrid(sheet);
             byte[] logo = CreateHeaderFooterLogoPng();
-            sheet.SetHeaderImage(HeaderFooterPosition.Center, logo, "image/png", widthPoints: 36D, heightPoints: 16D);
-            sheet.SetFooterImage(HeaderFooterPosition.Right, logo, "image/png", widthPoints: 24D, heightPoints: 12D);
+            sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, logo, "image/png", widthPoints: 36D, heightPoints: 16D);
+            sheet.SetFooterImage(ExcelHeaderFooterPosition.Right, logo, "image/png", widthPoints: 24D, heightPoints: 12D);
             sheet.AddManualRowPageBreak(2, save: false);
 
             var options = new ExcelWorksheetImageExportOptions {
@@ -532,7 +560,7 @@ namespace OfficeIMO.Tests {
             using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
             ExcelSheet sheet = document.AddWorksheet("Report");
             FillPageBreakGrid(sheet);
-            sheet.SetHeaderImage(HeaderFooterPosition.Center, CreateHeaderFooterLogoPng(), "image/png", widthPoints: 36D, heightPoints: 16D);
+            sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, CreateHeaderFooterLogoPng(), "image/png", widthPoints: 36D, heightPoints: 16D);
             sheet.AddManualRowPageBreak(2, save: false);
 
             OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Svg, new ExcelWorksheetImageExportOptions {
@@ -553,7 +581,7 @@ namespace OfficeIMO.Tests {
             ExcelSheet sheet = document.AddWorksheet("Report");
             FillPageBreakGrid(sheet);
             byte[] logo = CreateHeaderFooterLogoPng();
-            sheet.SetHeaderImage(HeaderFooterPosition.Center, logo, "image/png", widthPoints: 36D, heightPoints: 16D);
+            sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, logo, "image/png", widthPoints: 36D, heightPoints: 16D);
             sheet.AddImage(1, 1, logo, "image/png", widthPixels: 24, heightPixels: 12, name: "Worksheet logo");
             sheet.AddManualRowPageBreak(2, save: false);
 
@@ -574,7 +602,7 @@ namespace OfficeIMO.Tests {
             using ExcelDocument document = ExcelDocument.Create(filePath);
             ExcelSheet sheet = document.AddWorksheet("Report");
             FillPageBreakGrid(sheet);
-            sheet.SetHeaderImage(HeaderFooterPosition.Center, CreateHeaderFooterLogoBmp(), "image/bmp", widthPoints: 36D, heightPoints: 16D);
+            sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, CreateHeaderFooterLogoBmp(), "image/bmp", widthPoints: 36D, heightPoints: 16D);
             sheet.AddManualRowPageBreak(2, save: false);
 
             var options = new ExcelWorksheetImageExportOptions {
@@ -604,7 +632,7 @@ namespace OfficeIMO.Tests {
             using ExcelDocument document = ExcelDocument.Create(filePath);
             ExcelSheet sheet = document.AddWorksheet("Report");
             FillPageBreakGrid(sheet);
-            sheet.SetHeaderImage(HeaderFooterPosition.Center, new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, "image/gif", widthPoints: 36D, heightPoints: 16D);
+            sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, "image/gif", widthPoints: 36D, heightPoints: 16D);
             sheet.AddManualRowPageBreak(2, save: false);
 
             OfficeImageExportResult result = sheet.ExportImages(OfficeImageExportFormat.Png, new ExcelWorksheetImageExportOptions {
@@ -627,7 +655,7 @@ namespace OfficeIMO.Tests {
             ExcelSheet sheet = document.AddWorksheet("Report");
             FillPageBreakGrid(sheet);
             sheet.SetHeaderImage(
-                HeaderFooterPosition.Center,
+                ExcelHeaderFooterPosition.Center,
                 new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 },
                 "image/gif",
                 widthPoints: 36D,

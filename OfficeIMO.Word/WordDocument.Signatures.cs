@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using DocumentFormat.OpenXml.Packaging;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.Security;
 
 namespace OfficeIMO.Word {
@@ -17,7 +17,7 @@ namespace OfficeIMO.Word {
                 snapshot.ToArray(), new OfficePackageSignatureInspectionOptions { VerifyDigests = false });
             return CreateWordSignatureInfo(shared,
                 _wordprocessingDocument.DigitalSignatureOriginPart != null,
-                ApplicationProperties.DigitalSignature != null);
+                ApplicationProperties.HasDigitalSignatureMetadata);
         }
 
         private static WordSignatureInfo CreateWordSignatureInfo(
@@ -95,7 +95,7 @@ namespace OfficeIMO.Word {
             options ??= new WordSignatureValidationOptions();
             OfficePackageSignatureValidator.ValidateOptions(options);
             var originPart = _wordprocessingDocument.DigitalSignatureOriginPart;
-            bool hasApplicationSignatureMetadata = ApplicationProperties.DigitalSignature != null;
+            bool hasApplicationSignatureMetadata = ApplicationProperties.HasDigitalSignatureMetadata;
             if (originPart == null || !originPart.XmlSignatureParts.Any()) {
                 WordSignatureInfo unsignedInfo = WordSignatureInspector.Inspect(
                     _wordprocessingDocument,
@@ -297,7 +297,7 @@ namespace OfficeIMO.Word {
 
         internal static WordLoadOptions CreateSigningReadbackLoadOptions(
             WordPackageSigningOptions signingOptions) => new WordLoadOptions {
-                AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
+                AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly,
                 MaxInputBytes = signingOptions.MaxPackageBytes
             };
 

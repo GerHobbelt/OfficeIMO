@@ -132,7 +132,7 @@ namespace OfficeIMO.Word {
         /// based on an existing Open XML <see cref="Level"/> element.
         /// </summary>
         /// <param name="level">The underlying Open XML list level element.</param>
-        public WordListLevel(Level level) {
+        internal WordListLevel(Level level) {
             _level = level ?? throw new ArgumentNullException(nameof(level));
         }
 
@@ -140,9 +140,12 @@ namespace OfficeIMO.Word {
         /// Gets the underlying Open XML list level element for advanced interop scenarios.
         /// Prefer the typed properties on <see cref="WordListLevel"/> for normal list configuration.
         /// </summary>
-        public Level OpenXmlElement => _level;
+        internal Level OpenXmlElement => _level;
 
         internal Level _level { get; set; } = null!;
+
+        /// <summary>Gets the zero-based list level index.</summary>
+        public int LevelIndex => _level.LevelIndex?.Value ?? 0;
 
         private StartNumberingValue GetStartNumberingValueElement() {
             var element = _level.Descendants<StartNumberingValue>().FirstOrDefault();
@@ -304,28 +307,28 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the level justification.
         /// </summary>
-        public LevelJustificationValues LevelJustification {
+        public WordListLevelAlignment LevelJustification {
             get {
                 var element = GetLevelJustificationElement();
-                return element.Val?.Value ?? LevelJustificationValues.Left;
+                return (element.Val?.Value ?? LevelJustificationValues.Left).ToOfficeEnum();
             }
             set {
                 var element = GetLevelJustificationElement();
-                element.Val = value;
+                element.Val = value.ToOpenXml();
             }
         }
 
         /// <summary>
         /// Gets or sets the suffix placed after the numbering marker.
         /// </summary>
-        public LevelSuffixValues LevelSuffix {
+        public WordListLevelSuffix LevelSuffix {
             get {
                 var element = GetLevelSuffixElement();
-                return element.Val?.Value ?? LevelSuffixValues.Tab;
+                return (element.Val?.Value ?? LevelSuffixValues.Tab).ToOfficeEnum();
             }
             set {
                 var element = GetLevelSuffixElement();
-                element.Val = value;
+                element.Val = value.ToOpenXml();
             }
         }
 

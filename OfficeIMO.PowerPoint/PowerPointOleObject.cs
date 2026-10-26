@@ -3,14 +3,14 @@ using System.IO;
 using System.Linq;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using P = DocumentFormat.OpenXml.Presentation;
 
 namespace OfficeIMO.PowerPoint {
     /// <summary>
     ///     Represents an embedded OLE object placed on a slide.
     /// </summary>
-    public sealed class PowerPointOleObject : PowerPointShape {
+    public sealed partial class PowerPointOleObject : PowerPointShape {
         internal const string DefaultContentType =
             "application/vnd.openxmlformats-officedocument.oleObject";
         internal const int MaximumStorageBytes = 64 * 1024 * 1024;
@@ -56,16 +56,16 @@ namespace OfficeIMO.PowerPoint {
         }
 
         /// <summary>Gets or sets how the object follows the presentation color scheme.</summary>
-        public P.OleObjectFollowColorSchemeValues FollowColorScheme {
+        public PowerPointOleFollowColorScheme FollowColorScheme {
             get => OleObject.GetFirstChild<P.OleObjectEmbed>()?
-                .FollowColorScheme?.Value
-                ?? P.OleObjectFollowColorSchemeValues.None;
+                .FollowColorScheme?.Value.ToOfficeEnum()
+                ?? PowerPointOleFollowColorScheme.None;
             set {
                 P.OleObjectEmbed embed = OleObject
                     .GetFirstChild<P.OleObjectEmbed>()
                     ?? throw new InvalidOperationException(
                         "The OLE object is linked rather than embedded.");
-                embed.FollowColorScheme = value;
+                embed.FollowColorScheme = value.ToOpenXml();
             }
         }
 

@@ -1,4 +1,4 @@
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -39,18 +39,8 @@ namespace OfficeIMO.Word {
             return filePath;
         }
 
-        private static OpenSettings CreateOpenSettings(OpenSettings? openSettings) {
-            if (openSettings is null) {
-                return new OpenSettings { AutoSave = false };
-            }
-
-            return new OpenSettings {
-                AutoSave = false,
-                CompatibilityLevel = openSettings.CompatibilityLevel,
-                MarkupCompatibilityProcessSettings = openSettings.MarkupCompatibilityProcessSettings,
-                MaxCharactersInPart = openSettings.MaxCharactersInPart,
-            };
-        }
+        private static OpenSettings CreateOpenSettings(OfficeOpenXmlLoadSettings? openSettings) =>
+            openSettings.ToOpenXml();
 
         private static byte[] ReadSourceBytes(Stream stream, WordLoadOptions options) {
             ValidateMaxInputBytes(options);
@@ -99,7 +89,7 @@ namespace OfficeIMO.Word {
             if (resolved.PersistenceMode == DocumentPersistenceMode.SaveOnDispose) {
                 throw new ArgumentException("SaveOnDispose requires an associated file path or writable stream.", nameof(options));
             }
-            return CreateInternal(filePath: null, stream: null, resolved.DocumentType, resolved.PersistenceMode);
+            return CreateInternal(filePath: null, stream: null, resolved.DocumentType.ToOpenXml(), resolved.PersistenceMode);
         }
 
         /// <summary>Creates a Word document associated with a path that is written on explicit save.</summary>
@@ -209,6 +199,7 @@ namespace OfficeIMO.Word {
 
             StyleDefinitionsPart styleDefinitionsPart1 = mainPart.AddNewPart<StyleDefinitionsPart>("rId1");
             GenerateStyleDefinitionsPart1Content(styleDefinitionsPart1);
+            word._styleDefinitionsInitialized = true;
 
             WebSettingsPart webSettingsPart1 = mainPart.AddNewPart<WebSettingsPart>("rId3");
             GenerateWebSettingsPart1Content(webSettingsPart1);
@@ -230,8 +221,8 @@ namespace OfficeIMO.Word {
 
             new WordSettings(word);
             new WordCompatibilitySettings(word);
-            new ApplicationProperties(word);
-            new BuiltinDocumentProperties(word);
+            new WordApplicationProperties(word);
+            new WordBuiltinDocumentProperties(word);
             new WordSection(word, null!);
             new WordBackground(word);
             new WordDocumentStatistics(word);
@@ -251,7 +242,7 @@ namespace OfficeIMO.Word {
         public static WordDocument Create(Stream stream, WordCreateOptions? options = null) {
             OfficeDocumentLifecycle.EnsureAssociatedDestination(stream, nameof(stream));
             WordCreateOptions resolved = options ?? new WordCreateOptions();
-            var word = CreateInternal(null, stream, resolved.DocumentType, resolved.PersistenceMode);
+            var word = CreateInternal(null, stream, resolved.DocumentType.ToOpenXml(), resolved.PersistenceMode);
             return word;
         }
 
@@ -262,9 +253,8 @@ namespace OfficeIMO.Word {
             Sections.Clear();
             InitializeSdtIdState();
             // add settings if not existing
-            new WordSettings(this);
-            new ApplicationProperties(this);
-            new BuiltinDocumentProperties(this);
+            new WordApplicationProperties(this);
+            new WordBuiltinDocumentProperties(this);
             new WordCustomProperties(this);
             new WordDocumentVariables(this);
             new WordBibliography(this);
@@ -365,14 +355,18 @@ namespace OfficeIMO.Word {
                     return LoadLegacyDocFromNormalFlow(sourceBytes, filePath, saveOnDispose, readOnly);
                 }
 
-                var memoryStream = new MemoryStream(sourceBytes.Length);
-                memoryStream.Write(sourceBytes, 0, sourceBytes.Length);
-                memoryStream.Position = 0;
+                MemoryStream memoryStream = CreateLegacyValidationPackageStream(
+                    sourceBytes,
+                    readOnly,
+                    resolved.PackageSecurity?.MaxPackageBytes ?? int.MaxValue);
 
                 var wordDocument = WordprocessingDocument.Open(memoryStream, !readOnly, effectiveOpenSettings);
 
                 bool applyOverrideStyles = resolved.OverrideStyles && !readOnly;
-                InitialiseStyleDefinitions(wordDocument, readOnly, applyOverrideStyles);
+                if (applyOverrideStyles) {
+                    InitialiseStyleDefinitions(wordDocument, readOnly, overrideStyles: true);
+                    word._styleDefinitionsInitialized = true;
+                }
 
                 word.FilePath = filePath;
                 word._ownedPackageStream = memoryStream;
@@ -387,7 +381,7 @@ namespace OfficeIMO.Word {
                 word.LoadDocument();
                 if (applyOverrideStyles) {
                     // Ensure overrides are applied after any document initialization that may touch styles
-                    InitialiseStyleDefinitions(wordDocument, readOnly, applyOverrideStyles);
+                    InitialiseStyleDefinitions(wordDocument, readOnly, overrideStyles: true);
                     EnsureCustomStyleNames(wordDocument);
                 }
                 WordChart.InitializeAxisIdSeed(wordDocument);
@@ -482,9 +476,10 @@ namespace OfficeIMO.Word {
                 return LoadLegacyDocFromNormalFlow(sourceBytes, filePath, saveOnDispose, readOnly);
             }
 
-            var memoryStream = new MemoryStream(sourceBytes.Length);
-            memoryStream.Write(sourceBytes, 0, sourceBytes.Length);
-            memoryStream.Position = 0;
+            MemoryStream memoryStream = CreateLegacyValidationPackageStream(
+                sourceBytes,
+                readOnly,
+                resolved.PackageSecurity?.MaxPackageBytes ?? int.MaxValue);
 
             var wordDocument = WordprocessingDocument.Open(memoryStream, !readOnly, effectiveOpenSettings);
 
@@ -503,10 +498,13 @@ namespace OfficeIMO.Word {
             };
 
             bool applyOverrideStyles = resolved.OverrideStyles && !readOnly;
-            InitialiseStyleDefinitions(wordDocument, readOnly, applyOverrideStyles);
+            if (applyOverrideStyles) {
+                InitialiseStyleDefinitions(wordDocument, readOnly, overrideStyles: true);
+                word._styleDefinitionsInitialized = true;
+            }
             word.LoadDocument();
             if (applyOverrideStyles) {
-                InitialiseStyleDefinitions(wordDocument, readOnly, applyOverrideStyles);
+                InitialiseStyleDefinitions(wordDocument, readOnly, overrideStyles: true);
                 EnsureCustomStyleNames(wordDocument);
             }
             WordChart.InitializeAxisIdSeed(wordDocument);
@@ -572,9 +570,10 @@ namespace OfficeIMO.Word {
                 return LoadLegacyDocFromNormalFlow(sourceBytes, sourcePath: null, saveOnDispose, readOnly);
             }
 
-            var packageStream = new MemoryStream(sourceBytes.Length);
-            packageStream.Write(sourceBytes, 0, sourceBytes.Length);
-            packageStream.Position = 0;
+            MemoryStream packageStream = CreateLegacyValidationPackageStream(
+                sourceBytes,
+                readOnly,
+                resolved.PackageSecurity?.MaxPackageBytes ?? int.MaxValue);
             try {
                 var document = new WordDocument() {
                     OriginalStream = OfficeDocumentLifecycle.ResolveAssociatedDestination(stream, resolved.AccessMode)!,
@@ -590,13 +589,16 @@ namespace OfficeIMO.Word {
 
                 var wordDocument = WordprocessingDocument.Open(packageStream, !readOnly, effectiveOpenSettings);
                 bool applyOverrideStyles = resolved.OverrideStyles && !readOnly;
-                InitialiseStyleDefinitions(wordDocument, readOnly, applyOverrideStyles);
 
                 document._wordprocessingDocument = wordDocument;
                 document._document = wordDocument.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document is missing.");
+                if (applyOverrideStyles) {
+                    InitialiseStyleDefinitions(wordDocument, readOnly, overrideStyles: true);
+                    document._styleDefinitionsInitialized = true;
+                }
                 document.LoadDocument();
                 if (applyOverrideStyles) {
-                    InitialiseStyleDefinitions(wordDocument, readOnly, applyOverrideStyles);
+                    InitialiseStyleDefinitions(wordDocument, readOnly, overrideStyles: true);
                     EnsureCustomStyleNames(wordDocument);
                 }
 

@@ -2,6 +2,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeIMO.Excel.Utilities;
+using OfficeIMO.Spreadsheet;
 
 namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
@@ -548,31 +549,31 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Adds a text-matching conditional formatting rule.
         /// </summary>
-        public void AddConditionalTextRule(string range, ConditionalFormatValues type, string text, bool stopIfTrue = false) {
+        public void AddConditionalTextRule(string range, ExcelConditionalFormatType type, string text, bool stopIfTrue = false) {
             if (string.IsNullOrEmpty(text)) throw new ArgumentNullException(nameof(text));
             string firstCell = GetFirstCellReference(range);
             string literal = EscapeFormulaString(text);
             string formula;
-            ConditionalFormattingOperatorValues op;
-            if (type == ConditionalFormatValues.ContainsText) {
+            ExcelConditionalFormattingOperator op;
+            if (type == ExcelConditionalFormatType.ContainsText) {
                 formula = $"NOT(ISERROR(SEARCH(\"{literal}\",{firstCell})))";
-                op = ConditionalFormattingOperatorValues.ContainsText;
-            } else if (type == ConditionalFormatValues.NotContainsText) {
+                op = ExcelConditionalFormattingOperator.ContainsText;
+            } else if (type == ExcelConditionalFormatType.NotContainsText) {
                 formula = $"ISERROR(SEARCH(\"{literal}\",{firstCell}))";
-                op = ConditionalFormattingOperatorValues.NotContains;
-            } else if (type == ConditionalFormatValues.BeginsWith) {
+                op = ExcelConditionalFormattingOperator.NotContains;
+            } else if (type == ExcelConditionalFormatType.BeginsWith) {
                 formula = $"LEFT({firstCell},LEN(\"{literal}\"))=\"{literal}\"";
-                op = ConditionalFormattingOperatorValues.BeginsWith;
-            } else if (type == ConditionalFormatValues.EndsWith) {
+                op = ExcelConditionalFormattingOperator.BeginsWith;
+            } else if (type == ExcelConditionalFormatType.EndsWith) {
                 formula = $"RIGHT({firstCell},LEN(\"{literal}\"))=\"{literal}\"";
-                op = ConditionalFormattingOperatorValues.EndsWith;
+                op = ExcelConditionalFormattingOperator.EndsWith;
             } else {
                 throw new ArgumentOutOfRangeException(nameof(type), "Text conditional formatting requires ContainsText, NotContainsText, BeginsWith, or EndsWith.");
             }
 
-            AddConditionalRuleCore(range, type, rule => {
+            AddConditionalRuleCore(range, type.ToOpenXml(), rule => {
                 rule.Text = text;
-                rule.Operator = op;
+                rule.Operator = op.ToOpenXml();
             }, new[] { formula }, stopIfTrue, fillColor: null);
         }
 
@@ -599,10 +600,10 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Adds a time-period conditional formatting rule.
         /// </summary>
-        public void AddConditionalTimePeriodRule(string range, TimePeriodValues timePeriod, bool stopIfTrue = false, string? fillColor = null) {
+        public void AddConditionalTimePeriodRule(string range, ExcelConditionalTimePeriod timePeriod, bool stopIfTrue = false, string? fillColor = null) {
             string firstCell = GetFirstCellReference(range);
             AddConditionalRuleCore(range, ConditionalFormatValues.TimePeriod, rule => {
-                rule.TimePeriod = timePeriod;
+                rule.TimePeriod = timePeriod.ToOpenXml();
             }, new[] { BuildTimePeriodFormula(firstCell, timePeriod) }, stopIfTrue, fillColor);
         }
 
@@ -676,7 +677,7 @@ namespace OfficeIMO.Excel {
                         || !string.Equals(validation.Error?.Value, options.Error, StringComparison.Ordinal)
                         || validation.ShowInputMessage?.Value != showInputMessage
                         || validation.ShowErrorMessage?.Value != showErrorMessage
-                        || (options.ErrorStyle.HasValue && validation.ErrorStyle?.Value != options.ErrorStyle.Value)
+                        || (options.ErrorStyle.HasValue && validation.ErrorStyle?.Value != options.ErrorStyle.Value.ToOpenXml())
                         || (options.SuppressDropDown.HasValue && validation.ShowDropDown?.Value != options.SuppressDropDown.Value);
 
                     if (!validationChanged) continue;
@@ -688,7 +689,7 @@ namespace OfficeIMO.Excel {
                     validation.ShowInputMessage = showInputMessage;
                     validation.ShowErrorMessage = showErrorMessage;
                     if (options.ErrorStyle.HasValue) {
-                        validation.ErrorStyle = options.ErrorStyle.Value;
+                        validation.ErrorStyle = options.ErrorStyle.Value.ToOpenXml();
                     }
 
                     if (options.SuppressDropDown.HasValue) {
@@ -927,36 +928,29 @@ namespace OfficeIMO.Excel {
 
         private static string GetFirstCellReference(string range) {
             if (string.IsNullOrWhiteSpace(range)) throw new ArgumentNullException(nameof(range));
-            string firstReference = range.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries)[0];
-            int sheetSeparatorIndex = firstReference.LastIndexOf('!');
-            if (sheetSeparatorIndex >= 0 && sheetSeparatorIndex < firstReference.Length - 1) {
-                firstReference = firstReference.Substring(sheetSeparatorIndex + 1);
-            }
-
-            int rangeSeparatorIndex = firstReference.IndexOf(':');
-            if (rangeSeparatorIndex >= 0) {
-                firstReference = firstReference.Substring(0, rangeSeparatorIndex);
-            }
-
-            return firstReference.Replace("$", string.Empty);
+            SpreadsheetReferenceSequence syntax = SpreadsheetReferenceSequence.Parse(
+                range, SpreadsheetAddressDialect.ExcelA1);
+            SpreadsheetCellReference start = syntax.References[0].Start;
+            if (!start.IsCell) throw new ArgumentException("Conditional formatting requires a cell reference.", nameof(range));
+            return A1.CellReference(checked((int)start.Row!.Value), start.Column!.Value);
         }
 
         private static string EscapeFormulaString(string value) {
             return value.Replace("\"", "\"\"");
         }
 
-        private static string BuildTimePeriodFormula(string firstCell, TimePeriodValues timePeriod) {
+        private static string BuildTimePeriodFormula(string firstCell, ExcelConditionalTimePeriod timePeriod) {
             string day = $"FLOOR({firstCell},1)";
-            if (timePeriod == TimePeriodValues.Yesterday) return $"{day}=TODAY()-1";
-            if (timePeriod == TimePeriodValues.Today) return $"{day}=TODAY()";
-            if (timePeriod == TimePeriodValues.Tomorrow) return $"{day}=TODAY()+1";
-            if (timePeriod == TimePeriodValues.Last7Days) return $"AND(TODAY()-FLOOR({firstCell},1)<=6,FLOOR({firstCell},1)<=TODAY())";
-            if (timePeriod == TimePeriodValues.LastWeek) return $"AND({day}>=TODAY()-WEEKDAY(TODAY(),2)-6,{day}<=TODAY()-WEEKDAY(TODAY(),2))";
-            if (timePeriod == TimePeriodValues.ThisWeek) return $"AND({day}>=TODAY()-WEEKDAY(TODAY(),2)+1,{day}<=TODAY()-WEEKDAY(TODAY(),2)+7)";
-            if (timePeriod == TimePeriodValues.NextWeek) return $"AND({day}>=TODAY()-WEEKDAY(TODAY(),2)+8,{day}<=TODAY()-WEEKDAY(TODAY(),2)+14)";
-            if (timePeriod == TimePeriodValues.LastMonth) return $"AND({day}>=DATE(YEAR(TODAY()),MONTH(TODAY())-1,1),{day}<DATE(YEAR(TODAY()),MONTH(TODAY()),1))";
-            if (timePeriod == TimePeriodValues.ThisMonth) return $"AND({day}>=DATE(YEAR(TODAY()),MONTH(TODAY()),1),{day}<DATE(YEAR(TODAY()),MONTH(TODAY())+1,1))";
-            if (timePeriod == TimePeriodValues.NextMonth) return $"AND({day}>=DATE(YEAR(TODAY()),MONTH(TODAY())+1,1),{day}<DATE(YEAR(TODAY()),MONTH(TODAY())+2,1))";
+            if (timePeriod == ExcelConditionalTimePeriod.Yesterday) return $"{day}=TODAY()-1";
+            if (timePeriod == ExcelConditionalTimePeriod.Today) return $"{day}=TODAY()";
+            if (timePeriod == ExcelConditionalTimePeriod.Tomorrow) return $"{day}=TODAY()+1";
+            if (timePeriod == ExcelConditionalTimePeriod.Last7Days) return $"AND(TODAY()-FLOOR({firstCell},1)<=6,FLOOR({firstCell},1)<=TODAY())";
+            if (timePeriod == ExcelConditionalTimePeriod.LastWeek) return $"AND({day}>=TODAY()-WEEKDAY(TODAY(),2)-6,{day}<=TODAY()-WEEKDAY(TODAY(),2))";
+            if (timePeriod == ExcelConditionalTimePeriod.ThisWeek) return $"AND({day}>=TODAY()-WEEKDAY(TODAY(),2)+1,{day}<=TODAY()-WEEKDAY(TODAY(),2)+7)";
+            if (timePeriod == ExcelConditionalTimePeriod.NextWeek) return $"AND({day}>=TODAY()-WEEKDAY(TODAY(),2)+8,{day}<=TODAY()-WEEKDAY(TODAY(),2)+14)";
+            if (timePeriod == ExcelConditionalTimePeriod.LastMonth) return $"AND({day}>=DATE(YEAR(TODAY()),MONTH(TODAY())-1,1),{day}<DATE(YEAR(TODAY()),MONTH(TODAY()),1))";
+            if (timePeriod == ExcelConditionalTimePeriod.ThisMonth) return $"AND({day}>=DATE(YEAR(TODAY()),MONTH(TODAY()),1),{day}<DATE(YEAR(TODAY()),MONTH(TODAY())+1,1))";
+            if (timePeriod == ExcelConditionalTimePeriod.NextMonth) return $"AND({day}>=DATE(YEAR(TODAY()),MONTH(TODAY())+1,1),{day}<DATE(YEAR(TODAY()),MONTH(TODAY())+2,1))";
 
             return $"{day}=TODAY()";
         }

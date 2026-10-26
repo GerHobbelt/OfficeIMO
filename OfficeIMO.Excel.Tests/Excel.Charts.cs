@@ -248,7 +248,7 @@ namespace OfficeIMO.Tests {
                         new ExcelChartSeries("Target", new[] { 5d, 5d, 5d, 4d }, ExcelChartType.Radar)
                     }));
                 chart.SetSeriesLineColor("Current", "2563EB", widthPoints: 1.25)
-                    .SetSeriesMarker("Target", C.MarkerStyleValues.Circle, size: 6, fillColor: "F97316", lineColor: "7C2D12");
+                    .SetSeriesMarker("Target", OfficeChartMarkerShape.Circle, size: 6, fillColor: "F97316", lineColor: "7C2D12");
 
                 document.Save();
             }
@@ -283,7 +283,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -362,7 +362,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -435,7 +435,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -537,7 +537,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -601,7 +601,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -684,7 +684,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -766,7 +766,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -884,7 +884,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -921,7 +921,7 @@ namespace OfficeIMO.Tests {
                         new ExcelChartSeries("Plan", new[] { 12d, 18d, 24d, 29d }, ExcelChartType.LineStacked)
                     }));
                 stackedChart.SetSeriesLineColor("Actual", "2563EB", widthPoints: 1.25)
-                    .SetSeriesMarker("Plan", C.MarkerStyleValues.Circle, size: 6, fillColor: "F97316", lineColor: "7C2D12")
+                    .SetSeriesMarker("Plan", OfficeChartMarkerShape.Circle, size: 6, fillColor: "F97316", lineColor: "7C2D12")
                     .SetDataLabels(showValue: true);
 
                 sheet.Chart("A1:C4")
@@ -969,7 +969,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1035,7 +1035,7 @@ namespace OfficeIMO.Tests {
                         new ExcelChartSeries("Plan", new[] { 12d, 18d, 24d, 29d }, ExcelChartType.Line3D)
                     }));
                 chart.SetSeriesLineColor("Actual", "2563EB", widthPoints: 1.25)
-                    .SetSeriesMarker("Plan", C.MarkerStyleValues.Circle, size: 6, fillColor: "F97316", lineColor: "7C2D12")
+                    .SetSeriesMarker("Plan", OfficeChartMarkerShape.Circle, size: 6, fillColor: "F97316", lineColor: "7C2D12")
                     .SetDataLabels(showValue: true);
 
                 document.Save();
@@ -1070,7 +1070,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1151,7 +1151,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1249,7 +1249,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(errors.Count == 0, FormatValidationErrors(errors));
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1268,7 +1268,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(3, 2, 16);
                 sheet.CellValue(4, 1, "Mar");
                 sheet.CellValue(4, 2, 13);
-                sheet.AddTable("A1:B4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                sheet.AddTable("A1:B4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
 
                 sheet.AddRevenueTrendChart("A1:B4", row: 1, column: 5);
                 sheet.AddTopNBarChart("A1:B4", row: 18, column: 5, title: "Top Revenue");
@@ -1329,7 +1329,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(2, 2, 5);
                 sheet.CellValue(3, 1, "Medium");
                 sheet.CellValue(3, 2, 3);
-                sheet.AddTable("A1:B3", hasHeader: true, name: "StatusData", style: OfficeIMO.Excel.TableStyle.TableStyleMedium4);
+                sheet.AddTable("A1:B3", hasHeader: true, name: "StatusData", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium4);
 
                 ExcelChartGridLayout layout = sheet.ChartLayout(row: 12, column: 4, widthPixels: 520, heightPixels: 300);
                 ExcelChartPlacement statusPlacement = layout.Next();
@@ -1381,7 +1381,7 @@ namespace OfficeIMO.Tests {
                         showSeriesName: false,
                         showLegendKey: false,
                         showPercent: true,
-                        position: C.DataLabelPositionValues.OutsideEnd,
+                        position: OfficeChartDataLabelPosition.OutsideEnd,
                         numberFormat: "0%");
                 document.Save();
             }
@@ -1416,7 +1416,7 @@ namespace OfficeIMO.Tests {
                         showSeriesName: false,
                         showLegendKey: false,
                         showPercent: true,
-                        position: C.DataLabelPositionValues.BestFit,
+                        position: OfficeChartDataLabelPosition.BestFit,
                         numberFormat: "0%");
                 document.Save();
             }
@@ -1445,7 +1445,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellValue(3, 2, 16);
                 sheet.CellValue(4, 1, "Mar");
                 sheet.CellValue(4, 2, 13);
-                sheet.AddTable("A1:B4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                sheet.AddTable("A1:B4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
 
                 var builder = sheet.ChartFromTable("RevenueData");
                 builder.KpiScorecard("Revenue KPI").At(1, 5);
@@ -1497,7 +1497,7 @@ namespace OfficeIMO.Tests {
                 Assert.Contains("2563EB", chartPart.ChartSpace.OuterXml, StringComparison.OrdinalIgnoreCase);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1536,7 +1536,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal((uint)3, cache.PointCount!.Val!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1663,7 +1663,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(2, plotArea.Elements<C.ValueAxis>().Count());
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -1729,20 +1729,20 @@ namespace OfficeIMO.Tests {
                 var comboData = new ExcelChartData(
                     new[] { "Q1", "Q2", "Q3", "Q4" },
                     new[] {
-                        new ExcelChartSeries("Sales", new[] { 10d, 20d, 25d, 30d }, ExcelChartType.ColumnClustered, ExcelChartAxisGroup.Primary),
-                        new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d, 35d }, ExcelChartType.Line, ExcelChartAxisGroup.Secondary)
+                        new ExcelChartSeries("Sales", new[] { 10d, 20d, 25d, 30d }, ExcelChartType.ColumnClustered, OfficeChartAxisGroup.Primary),
+                        new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d, 35d }, ExcelChartType.Line, OfficeChartAxisGroup.Secondary)
                     });
 
                 var comboChart = sheet.AddChart(comboData, row: 2, column: 6, widthPixels: 640, heightPixels: 360,
                     type: ExcelChartType.ColumnClustered, title: "Sales vs Trend");
                 comboChart.ApplyStylePreset()
-                          .SetSeriesMarker(1, C.MarkerStyleValues.Circle, size: 6, lineColor: "4472C4");
-                comboChart.SetValueAxisNumberFormat("0.00", sourceLinked: false, axisGroup: ExcelChartAxisGroup.Secondary)
-                          .SetSeriesDataLabels(1, showValue: true, position: C.DataLabelPositionValues.Top, numberFormat: "0.0")
+                          .SetSeriesMarker(1, OfficeChartMarkerShape.Circle, size: 6, lineColor: "4472C4");
+                comboChart.SetValueAxisNumberFormat("0.00", sourceLinked: false, axisGroup: OfficeChartAxisGroup.Secondary)
+                          .SetSeriesDataLabels(1, showValue: true, position: OfficeChartDataLabelPosition.Top, numberFormat: "0.0")
                           .SetSeriesDataLabelTextStyle(1, fontSizePoints: 9, color: "1F4E79")
                           .SetSeriesDataLabelShapeStyle(1, fillColor: "FFFFFF", lineColor: "1F4E79", lineWidthPoints: 0.5);
                 comboChart.SetSeriesDataLabelLeaderLines(1, showLeaderLines: true, lineColor: "1F4E79", lineWidthPoints: 0.5);
-                comboChart.SetLegend(C.LegendPositionValues.Right)
+                comboChart.SetLegend(OfficeChartLegendPosition.Right)
                           .SetTitleTextStyle(fontSizePoints: 14, bold: true, color: "1F4E79")
                           .SetLegendTextStyle(fontSizePoints: 9, color: "404040")
                           .SetCategoryAxisTitle("Quarter")
@@ -1751,27 +1751,27 @@ namespace OfficeIMO.Tests {
                           .SetValueAxisLabelTextStyle(fontSizePoints: 9, color: "404040")
                           .SetValueAxisGridlines(showMajor: true, showMinor: false, lineColor: "C0C0C0", lineWidthPoints: 0.75)
                           .SetCategoryAxisLabelRotation(45)
-                          .SetValueAxisTickLabelPosition(C.TickLabelPositionValues.Low);
+                          .SetValueAxisTickLabelPosition(OfficeChartAxisTickLabelPosition.Low);
                 comboChart.SetCategoryAxisReverseOrder()
                           .SetValueAxisScale(minimum: 0, maximum: 40, majorUnit: 10, minorUnit: 5);
-                comboChart.SetValueAxisCrossing(C.CrossesValues.Maximum)
-                          .SetCategoryAxisCrossing(C.CrossesValues.Minimum)
-                          .SetValueAxisCrossBetween(C.CrossBetweenValues.Between)
-                          .SetValueAxisDisplayUnits(C.BuiltInUnitValues.Thousands, "Thousands USD", showLabel: true);
+                comboChart.SetValueAxisCrossing(OfficeChartAxisCrossingPosition.Maximum)
+                          .SetCategoryAxisCrossing(OfficeChartAxisCrossingPosition.Minimum)
+                          .SetValueAxisCrossBetween(OfficeChartAxisCrossBetween.Between)
+                          .SetValueAxisDisplayUnits(OfficeChartDisplayUnit.Thousands, "Thousands USD", showLabel: true);
                 comboChart.SetChartAreaStyle(fillColor: "F2F2F2", lineColor: "404040", lineWidthPoints: 1)
                           .SetPlotAreaStyle(fillColor: "FFFFFF", lineColor: "BFBFBF", lineWidthPoints: 0.75);
-                comboChart.SetSeriesTrendline(1, C.TrendlineValues.Linear, displayEquation: true, displayRSquared: true,
+                comboChart.SetSeriesTrendline(1, OfficeChartTrendlineType.Linear, displayEquation: true, displayRSquared: true,
                     lineColor: "A5A5A5", lineWidthPoints: 1);
                 var labelTemplate = new ExcelChartDataLabelTemplate {
                     ShowValue = true,
-                    Position = C.DataLabelPositionValues.Top,
+                    Position = OfficeChartDataLabelPosition.Top,
                     NumberFormat = "0.0",
                     FontSizePoints = 9,
                     TextColor = "404040",
                     Separator = " - "
                 };
                 comboChart.SetSeriesDataLabelTemplate(1, labelTemplate)
-                          .SetSeriesDataLabelForPoint(1, 2, showValue: true, position: C.DataLabelPositionValues.OutsideEnd,
+                          .SetSeriesDataLabelForPoint(1, 2, showValue: true, position: OfficeChartDataLabelPosition.OutsideEnd,
                             numberFormat: "0.00")
                           .SetSeriesDataLabelSeparatorForPoint(1, 2, " | ")
                           .SetSeriesDataLabelTextStyleForPoint(1, 2, fontSizePoints: 11, bold: true, color: "FF0000");
@@ -1784,7 +1784,7 @@ namespace OfficeIMO.Tests {
                     type: ExcelChartType.Scatter, title: "Scatter Sample");
                 scatterChart.SetScatterXAxisScale(minimum: 1, maximum: 10, majorUnit: 1, logScale: true);
                 scatterChart.SetScatterYAxisScale(minimum: 0, maximum: 6, majorUnit: 1);
-                scatterChart.SetScatterYAxisCrossing(C.CrossesValues.Minimum, crossesAt: 2d);
+                scatterChart.SetScatterYAxisCrossing(OfficeChartAxisCrossingPosition.Minimum, crossesAt: 2d);
 
                 var rangeCells = new List<(int Row, int Column, object Value)> {
                     (30, 1, "X"), (30, 2, "Y1"), (30, 3, "Y2"), (30, 4, "Size"),
@@ -1866,8 +1866,8 @@ namespace OfficeIMO.Tests {
                 var data = new ExcelChartData(
                     new[] { "Q1", "Q2", "Q3" },
                     new[] {
-                        new ExcelChartSeries("Sales", new[] { 10d, 20d, 30d }, ExcelChartType.ColumnClustered, ExcelChartAxisGroup.Primary),
-                        new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d }, ExcelChartType.Line, ExcelChartAxisGroup.Secondary)
+                        new ExcelChartSeries("Sales", new[] { 10d, 20d, 30d }, ExcelChartType.ColumnClustered, OfficeChartAxisGroup.Primary),
+                        new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d }, ExcelChartType.Line, OfficeChartAxisGroup.Secondary)
                     });
 
                 sheet.AddChart(data, row: 1, column: 6, widthPixels: 480, heightPixels: 320,
@@ -1901,14 +1901,14 @@ namespace OfficeIMO.Tests {
                 var data = new ExcelChartData(
                     new[] { "Q1", "Q2", "Q3" },
                     new[] {
-                        new ExcelChartSeries("Sales", new[] { 10d, 20d, 30d }, ExcelChartType.ColumnClustered, ExcelChartAxisGroup.Primary),
-                        new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d }, ExcelChartType.Line, ExcelChartAxisGroup.Secondary)
+                        new ExcelChartSeries("Sales", new[] { 10d, 20d, 30d }, ExcelChartType.ColumnClustered, OfficeChartAxisGroup.Primary),
+                        new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d }, ExcelChartType.Line, OfficeChartAxisGroup.Secondary)
                     });
 
                 var chart = sheet.AddChart(data, row: 1, column: 6, widthPixels: 480, heightPixels: 320,
                     type: ExcelChartType.ColumnClustered, title: "Combo");
-                chart.SetValueAxisNumberFormat("0.00", sourceLinked: false, axisGroup: ExcelChartAxisGroup.Secondary)
-                     .SetSeriesDataLabels(1, showValue: true, position: C.DataLabelPositionValues.Top, numberFormat: "0.0");
+                chart.SetValueAxisNumberFormat("0.00", sourceLinked: false, axisGroup: OfficeChartAxisGroup.Secondary)
+                     .SetSeriesDataLabels(1, showValue: true, position: OfficeChartDataLabelPosition.Top, numberFormat: "0.0");
                 document.Save();
             }
 
@@ -2148,7 +2148,7 @@ namespace OfficeIMO.Tests {
 
                 var chart = sheet.AddChart(data, row: 1, column: 4, widthPixels: 480, heightPixels: 320,
                     type: ExcelChartType.ColumnClustered, title: "Styled");
-                chart.SetLegend(C.LegendPositionValues.Right)
+                chart.SetLegend(OfficeChartLegendPosition.Right)
                      .SetTitleTextStyle(fontSizePoints: 14, bold: true, color: "1F4E79")
                      .SetLegendTextStyle(fontSizePoints: 9, italic: true, color: "404040", fontName: "Calibri");
                 document.Save();
@@ -2270,7 +2270,7 @@ namespace OfficeIMO.Tests {
                     type: ExcelChartType.ColumnClustered, title: "Gridlines");
                 chart.SetValueAxisGridlines(showMajor: true, showMinor: true, lineColor: "C0C0C0", lineWidthPoints: 0.75)
                      .SetCategoryAxisLabelRotation(45)
-                     .SetValueAxisTickLabelPosition(C.TickLabelPositionValues.Low);
+                     .SetValueAxisTickLabelPosition(OfficeChartAxisTickLabelPosition.Low);
                 document.Save();
             }
 
@@ -2313,10 +2313,10 @@ namespace OfficeIMO.Tests {
 
                 var chart = sheet.AddChart(data, row: 1, column: 4, widthPixels: 480, heightPixels: 320,
                     type: ExcelChartType.ColumnClustered, title: "Axis Crossing");
-                chart.SetValueAxisCrossing(C.CrossesValues.Maximum)
-                     .SetCategoryAxisCrossing(C.CrossesValues.Minimum)
-                     .SetValueAxisCrossBetween(C.CrossBetweenValues.Between)
-                     .SetValueAxisDisplayUnits(C.BuiltInUnitValues.Thousands, "Thousands USD", showLabel: true);
+                chart.SetValueAxisCrossing(OfficeChartAxisCrossingPosition.Maximum)
+                     .SetCategoryAxisCrossing(OfficeChartAxisCrossingPosition.Minimum)
+                     .SetValueAxisCrossBetween(OfficeChartAxisCrossBetween.Between)
+                     .SetValueAxisDisplayUnits(OfficeChartDisplayUnit.Thousands, "Thousands USD", showLabel: true);
                 document.Save();
             }
 
@@ -2351,7 +2351,7 @@ namespace OfficeIMO.Tests {
 
                 var chart = sheet.AddChart(data, row: 1, column: 4, widthPixels: 480, heightPixels: 320,
                     type: ExcelChartType.ColumnClustered, title: "Axis Crossing At");
-                chart.SetValueAxisCrossing(C.CrossesValues.AutoZero, crossesAt: 2.5);
+                chart.SetValueAxisCrossing(OfficeChartAxisCrossingPosition.AutoZero, crossesAt: 2.5);
                 document.Save();
             }
 
@@ -2473,7 +2473,7 @@ namespace OfficeIMO.Tests {
                 chart.SetScatterXAxisScale(minimum: 1, maximum: 10, logScale: true);
 
                 Assert.Throws<ArgumentOutOfRangeException>(() =>
-                    chart.SetScatterXAxisCrossing(C.CrossesValues.AutoZero, crossesAt: 0));
+                    chart.SetScatterXAxisCrossing(OfficeChartAxisCrossingPosition.AutoZero, crossesAt: 0));
             }
         }
 
@@ -2489,7 +2489,7 @@ namespace OfficeIMO.Tests {
 
                 var chart = sheet.AddChart(data, row: 1, column: 4, widthPixels: 480, heightPixels: 320,
                     type: ExcelChartType.Scatter, title: "Scatter Crossing");
-                chart.SetScatterYAxisCrossing(C.CrossesValues.Minimum, crossesAt: 2d);
+                chart.SetScatterYAxisCrossing(OfficeChartAxisCrossingPosition.Minimum, crossesAt: 2d);
                 document.Save();
             }
 
@@ -2519,7 +2519,7 @@ namespace OfficeIMO.Tests {
                     type: ExcelChartType.ColumnClustered, title: "Label Template");
                 var template = new ExcelChartDataLabelTemplate {
                     ShowValue = true,
-                    Position = C.DataLabelPositionValues.Top,
+                    Position = OfficeChartDataLabelPosition.Top,
                     NumberFormat = "0.0",
                     FontSizePoints = 9,
                     TextColor = "404040",
@@ -2529,7 +2529,7 @@ namespace OfficeIMO.Tests {
                     LineWidthPoints = 0.5
                 };
                 chart.SetSeriesDataLabelTemplate(0, template)
-                     .SetSeriesDataLabelForPoint(0, 1, showValue: true, position: C.DataLabelPositionValues.OutsideEnd,
+                     .SetSeriesDataLabelForPoint(0, 1, showValue: true, position: OfficeChartDataLabelPosition.OutsideEnd,
                         numberFormat: "0.00")
                      .SetSeriesDataLabelSeparatorForPoint(0, 1, " | ")
                      .SetSeriesDataLabelTextStyleForPoint(0, 1, fontSizePoints: 11, bold: true, color: "FF0000")
@@ -2606,7 +2606,7 @@ namespace OfficeIMO.Tests {
                 chartPart.ChartSpace.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelChart chart = Assert.Single(document.Sheets.Single(sheet => sheet.Name == "Summary").Charts);
                 Assert.True(chart.TryGetSnapshot(out ExcelChartSnapshot snapshot));
                 Assert.Equal("0000FF", snapshot.Data.Series[0].SeriesColorArgb);
@@ -2649,7 +2649,7 @@ namespace OfficeIMO.Tests {
                 chartPart.ChartSpace.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelChart chart = Assert.Single(document.Sheets.Single(sheet => sheet.Name == "Summary").Charts);
                 Assert.True(chart.TryGetSnapshot(out ExcelChartSnapshot snapshot));
 
@@ -2710,7 +2710,7 @@ namespace OfficeIMO.Tests {
                 chartPart.ChartSpace.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelChart chart = Assert.Single(document.Sheets.Single(sheet => sheet.Name == "Summary").Charts);
                 Assert.True(chart.TryGetSnapshot(out ExcelChartSnapshot snapshot));
 
@@ -2733,7 +2733,7 @@ namespace OfficeIMO.Tests {
 
                 var chart = sheet.AddChart(data, row: 1, column: 4, widthPixels: 480, heightPixels: 320,
                     type: ExcelChartType.Line, title: "Trendline");
-                chart.SetSeriesTrendline(0, C.TrendlineValues.Polynomial, order: 2,
+                chart.SetSeriesTrendline(0, OfficeChartTrendlineType.Polynomial, order: 2,
                     displayEquation: true, displayRSquared: true, lineColor: "FF0000", lineWidthPoints: 1.5);
                 document.Save();
             }

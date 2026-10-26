@@ -38,9 +38,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the width of the left border.
         /// </summary>
-        public UInt32Value? LeftSize {
+        public uint? LeftSize {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.LeftBorder?.Size;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.LeftBorder?.Size?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -90,9 +90,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the style of the left border.
         /// </summary>
-        public BorderValues? LeftStyle {
+        public WordBorderStyle? LeftStyle {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.LeftBorder?.Val?.Value;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.LeftBorder?.Val?.Value.ToOfficeEnum();
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -103,7 +103,7 @@ namespace OfficeIMO.Word {
 
                 var leftBorder = pageBorder.LeftBorder ?? (pageBorder.LeftBorder = new LeftBorder());
                 if (value.HasValue) {
-                    leftBorder.Val = value.Value;
+                    leftBorder.Val = value.Value.ToOpenXml();
                 } else {
                     leftBorder.Val = null;
                 }
@@ -113,9 +113,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the space between the left border and page text.
         /// </summary>
-        public UInt32Value? LeftSpace {
+        public uint? LeftSpace {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.LeftBorder?.Space;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.LeftBorder?.Space?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -172,9 +172,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the width of the right border.
         /// </summary>
-        public UInt32Value? RightSize {
+        public uint? RightSize {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.RightBorder?.Size;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.RightBorder?.Size?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -224,9 +224,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the style of the right border.
         /// </summary>
-        public BorderValues? RightStyle {
+        public WordBorderStyle? RightStyle {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.RightBorder?.Val?.Value;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.RightBorder?.Val?.Value.ToOfficeEnum();
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -237,7 +237,7 @@ namespace OfficeIMO.Word {
 
                 var rightBorder = pageBorder.RightBorder ?? (pageBorder.RightBorder = new RightBorder());
                 if (value.HasValue) {
-                    rightBorder.Val = value.Value;
+                    rightBorder.Val = value.Value.ToOpenXml();
                 } else {
                     rightBorder.Val = null;
                 }
@@ -247,9 +247,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the space between the right border and page text.
         /// </summary>
-        public UInt32Value? RightSpace {
+        public uint? RightSpace {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.RightBorder?.Space;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.RightBorder?.Space?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -306,9 +306,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the width of the top border.
         /// </summary>
-        public UInt32Value? TopSize {
+        public uint? TopSize {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.TopBorder?.Size;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.TopBorder?.Size?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -358,9 +358,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the style of the top border.
         /// </summary>
-        public BorderValues? TopStyle {
+        public WordBorderStyle? TopStyle {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.TopBorder?.Val?.Value;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.TopBorder?.Val?.Value.ToOfficeEnum();
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -371,7 +371,7 @@ namespace OfficeIMO.Word {
 
                 var topBorder = pageBorder.TopBorder ?? (pageBorder.TopBorder = new TopBorder());
                 if (value.HasValue) {
-                    topBorder.Val = value.Value;
+                    topBorder.Val = value.Value.ToOpenXml();
                 } else {
                     topBorder.Val = null;
                 }
@@ -381,9 +381,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the space between the top border and page text.
         /// </summary>
-        public UInt32Value? TopSpace {
+        public uint? TopSpace {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.TopBorder?.Space;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.TopBorder?.Space?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -443,9 +443,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the width of the bottom border.
         /// </summary>
-        public UInt32Value? BottomSize {
+        public uint? BottomSize {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.BottomBorder?.Size;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.BottomBorder?.Size?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -495,9 +495,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the style of the bottom border.
         /// </summary>
-        public BorderValues? BottomStyle {
+        public WordBorderStyle? BottomStyle {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.BottomBorder?.Val?.Value;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.BottomBorder?.Val?.Value.ToOfficeEnum();
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();
@@ -508,7 +508,7 @@ namespace OfficeIMO.Word {
 
                 var bottomBorder = pageBorder.BottomBorder ?? (pageBorder.BottomBorder = new BottomBorder());
                 if (value.HasValue) {
-                    bottomBorder.Val = value.Value;
+                    bottomBorder.Val = value.Value.ToOpenXml();
                 } else {
                     bottomBorder.Val = null;
                 }
@@ -518,9 +518,9 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the space between the bottom border and page text.
         /// </summary>
-        public UInt32Value? BottomSpace {
+        public uint? BottomSpace {
             get {
-                return _section._sectionProperties.GetFirstChild<PageBorders>()?.BottomBorder?.Space;
+                return _section._sectionProperties.GetFirstChild<PageBorders>()?.BottomBorder?.Space?.Value;
             }
             set {
                 var pageBorder = _section._sectionProperties.GetFirstChild<PageBorders>();

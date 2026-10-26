@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using OfficeIMO.Drawing;
+using OfficeIMO.Data;
 using OfficeIMO.PowerPoint;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
@@ -60,7 +61,7 @@ namespace OfficeIMO.Examples.PowerPoint {
             AddGrowthSlide(presentation);
 
             presentation.Save();
-            List<DocumentFormat.OpenXml.Validation.ValidationErrorInfo> errors = presentation.ValidateDocument();
+            List<OfficeOpenXmlValidationError> errors = presentation.ValidateDocument();
             if (errors.Count > 0) {
                 string details = string.Join(Environment.NewLine, errors.Take(5).Select(error => error.Description));
                 throw new InvalidOperationException($"PowerPoint validation failed with {errors.Count} error(s).{Environment.NewLine}{details}");
@@ -74,7 +75,7 @@ namespace OfficeIMO.Examples.PowerPoint {
         private static void AddCoverSlide(PowerPointPresentation presentation, string backgroundImagePath) {
             PowerPointSlide slide = presentation.AddSlide();
             slide.BackgroundColor = Paper;
-            slide.Transition = SlideTransition.Morph;
+            slide.Transition = PowerPointSlideTransition.Morph;
             ApplyBackgroundImage(slide, backgroundImagePath);
             AddWash(slide);
 
@@ -120,14 +121,14 @@ namespace OfficeIMO.Examples.PowerPoint {
             PowerPointTextBox footer = slide.AddTextBoxCm("Composable layout system", 22.7, 13.45, 7.8, 0.45);
             footer.FontSize = 11;
             footer.Color = Ink;
-            footer.TextVerticalAlignment = A.TextAnchoringTypeValues.Center;
+            footer.TextVerticalAlignment = PowerPointTextVerticalAlignment.Center;
             slide.Notes.Text = "Opening slide introduces the feature set demonstrated by this deck.";
         }
 
         private static void AddAgendaSlide(PowerPointPresentation presentation) {
             PowerPointSlide slide = presentation.AddSlide();
             slide.BackgroundColor = Paper;
-            slide.Transition = SlideTransition.Fade;
+            slide.Transition = PowerPointSlideTransition.Fade;
             AddSlideTitle(slide, "Agenda", "Lists, layout grids, charts, tables, and guided placement.");
 
             PowerPointAutoShape rail = slide.AddRectangleCm(1.25, 4.05, 0.18, 8.7, "Agenda Rail");
@@ -169,7 +170,7 @@ namespace OfficeIMO.Examples.PowerPoint {
         private static void AddCapabilitiesSlide(PowerPointPresentation presentation) {
             PowerPointSlide slide = presentation.AddSlide();
             slide.BackgroundColor = Paper;
-            slide.Transition = SlideTransition.Fade;
+            slide.Transition = PowerPointSlideTransition.Fade;
             AddSlideTitle(slide, "Layout building blocks", "Cards, lists, and aligned sections from one grid.");
 
             AddLabel(slide, "Reusable sections", 2.1, 3.25, 7.5, 0.55, Teal, 16, bold: true);
@@ -215,19 +216,19 @@ namespace OfficeIMO.Examples.PowerPoint {
         private static void AddProcessSlide(PowerPointPresentation presentation) {
             PowerPointSlide slide = presentation.AddSlide();
             slide.BackgroundColor = Teal;
-            slide.Transition = SlideTransition.Fade;
+            slide.Transition = PowerPointSlideTransition.Fade;
 
-            PowerPointAutoShape leftPlane = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, -1.0, 0.0, 15.1, 19.05, "Process Left Plane");
+            PowerPointAutoShape leftPlane = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, -1.0, 0.0, 15.1, 19.05, "Process Left Plane");
             leftPlane.FillColor = "176A8D";
             leftPlane.FillTransparency = 18;
             leftPlane.OutlineColor = "176A8D";
 
-            PowerPointAutoShape middlePlane = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, 11.0, 0.0, 10.7, 19.05, "Process Middle Plane");
+            PowerPointAutoShape middlePlane = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, 11.0, 0.0, 10.7, 19.05, "Process Middle Plane");
             middlePlane.FillColor = "0B5475";
             middlePlane.FillTransparency = 26;
             middlePlane.OutlineColor = "0B5475";
 
-            PowerPointAutoShape rightPlane = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, 21.0, 0.0, 13.4, 19.05, "Process Right Plane");
+            PowerPointAutoShape rightPlane = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, 21.0, 0.0, 13.4, 19.05, "Process Right Plane");
             rightPlane.FillColor = "0B415A";
             rightPlane.FillTransparency = 34;
             rightPlane.OutlineColor = "0B415A";
@@ -265,7 +266,7 @@ namespace OfficeIMO.Examples.PowerPoint {
         private static void AddPerformanceSlide(PowerPointPresentation presentation) {
             PowerPointSlide slide = presentation.AddSlide();
             slide.BackgroundColor = Paper;
-            slide.Transition = SlideTransition.Fade;
+            slide.Transition = PowerPointSlideTransition.Fade;
             AddSlideTitle(slide, "Monthly performance", "Column chart, KPI table, shape effects, and speaker notes.");
 
             PowerPointAutoShape chartPanel = AddPanel(slide, 1.3, 3.1, 16.2, 9.9, "Chart Surface");
@@ -279,7 +280,7 @@ namespace OfficeIMO.Examples.PowerPoint {
                 });
             PowerPointChart chart = slide.AddChartCm(OfficeChartKind.ColumnClustered, data, 1.8, 3.7, 15.1, 8.5);
             chart.SetTitle("Sales vs Profit")
-                .SetLegend(C.LegendPositionValues.Bottom)
+                .SetLegend(OfficeChartLegendPosition.Bottom)
                 .SetChartAreaStyle(fillColor: "FFFFFF", lineColor: "FFFFFF")
                 .SetPlotAreaStyle(fillColor: "FFFFFF", lineColor: "FFFFFF")
                 .SetSeriesFillColor("Sales", Teal)
@@ -321,7 +322,7 @@ namespace OfficeIMO.Examples.PowerPoint {
         private static void AddChannelMixSlide(PowerPointPresentation presentation) {
             PowerPointSlide slide = presentation.AddSlide();
             slide.BackgroundColor = Paper;
-            slide.Transition = SlideTransition.Fade;
+            slide.Transition = PowerPointSlideTransition.Fade;
             AddSlideTitle(slide, "Channel mix", "Doughnut chart, modern cards, and soft visual hierarchy.");
 
             PowerPointAutoShape chartPanel = AddPanel(slide, 1.3, 3.0, 15.3, 10.0, "Channel Chart Panel");
@@ -333,9 +334,9 @@ namespace OfficeIMO.Examples.PowerPoint {
                 new[] { new OfficeChartSeries("Share", new[] { 42d, 27d, 22d, 9d }) });
             PowerPointChart chart = slide.AddChartCm(OfficeChartKind.Doughnut, data, 2.2, 3.9, 13.4, 7.8);
             chart.SetTitle("Revenue Share by Channel")
-                .SetLegend(C.LegendPositionValues.Bottom)
+                .SetLegend(OfficeChartLegendPosition.Bottom)
                 .SetDataLabels(showPercent: true)
-                .SetDataLabelPosition(C.DataLabelPositionValues.BestFit)
+                .SetDataLabelPosition(OfficeChartDataLabelPosition.BestFit)
                 .SetChartAreaStyle(fillColor: "FFFFFF", lineColor: "FFFFFF")
                 .SetSeriesFillColor(0, Teal);
 
@@ -356,7 +357,7 @@ namespace OfficeIMO.Examples.PowerPoint {
         private static void AddGrowthSlide(PowerPointPresentation presentation) {
             PowerPointSlide slide = presentation.AddSlide();
             slide.BackgroundColor = Paper;
-            slide.Transition = SlideTransition.Fade;
+            slide.Transition = PowerPointSlideTransition.Fade;
             AddSlideTitle(slide, "Growth trend", "Line chart with styled series, markers, gridlines, and an observation card.");
 
             PowerPointAutoShape stripe = slide.AddRectangleCm(1.3, 4.2, 0.36, 8.8, "Accent Stripe");
@@ -375,13 +376,13 @@ namespace OfficeIMO.Examples.PowerPoint {
                 });
             PowerPointChart chart = slide.AddChartCm(OfficeChartKind.Line, data, 2.8, 3.8, 19.5, 8.4);
             chart.SetTitle("Momentum Over Time")
-                .SetLegend(C.LegendPositionValues.Bottom)
+                .SetLegend(OfficeChartLegendPosition.Bottom)
                 .SetChartAreaStyle(fillColor: "FFFFFF", lineColor: "FFFFFF")
                 .SetPlotAreaStyle(fillColor: "FFFFFF", lineColor: "FFFFFF")
                 .SetSeriesLineColor("Sales", Teal, widthPoints: 2.75)
                 .SetSeriesLineColor("Profit", Orange, widthPoints: 2.75)
-                .SetSeriesMarker("Sales", C.MarkerStyleValues.Diamond, size: 8, fillColor: Teal, lineColor: Teal)
-                .SetSeriesMarker("Profit", C.MarkerStyleValues.Square, size: 8, fillColor: Orange, lineColor: Orange)
+                .SetSeriesMarker("Sales", OfficeChartMarkerShape.Diamond, size: 8, fillColor: Teal, lineColor: Teal)
+                .SetSeriesMarker("Profit", OfficeChartMarkerShape.Square, size: 8, fillColor: Orange, lineColor: Orange)
                 .SetValueAxisGridlines(showMajor: true, lineColor: "D8D5CC", lineWidthPoints: 0.75)
                 .SetValueAxisLabelTextStyle(fontSizePoints: 9, color: "534F49", fontName: "Aptos")
                 .SetCategoryAxisLabelTextStyle(fontSizePoints: 9, color: "534F49", fontName: "Aptos");
@@ -441,14 +442,14 @@ namespace OfficeIMO.Examples.PowerPoint {
 
             PowerPointTextBox label = AddLabel(slide, text, box.LeftCm + 0.25, box.TopCm + 0.17, box.WidthCm - 0.5,
                 box.HeightCm - 0.3, "4A4F55", 10, bold: false);
-            label.TextVerticalAlignment = A.TextAnchoringTypeValues.Center;
+            label.TextVerticalAlignment = PowerPointTextVerticalAlignment.Center;
             foreach (PowerPointParagraph paragraph in label.Paragraphs) {
-                paragraph.Alignment = A.TextAlignmentTypeValues.Center;
+                paragraph.Alignment = PowerPointTextAlignment.Center;
             }
         }
 
         private static void AddProcessLane(PowerPointSlide slide, PowerPointLayoutBox box, string name, string fillColor) {
-            PowerPointAutoShape lane = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, box.LeftCm - 0.55, box.TopCm + 0.15,
+            PowerPointAutoShape lane = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, box.LeftCm - 0.55, box.TopCm + 0.15,
                 box.WidthCm + 1.0, box.HeightCm + 0.8, name);
             lane.FillColor = fillColor;
             lane.FillTransparency = 72;
@@ -458,7 +459,7 @@ namespace OfficeIMO.Examples.PowerPoint {
 
         private static void AddArrowMotif(PowerPointSlide slide, double leftCm, double topCm, int count, double spacingCm) {
             for (int index = 0; index < count; index++) {
-                PowerPointAutoShape arrow = slide.AddShapeCm(A.ShapeTypeValues.RightArrow, leftCm + index * spacingCm, topCm,
+                PowerPointAutoShape arrow = slide.AddShapeCm(OfficePresetShapeType.RightArrow, leftCm + index * spacingCm, topCm,
                     0.26, 0.18, "Process Direction Motif " + (index + 1));
                 arrow.FillColor = "D7F3FA";
                 arrow.FillTransparency = Math.Min(65, 18 + index * 5);
@@ -493,11 +494,11 @@ namespace OfficeIMO.Examples.PowerPoint {
             PowerPointAutoShape arrow = slide.AddLineCm(left.RightCm + 0.06, y, right.LeftCm - 0.22, y, "Process Arrow");
             arrow.OutlineColor = "D7F3FA";
             arrow.OutlineWidthPoints = 2.8;
-            arrow.SetLineEnds(null, A.LineEndValues.Triangle, A.LineEndWidthValues.Medium, A.LineEndLengthValues.Medium);
+            arrow.SetLineEnds(null, OfficeLineMarkerKind.Triangle, PowerPointLineEndWidth.Medium, PowerPointLineEndLength.Medium);
         }
 
         private static void AddLightSlideChrome(PowerPointSlide slide) {
-            PowerPointAutoShape diagonal = slide.AddShapeCm(A.ShapeTypeValues.Parallelogram, 12.0, 0.0, 7.3, 19.05,
+            PowerPointAutoShape diagonal = slide.AddShapeCm(OfficePresetShapeType.Parallelogram, 12.0, 0.0, 7.3, 19.05,
                 "Subtle Diagonal Wash");
             diagonal.FillColor = Linen;
             diagonal.FillTransparency = 62;
@@ -600,8 +601,8 @@ namespace OfficeIMO.Examples.PowerPoint {
             for (int c = 0; c < table.Columns; c++) {
                 PowerPointTableCell header = table.GetCell(0, c);
                 header.Bold = true;
-                header.HorizontalAlignment = A.TextAlignmentTypeValues.Center;
-                header.VerticalAlignment = A.TextAnchoringTypeValues.Center;
+                header.HorizontalAlignment = PowerPointTextAlignment.Center;
+                header.VerticalAlignment = PowerPointTextVerticalAlignment.Center;
             }
         }
 

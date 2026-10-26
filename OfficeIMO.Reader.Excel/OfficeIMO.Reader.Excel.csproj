@@ -3,7 +3,7 @@
     <Description>Excel workbook adapter for OfficeIMO.Reader.Core.</Description>
     <AssemblyName>OfficeIMO.Reader.Excel</AssemblyName>
     <AssemblyTitle>OfficeIMO.Reader.Excel</AssemblyTitle>
-    <VersionPrefix>3.1.0</VersionPrefix>
+    <VersionPrefix>3.2.1</VersionPrefix>
     <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
     <TargetFrameworks Condition=" '$([MSBuild]::IsOsPlatform(`Windows`))' ">$(TargetFrameworks);net472</TargetFrameworks>
     <GeneratePackageOnBuild>False</GeneratePackageOnBuild>
@@ -25,8 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\OfficeIMO.Reader.Core\OfficeIMO.Reader.Core.csproj" />
     <ProjectReference Include="..\OfficeIMO.Excel\OfficeIMO.Excel.csproj" />
-    <ProjectReference Include="..\OfficeIMO.CSV\OfficeIMO.CSV.csproj" />
-    <ProjectReference Include="..\OfficeIMO.Drawing\OfficeIMO.Drawing.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Core\OfficeIMO.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\OfficeIMO.Reader.FormatInternals\OpenXmlImageAssetCollector.cs" Link="FormatInternals\OpenXmlImageAssetCollector.cs" />

@@ -1,5 +1,5 @@
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,7 +31,7 @@ public partial class WordDocument {
         OfficeFormatDescriptor destinationDescriptor = WordFormatCatalog.GetByExtension(paths.Destination);
         OfficeCompatibilityMode mode = GetCompatibilityMode(options);
         bool allowsLoss = AllowsLoss(options, mode);
-        IReadOnlyList<WordConversionDiagnostic> diagnostics = CreateWordConversionDiagnostics(
+        IReadOnlyList<OfficeConversionDiagnostic> diagnostics = CreateOfficeConversionDiagnostics(
             document,
             paths.Source,
             sourceDescriptor,

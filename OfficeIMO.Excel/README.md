@@ -31,11 +31,28 @@ sheet.AutoFitColumns();
 document.Save();
 ```
 
+`AsFluent()` wraps the same `ExcelDocument`; it does not create a separate
+workbook model. Call `End()` when direct worksheet APIs are more convenient:
+
+```csharp
+using var document = ExcelDocument.Create("report.xlsx");
+
+document.AsFluent()
+    .Sheet("Data", sheet => sheet
+        .Cell(1, 1, "Name")
+        .Cell(1, 2, "Value")
+        .Cell(2, 1, "Alpha")
+        .Cell(2, 2, 42))
+    .End();
+
+document.Save();
+```
+
 ## What it does
 
 - Creates and edits workbooks, worksheets, cells, ranges, tables, styles, hyperlinks, formulas, names, comments, images, charts, filters, and page setup.
-- Reads values through worksheet, range, row, dictionary, stream, and typed object helpers.
-- Supports editable row workflows where rows can be read, changed, and saved back.
+- Reads tabular values through the forward-only `ExcelDocument.OpenDataReader(...)` API and typed `ExcelSheet.RowsAs<T>(...)` helpers.
+- Edits loaded workbooks through the normal worksheet, cell, range, table, and fluent authoring APIs.
 - Handles practical workbook hygiene such as table/filter conflicts, safe table names, deterministic save order, and feature inspection.
 - Applies optional shared package-security policy before parsing Open XML, XLSB, or compound XLS files.
 - Includes parallel execution controls for heavy export and autofit workloads while serializing the Open XML mutation phase safely.
@@ -59,11 +76,12 @@ The quick start covers the smallest workbook. These examples show common read, w
 ### Read rows by header
 
 ```csharp
-using var document = ExcelDocument.Load("input.xlsx");
-var sheet = document["Data"];
+using var reader = ExcelDocument.OpenDataReader("input.xlsx", new ExcelReadOptions {
+    SheetName = "Data"
+});
 
-foreach (var row in sheet.Rows()) {
-    Console.WriteLine(row["Name"]);
+while (reader.Read()) {
+    Console.WriteLine(reader["Name"]);
 }
 ```
 
@@ -94,7 +112,7 @@ OfficeIMO throws a preflight error with the unsupported feature name so the
 caller can save as `.xlsx`, remove the feature, or choose a different workflow.
 `ExcelDocument.Convert(...)` uses those same load and save paths and blocks
 legacy sources with unsupported or preserve-only content by default. Set
-`LossPolicy` to `ExcelConversionLossPolicy.Allow` on conversion or save options
+`LossPolicy` to `OfficeConversionLossPolicy.Allow` on conversion or save options
 only after reviewing that loss. See
 [XLS and XLSX compatibility](../Docs/officeimo.excel.legacy-xls-compatibility.md) for
 the current capability matrix and safety contract. Use the
@@ -148,14 +166,72 @@ while (reader.Read()) {
 ```
 
 `ExcelDocument.OpenDataReader` returns an `ExcelWorkbookDataReader`, the package-owned read-only entry point for
-XLSX, XLSM, XLSB, and BIFF8 XLS. It discovers used ranges and exposes
+XLSX, XLSM, XLTX, XLTM, XLAM, XLSB, and BIFF8 XLS. It discovers used ranges and exposes
 additional worksheets through `NextResult()`. Select one worksheet with
 `SheetName` or the zero-based `SheetIndex`, and select an explicit range with
 `A1Range`. `CurrentSheetName` and `CurrentSheetIndex` identify the active workbook sheet;
 `CurrentResultIndex` identifies its position in the selected results. Legacy XLS is projected through
 the package's existing first-party reader; use `ExcelDocument.Load` when the
-workbook must be inspected, edited, or saved again. CSV uses the parallel
-`CsvDocument.OpenDataReader` API from the separate `OfficeIMO.CSV` package.
+workbook must be inspected, edited, or saved again. CSV provides the same typed
+and ordered-parallel row-mapping contracts through the separate
+`OfficeIMO.CSV` package.
+
+On .NET 8 and later, request `DateOnly` or `TimeOnly` explicitly through
+`GetFieldValue<T>` or `RowsAs<T>`. Inferred Excel date/time columns remain
+`DateTime`, so moving between target frameworks does not silently change the
+reader schema. Set `ExcelReadOptions.MappingErrorValuePolicy` to
+`DataMappingErrorValuePolicy.Redact` when typed mapping failures must omit
+source values and custom-converter exception details; the default is `Include`
+for compatibility.
+
+### Choose automatic or ordered parallel reads
+
+Use `RowsAsParallel<T>()` on the public forward-only reader when typed conversion
+is substantial enough to repay parallel scheduling. Workbook parsing stays
+single-owner while independent row snapshots are mapped concurrently and
+returned in source order:
+
+```csharp
+using OfficeIMO.Data;
+using OfficeIMO.Excel;
+
+using ExcelWorkbookDataReader reader = ExcelDocument.OpenDataReader(
+    "sales.xlsx",
+    new ExcelReadOptions {
+        SheetName = "Data",
+        A1Range = "A1:D50001",
+        InferSchema = true
+    });
+
+SalesRow[] rows = reader.RowsAsParallel<SalesRow>(
+    new ParallelRowMappingOptions {
+        MaxDegreeOfParallelism = 8
+    }).ToArray();
+```
+
+For an `ExcelSheet`, use the explicit ordered-parallel projection API. It
+supports automatic property mapping, an AOT-friendly `RowMapper<T>`, or an
+`IDataRecord` factory:
+
+```csharp
+using OfficeIMO.Data;
+
+using var document = ExcelDocument.Load("sales.xlsx");
+SalesRow[] rows = document["Data"].RowsAsParallel<SalesRow>(
+    "A1:D50001",
+    new ParallelRowMappingOptions {
+        MaxDegreeOfParallelism = 8
+    }).ToArray();
+```
+
+Both public surfaces preserve source order and bound in-flight work. The
+forward-only form applies to every format supported by `OpenDataReader`; the
+`ExcelSheet` form projects an already loaded editable workbook and enables the
+bounded schema inference required for safe snapshots. Set `InferSchema = true`
+on a directly opened reader as shown above. A degree of one, or a schema with
+provider-owned object/mutable fields, uses the sequential mapping contract.
+Parsing and decompression are not claimed to run in parallel, and small or cheap
+rows can still be faster sequentially.
 
 ### Append to an existing table
 
@@ -252,10 +328,24 @@ List<RowModel> rows = sheet.RowsAs<RowModel>("A1:C100").ToList();
 // Omitting the range maps the populated worksheet range.
 List<RowModel> populatedRows = sheet.RowsAs<RowModel>().ToList();
 
+// For NativeAOT or explicit column control, use the same mapper shape as CSV.
+List<RowModel> mappedRows = sheet.RowsAs<RowModel>(map => map
+    .FromColumn<string>("Name", static (row, value) => { row.Name = value; return row; })
+    .FromColumn<string>("Status", static (row, value) => { row.Status = value; return row; }))
+    .ToList();
+
+// Constructor-bound models use an explicit factory and do not require T : new().
+List<ImmutableRow> immutableRows = sheet.RowsAs(factory: row => new ImmutableRow(
+    row.GetString(row.GetOrdinal("Name")),
+    row.GetString(row.GetOrdinal("Status"))))
+    .ToList();
+
 public sealed class RowModel {
     public string Name { get; set; } = "";
     public string Status { get; set; } = "";
 }
+
+public sealed record ImmutableRow(string Name, string Status);
 ```
 
 ### Charts and dashboard recipes
@@ -432,7 +522,7 @@ document.Save("report.xlsx", new ExcelSaveOptions {
 ```csharp
 using var document = ExcelDocument.Load(
     "incoming.xlsx",
-    new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+    new ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
 
 ExcelFeatureReport report = document.InspectFeatures();
 
@@ -555,7 +645,7 @@ than silently discarding them.
 
 ```csharp
 using var document = ExcelDocument.Create("large-report.xlsx");
-document.Execution.Mode = ExecutionMode.Automatic;
+document.Execution.Mode = ExcelExecutionMode.Automatic;
 document.Execution.MaxDegreeOfParallelism = Environment.ProcessorCount;
 document.Execution.SaveWorksheetAfterAutoFit = false;
 ```
@@ -579,8 +669,29 @@ ExcelDocument.WriteRows(
         SheetName = "Data",
         IncludeCellReferences = false,
         UseSharedStrings = false
-    });
+});
 ```
+
+When rows arrive asynchronously, use the same headers and row writer without
+buffering the sequence:
+
+```csharp
+await ExcelDocument.WriteRowsAsync(
+    output,
+    GetRowsAsync(cancellationToken),
+    new[] { "Id", "Name", "Created", "Active" },
+    static (writer, row) => writer
+        .Write(row.Id)
+        .Write(row.Name)
+        .Write(row.Created)
+        .Write(row.Active),
+    ct: cancellationToken);
+```
+
+`WriteRowsAsync` awaits and disposes the source enumerator and writes each row
+once. Because the final row count is unknown when package output starts, this
+overload does not support `CreateTable` or `AutoFit`; add those features through
+the editable workbook API when they are required.
 
 ### Fluent compose
 
@@ -631,11 +742,35 @@ byte[] tiff = sheet.Range("A1:F20").ToTiff(new ExcelImageExportOptions {
 
 document.ToImages()
     .ForSheets("Summary", "Data")
+    .FitWithin(1600, 1200)
     .AsWebp()
     .Save("preview-images");
+
+sheet.ToImages()
+    .UsePrintArea()
+    .SplitByManualPageBreaks()
+    .WithGridlines(false)
+    .AsPng()
+    .Save("print-area-pages");
 ```
 
-Excel layout, print-title, page-setup, and header/footer composition stays in `OfficeIMO.Excel`; final raster encoding is delegated once to `OfficeIMO.Drawing`.
+Excel layout, print-title, page-setup, and header/footer composition stays in `OfficeIMO.Excel`; final sizing and encoding are delegated once to `OfficeIMO.Drawing`. Worksheet batches can use print-area segments or manual page breaks without routing through a workbook export.
+
+Charts use the same managed image contract and preserve their anchored dimensions:
+
+```csharp
+ExcelChart chart = sheet.ChartFromTable("RevenueTable")
+    .RevenueTrend("Revenue trend")
+    .Size(640, 320)
+    .At(row: 1, column: 5);
+
+chart.ToImage()
+    .WithBackground(OfficeColor.White)
+    .AsPng()
+    .Save("revenue-chart.png");
+
+chart.SaveAsSvg("revenue-chart.svg");
+```
 
 ## Adjacent packages
 
@@ -661,7 +796,7 @@ Excel layout, print-title, page-setup, and header/footer composition stays in `O
 ## Dependency footprint
 
 - **External:** Open XML SDK for `.xlsx` package mechanics. Microsoft BCL/JSON compatibility packages are used on older targets.
-- **OfficeIMO:** `OfficeIMO.Drawing`. The workbook API, BIFF8 `.xls` reader/writer, large-data paths, validation, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
+- **OfficeIMO:** `OfficeIMO.Core`. The workbook API, BIFF8 `.xls` reader/writer, large-data paths, validation, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
 - **Security:** Open XML and VBA signature carriers are inspected and signed-package mutations fail safely without a cryptographic dependency. Package and VBA signature creation and cryptographic validation accept an explicit `IOfficeSecurityProvider`; `OfficeIMO.Security` is not pulled transitively.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

@@ -1,7 +1,9 @@
 using OfficeIMO.Word;
 using OfficeIMO.Word.Html;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentFormat.OpenXml;
 using Xunit;
+using M = DocumentFormat.OpenXml.Math;
 
 namespace OfficeIMO.Tests;
 
@@ -11,7 +13,7 @@ public sealed class HtmlAllSeverityBatch16SecurityTests {
         using WordDocument document = WordDocument.Create();
         WordTableCell cell = document.AddTable(1, 1).Rows[0].Cells[0];
         cell.ShadingFillColorHex = "ffffff;background-image:url(https://tracker.invalid/pixel)";
-        cell.Borders.LeftStyle = DocumentFormat.OpenXml.Wordprocessing.BorderValues.Single;
+        cell.Borders.LeftStyle = OfficeIMO.Word.WordBorderStyle.Single;
         cell.Borders.LeftColorHex = "ffffff;position:fixed";
 
         string html = document.ToHtml();
@@ -62,5 +64,54 @@ public sealed class HtmlAllSeverityBatch16SecurityTests {
         string html = document.ToHtml();
 
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, ">same-content</p>").Count);
+    }
+
+    [Fact]
+    public void WordToHtmlExpandsDeepTableCellWrappersWithoutRecursion() {
+        const int depth = 5_000;
+        using WordDocument document = WordDocument.Create();
+        WordTableCell cell = document.AddTable(1, 1).Rows[0].Cells[0];
+        cell._tableCell.RemoveAllChildren();
+        OpenXmlElement nested = new Paragraph(new Run(new Text("deep-table-cell")));
+        for (int index = 0; index < depth; index++) {
+            var content = new SdtContentBlock();
+            content.Append(nested);
+            nested = new SdtBlock(new SdtProperties(), content);
+        }
+        cell._tableCell.Append(nested);
+
+        string html = document.ToHtml(new WordToHtmlOptions {
+            MaxDocumentElements = 100_000
+        });
+
+        Assert.Contains("deep-table-cell", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WordToHtmlRejectsDeepOmmlBeforeRecursiveProjection() {
+        // Stay below the Open XML SDK's own recursive parent-context limit while remaining
+        // well above the converter contract exercised below.
+        const int depth = 256;
+        using WordDocument document = WordDocument.Create();
+        var equation = new M.OfficeMath();
+        OpenXmlCompositeElement parent = equation;
+        for (int index = 0; index < depth; index++) {
+            var numerator = new M.Numerator();
+            parent.Append(new M.Fraction(
+                numerator,
+                new M.Denominator(new M.Run(new M.Text("1")))));
+            parent = numerator;
+        }
+        parent.Append(new M.Run(new M.Text("x")));
+        document.AddParagraph()._paragraph.Append(equation);
+
+        HtmlConversionLimitException exception = Assert.Throws<HtmlConversionLimitException>(() =>
+            document.ToHtmlResult(new WordToHtmlOptions {
+                MaxDocumentElements = 100_000,
+                MaxEquationNestingDepth = 64
+            }));
+
+        Assert.Equal("WordEquationDepthLimitExceeded", exception.Code);
+        Assert.Equal("EquationOmml", exception.LimitSource);
     }
 }

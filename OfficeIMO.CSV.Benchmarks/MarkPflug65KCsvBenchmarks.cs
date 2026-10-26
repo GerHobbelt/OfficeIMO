@@ -26,7 +26,12 @@ public class MarkPflug65KCsvBenchmarks {
     [GlobalSetup]
     public void Setup() {
         MarkPflug65KFixture.EnsureAuthentic(MarkPflug65KFixture.CsvFileName);
-        _expected = OfficeIMO();
+        _expected = new CsvReadObservation(
+            MarkPflug65KFixture.ExpectedRows,
+            MarkPflug65KFixture.ExpectedRows * MarkPflug65KFixture.ExpectedColumns,
+            MarkPflug65KFixture.ExpectedCsvCharacters,
+            MarkPflug65KFixture.ExpectedCsvChecksum);
+        Validate(nameof(OfficeIMO), OfficeIMO());
         Validate(nameof(Sep), Sep());
         Validate(nameof(Sylvan), Sylvan());
         Validate(nameof(CsvHelper), CsvHelper());
@@ -38,8 +43,8 @@ public class MarkPflug65KCsvBenchmarks {
     public CsvReadObservation OfficeIMO() {
         using DbDataReader reader = CsvDocument.OpenDataReader(
             MarkPflug65KFixture.CsvPath,
-            new CsvLoadOptions { Mode = CsvLoadMode.Stream, DetectDelimiter = false });
-        return Observe(reader.FieldCount, read: reader.Read, value: reader.GetString);
+            new CsvLoadOptions { DetectDelimiter = false });
+        return Observe(reader);
     }
 
     [Benchmark]
@@ -66,7 +71,7 @@ public class MarkPflug65KCsvBenchmarks {
     public CsvReadObservation Sylvan() {
         using var text = new StreamReader(MarkPflug65KFixture.CsvPath);
         using SylvanCsvDataReader reader = SylvanCsvDataReader.Create(text);
-        return Observe(reader.FieldCount, read: reader.Read, value: reader.GetString);
+        return Observe(reader);
     }
 
     [Benchmark]
@@ -124,6 +129,25 @@ public class MarkPflug65KCsvBenchmarks {
             for (int column = 0; column < fieldCount; column++) {
                 cells++;
                 string decoded = value(column);
+                characters += decoded.Length;
+                AddValue(ref checksum, decoded);
+            }
+        }
+
+        return new CsvReadObservation(rows, cells, characters, checksum);
+    }
+
+    private static CsvReadObservation Observe(DbDataReader reader) {
+        int fieldCount = reader.FieldCount;
+        int rows = 0;
+        int cells = 0;
+        long characters = 0;
+        ulong checksum = ChecksumOffset;
+        while (reader.Read()) {
+            rows++;
+            for (int column = 0; column < fieldCount; column++) {
+                cells++;
+                string decoded = reader.GetString(column);
                 characters += decoded.Length;
                 AddValue(ref checksum, decoded);
             }

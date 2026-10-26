@@ -30,8 +30,8 @@ public class WordRtfCharacterFormattingTests {
         Assert.Contains(@"\super nd\nosupersub", rtf, StringComparison.Ordinal);
         Assert.Contains(@"\sub 2\nosupersub", rtf, StringComparison.Ordinal);
 
-        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "nd" && run.VerticalTextAlignment == VerticalPositionValues.Superscript);
-        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "2" && run.VerticalTextAlignment == VerticalPositionValues.Subscript);
+        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "nd" && run.VerticalTextAlignment == WordVerticalTextPosition.Superscript);
+        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "2" && run.VerticalTextAlignment == WordVerticalTextPosition.Subscript);
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class WordRtfCharacterFormattingTests {
         using WordDocument word = WordDocument.Create();
         WordParagraph paragraph = word.AddParagraph();
         paragraph.AddText("Double").SetDoubleStrike();
-        paragraph.AddText("Caps").SetCapsStyle(CapsStyle.Caps);
+        paragraph.AddText("Caps").SetCapsStyle(WordCapsStyle.Caps);
         paragraph.AddText("Small").SetSmallCaps();
         paragraph.AddText("Plain");
 
@@ -76,9 +76,9 @@ public class WordRtfCharacterFormattingTests {
         Assert.Contains(@"\caps Caps\caps0", rtf, StringComparison.Ordinal);
         Assert.Contains(@"\scaps Small\scaps0", rtf, StringComparison.Ordinal);
         Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Double" && run.DoubleStrike);
-        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Caps" && run.CapsStyle == CapsStyle.Caps);
-        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Small" && run.CapsStyle == CapsStyle.SmallCaps);
-        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Plain" && !run.DoubleStrike && run.CapsStyle == CapsStyle.None);
+        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Caps" && run.CapsStyle == WordCapsStyle.Caps);
+        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Small" && run.CapsStyle == WordCapsStyle.SmallCaps);
+        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Plain" && !run.DoubleStrike && run.CapsStyle == WordCapsStyle.None);
     }
 
     [Fact]
@@ -93,9 +93,9 @@ public class WordRtfCharacterFormattingTests {
         using WordDocument word = rtfDocument.ToWordDocument();
 
         Assert.Contains(word.Paragraphs, run => run.Text == "Double" && run.DoubleStrike);
-        Assert.Contains(word.Paragraphs, run => run.Text == "Caps" && run.CapsStyle == CapsStyle.Caps);
-        Assert.Contains(word.Paragraphs, run => run.Text == "Small" && run.CapsStyle == CapsStyle.SmallCaps);
-        Assert.Contains(word.Paragraphs, run => run.Text == "Plain" && !run.DoubleStrike && run.CapsStyle == CapsStyle.None);
+        Assert.Contains(word.Paragraphs, run => run.Text == "Caps" && run.CapsStyle == WordCapsStyle.Caps);
+        Assert.Contains(word.Paragraphs, run => run.Text == "Small" && run.CapsStyle == WordCapsStyle.SmallCaps);
+        Assert.Contains(word.Paragraphs, run => run.Text == "Plain" && !run.DoubleStrike && run.CapsStyle == WordCapsStyle.None);
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class WordRtfCharacterFormattingTests {
         using WordDocument word = WordDocument.Create();
         WordParagraph paragraph = word.AddParagraph();
         paragraph.AddText("Normal ");
-        paragraph.AddText("Marked").SetHighlight(HighlightColorValues.Yellow);
+        paragraph.AddText("Marked").SetHighlight(WordHighlightColor.Yellow);
         paragraph.AddText(" done");
 
         RtfDocument rtfDocument = word.ToRtfDocument();
@@ -166,7 +166,7 @@ public class WordRtfCharacterFormattingTests {
         Assert.Contains(rtfParagraph.Runs, run => run.Text == "Marked" && run.HighlightColorIndex == 1);
         Assert.Contains(@"{\colortbl;\red255\green255\blue0;}", rtf, StringComparison.Ordinal);
         Assert.Contains(@"\highlight1 Marked", rtf, StringComparison.Ordinal);
-        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Marked" && run.Highlight == HighlightColorValues.Yellow);
+        Assert.Contains(roundTrip.Paragraphs, run => run.Text == "Marked" && run.Highlight == WordHighlightColor.Yellow);
     }
 
     [Fact]
@@ -179,7 +179,7 @@ public class WordRtfCharacterFormattingTests {
 
         using WordDocument word = rtfDocument.ToWordDocument();
 
-        Assert.Contains(word.Paragraphs, run => run.Text == "Marked" && run.Highlight == HighlightColorValues.Yellow);
+        Assert.Contains(word.Paragraphs, run => run.Text == "Marked" && run.Highlight == WordHighlightColor.Yellow);
     }
 
     [Fact]

@@ -4,7 +4,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Validation;
 using OfficeIMO.Excel.Utilities;
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using System.IO.Packaging;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,7 +24,8 @@ namespace OfficeIMO.Excel {
             new System.Text.RegularExpressions.Regex("_+", System.Text.RegularExpressions.RegexOptions.Compiled);
 
         private static readonly Lazy<byte[]> DefaultThemeBytes = new(() => LoadEmbeddedResource("OfficeIMO.Excel.Resources.theme1.xml"));
-        // Allocated only when an operation actually needs a serialized apply stage
+        // Allocated only when an operation actually needs a serialized apply stage.
+        // Publication must be atomic because the first operation may itself be concurrent.
         internal ReaderWriterLockSlim? _lock;
         internal List<UInt32Value> id = new List<UInt32Value>() { 0 };
         private readonly Dictionary<string, int> _sharedStringCache = new Dictionary<string, int>();
@@ -71,7 +72,7 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Execution policy for controlling parallel vs sequential operations.
         /// </summary>
-        public ExecutionPolicy Execution { get; } = new();
+        public ExcelExecutionPolicy Execution { get; } = new();
 
         // Default strategy mirrors CoerceValueHelper's behaviour and uses LocalDateTime so that
         // serial values are aligned with Excel's local time interpretation.
@@ -90,8 +91,17 @@ namespace OfficeIMO.Excel {
             set => _dateTimeOffsetWriteStrategy = value ?? throw new ArgumentNullException(nameof(value));
         }
 
-        internal ReaderWriterLockSlim EnsureLock()
-            => _lock ??= new ReaderWriterLockSlim(); // default: NoRecursion
+        internal ReaderWriterLockSlim EnsureLock() {
+            ReaderWriterLockSlim? existing = Volatile.Read(ref _lock);
+            if (existing != null) return existing;
+
+            var created = new ReaderWriterLockSlim(); // default: NoRecursion
+            existing = Interlocked.CompareExchange(ref _lock, created, null);
+            if (existing == null) return created;
+
+            created.Dispose();
+            return existing;
+        }
 
         internal bool EnsureWorkbookThemeAndStyles() {
             var workbookPart = _spreadSheetDocument?.WorkbookPart ?? _workBookPart;
@@ -293,9 +303,9 @@ namespace OfficeIMO.Excel {
         /// </summary>
         public IReadOnlyList<ExcelSheet> Sheets {
             get {
-                MaterializeDeferredDataSetImport();
                 var lck = EnsureLock();
                 if (Locking.IsNoLock || lck is null) {
+                    MaterializeDeferredDataSetImport();
                     if (SheetCachingEnabled) {
                         EnsureSheetCacheInitialized(lck);
                         return CloneSheetCache();
@@ -307,7 +317,7 @@ namespace OfficeIMO.Excel {
                 if (!SheetCachingEnabled) {
                     lck.EnterReadLock();
                     try {
-                        return BuildSheetsWithoutCaching();
+                        if (!RequiresDeferredMaterialization) return BuildSheetsWithoutCaching();
                     } finally {
                         lck.ExitReadLock();
                     }
@@ -315,7 +325,8 @@ namespace OfficeIMO.Excel {
 
                 lck.EnterReadLock();
                 try {
-                    if (!(_sheetCacheDirty || _cachedSheets == null)) {
+                    if (!RequiresDeferredMaterialization
+                        && !(_sheetCacheDirty || _cachedSheets == null)) {
                         return CloneSheetCache();
                     }
                 } finally {
@@ -324,6 +335,16 @@ namespace OfficeIMO.Excel {
 
                 lck.EnterUpgradeableReadLock();
                 try {
+                    if (RequiresDeferredMaterialization) {
+                        lck.EnterWriteLock();
+                        try {
+                            MaterializeDeferredDataSetImport();
+                        } finally {
+                            lck.ExitWriteLock();
+                        }
+                    }
+
+                    if (!SheetCachingEnabled) return BuildSheetsWithoutCaching();
                     if (_sheetCacheDirty || _cachedSheets == null) {
                         EnsureSheetCacheInitialized(lck);
                     }

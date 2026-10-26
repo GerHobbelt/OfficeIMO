@@ -16,14 +16,24 @@ using OfficeIMO.Excel.Xlsb.Read;
 
 namespace OfficeIMO.Excel {
     /// <summary>
-    /// Package-owned ADO.NET projection for XLSX, XLSM, XLSB, and BIFF8 XLS workbook worksheets.
+    /// Package-owned ADO.NET projection for XLSX, XLSM, XLTX, XLTM, XLAM, XLSB, and BIFF8 XLS workbook worksheets.
     /// </summary>
-    public sealed class ExcelWorkbookDataReader : DbDataReader {
+    public sealed class ExcelWorkbookDataReader : DbDataReader, IDataReaderMappingMetadata, IDataReaderMappingErrorMetadata {
         private readonly IReadOnlyList<SheetSelection> _sheets;
         private readonly IReadOnlyList<string> _sheetNames;
         private readonly Func<int, DbDataReader> _openSheet;
         private IDisposable _owner;
         private readonly CultureInfo _culture;
+
+        CultureInfo IDataReaderMappingMetadata.MappingCulture => _culture;
+
+        IReadOnlyList<string>? IDataReaderMappingMetadata.MappingDateTimeFormats => null;
+        Func<object, Type, CultureInfo, (bool ok, object? value)>? IDataReaderMappingMetadata.MappingTypeConverter => _typeConverter;
+        bool IDataReaderMappingMetadata.RequireAllColumnsMapped => _requireAllColumnsMapped;
+        DataMappingErrorValuePolicy IDataReaderMappingErrorMetadata.MappingErrorValuePolicy => _mappingErrorValuePolicy;
+        private readonly Func<object, Type, CultureInfo, (bool ok, object? value)>? _typeConverter;
+        private readonly bool _requireAllColumnsMapped;
+        private readonly DataMappingErrorValuePolicy _mappingErrorValuePolicy;
         private readonly CancellationToken _cancellationToken;
         private DbDataReader _current;
         private int _resultIndex;
@@ -34,6 +44,9 @@ namespace OfficeIMO.Excel {
             Func<int, DbDataReader> openSheet,
             IDisposable owner,
             CultureInfo culture,
+            Func<object, Type, CultureInfo, (bool ok, object? value)>? typeConverter,
+            bool requireAllColumnsMapped,
+            DataMappingErrorValuePolicy mappingErrorValuePolicy,
             CancellationToken cancellationToken) {
             if (sheets.Count == 0) {
                 owner.Dispose();
@@ -45,6 +58,9 @@ namespace OfficeIMO.Excel {
             _openSheet = openSheet;
             _owner = owner;
             _culture = culture;
+            _typeConverter = typeConverter;
+            _requireAllColumnsMapped = requireAllColumnsMapped;
+            _mappingErrorValuePolicy = mappingErrorValuePolicy;
             _cancellationToken = cancellationToken;
             _current = _openSheet(0);
         }
@@ -106,6 +122,7 @@ namespace OfficeIMO.Excel {
                 XlsbImportOptions = new OfficeIMO.Excel.Xlsb.XlsbImportOptions {
                     MaxPackageBytes = options.MaxInputBytes,
                     MaxCells = options.MaxXlsbCells,
+                    MaxLogicalRows = options.MaxXlsbLogicalRows,
                     MaxSharedStrings = options.MaxSharedStringItems,
                     MaxSharedStringItemCharacters = options.MaxSharedStringItemCharacters,
                     MaxSharedStringCharacters = options.MaxSharedStringCharacters,
@@ -140,7 +157,7 @@ namespace OfficeIMO.Excel {
 
             options.CancellationToken.ThrowIfCancellationRequested();
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            byte[] bytes = OfficeIMO.Drawing.Internal.OfficeStreamReader.ReadRemainingBytes(
+            byte[] bytes = OfficeIMO.Core.Internal.OfficeStreamReader.ReadRemainingBytes(
                 stream,
                 options.CancellationToken,
                 options.MaxInputBytes);
@@ -163,7 +180,6 @@ namespace OfficeIMO.Excel {
 
         private static bool CanUseLegacyFastPath(ExcelReadOptions options) =>
             string.IsNullOrWhiteSpace(options.A1Range)
-            && !options.InferSchema
             && options.CellValueConverter == null
             && options.UseCachedFormulaResult;
 
@@ -264,6 +280,9 @@ namespace OfficeIMO.Excel {
                     index => OpenOpenXmlSheet(owner, sheets[index].Name, options),
                     lifetime,
                     options.Culture,
+                    options.TypeConverter,
+                    options.StrictTypedMapping,
+                    options.MappingErrorValuePolicy,
                     options.CancellationToken);
             } catch {
                 lifetime.Dispose();
@@ -303,6 +322,9 @@ namespace OfficeIMO.Excel {
                         options.CancellationToken),
                     owner,
                     options.Culture,
+                    options.TypeConverter,
+                    options.StrictTypedMapping,
+                    options.MappingErrorValuePolicy,
                     options.CancellationToken);
             } catch {
                 owner.Dispose();
@@ -324,6 +346,9 @@ namespace OfficeIMO.Excel {
                         options.CancellationToken),
                     owner,
                     options.Culture,
+                    options.TypeConverter,
+                    options.StrictTypedMapping,
+                    options.MappingErrorValuePolicy,
                     options.CancellationToken);
             } catch {
                 owner.Dispose();
@@ -509,6 +534,15 @@ namespace OfficeIMO.Excel {
             if (destinationType == typeof(double)) return (T)(object)GetDouble(ordinal);
             if (destinationType == typeof(decimal)) return (T)(object)GetDecimal(ordinal);
             if (destinationType == typeof(DateTime)) return (T)(object)GetDateTime(ordinal);
+#if NET6_0_OR_GREATER
+            if (destinationType == typeof(DateOnly) || destinationType == typeof(TimeOnly)) {
+                object? sourceValue = IsDBNull(ordinal) ? null : GetValue(ordinal);
+                return DataValueConverter.ConvertTo<T>(
+                    sourceValue,
+                    _culture,
+                    errorValuePolicy: _mappingErrorValuePolicy)!;
+            }
+#endif
             if (destinationType == typeof(Guid)) return (T)(object)GetGuid(ordinal);
 
             object value = GetValue(ordinal);

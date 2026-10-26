@@ -28,7 +28,7 @@ namespace OfficeIMO.Tests {
             byte[] bytes;
             using (PowerPointPresentation source = PowerPointPresentation.Create()) {
                 PowerPointSmartArt smartArt = source
-                    .AddSlide(P.SlideLayoutValues.Blank)
+                    .AddSlide(PowerPointSlideLayoutType.Blank)
                     .AddSmartArt(sourceKind,
                         new[] { "Discover", "Build", "Validate", "Ship" },
                         PowerPointUnits.FromPoints(20D),
@@ -52,7 +52,7 @@ namespace OfficeIMO.Tests {
                     PowerPointFileFormat.Ppt));
                 bytes = source.ToBytes(PowerPointFileFormat.Ppt,
                     new PowerPointSaveOptions {
-                        LossPolicy = PowerPointConversionLossPolicy.Allow
+                        LossPolicy = OfficeConversionLossPolicy.Allow
                     });
             }
 

@@ -729,6 +729,8 @@ public partial class DrawingTests {
     [InlineData("image/pjpeg", OfficeImageFormat.Jpeg)]
     [InlineData("image/svg+xml; charset=utf-8", OfficeImageFormat.Svg)]
     [InlineData("image/x-emf", OfficeImageFormat.Emf)]
+    [InlineData("image/ico", OfficeImageFormat.Icon)]
+    [InlineData("image/pcx", OfficeImageFormat.Pcx)]
     [InlineData("image/webp", OfficeImageFormat.Webp)]
     [InlineData("application/octet-stream", OfficeImageFormat.Unknown)]
     public void OfficeImageInfoMapsMimeTypesToSharedFormats(string contentType, OfficeImageFormat expected) {
@@ -3484,7 +3486,7 @@ public partial class DrawingTests {
         OfficeImageExportDiagnostic diagnostic = Assert.IsType<OfficeImageExportDiagnostic>(
             fonts.CreateSubstitutionDiagnostic(emoji, "Missing Demo, Emoji Demo", source: "test"));
         Assert.Equal(OfficeImageExportDiagnosticCodes.FontSubstituted, diagnostic.Code);
-        Assert.Equal(OfficeImageExportLossKind.Approximation, diagnostic.LossKind);
+        Assert.Equal(OfficeConversionLossKind.Approximation, diagnostic.LossKind);
         Assert.Equal("test", diagnostic.Source);
         Assert.Contains("Emoji Demo", diagnostic.Message, StringComparison.Ordinal);
 

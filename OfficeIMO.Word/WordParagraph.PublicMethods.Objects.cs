@@ -70,11 +70,11 @@ namespace OfficeIMO.Word {
         /// <param name="alignment">The optional alignment for the tabs.</param>
         /// <param name="leader">The optional rune to use before the tabs.</param>
         /// <returns>The added tabs.</returns>
-        public WordTabStop AddTabStop(int position, TabStopValues? alignment = null, TabStopLeaderCharValues? leader = null) {
-            alignment ??= TabStopValues.Left;
-            leader ??= TabStopLeaderCharValues.None;
+        public WordTabStop AddTabStop(int position, WordTabAlignment? alignment = null, WordTabLeader? leader = null) {
+            alignment ??= WordTabAlignment.Left;
+            leader ??= WordTabLeader.None;
             var wordTab = new WordTabStop(this);
-            wordTab.AddTab(position, alignment, leader);
+            wordTab.AddTab(position, alignment.Value.ToOpenXml(), leader.Value.ToOpenXml());
             return wordTab;
         }
 
@@ -139,7 +139,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="type">Layout of SmartArt to create.</param>
         /// <returns>The created <see cref="WordSmartArt"/>.</returns>
-        public WordSmartArt AddSmartArt(SmartArtType type) {
+        public WordSmartArt AddSmartArt(WordSmartArtType type) {
             var paragraph = this.AddParagraph();
             return new WordSmartArt(this._document, paragraph, type);
         }
@@ -177,7 +177,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="text">The text inside the text box.</param>
         /// <param name="wrapTextImage">The text image wrapping settings.</param>
-        public WordTextBox AddTextBox(string text, WrapTextImage wrapTextImage) {
+        public WordTextBox AddTextBox(string text, WordImageTextWrapping wrapTextImage) {
             WordTextBox wordTextBox = new WordTextBox(this._document, this, text, wrapTextImage);
             return wordTextBox;
         }

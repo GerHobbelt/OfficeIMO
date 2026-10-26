@@ -46,13 +46,14 @@ new CsvDocument()
 - Supports `AddRow`, `AddColumn`, `RemoveColumn`, `SortBy`, `Filter`, and `Transform`.
 - Provides schema inference and schema validation with required columns, typed columns, defaults, and custom rules.
 - Maps rows to typed objects with explicit no-reflection mapping.
-- Supports streaming mode for large files and explicit materialization when transforms are needed.
+- Provides forward-only `DbDataReader` access for large files without presenting a streaming document as an editable model.
+- Provides ordered, bounded parallel projection for data readers and a span-backed transient-record path for decoded text on .NET 8 and later.
 - Includes validated cross-library benchmark lanes with operating-system and run-mode provenance.
 
 ## Performance without giving up the document model
 
 OfficeIMO.CSV has dedicated field-span, reusable-row, streaming `DbDataReader`,
-projected-row, and trusted-text fast paths. The same package also keeps the
+projected-row and preformatted-text fast paths. The same package also keeps the
 features expected from a document and ingestion model: schema inference and
 validation, typed values, transforms, compressed files, malformed-input policy,
 formula-injection protection, progress, cancellation, and diagnostics.
@@ -114,7 +115,8 @@ document.EnsureInferredSchema()
 
 For ordinary DTOs, `RowsAs<T>()` matches headers to writable properties without
 requiring a range or mapping builder. Matching is case-insensitive and ignores
-spaces and punctuation:
+spaces and punctuation. OfficeIMO builds the writable-property plan once per
+model type and reuses compiled assignments when the runtime supports them:
 
 ```csharp
 List<Person> people = CsvDocument.Load("people.csv")
@@ -122,7 +124,24 @@ List<Person> people = CsvDocument.Load("people.csv")
     .ToList();
 ```
 
-Use the explicit overload for immutable models and trimming or NativeAOT-sensitive applications:
+For a forward-only typed pipeline, project the existing `DbDataReader` surface.
+This avoids building a `CsvDocument` and keeps reader lifetime explicit:
+
+```csharp
+using System.Data.Common;
+
+using DbDataReader reader = CsvDocument.OpenDataReader("people.csv");
+foreach (Person person in reader.RowsAs<Person>()) {
+    Process(person);
+}
+```
+
+The same automatic and explicit `RowsAs<T>` mappings work on both a materialized
+`CsvDocument` and a forward-only reader. The caller owns and disposes the reader.
+
+Use the explicit overload when assignments must be declared without reflection,
+including trimming- and NativeAOT-sensitive applications. This overload still
+requires `T : new()`:
 
 ```csharp
 using OfficeIMO.CSV;
@@ -155,7 +174,8 @@ public sealed class Person {
 }
 ```
 
-For immutable models, return a new instance from each assignment:
+For a non-positional record with a public parameterless constructor, an
+assignment can return a new value from each step:
 
 ```csharp
 using OfficeIMO.CSV;
@@ -171,6 +191,98 @@ public sealed record PersonRecord {
     public string Name { get; init; } = "";
 }
 ```
+
+The mapper overload still requires a public parameterless constructor. For a
+positional record or another constructor-bound model, use the factory overload:
+
+```csharp
+using OfficeIMO.CSV;
+
+var people = CsvDocument.Load("people.csv")
+    .RowsAs(factory: row => new PersonRecord(
+        row.GetInt32(row.GetOrdinal("Id")),
+        row.GetString(row.GetOrdinal("Name"))))
+    .ToList();
+
+public sealed record PersonRecord(int Id, string Name);
+```
+
+The factory receives the current `IDataRecord`; its typed getters use the CSV
+reader's configured culture and schema conversions. The same overload is
+available on `DbDataReader` and does not require `T : new()`.
+
+### Ordered parallel mapping
+
+Use `RowsAsParallel<T>()` when row conversion is substantial enough to repay
+worker scheduling. One producer reads the forward-only source, workers receive
+independent bounded batches, and results retain source order.
+`MaxDegreeOfParallelism` bounds concurrent batches. Leave `BatchSize` unset for
+the source's tuned bounded default; set it only when an application needs an
+explicit throughput-versus-working-set tradeoff:
+
+```csharp
+using OfficeIMO.Data;
+using System.Data.Common;
+
+using DbDataReader reader = CsvDocument.OpenDataReader("people.csv");
+Person[] people = reader.RowsAsParallel<Person>(
+    new ParallelRowMappingOptions {
+        MaxDegreeOfParallelism = 8
+    },
+    cancellationToken).ToArray();
+```
+
+The automatic, explicit `RowMapper<T>`, and `Func<IDataRecord, T>` projection
+shapes all have parallel overloads. Automatic and explicit mapping snapshot
+ordinary readers on the calling thread and map those bounded snapshots on
+workers. Factory mapping also snapshots ordinary readers when their field
+types are safe to copy, so its factory can run concurrently; readers with
+provider-owned or mutable field values keep their native calling-thread
+behavior. A degree of one always uses the corresponding sequential mapping
+contract. Concurrent factories must not mutate unprotected shared state or
+retain the transient `IDataRecord`.
+
+On .NET 8 and later, decoded text can use the lower-overhead transient-record
+API. The builder resolves headers once; its returned factory receives
+span-backed fields directly from bounded parser batches:
+
+```csharp
+Person[] people = CsvDocument.ReadTextRowsAsParallel<Person>(
+    csvText,
+    header => {
+        int id = header.GetOrdinal("Id");
+        int name = header.GetOrdinal("Name");
+        int age = header.GetOrdinal("Age");
+        return row => new Person {
+            Id = row.GetInt32(id),
+            Name = row.GetString(name),
+            Age = row.GetInt32(age)
+        };
+    },
+    parallelOptions: new ParallelRowMappingOptions {
+        MaxDegreeOfParallelism = 8
+    },
+    cancellationToken: cancellationToken).ToArray();
+```
+
+`CsvRecord`, and every span returned by it, is valid only during that factory
+call. Do not retain either one. Use `CsvRecord.IsMissing(ordinal)` when a short
+source row omitted a field and `CsvRecord.IsNull(ordinal)` when a present field
+matches `CsvLoadOptions.NullValue`; an omitted field is deliberately not also
+reported as null. The path falls back to correct sequential record access when
+selected CSV options or a record shape cannot use the span-batch parser.
+Parallel execution uses more working memory and thread-pool work; small or
+cheap rows may be faster through the ordinary sequential API.
+
+On .NET 8 and later, explicit `DateOnly` and `TimeOnly` targets are supported by
+`RowsAs<T>`, `GetFieldValue<T>`, and `CsvColumnBuilder.AsDateOnly()` /
+`AsTimeOnly()`. Default schema inference remains `DateTime`, so moving between
+target frameworks does not silently change a column's inferred type.
+
+Set `CsvLoadOptions.MappingErrorValuePolicy` to
+`DataMappingErrorValuePolicy.Redact` when schema and row-mapping failures must
+not include source values or custom-converter exception details. The default is
+`Include` for compatibility.
 
 ## Read once or edit
 
@@ -223,8 +335,49 @@ var table = new DataTable();
 table.Load(reader);
 ```
 
+For a large typed import, enable bounded parallel projection on the reader.
+Parsing remains single-owner, completed batches are returned in source order,
+and the caller still consumes one `DbDataReader`, so the same reader can be
+passed to `SqlBulkCopy` or another provider bulk-copy API:
+
+```csharp
+var schema = new CsvSchemaBuilder()
+    .Column("Id").AsInt32()
+    .Column("Amount").AsType(typeof(decimal))
+    .Column("CreatedUtc").AsDateTime()
+    .Done()
+    .Build();
+
+using var reader = CsvDocument.OpenDataReader(
+    "large.csv",
+    readerOptions: new CsvDataReaderOptions {
+        Schema = schema,
+        ParallelProcessing = new CsvDataReaderParallelOptions {
+            MaxDegreeOfParallelism = 4,
+            BatchSize = 4096
+        }
+    });
+```
+
+Parallel processing is opt-in and targets typed value conversion. String-only
+readers keep their lower-overhead sequential fast path. The defaults use at
+most four workers and bounded batches; tune either setting only with a
+representative workload because more workers can be slower on multi-domain or
+hybrid CPUs. Custom schema converters may run concurrently in this mode and
+must be thread-safe; keep the reader sequential when a converter depends on
+mutable single-threaded state.
+
 `OpenDataReader` is the forward-only entry point. Use `CsvDocument.Load` when a
 materialized document is required; 3.1 no longer exposes a load-mode switch.
+`LoadAsync` and `SaveAsync` perform asynchronous source or destination I/O but
+still materialize the document or serialized output. They are not an async CSV
+cursor; `DbDataReader.Read()` remains the bounded forward-only read path.
+
+Streaming readers also implement `ICsvDataReaderPositionMetadata`. Its
+`RecordNumber` is the one-based data-record number, while
+`PhysicalLineNumber` and `PhysicalEndLineNumber` identify the source lines for
+the current record when the selected reader path retains that information.
+Physical line values are `null` for materialized paths rather than estimated.
 
 ## Real-world headers
 
@@ -312,7 +465,7 @@ Console.WriteLine($"Imported {rowsRead} rows");
 
 ## Export options
 
-CSV output supports null tokens, date/time formatting, UTC conversion, append, no-clobber checks, compression, quoting, encoding, and formula escaping:
+CSV output supports null tokens, date/time formatting, UTC conversion, append, no-clobber checks, compression, quoting, encoding, and formula escaping. Formula escaping applies to text and configured text tokens; typed negative numeric values remain numeric:
 
 ```csharp
 CsvDocument.Load("input.csv")
@@ -373,6 +526,30 @@ CsvDocument.WriteDataReader("summary.csv.gz", reader, new CsvSaveOptions {
 });
 ```
 
+For large database exports with CPU-heavy quoting or value formatting, opt in
+to ordered parallel formatting. The source reader is still consumed by one
+thread; detached row batches are formatted concurrently and committed in the
+original order:
+
+```csharp
+using var reader = command.ExecuteReader();
+CsvDocument.WriteDataReaderParallel(
+    "summary.csv.gz",
+    reader,
+    new CsvSaveOptions { CompressionType = CsvCompressionType.Auto },
+    new CsvWriteParallelOptions {
+        MaxDegreeOfParallelism = 4,
+        BatchSize = 4096
+    },
+    cancellationToken);
+```
+
+The parallel writer keeps at most two batches in memory. Custom values and
+format providers used during formatting must support concurrent read-only
+access. For small or simply formatted exports, `WriteDataReader` avoids the
+thread-pool and batch-buffering overhead and may be faster; measure the real
+row shape on the target machine before choosing the parallel path.
+
 When the caller already has projected arrays, pass the shared schema once. The
 writer validates every row width without repeating column-name validation:
 
@@ -383,7 +560,7 @@ object?[][] projectedRows = {
 };
 
 using var output = File.CreateText("summary.csv");
-using var csv = new CsvObjectWriter(output);
+using var csv = new CsvRowWriter(output);
 csv.WriteRows(new[] { "Name", "Count", "Active" }, projectedRows);
 ```
 
@@ -421,6 +598,6 @@ string normalized = document.ToString(new CsvSaveOptions {
 ## Dependency footprint
 
 - **External:** No third-party CSV engine. `System.Buffers` and .NET Framework reference assemblies support compatibility targets.
-- **OfficeIMO:** `OfficeIMO.Drawing`. Parsing, streaming, schemas, transforms, compression, and object mapping are first-party.
+- **OfficeIMO:** `OfficeIMO.Core`. Parsing, streaming, schemas, transforms, compression, and object mapping are first-party.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

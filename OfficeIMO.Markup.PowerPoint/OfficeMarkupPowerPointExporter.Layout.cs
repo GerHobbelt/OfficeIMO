@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using OfficeIMO.PowerPoint;
-using A = DocumentFormat.OpenXml.Drawing;
-using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeIMO.Markup.PowerPoint;
 
@@ -106,7 +104,7 @@ internal sealed partial class OfficeMarkupPowerPointExporter {
             return;
         }
 
-        if (Enum.TryParse<SlideTransition>(resolvedTransition.ResolvedIdentifier, true, out var parsed)) {
+        if (Enum.TryParse<PowerPointSlideTransition>(resolvedTransition.ResolvedIdentifier, true, out var parsed)) {
             slide.Transition = parsed;
             ApplyTransitionAttributes(slide, resolvedTransition.Attributes);
         }
@@ -130,7 +128,7 @@ internal sealed partial class OfficeMarkupPowerPointExporter {
         }
     }
 
-    private static bool TryGetTransitionSpeed(IReadOnlyDictionary<string, string> attributes, out SlideTransitionSpeed speed) {
+    private static bool TryGetTransitionSpeed(IReadOnlyDictionary<string, string> attributes, out PowerPointSlideTransitionSpeed speed) {
         speed = default;
         var value = GetTransitionAttribute(attributes, "speed", "spd");
         if (string.IsNullOrWhiteSpace(value)) {
@@ -139,14 +137,14 @@ internal sealed partial class OfficeMarkupPowerPointExporter {
 
         switch (NormalizeTransitionToken(value)) {
             case "slow":
-                speed = SlideTransitionSpeed.Slow;
+                speed = PowerPointSlideTransitionSpeed.Slow;
                 return true;
             case "medium":
             case "med":
-                speed = SlideTransitionSpeed.Medium;
+                speed = PowerPointSlideTransitionSpeed.Medium;
                 return true;
             case "fast":
-                speed = SlideTransitionSpeed.Fast;
+                speed = PowerPointSlideTransitionSpeed.Fast;
                 return true;
             default:
                 return false;

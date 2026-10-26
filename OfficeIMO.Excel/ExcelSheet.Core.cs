@@ -22,7 +22,7 @@ namespace OfficeIMO.Excel {
                 return _sheet.Name?.Value ?? string.Empty;
             }
             set {
-                _excelDocument.RenameWorksheet(this, value, SheetNameValidationMode.Strict);
+                _excelDocument.RenameWorksheet(this, value, ExcelSheetNameValidationMode.Strict);
             }
         }
         private readonly UInt32Value _id;
@@ -39,12 +39,9 @@ namespace OfficeIMO.Excel {
         internal WorksheetPart DeferredMetadataWorksheetPart => _worksheetPart;
         private readonly SpreadsheetDocument _spreadSheetDocument;
         private readonly ExcelDocument _excelDocument;
-        private bool _isBatchOperation = false;
-        private bool _batchHasCellMutations;
         private bool _hasWorksheetMutations;
         private bool _requiresSavePreparation;
         private readonly List<TableDefinitionPart> _pendingTableDefinitionPartSaves = new();
-        private readonly object _batchLock = new object();
         private Row? _lastAccessedRow;
         private int _lastAccessedRowIndex;
         private Cell? _lastAccessedCell;
@@ -68,75 +65,17 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Override execution policy for this sheet. Null = inherit from document.
         /// </summary>
-        public ExecutionPolicy? ExecutionOverride { get; set; }
+        public ExcelExecutionPolicy? ExecutionOverride { get; set; }
 
         /// <summary>
         /// Gets the effective execution policy for this sheet.
         /// </summary>
-        internal ExecutionPolicy EffectiveExecution => ExecutionOverride ?? _excelDocument.Execution;
-
-        /// <summary>
-        /// Begin a no-lock context where operations bypass locking.
-        /// </summary>
-        public NoLockContext BeginNoLock() => new();
-
-        /// <summary>
-        /// Executes multiple worksheet mutations under a single workbook write lock.
-        /// </summary>
-        /// <param name="action">The worksheet updates to execute.</param>
-        public void Batch(Action<ExcelSheet> action) {
-            if (action == null) {
-                throw new ArgumentNullException(nameof(action));
-            }
-
-            if (Locking.IsNoLock) {
-                MaterializeDeferredDataSetImportIfNeeded();
-                action(this);
-                return;
-            }
-
-            var lck = _excelDocument.EnsureLock();
-            if (_isBatchOperation && lck.IsWriteLockHeld) {
-                MaterializeDeferredDataSetImportIfNeeded();
-                action(this);
-                return;
-            }
-
-            MaterializeDeferredDataSetImportIfNeeded();
-            lck.EnterWriteLock();
-            bool wasBatchOperation = _isBatchOperation;
-            bool hadBatchCellMutations = _batchHasCellMutations;
-            try {
-                _isBatchOperation = true;
-                _batchHasCellMutations = false;
-                action(this);
-                if (_batchHasCellMutations) {
-                    _excelDocument.MarkPackageDirty();
-                }
-            } finally {
-                _isBatchOperation = wasBatchOperation;
-                _batchHasCellMutations = hadBatchCellMutations;
-                lck.ExitWriteLock();
-            }
-        }
-
-        /// <summary>
-        /// Represents a scope where worksheet operations bypass locking.
-        /// </summary>
-        public sealed class NoLockContext : IDisposable {
-            private readonly IDisposable _scope;
-            internal NoLockContext() => _scope = Locking.EnterNoLockScope();
-
-            /// <summary>
-            /// Ends the no-lock scope and restores normal locking behavior.
-            /// </summary>
-            public void Dispose() => _scope.Dispose();
-        }
+        internal ExcelExecutionPolicy EffectiveExecution => ExecutionOverride ?? _excelDocument.Execution;
 
         /// <summary>
         /// Returns the used range of this worksheet as an A1 string by leveraging the read bridge.
         /// </summary>
-        public string GetUsedRangeA1() {
+        private string GetUsedRangeA1() {
             if (_excelDocument.TryGetDirectTabularSaveCandidateRange(this, out string pendingRange)) {
                 return pendingRange;
             }
@@ -152,7 +91,7 @@ namespace OfficeIMO.Excel {
         /// <param name="excelDocument">Parent document.</param>
         /// <param name="spreadSheetDocument">Open XML spreadsheet document.</param>
         /// <param name="sheet">Underlying sheet element.</param>
-        public ExcelSheet(ExcelDocument excelDocument, SpreadsheetDocument spreadSheetDocument, Sheet sheet)
+        internal ExcelSheet(ExcelDocument excelDocument, SpreadsheetDocument spreadSheetDocument, Sheet sheet)
             : this(excelDocument, spreadSheetDocument, sheet, registerSheetWrapper: true) {
         }
 
@@ -183,7 +122,7 @@ namespace OfficeIMO.Excel {
         /// <param name="workbookpart">Workbook part to add the worksheet to.</param>
         /// <param name="spreadSheetDocument">Open XML spreadsheet document.</param>
         /// <param name="name">Worksheet name.</param>
-        public ExcelSheet(ExcelDocument excelDocument, WorkbookPart workbookpart, SpreadsheetDocument spreadSheetDocument, string name) {
+        internal ExcelSheet(ExcelDocument excelDocument, WorkbookPart workbookpart, SpreadsheetDocument spreadSheetDocument, string name) {
             _excelDocument = excelDocument;
             _spreadSheetDocument = spreadSheetDocument;
             _hasWorksheetMutations = true;
@@ -705,54 +644,6 @@ namespace OfficeIMO.Excel {
 
             index = parsed;
             return true;
-        }
-
-        private void WriteLock(Action action) {
-            Locking.ExecuteWrite(_excelDocument.EnsureLock(), () => {
-                action();
-                MarkRequiresSavePreparation();
-            });
-        }
-
-        private void WriteLockWorksheetPreparationOnly(Action action) {
-            Locking.ExecuteWrite(_excelDocument.EnsureLock(), () => {
-                action();
-                MarkRequiresWorksheetPreparation();
-            });
-        }
-
-        private void WriteLockWorksheetPreparationOnly(Func<bool> action) {
-            Locking.ExecuteWrite(_excelDocument.EnsureLock(), () => {
-                if (action()) {
-                    MarkRequiresWorksheetPreparation();
-                }
-            });
-        }
-
-        private void WriteLockConditional(Action action) {
-            // If we're already in a batch operation or in a NoLock scope,
-            // just execute the action directly
-            if (_isBatchOperation || Locking.IsNoLock) {
-                MaterializeDeferredDataSetImportIfNeeded();
-                action();
-                MarkRequiresSavePreparation();
-            } else {
-                MaterializeDeferredDataSetImportIfNeeded();
-                WriteLock(action);
-            }
-        }
-
-        private void MaterializeDeferredDataSetImportIfNeeded() {
-            if (_excelDocument.IsPreservingDirectDataSetExternalCellMutation
-                && _excelDocument.HasDeferredDirectDataSetImport
-                && !_excelDocument.HasPendingDirectCellValues) {
-                return;
-            }
-
-            if (_excelDocument.HasUnmaterializedDirectDataSetRows
-                || _excelDocument.HasPendingDirectCellValues) {
-                _excelDocument.MaterializeDeferredDataSetImport();
-            }
         }
 
         private OfficeFontInfo? GetWorkbookDefaultFontInfo() {

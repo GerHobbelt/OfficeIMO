@@ -1,27 +1,26 @@
 # OfficeIMO.Html
 
-`OfficeIMO.Html` contains the shared HTML and MHTML parser, resource policy, layout scene, and direct PNG/JPEG/TIFF/SVG/WebP rendering APIs used by OfficeIMO converters.
+`OfficeIMO.Html` contains the shared HTML parser, resource policy, layout scene, and direct PNG/JPEG/TIFF/SVG/WebP rendering APIs used by OfficeIMO converters.
 
-It owns the reusable parts that should behave consistently across HTML-to-Markdown, HTML-to-Word, HTML-to/from-RTF, and HTML-backed PDF workflows:
+It owns the reusable parts that should behave consistently across HTML-to-Markdown, HTML-to-Office, image, and PDF workflows:
 
 - trust-aware parsing profiles and shared source, DOM, CSS, selector, responsive-image, and semantic-metadata limits
+- shared HTML, CSS, and data-URI charset handling, including legacy web encodings
 - URL policy evaluation and base URI resolution
 - AngleSharp document parsing helpers
 - DOM traversal facts and node/depth limit tracking
 - image source discovery for `img`, lazy-loading attributes, `srcset`, and `picture/source`
 - image data URI parsing and media-type extension mapping
-- MHTML/MHT web-archive loading, deterministic saving, root-part selection, and CID/Content-Location resource resolution
 - deterministic accessible-name, ARIA heading, EPUB structural-semantic, and logical quote/code/footnote projection
 - dependency-free HTML layout for continuous and paged output
 - bounded CSS length math, caller stylesheets, deterministic media preferences, running strings, and Unicode-range-aware WOFF 1/OpenType fonts
 - direct PNG, JPEG, TIFF, SVG, and lossless WebP export over `OfficeIMO.Drawing`
-- semantic HTML to/from RTF conversion over the dependency-free `OfficeIMO.Rtf` model
 - one typed semantic document projection shared by Excel, PowerPoint, and OneNote importers
 - executable target capability contracts, preflight analysis, and source-to-target diagnostic provenance
 - one operation-scoped resource session for policy, resolution, MIME checks, caching, deduplication, budgets, timeouts, and digests
 - fidelity scoring across structure, text, styles, resources, annotations, formulas, charts, geometry, and reopened native artifacts
 
-Markdown, Word, Excel, PowerPoint, RTF, and PDF models remain in their owning packages. Those projections are explicit: for example, HTML becomes a `WordDocument` through `ToWordDocument()` and a `MarkdownDoc` through `ToMarkdownDocument()`.
+Markdown, Word, Excel, PowerPoint, RTF, Email, MHTML, and PDF models remain in their owning packages. Those projections are explicit: for example, HTML becomes a `WordDocument` through `OfficeIMO.Word.Html` and a `MarkdownDoc` through `OfficeIMO.Markdown.Html`.
 
 ## Direct HTML rendering
 
@@ -56,29 +55,10 @@ IReadOnlyList<OfficeImageExportResult> webpPages = source
     .Save("status-pages");
 ```
 
-## MHTML web archives
-
-MHTML uses the same bounded MIME mechanics as `OfficeIMO.Email`, but its root document, base URI, and embedded resources remain an HTML concern:
-
-```csharp
-using OfficeIMO.Html;
-
-MhtmlDocument archive = MhtmlDocument.Load("snapshot.mhtml");
-Console.WriteLine(archive.HtmlDocument.NormalizedHtml);
-
-var renderOptions = new HtmlRenderOptions();
-archive.ConfigureRenderOptions(renderOptions);
-byte[] png = archive.HtmlDocument.ToPng(renderOptions);
-
-archive.Save("copy.mht");
-```
-
-`ConfigureRenderOptions` resolves `cid:` and `Content-Location` references from the archive before falling back to a caller-supplied resolver. It does not grant network access or weaken the configured URL policy.
-
 ## Dependency footprint
 
-- **External:** AngleSharp and AngleSharp.Css for DOM and CSS parsing.
-- **OfficeIMO:** `OfficeIMO.Drawing`, `OfficeIMO.Email`, and `OfficeIMO.Rtf`. Resource policy, MHTML projection, layout scene, rendering, and format mappings are first-party.
+- **External:** AngleSharp and AngleSharp.Css for DOM and CSS parsing; System.Text.Encoding.CodePages for legacy web encodings.
+- **OfficeIMO:** `OfficeIMO.Core`. Resource policy, layout, rendering, and diagnostics are first-party.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.
 
@@ -98,24 +78,17 @@ byte[] png = source.ToPng(options);
 string svg = source.ToSvg(options);
 ```
 
-## RTF Bridge
+## Optional bridges
 
-```csharp
-using OfficeIMO.Html;
-using OfficeIMO.Rtf;
+Install only the bridge required by the application:
 
-HtmlConversionDocument source = HtmlConversionDocument.Parse("<p>Hello <strong>RTF</strong></p>");
-RtfDocument document = source.ToRtfDocument();
-string rtf = document.ToRtf();
-var webOptions = RtfToHtmlOptions.CreateWebSafeProfile();
-RtfToHtmlResult result = document.ToHtmlResult(webOptions);
-string html = result.RequireValue();
-result.Report.RequireNoLoss();
-```
+- `OfficeIMO.Html.Rtf` for semantic HTML/RTF conversion.
+- `OfficeIMO.Mhtml` for MHT/MHTML archives and embedded MIME resources.
+- `OfficeIMO.Email.Image` for email-body image rendering.
+- `OfficeIMO.Html.Pdf` for plain HTML/PDF conversion.
+- `OfficeIMO.Mhtml.Pdf` for MHTML/PDF conversion.
 
-RTF-to-RTF editing in `OfficeIMO.Rtf` remains the lossless preservation path. The HTML bridge is semantic: it preserves supported text, inline formatting, links, lists, tables, bookmarks, fields, form fields, notes, tracked revisions, object metadata, shape metadata, and embedded PNG/JPEG images without Office/COM automation.
-
-The web-safe profile is the default publishing boundary: only allowed web/mail URLs are emitted, private `data-officeimo-rtf-*` metadata is disabled, and image payloads require an explicit resolver. Use `RtfToHtmlOptions.CreateRoundTripProfile()` only for trusted OfficeIMO round trips; it can carry private metadata and embedded binary data and should not be published without sanitization.
+The public HTML/RTF and email-image namespaces remain familiar; the package references now describe the actual cross-format capability.
 
 ## URL Policy
 
@@ -137,6 +110,8 @@ HtmlConversionDocument document = HtmlConversionDocument.Parse(
     });
 Uri? baseUri = document.BaseUri;
 ```
+
+`HtmlConversionDocument.Load` and `LoadAsync` detect byte-order marks and HTML `meta charset` declarations. Pass the optional `Encoding` argument when transport metadata or application configuration is authoritative. CSS resources use their content-type charset, BOM, or `@charset`; textual data URIs use their declared `charset` and default to UTF-8.
 
 ## Trust and conversion limits
 
@@ -194,16 +169,33 @@ Reuse the same document for analysis too: `HtmlComputedStyleEngine.Compute(conve
 ## Semantic IR and target preflight
 
 ```csharp
-HtmlConversionDocument source = HtmlConversionDocument.Parse(html);
+const string semanticHtml = """
+    <h1>Quarterly checklist</h1>
+    <ol start="3"><li>Publish report</li></ol>
+    <input name="owner" value="Finance">
+    """;
+
+HtmlConversionDocument source = HtmlConversionDocument.Parse(semanticHtml);
 HtmlSemanticDocument semantics = source.SemanticDocument;
 HtmlConversionPreflight excel = source.AnalyzeFor(HtmlConversionTarget.Excel);
+
+HtmlSemanticBlock list = semantics.Sections
+    .SelectMany(section => section.Blocks)
+    .First(block => block.List != null);
+Console.WriteLine($"{list.List!.Kind}: start={list.List.Start}, reversed={list.List.IsReversed}");
+
+HtmlSemanticFormControl control = semantics.Sections
+    .SelectMany(section => section.Blocks)
+    .First(block => block.FormControl != null)
+    .FormControl!;
+foreach (string value in control.Values) Console.WriteLine(value);
 
 foreach (HtmlFeaturePreflightResult feature in excel.Features) {
     Console.WriteLine($"{feature.Feature}: {feature.Outcome} ({feature.OccurrenceCount})");
 }
 ```
 
-`HtmlSemanticDocument` is the single interpretation of sections, rich runs, nested lists, tables, links, forms, notes, resources, computed styles, and source locations. Generic Excel, PowerPoint, and OneNote importers consume it instead of independently deciding what the same DOM means. `AnalyzeFor(target)` uses the executable target registry to report `Supported`, `Approximated`, or `Omitted` before artifact creation. Diagnostics carry source and target provenance so applications can map a warning back to both sides of a conversion.
+`HtmlSemanticDocument` is the single interpretation of sections, rich runs, nested lists, tables, links, forms, notes, resources, computed styles, and source locations. List state retains ordered, unordered, and definition kinds, effective start and reverse direction, and each item's effective or explicit ordinal. Form controls expose specification-normalized types, one or more selected values, checked/disabled/required/readonly state, and resolved form ownership. Generic Excel, PowerPoint, and OneNote importers consume this model instead of independently deciding what the same DOM means. `AnalyzeFor(target)` uses the executable target registry to report `Supported`, `Approximated`, or `Omitted` before artifact creation. Diagnostics carry source and target provenance so applications can map a warning back to both sides of a conversion.
 
 The generated [HTML support matrix](../Docs/officeimo.html-support-matrix.md) is checked against those executable contracts in the test suite. Run `Build/Export-HtmlSupportMatrix.ps1 -Check` to verify it or omit `-Check` to regenerate it.
 
@@ -246,6 +238,8 @@ Console.WriteLine(verified.Dimensions["artifact-reload"]);
 
 Version 2 scores top-level fidelity dimensions independently. A dimension absent from both inputs is omitted rather than counted as a perfect result. Artifact reload evidence is intentionally caller-supplied: the score is marked verified only when a native artifact was successfully reopened and its re-exported HTML was compared with the original source.
 
+Capability-gallery JSON and Markdown manifests retain the score schema version, top-level dimensions, artifact kind, and reload-verification flag as durable review evidence.
+
 Conversion profile and trust are separate decisions. A `Document` or `HighFidelityPrint` profile does not make external resources trusted. Leave `Trust` as `Untrusted` for user-supplied HTML; set it to `Trusted` only when the caller controls the document and resource locations.
 
 Normalized HTML output is policy-aware: hyperlink and resource URLs are evaluated separately, URL-bearing attributes are resolved against the configured base URI, disallowed URLs are removed, boolean attributes are normalized, event-handler attributes are stripped by default, and non-document executable elements are skipped. External bytes are loaded only through a caller-supplied bounded resolver. Normalized output is intended for clean review, gallery proof, and downstream adapter input selection, not as a browser sandbox.
@@ -267,3 +261,5 @@ if (HtmlImageDataUri.TryParse(source, out var dataUri) && dataUri.IsBase64) {
     string extension = dataUri.FileExtension;
 }
 ```
+
+Use `HtmlDataUri` when the payload is textual. Its `DecodeText()` method honors a declared `charset` and uses UTF-8 only when the data URI does not declare one.

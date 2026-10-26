@@ -16,7 +16,7 @@ namespace OfficeIMO.Word.GoogleDocs {
             if (session == null) throw new ArgumentNullException(nameof(session));
             GoogleDocsImportOptions effective = options ?? new GoogleDocsImportOptions();
             ValidateOptions(effective);
-            return effective.Mode == GoogleDocsImportMode.DriveExport
+            return effective.Mode == GoogleWorkspaceImportMode.DriveExport
                 ? await ImportDriveAsync(documentId, session, effective, cancellationToken).ConfigureAwait(false)
                 : await ImportNativeAsync(documentId, session, effective, cancellationToken).ConfigureAwait(false);
         }
@@ -172,9 +172,9 @@ namespace OfficeIMO.Word.GoogleDocs {
                 _ => paragraph.Style,
             };
             paragraph.ParagraphAlignment = style.Alignment switch {
-                "CENTER" => JustificationValues.Center,
-                "END" => JustificationValues.Right,
-                "JUSTIFIED" => JustificationValues.Both,
+                "CENTER" => WordParagraphAlignment.Center,
+                "END" => WordParagraphAlignment.Right,
+                "JUSTIFIED" => WordParagraphAlignment.Both,
                 _ => paragraph.ParagraphAlignment,
             };
         }
@@ -183,12 +183,12 @@ namespace OfficeIMO.Word.GoogleDocs {
             if (style == null) return;
             if (style.Bold == true) run.SetBold();
             if (style.Italic == true) run.SetItalic();
-            if (style.Underline == true) run.SetUnderline(UnderlineValues.Single);
+            if (style.Underline == true) run.SetUnderline(WordUnderlineStyle.Single);
             if (style.Strikethrough == true) run.SetStrike();
             if (style.FontSize?.Magnitude is double size && size > 0) run.SetFontSize((int)Math.Round(size));
             if (!string.IsNullOrWhiteSpace(style.WeightedFontFamily?.FontFamily)) run.SetFontFamily(style.WeightedFontFamily!.FontFamily);
             if (style.ForegroundColor?.Color.RgbColor is GoogleDocsApiRgbColorPayload color) run.SetColorHex(ToHex(color));
-            if (style.SmallCaps == true) run.CapsStyle = CapsStyle.SmallCaps;
+            if (style.SmallCaps == true) run.CapsStyle = WordCapsStyle.SmallCaps;
             if (style.Link != null) {
                 report.AddUnique(TranslationSeverity.Warning, "Links", "Native links are detected, but exact tab/bookmark hyperlink reconstruction currently uses the Drive-export fallback.",
                     path: tabId ?? string.Empty, code: "DOCS.IMPORT.LINK_FALLBACK", action: TranslationAction.Flatten);

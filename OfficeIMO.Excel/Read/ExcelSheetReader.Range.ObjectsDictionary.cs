@@ -12,14 +12,8 @@ namespace OfficeIMO.Excel {
     /// Range-based read operations for <see cref="ExcelSheetReader"/>.
     /// </summary>
     internal sealed partial class ExcelSheetReader {
-        private bool CanUseReadObjectsXmlFastPath(OfficeIMO.Excel.ExecutionMode? mode) {
-            var policy = _opt.Execution;
-            var decided = mode ?? policy.Mode;
-            if (decided == OfficeIMO.Excel.ExecutionMode.Parallel) {
-                return false;
-            }
-
-            return policy.OnDecision == null && CanUseXmlFastReader();
+        private bool CanUseReadObjectsXmlFastPath(OfficeIMO.Excel.ExcelExecutionMode? mode) {
+            return CanUseXmlFastReader();
         }
 
         private bool TryReadObjectsDictionaryXmlStreamingFast(

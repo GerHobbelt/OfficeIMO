@@ -89,7 +89,7 @@ public static partial class WordRtfConverterExtensions {
 
     private static void CopyTabStops(WordParagraph source, RtfParagraph destination) {
         foreach (WordTabStop tabStop in source.TabStops) {
-            destination.AddTabStop(tabStop.Position, ToRtfTabAlignment(tabStop.Alignment), ToRtfTabLeader(tabStop.Leader));
+            destination.AddTabStop(tabStop.Position, ToRtfTabAlignment(tabStop.Alignment.ToOpenXml()), ToRtfTabLeader(tabStop.Leader.ToOpenXml()));
         }
     }
 
@@ -397,24 +397,12 @@ public static partial class WordRtfConverterExtensions {
 
     private static string CreateHyperlinkFieldInstruction(WordParagraph wordParagraph, Hyperlink hyperlink) {
         var wordHyperlink = new WordHyperLink(wordParagraph._document, wordParagraph._paragraph, hyperlink);
-        var instruction = new StringBuilder("HYPERLINK");
-        AppendHyperlinkFieldArgument(instruction, null, wordHyperlink.Uri?.ToString());
-        AppendHyperlinkFieldArgument(instruction, "l", hyperlink.Anchor?.Value);
-        AppendHyperlinkFieldArgument(instruction, "o", hyperlink.Tooltip?.Value);
-        AppendHyperlinkFieldArgument(instruction, "t", hyperlink.TargetFrame?.Value);
-        return instruction.ToString();
-    }
-
-    private static void AppendHyperlinkFieldArgument(StringBuilder instruction, string? fieldSwitch, string? value) {
-        if (string.IsNullOrEmpty(value)) {
-            return;
-        }
-
-        instruction.Append(' ');
-        if (!string.IsNullOrEmpty(fieldSwitch)) {
-            instruction.Append('\\').Append(fieldSwitch).Append(' ');
-        }
-        instruction.Append('"').Append(value!.Replace("\"", "'")).Append('"');
+        return new RtfHyperlinkFieldInfo {
+            Target = wordHyperlink.Uri,
+            SubAddress = hyperlink.Anchor?.Value,
+            ScreenTip = hyperlink.Tooltip?.Value,
+            TargetFrame = hyperlink.TargetFrame?.Value
+        }.ToInstruction();
     }
 
     private static bool AppendRevisionContent(
@@ -691,16 +679,16 @@ public static partial class WordRtfConverterExtensions {
         RtfParagraph destination = activeCapture?.Result ?? paragraph;
         if (revisionKind != RtfRevisionKind.None && !IsEquationFieldInstruction(instruction)) {
             RtfRun? flattenedPreviousRun = null;
-            foreach (Run childRun in simpleField.Elements<Run>()) {
-                AppendWordRun(
-                    new WordParagraph(wordParagraph._document, wordParagraph._paragraph, childRun),
-                    destination,
-                    ref flattenedPreviousRun,
-                    rtfDocument,
-                    revisionAuthorIndexes,
-                    revisionKind,
-                    revisionAuthorIndex);
-            }
+            AppendInlineContainerContent(
+                wordParagraph,
+                simpleField,
+                destination,
+                ref flattenedPreviousRun,
+                rtfDocument,
+                revisionAuthorIndexes,
+                new Stack<ComplexFieldCapture>(),
+                revisionKind,
+                revisionAuthorIndex);
             if (activeCapture != null) {
                 activeCapture.PreviousRun = flattenedPreviousRun;
             }
@@ -709,16 +697,16 @@ public static partial class WordRtfConverterExtensions {
 
         RtfField field = destination.AddField(instruction.Trim());
         RtfRun? previousRun = null;
-        foreach (Run childRun in simpleField.Elements<Run>()) {
-            AppendWordRun(
-                new WordParagraph(wordParagraph._document, wordParagraph._paragraph, childRun),
-                field.Result,
-                ref previousRun,
-                rtfDocument,
-                revisionAuthorIndexes,
-                revisionKind,
-                revisionAuthorIndex);
-        }
+        AppendInlineContainerContent(
+            wordParagraph,
+            simpleField,
+            field.Result,
+            ref previousRun,
+            rtfDocument,
+            revisionAuthorIndexes,
+            new Stack<ComplexFieldCapture>(),
+            revisionKind,
+            revisionAuthorIndex);
         if (activeCapture != null) {
             activeCapture.PreviousRun = null;
         }
@@ -760,7 +748,7 @@ public static partial class WordRtfConverterExtensions {
 
     private static bool AppendWordRun(WordParagraph wordRun, RtfParagraph paragraph, ref RtfRun? previousRun, RtfDocument rtfDocument, Dictionary<string, int> revisionAuthorIndexes, RtfRevisionKind revisionKind = RtfRevisionKind.None, int? revisionAuthorIndex = null) {
         if (wordRun.Break != null) {
-            paragraph.AddBreak(ToRtfBreakKind(wordRun.Break.BreakType));
+            paragraph.AddBreak(ToRtfBreakKind(wordRun.Break.BreakType.ToOpenXml()));
             previousRun = null;
             return true;
         }
@@ -787,14 +775,15 @@ public static partial class WordRtfConverterExtensions {
             return previousRun == null;
         }
 
-        if (wordRun.IsImage && wordRun.Image != null) {
-            RtfImage? image = CreateRtfImage(wordRun);
-            if (image == null) {
-                return false;
-            }
-
-            RtfImage copy = paragraph.AddImage(image.Format, image.Data);
-            CopyImage(image, copy);
+        bool appendedImage = false;
+        foreach (WordImage wordImage in wordRun.EnumerateImages()) {
+            RtfImage? image = CreateRtfImage(wordImage, out _, out _);
+            if (image == null) continue;
+            CopyImage(image, paragraph.AddImage(image.Format, image.Data));
+            appendedImage = true;
+        }
+        if (wordRun.IsImage) {
+            if (!appendedImage) return false;
             previousRun = null;
             return true;
         }
@@ -882,7 +871,7 @@ public static partial class WordRtfConverterExtensions {
 
     private static void ApplyTabStops(WordParagraph destination, RtfParagraph source) {
         foreach (RtfTabStop tabStop in source.TabStops) {
-            destination.AddTabStop(tabStop.PositionTwips, ToWordTabAlignment(tabStop.Alignment), ToWordTabLeader(tabStop.Leader));
+            destination.AddTabStop(tabStop.PositionTwips, ToWordTabAlignment(tabStop.Alignment).ToOfficeEnum(), ToWordTabLeader(tabStop.Leader).ToOfficeEnum());
         }
     }
 
@@ -939,7 +928,7 @@ public static partial class WordRtfConverterExtensions {
             }
 
             if (inline is RtfBreak rtfBreak) {
-                wordParagraph.AddBreak(ToWordBreakKind(rtfBreak.Kind));
+                wordParagraph.AddBreak(ToWordBreakKind(rtfBreak.Kind).ToOfficeEnum());
                 continue;
             }
 
@@ -1089,7 +1078,7 @@ public static partial class WordRtfConverterExtensions {
         string? targetFrameValue = field.HyperlinkField?.TargetFrame;
         if (linkedHyperlink != null &&
             !string.IsNullOrEmpty(targetFrameValue) &&
-            Enum.TryParse<TargetFrame>(targetFrameValue, true, out TargetFrame targetFrame)) {
+            Enum.TryParse<WordHyperlinkTargetFrame>(targetFrameValue, true, out WordHyperlinkTargetFrame targetFrame)) {
             linkedHyperlink.TargetFrame = targetFrame;
         }
     }

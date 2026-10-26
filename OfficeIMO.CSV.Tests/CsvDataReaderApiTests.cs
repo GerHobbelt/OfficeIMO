@@ -1,5 +1,6 @@
 using System;
 using System.Data.Common;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -61,7 +62,7 @@ public sealed class CsvDataReaderApiTests {
 
     [Fact]
     public void OpenDataReader_HandlesQuotedMultilineEscapedAndLongFields() {
-        string longValue = new('x', 70_000);
+        string longValue = new('x', 200_000);
         string csv = "Id,Description,LongValue\n"
             + "1,\"line one\nline \"\"two\"\"\",\"" + longValue + "\"\n";
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
@@ -74,6 +75,281 @@ public sealed class CsvDataReaderApiTests {
         Assert.Equal(longValue, reader.GetString(2));
         Assert.False(reader.Read());
     }
+
+    [Fact]
+    public void OpenDataReader_DoesNotLeakCrLfAcrossLargeUnquotedBufferBoundaries() {
+        var csv = new StringBuilder(5_000_000);
+        csv.Append("Id,DisplayName,Score,CreatedUtc\r\n");
+        for (int id = 1; id <= 100_000; id++) {
+            csv.Append(id)
+                .Append(",Row ")
+                .Append(id)
+                .Append(',')
+                .Append((id * 1.25m).ToString("F2", CultureInfo.InvariantCulture))
+                .Append(",08/09/2026 09:31:27\r\n");
+        }
+
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.BufferBoundary.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(path, csv.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            using DbDataReader reader = CsvDocument.OpenDataReader(path);
+
+            int expectedId = 0;
+            while (reader.Read()) {
+                expectedId++;
+                Assert.Equal(expectedId.ToString(), reader.GetString(0));
+            }
+
+            Assert.Equal(100_000, expectedId);
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OpenDataReader_PathPreservesUtf8FieldsWithOrWithoutPreamble(bool emitPreamble) {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.Utf8.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(
+                path,
+                "Id,Name,City\r\n1,Zażółć gęślą jaźń,東京\r\n2,😀,München\r\n",
+                new UTF8Encoding(emitPreamble));
+
+            using DbDataReader reader = CsvDocument.OpenDataReader(path);
+
+            Assert.True(reader.Read());
+            Assert.Equal("1", reader.GetString(0));
+            Assert.Equal("Zażółć gęślą jaźń", reader.GetString(1));
+            Assert.Equal("東京", reader.GetString(2));
+            Assert.True(reader.Read());
+            Assert.Equal("2", reader.GetString(0));
+            Assert.Equal("😀", reader.GetString(1));
+            Assert.Equal("München", reader.GetString(2));
+            Assert.False(reader.Read());
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void OpenDataReader_PathFallsBackForUtf16Preamble() {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.Utf16.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(path, "Id,Name\r\n1,Łódź\r\n", Encoding.Unicode);
+
+            using DbDataReader reader = CsvDocument.OpenDataReader(path);
+
+            Assert.True(reader.Read());
+            Assert.Equal("1", reader.GetString(0));
+            Assert.Equal("Łódź", reader.GetString(1));
+            Assert.False(reader.Read());
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void OpenDataReader_PathFallsBackAtOversizedUnquotedRecordBoundary() {
+        string longValue = new('x', 600_000);
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.Oversized.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(
+                path,
+                "Id,Value\n1,short\n2," + longValue + "\n3,last\n",
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+            using DbDataReader reader = CsvDocument.OpenDataReader(path);
+
+            Assert.True(reader.Read());
+            Assert.Equal("short", reader.GetString(1));
+            Assert.True(reader.Read());
+            Assert.Equal(longValue, reader.GetString(1));
+            Assert.True(reader.Read());
+            Assert.Equal("last", reader.GetString(1));
+            Assert.False(reader.Read());
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void OpenDataReader_PathUtf8FastRowsEnforceStrictColumnCount() {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.Strict.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(path, "First,Second\n1,2\n3\n", new UTF8Encoding(false));
+            using DbDataReader reader = CsvDocument.OpenDataReader(
+                path,
+                new CsvLoadOptions {
+                    ColumnCountMismatchPolicy = CsvColumnCountMismatchPolicy.Strict
+                });
+
+            Assert.True(reader.Read());
+            Assert.Equal("1", reader.GetString(0));
+            CsvException exception = Assert.Throws<CsvException>(() => reader.Read());
+            Assert.Contains("header defines 2 columns", exception.Message);
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void OpenDataReader_PathFallbackDoesNotTreatLaterCommentAsPreHeaderComment() {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.CommentData.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(path, "Value\nfirst\n# literal data\nlast\n", new UTF8Encoding(false));
+
+            using DbDataReader reader = CsvDocument.OpenDataReader(path);
+
+            Assert.True(reader.Read());
+            Assert.Equal("first", reader.GetString(0));
+            Assert.True(reader.Read());
+            Assert.Equal("# literal data", reader.GetString(0));
+            Assert.True(reader.Read());
+            Assert.Equal("last", reader.GetString(0));
+            Assert.False(reader.Read());
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData('\n')]
+    [InlineData('\r')]
+    public void OpenDataReader_PathFallsBackForRecordSeparatorDelimiter(char delimiter) {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.RecordSeparatorDelimiter.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(
+                path,
+                $"Name{delimiter}Ada{delimiter}",
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+            using DbDataReader reader = CsvDocument.OpenDataReader(
+                path,
+                new CsvLoadOptions { Delimiter = delimiter });
+
+            Assert.Equal(1, reader.FieldCount);
+            Assert.Equal("Name", reader.GetName(0));
+            Assert.True(reader.Read());
+            Assert.Equal("Ada", reader.GetString(0));
+            Assert.False(reader.Read());
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void OpenDataReader_PathAlreadyCancelledReleasesFile() {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.CancelledPath.{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, "Name\nAda\n", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        try {
+            Assert.Throws<OperationCanceledException>(() =>
+                CsvDocument.OpenDataReader(
+                    path,
+                    new CsvLoadOptions { CancellationToken = cancellation.Token }));
+
+            File.Delete(path);
+            Assert.False(File.Exists(path));
+        } finally {
+            if (File.Exists(path)) {
+                File.Delete(path);
+            }
+        }
+    }
+
+#if NET8_0_OR_GREATER
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void OpenDataReader_ReportsLogicalRecordsAndStreamingPhysicalLines(string newLine) {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.Position.{Guid.NewGuid():N}.csv");
+        try {
+            string csv = string.Join(newLine, new[] {
+                "Id,Value",
+                "1,one",
+                "2,\"line one",
+                "line two\"",
+                "# ignored",
+                "3,three"
+            });
+            File.WriteAllText(path, csv);
+            using DbDataReader reader = CsvDocument.OpenDataReader(
+                path,
+                new CsvLoadOptions { SkipCommentRows = true });
+            ICsvDataReaderPositionMetadata position =
+                Assert.IsAssignableFrom<ICsvDataReaderPositionMetadata>(reader);
+
+            Assert.Equal(0, position.RecordNumber);
+            Assert.Null(position.PhysicalLineNumber);
+
+            Assert.True(reader.Read());
+            Assert.Equal(1, position.RecordNumber);
+            Assert.Equal(2, position.PhysicalLineNumber);
+            Assert.Equal(2, position.PhysicalEndLineNumber);
+
+            Assert.True(reader.Read());
+            Assert.Equal(2, position.RecordNumber);
+            Assert.Equal(3, position.PhysicalLineNumber);
+            Assert.Equal(4, position.PhysicalEndLineNumber);
+
+            Assert.True(reader.Read());
+            Assert.Equal(3, position.RecordNumber);
+            Assert.Equal(6, position.PhysicalLineNumber);
+            Assert.Equal(6, position.PhysicalEndLineNumber);
+
+            Assert.False(reader.Read());
+            Assert.Equal(0, position.RecordNumber);
+            Assert.Null(position.PhysicalLineNumber);
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void OpenDataReader_ReportsMultilineEndPositionAtEndOfFile(string newLine) {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.PositionEof.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(path, $"Id,Value{newLine}1,\"first{newLine}second\"");
+            using DbDataReader reader = CsvDocument.OpenDataReader(path);
+            ICsvDataReaderPositionMetadata position =
+                Assert.IsAssignableFrom<ICsvDataReaderPositionMetadata>(reader);
+
+            Assert.True(reader.Read());
+            Assert.Equal(2, position.PhysicalLineNumber);
+            Assert.Equal(3, position.PhysicalEndLineNumber);
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void OpenDataReader_PreservesPhysicalLinesForReplayedCommentLookahead(string newLine) {
+        string path = Path.Combine(Path.GetTempPath(), $"OfficeIMO.CSV.PositionComment.{Guid.NewGuid():N}.csv");
+        try {
+            File.WriteAllText(path, $"Id,Value{newLine}# \"unterminated{newLine}1,one{newLine}");
+            using DbDataReader reader = CsvDocument.OpenDataReader(
+                path,
+                new CsvLoadOptions { SkipCommentRows = true });
+            ICsvDataReaderPositionMetadata position =
+                Assert.IsAssignableFrom<ICsvDataReaderPositionMetadata>(reader);
+
+            Assert.True(reader.Read());
+            Assert.Equal("1", reader.GetString(0));
+            Assert.Equal(3, position.PhysicalLineNumber);
+            Assert.Equal(3, position.PhysicalEndLineNumber);
+        } finally {
+            File.Delete(path);
+        }
+    }
+#endif
 
     [Fact]
     public void OpenDataReader_StringColumnsSupportTypedGettersWithoutSchemaInference() {
@@ -99,6 +375,20 @@ public sealed class CsvDataReaderApiTests {
         Assert.Equal(identifier, reader.GetGuid(9));
     }
 
+#if NET6_0_OR_GREATER
+    [Fact]
+    public void OpenDataReader_ExplicitDateOnlyAndTimeOnlyGettersPreserveStringSchema() {
+        using DbDataReader reader = CsvDocument.OpenTextDataReader(
+            "Date,Time\n2026-08-06,14:35:12\n");
+
+        Assert.True(reader.Read());
+        Assert.Equal(typeof(string), reader.GetFieldType(0));
+        Assert.Equal(typeof(string), reader.GetFieldType(1));
+        Assert.Equal(new DateOnly(2026, 8, 6), reader.GetFieldValue<DateOnly>(0));
+        Assert.Equal(new TimeOnly(14, 35, 12), reader.GetFieldValue<TimeOnly>(1));
+    }
+#endif
+
     [Fact]
     public void OpenDataReader_SeekableFallbackStartsAtCallerPosition() {
         byte[] prefix = Encoding.UTF8.GetBytes("ignored prefix");
@@ -113,6 +403,8 @@ public sealed class CsvDataReaderApiTests {
                 DetectDelimiter = true
             });
 
+        ICsvDataReaderMetadata metadata = Assert.IsAssignableFrom<ICsvDataReaderMetadata>(reader);
+        Assert.Equal(';', metadata.Delimiter);
         Assert.Equal(prefix.Length, stream.Position);
         Assert.Equal("Id", reader.GetName(0));
         Assert.Equal("Name", reader.GetName(1));

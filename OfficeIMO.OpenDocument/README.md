@@ -1,6 +1,6 @@
 # OfficeIMO.OpenDocument
 
-`OfficeIMO.OpenDocument` creates and edits ODT, ODS, and ODP files directly. Its only runtime dependency is the zero-dependency `OfficeIMO.Drawing` foundation used across OfficeIMO for lifecycle and result contracts. It has no third-party runtime dependencies and does not invoke LibreOffice, Microsoft Office, or UNO.
+`OfficeIMO.OpenDocument` creates and edits ODT, ODS, and ODP files directly. Its only runtime dependency is the zero-dependency `OfficeIMO.Core` foundation used across OfficeIMO for lifecycle and result contracts. It has no third-party runtime dependencies and does not invoke LibreOffice, Microsoft Office, or UNO.
 
 ```powershell
 dotnet add package OfficeIMO.OpenDocument
@@ -38,6 +38,15 @@ sheet.Cell(1, 1).SetDecimal(42.5m);
 
 OdsCell total = sheet.Cell(2, 1);
 total.Formula = "of:=SUM([.B2:.B2])";
+OdsValidation positive = workbook.AddValidation(
+    "PositiveAmount",
+    OdsValidationConditionSyntax.Create(
+        OdsValidationValueKind.DecimalNumber,
+        OdsValidationComparison.GreaterThan,
+        "0"));
+positive.SetHelpMessage("Amount", "Enter a value greater than zero.");
+positive.SetErrorMessage("Invalid amount", "The amount must be positive.");
+sheet.Cell(1, 1).ValidationName = positive.Name;
 OdsRecalculationReport calculation = workbook.Recalculate();
 if (calculation.FailedCells > 0) {
     Console.WriteLine(calculation.Diagnostics[0].Message);
@@ -87,9 +96,9 @@ New documents use ODF 1.4. Set `OdfCompatibilityProfile.Odf13` when the output n
 | Area | Current support |
 | --- | --- |
 | Package | Bounded ZIP/XML loading, direct reading of seekable package streams, manifest updates, deterministic output, metadata, atomic path saves, flat XML projection with loss reporting, unknown-entry preservation |
-| ODT | Paragraphs, headings, runs, whitespace controls, styles, lists, tables and spans, links, bookmarks, sections, page layout, headers/footers, page breaks, images, paragraph insertion/deletion tracking |
-| ODS | Sparse repeated rows/cells, typed values, OpenFormula text and cached values, bounded formula evaluation/recalculation, styles and data formats, merges, row/column sizing and visibility, sheet order, named ranges, links, validation, print ranges |
-| ODP | Slide order and visibility, page size, masters/layouts, text and lists, rectangles, ellipses, lines, groups, transforms, images and crop, tables, speaker notes, backgrounds, transitions, basic shape animations |
+| ODT | Paragraphs, headings, ordered inline text/span/link/image/bookmark syntax, whitespace controls, common text and paragraph styles, lists, tables, sections, page layout, headers/footers, page breaks, images, paragraph insertion/deletion tracking |
+| ODS | Sparse repeated rows/cells, typed values, OpenFormula text and cached values, bounded formula evaluation/recalculation, styles and data formats, merges, row/column sizing and visibility, sheet order, typed named ranges, annotations, typed scalar/list validations and messages, links, print ranges |
+| ODP | Slide order and visibility, page size, masters/layouts, ordered inline text/run/link syntax, common run styles, lists, rectangles, ellipses, lines, groups, transforms, images and crop, tables, speaker notes, backgrounds, transitions, basic shape animations |
 | Inspection | Annotations, tracked changes, extension namespaces, scripts, event listeners, external links, embedded objects, formulas, validations, transitions, animations, encryption, and signatures |
 
 Unknown XML, vendor extensions, scripts, embedded content, and unsupported drawing features are preserved when their owning part is not replaced. The library never executes scripts, macros, event listeners, embedded objects, or external links. Formula evaluation is a bounded, side-effect-free parser for the documented local subset; it does not execute active content or fetch data.
@@ -99,6 +108,8 @@ Unknown XML, vendor extensions, scripts, embedded content, and unsupported drawi
 ## Explicit boundaries
 
 - Formula evaluation covers arithmetic, comparisons, concatenation, cell/range references, and common aggregate/math functions. External data, volatile functions, matrix formulas, and the complete OpenFormula language are not included.
+- Typed validation syntax covers explicit lists and scalar whole-number, decimal, and text-length comparisons. Other valid ODF conditions remain preserved text and are reported by conversions that cannot map them exactly.
+- Ordered ODT/ODP inline syntax types direct text, spans/runs, hyperlinks, images, and bookmark markers. Nested inline markup remains preserved in the package and is surfaced as an untyped node so conversion loss is explicit.
 - Tracked-change editing covers paragraph insertions and deletions. Arbitrary inline merges and conflict resolution remain preservation-oriented.
 - Animation editing covers basic shape-attribute effects and fade-in timing. Advanced timing trees are preserved when untouched.
 - Encrypted packages are detected and rejected before editing.
@@ -111,12 +122,12 @@ Unknown XML, vendor extensions, scripts, embedded content, and unsupported drawi
 
 The package targets `netstandard2.0`, `net8.0`, and `net10.0`, plus `net472` on Windows. CI checks generated ODF 1.3 and 1.4 XML against pinned OASIS Relax NG schemas, then opens and resaves the generated packages with the runner's reported LibreOffice version.
 
-Producer evidence is recorded in `OfficeIMO.OpenDocument.Tests/Fixtures/producer-manifest.json`: exact hashes cover LibreOffice and Microsoft Office for ODT, ODS, and ODP, while a genuine Google Docs ODT export is verified externally by stable semantic content because its ZIP bytes contain nondeterministic identifiers. The manifest also names the executable style, formula, drawing, embedded-content, and unknown-package-preservation tests. `Build/Test-OpenDocumentExternalProducerEvidence.ps1` downloads the Google artifact, verifies provenance, loads and validates it with bounded package options, saves with preservation and strict loss reporting, reopens the result, and validates it again without checking third-party bytes into the repository.
+Interoperability coverage includes ODT, ODS, and ODP files from LibreOffice and Microsoft Office, plus an externally verified Google Docs ODT export. These files exercise styles, formulas, drawings, embedded content, and preservation of unknown package entries. See the [producer manifest](../OfficeIMO.OpenDocument.Tests/Fixtures/producer-manifest.json) when you need exact producer versions, hashes, or reproducibility details.
 
 ## Dependency footprint
 
 - **External:** None; no OpenDocument SDK and no LibreOffice process.
-- **OfficeIMO:** `OfficeIMO.Drawing`. ODT/ODS/ODP parsing, models, preservation, inspection, and writing are first-party.
+- **OfficeIMO:** `OfficeIMO.Core`. ODT/ODS/ODP parsing, models, preservation, inspection, and writing are first-party.
 - **Security:** ODF signature carriers are detected and changed signed packages fail safely without a cryptographic dependency. `OdfDocument.SignPackage(...)` and `ValidatePackageSignatures(...)` use an explicit provider for the bounded OfficeIMO XML package-manifest profile; `OfficeIMO.Security` is not pulled transitively. ODF encryption/decryption remains deliberately unsupported until a producer-identified interoperability corpus and explicit password/key policy exist.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

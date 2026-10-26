@@ -1,10 +1,10 @@
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
+using OfficeIMO.Excel;
 using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Spreadsheet;
-using OfficeIMO.Excel;
 using Xunit;
 
 namespace OfficeIMO.Tests {
@@ -17,7 +17,7 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "ValidationWholeNumber.xlsx");
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 ExcelSheet sheet = document.AddWorksheet("Data");
-                sheet.ValidationWholeNumber("A1:A10", DataValidationOperatorValues.Between, 1, 10, errorTitle: "Error", errorMessage: "1-10");
+                sheet.ValidationWholeNumber("A1:A10", ExcelDataValidationOperator.Between, 1, 10, errorTitle: "Error", errorMessage: "1-10");
                 document.Save();
             }
 
@@ -32,7 +32,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("1-10", dv.Error!.Value);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -62,7 +62,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("Invalid status", dv.ErrorTitle!.Value);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -72,7 +72,7 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "ValidationDecimal.xlsx");
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 ExcelSheet sheet = document.AddWorksheet("Data");
-                sheet.ValidationDecimal("B1:B10", DataValidationOperatorValues.GreaterThan, 5.5);
+                sheet.ValidationDecimal("B1:B10", ExcelDataValidationOperator.GreaterThan, 5.5);
                 document.Save();
             }
 
@@ -85,7 +85,7 @@ namespace OfficeIMO.Tests {
                 Assert.Null(dv.GetFirstChild<Formula2>());
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -96,7 +96,7 @@ namespace OfficeIMO.Tests {
             DateTime dt = new DateTime(2024, 1, 1);
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 ExcelSheet sheet = document.AddWorksheet("Data");
-                sheet.ValidationDate("C1:C10", DataValidationOperatorValues.LessThanOrEqual, dt);
+                sheet.ValidationDate("C1:C10", ExcelDataValidationOperator.LessThanOrEqual, dt);
                 document.Save();
             }
 
@@ -109,7 +109,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(expected, dv.GetFirstChild<Formula1>()!.Text);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -120,7 +120,7 @@ namespace OfficeIMO.Tests {
             TimeSpan ts = TimeSpan.FromHours(12);
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 ExcelSheet sheet = document.AddWorksheet("Data");
-                sheet.ValidationTime("D1:D10", DataValidationOperatorValues.Equal, ts);
+                sheet.ValidationTime("D1:D10", ExcelDataValidationOperator.Equal, ts);
                 document.Save();
             }
 
@@ -133,7 +133,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(expected, dv.GetFirstChild<Formula1>()!.Text);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -143,7 +143,7 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "ValidationTextLength.xlsx");
             using (ExcelDocument document = ExcelDocument.Create(filePath)) {
                 ExcelSheet sheet = document.AddWorksheet("Data");
-                sheet.ValidationTextLength("E1:E10", DataValidationOperatorValues.LessThan, 10);
+                sheet.ValidationTextLength("E1:E10", ExcelDataValidationOperator.LessThan, 10);
                 document.Save();
             }
 
@@ -155,7 +155,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("10", dv.GetFirstChild<Formula1>()!.Text);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -177,7 +177,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("SUM(A1:B1)>10", dv.GetFirstChild<Formula1>()!.Text);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -204,7 +204,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("=StatusOptions", dv.GetFirstChild<Formula1>()!.Text);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -230,7 +230,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("='Options'!A1:A3", dv.GetFirstChild<Formula1>()!.Text);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -255,10 +255,24 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("=D1:D3", dv.GetFirstChild<Formula1>()!.Text);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
+
+        [Fact]
+        public void ValidationFormulaLimitsAreEnforcedBeforeInvalidOpenXmlIsWritten() {
+            using ExcelDocument document = ExcelDocument.Create();
+            ExcelSheet sheet = document.AddWorksheet("Data");
+
+            sheet.ValidationList("A1", new[] { new string('x', 253) });
+
+            Assert.Throws<ArgumentException>(() =>
+                sheet.ValidationList("A2", new[] { new string('x', 254) }));
+            Assert.Throws<ArgumentException>(() =>
+                sheet.ValidationList("A3", new[] { "one,two" }));
+            Assert.Throws<ArgumentException>(() =>
+                sheet.ValidationCustomFormula("A4", new string('x', ExcelSheet.MaximumDataValidationFormulaLength + 1)));
+        }
     }
 }
-

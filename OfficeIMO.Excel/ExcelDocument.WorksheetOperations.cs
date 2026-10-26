@@ -15,7 +15,7 @@ namespace OfficeIMO.Excel {
         /// <param name="newSheetName">Requested name for the copied worksheet.</param>
         /// <param name="validationMode">How to validate or sanitize <paramref name="newSheetName"/>.</param>
         /// <returns>The copied worksheet.</returns>
-        public ExcelSheet CopyWorksheet(string sourceSheetName, string newSheetName, SheetNameValidationMode validationMode = SheetNameValidationMode.Sanitize) {
+        public ExcelSheet CopyWorksheet(string sourceSheetName, string newSheetName, ExcelSheetNameValidationMode validationMode = ExcelSheetNameValidationMode.Sanitize) {
             return CopyWorksheet(GetSheet(sourceSheetName), newSheetName, validationMode);
         }
 
@@ -26,7 +26,7 @@ namespace OfficeIMO.Excel {
         /// <param name="newSheetName">Requested name for the copied worksheet.</param>
         /// <param name="validationMode">How to validate or sanitize <paramref name="newSheetName"/>.</param>
         /// <returns>The copied worksheet.</returns>
-        public ExcelSheet CopyWorksheet(ExcelSheet sourceSheet, string newSheetName, SheetNameValidationMode validationMode = SheetNameValidationMode.Sanitize) {
+        public ExcelSheet CopyWorksheet(ExcelSheet sourceSheet, string newSheetName, ExcelSheetNameValidationMode validationMode = ExcelSheetNameValidationMode.Sanitize) {
             if (sourceSheet == null) throw new ArgumentNullException(nameof(sourceSheet));
             if (!ReferenceEquals(sourceSheet.Document, this)) {
                 throw new ArgumentException("Source worksheet must belong to this workbook. Use CopyWorksheetFrom to copy between workbooks.", nameof(sourceSheet));
@@ -40,7 +40,7 @@ namespace OfficeIMO.Excel {
             return CopyWorksheetWithinWorkbook(sourceSheet, newSheetName, validationMode).Sheet;
         }
 
-        private WorksheetPackageCopyResult CopyWorksheetWithinWorkbook(ExcelSheet sourceSheet, string newSheetName, SheetNameValidationMode validationMode) {
+        private WorksheetPackageCopyResult CopyWorksheetWithinWorkbook(ExcelSheet sourceSheet, string newSheetName, ExcelSheetNameValidationMode validationMode) {
             if (sourceSheet == null) throw new ArgumentNullException(nameof(sourceSheet));
             if (!ReferenceEquals(sourceSheet.Document, this)) {
                 throw new ArgumentException("Source worksheet must belong to this workbook. Use CopyWorksheetFrom to copy between workbooks.", nameof(sourceSheet));
@@ -70,7 +70,7 @@ namespace OfficeIMO.Excel {
         /// <param name="newSheetName">Requested name for the copied worksheet.</param>
         /// <param name="validationMode">How to validate or sanitize <paramref name="newSheetName"/>.</param>
         /// <returns>The copied worksheet.</returns>
-        public ExcelSheet CopyWorksheetFrom(ExcelDocument sourceDocument, string sourceSheetName, string newSheetName, SheetNameValidationMode validationMode = SheetNameValidationMode.Sanitize) {
+        public ExcelSheet CopyWorksheetFrom(ExcelDocument sourceDocument, string sourceSheetName, string newSheetName, ExcelSheetNameValidationMode validationMode = ExcelSheetNameValidationMode.Sanitize) {
             return CopyWorksheetFrom(sourceDocument, sourceSheetName, newSheetName, validationMode, options: null);
         }
 
@@ -83,7 +83,7 @@ namespace OfficeIMO.Excel {
         /// <param name="validationMode">How to validate or sanitize <paramref name="newSheetName"/>.</param>
         /// <param name="options">Copy strategy options.</param>
         /// <returns>The copied worksheet.</returns>
-        public ExcelSheet CopyWorksheetFrom(ExcelDocument sourceDocument, string sourceSheetName, string newSheetName, SheetNameValidationMode validationMode, ExcelWorksheetCopyOptions? options) {
+        public ExcelSheet CopyWorksheetFrom(ExcelDocument sourceDocument, string sourceSheetName, string newSheetName, ExcelSheetNameValidationMode validationMode, ExcelWorksheetCopyOptions? options) {
             if (sourceDocument == null) throw new ArgumentNullException(nameof(sourceDocument));
             if (string.IsNullOrWhiteSpace(sourceSheetName)) throw new ArgumentNullException(nameof(sourceSheetName));
             options ??= new ExcelWorksheetCopyOptions();
@@ -169,7 +169,7 @@ namespace OfficeIMO.Excel {
             options ??= new ExcelWorksheetMergeOptions();
             if (options.BlankRowsBefore < 0) throw new ArgumentOutOfRangeException(nameof(options.BlankRowsBefore));
 
-            string sourceRange = string.IsNullOrWhiteSpace(options.SourceRange) ? sourceSheet.GetUsedRangeA1() : options.SourceRange!;
+            string sourceRange = string.IsNullOrWhiteSpace(options.SourceRange) ? sourceSheet.UsedRangeA1 : options.SourceRange!;
             var sourceBounds = ParseRangeOrCell(sourceRange);
             sourceRange = ToRange(sourceBounds);
             object?[,] values;
@@ -224,7 +224,7 @@ namespace OfficeIMO.Excel {
         public IReadOnlyList<ExcelRangeDifference> CompareWorksheets(ExcelSheet leftSheet, ExcelSheet rightSheet, ExcelRangeCompareOptions? options = null) {
             if (leftSheet == null) throw new ArgumentNullException(nameof(leftSheet));
             if (rightSheet == null) throw new ArgumentNullException(nameof(rightSheet));
-            return CompareRanges(leftSheet, leftSheet.GetUsedRangeA1(), rightSheet, rightSheet.GetUsedRangeA1(), options);
+            return CompareRanges(leftSheet, leftSheet.UsedRangeA1, rightSheet, rightSheet.UsedRangeA1, options);
         }
 
         /// <summary>
@@ -900,7 +900,7 @@ namespace OfficeIMO.Excel {
             }
 
             if (options.MatchColumnsByHeader) {
-                var targetBounds = ParseRangeOrCell(targetSheet.GetUsedRangeA1());
+                var targetBounds = ParseRangeOrCell(targetSheet.UsedRangeA1);
                 return targetBounds.c1;
             }
 
@@ -921,7 +921,7 @@ namespace OfficeIMO.Excel {
                 return options.TargetStartRow.Value - 1;
             }
 
-            var targetBounds = ParseRangeOrCell(targetSheet.GetUsedRangeA1());
+            var targetBounds = ParseRangeOrCell(targetSheet.UsedRangeA1);
             return targetBounds.r1;
         }
 
@@ -930,7 +930,7 @@ namespace OfficeIMO.Excel {
         }
 
         private static int GetAppendStartRow(ExcelSheet targetSheet, int blankRowsBefore) {
-            string usedRange = targetSheet.GetUsedRangeA1();
+            string usedRange = targetSheet.UsedRangeA1;
             var (_, _, endRow, _) = A1.ParseRange(usedRange);
             if (IsWorksheetEffectivelyEmpty(targetSheet, usedRange)) {
                 return 1 + blankRowsBefore;

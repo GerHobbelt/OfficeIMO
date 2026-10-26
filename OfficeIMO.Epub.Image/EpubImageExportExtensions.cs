@@ -54,27 +54,29 @@ public static class EpubImageExportExtensions {
         EpubImageExportOptions effective =
             options?.CloneEpub() ?? new EpubImageExportOptions();
         IReadOnlyList<EpubChapter> chapters = SelectChapters(source, effective);
-        OfficeImageExportConsumer accept =
-            OfficeImageExportBatchProcessor.CreateGuardedConsumer(
-                effective,
-                consumer,
-                cancellationToken);
-        for (int index = 0; index < chapters.Count; index++) {
-            cancellationToken.ThrowIfCancellationRequested();
-            EpubChapter chapter = chapters[index];
-            EpubChapterRenderPreparation preparation =
-                PrepareChapter(source, chapter, effective);
-            preparation.Document.ExportImages(
-                format,
-                result => accept(CompleteResult(
-                    result,
-                    source,
-                    chapter,
-                    preparation.Diagnostics,
-                    effective)),
-                preparation.Options,
-                cancellationToken);
-        }
+        OfficeImageExportBatchProcessor.Run(
+            effective,
+            (accept, operationCancellationToken) => {
+                for (int index = 0; index < chapters.Count; index++) {
+                    operationCancellationToken.ThrowIfCancellationRequested();
+                    EpubChapter chapter = chapters[index];
+                    EpubChapterRenderPreparation preparation =
+                        PrepareChapter(source, chapter, effective);
+                    preparation.Document.ExportImages(
+                        format,
+                        result => accept(CompleteResult(
+                            result,
+                            source,
+                            chapter,
+                            preparation.Diagnostics,
+                            effective)),
+                        preparation.Options,
+                        operationCancellationToken);
+                }
+            },
+            consumer,
+            cancellationToken,
+            effective.Mode == HtmlRenderMode.Continuous ? chapters.Count : (int?)null);
     }
 
     /// <summary>Asynchronously exports selected EPUB chapters and resolves retained package resources.</summary>
@@ -107,28 +109,30 @@ public static class EpubImageExportExtensions {
         EpubImageExportOptions effective =
             options?.CloneEpub() ?? new EpubImageExportOptions();
         IReadOnlyList<EpubChapter> chapters = SelectChapters(source, effective);
-        OfficeImageExportAsyncConsumer accept =
-            OfficeImageExportBatchProcessor.CreateGuardedAsyncConsumer(
-                effective,
-                consumer,
-                cancellationToken);
-        foreach (EpubChapter chapter in chapters) {
-            cancellationToken.ThrowIfCancellationRequested();
-            EpubChapterRenderPreparation preparation =
-                PrepareChapter(source, chapter, effective);
-            await preparation.Document.ExportImagesAsync(
-                format,
-                async (result, token) => await accept(
-                    CompleteResult(
-                        result,
-                        source,
-                        chapter,
-                        preparation.Diagnostics,
-                        effective),
-                    token).ConfigureAwait(false),
-                preparation.Options,
-                cancellationToken).ConfigureAwait(false);
-        }
+        await OfficeImageExportBatchProcessor.RunAsync(
+            effective,
+            async (accept, operationCancellationToken) => {
+                foreach (EpubChapter chapter in chapters) {
+                    operationCancellationToken.ThrowIfCancellationRequested();
+                    EpubChapterRenderPreparation preparation =
+                        PrepareChapter(source, chapter, effective);
+                    await preparation.Document.ExportImagesAsync(
+                        format,
+                        async (result, token) => await accept(
+                            CompleteResult(
+                                result,
+                                source,
+                                chapter,
+                                preparation.Diagnostics,
+                                effective),
+                            token).ConfigureAwait(false),
+                        preparation.Options,
+                        operationCancellationToken).ConfigureAwait(false);
+                }
+            },
+            consumer,
+            cancellationToken,
+            effective.Mode == HtmlRenderMode.Continuous ? chapters.Count : (int?)null).ConfigureAwait(false);
     }
 
     /// <summary>Starts fluent image export for selected EPUB chapters.</summary>
@@ -187,7 +191,7 @@ public static class EpubImageExportExtensions {
                 "EPUB_IMAGE_RAW_HTML_UNAVAILABLE",
                 "Raw chapter HTML was not retained; the extracted chapter text was rendered instead.",
                 chapter.Path,
-                OfficeImageExportLossKind.Approximation));
+                OfficeConversionLossKind.Approximation));
         }
         if (chapter.Encryption?.RequiresDecryption == true) {
             diagnostics.Add(new OfficeImageExportDiagnostic(
@@ -195,7 +199,7 @@ public static class EpubImageExportExtensions {
                 "EPUB_IMAGE_CHAPTER_ENCRYPTED",
                 "The chapter declares unsupported encryption and may be incomplete.",
                 chapter.Path,
-                OfficeImageExportLossKind.Omission));
+                OfficeConversionLossKind.Omission));
         }
         HtmlConversionDocument document = HtmlConversionDocument.Parse(
             html,
@@ -344,13 +348,13 @@ public static class EpubImageExportExtensions {
                     diagnostic.Message,
                     diagnostic.Path,
                     severity == OfficeImageExportDiagnosticSeverity.Error
-                        ? OfficeImageExportLossKind.Failure
+                        ? OfficeConversionLossKind.Failure
                         : severity == OfficeImageExportDiagnosticSeverity.Warning &&
                           IsPackageOmissionDiagnostic(diagnostic.Code)
-                            ? OfficeImageExportLossKind.Omission
+                            ? OfficeConversionLossKind.Omission
                             : severity == OfficeImageExportDiagnosticSeverity.Warning
-                                ? OfficeImageExportLossKind.Approximation
-                                : OfficeImageExportLossKind.None));
+                                ? OfficeConversionLossKind.Approximation
+                                : OfficeConversionLossKind.None));
             }
         }
         diagnostics.AddRange(chapterDiagnostics);

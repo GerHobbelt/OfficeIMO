@@ -10,12 +10,12 @@ using OfficeIMO.PowerPoint;
 using Xunit;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
-using PptImagePartType = OfficeIMO.PowerPoint.ImagePartType;
+using PptImagePartType = OfficeIMO.Drawing.OfficeImageFormat;
 
 namespace OfficeIMO.Tests {
     public class PowerPointFunctionalSmokeTests {
         private static readonly byte[] OnePixelPng = Convert.FromBase64String(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X4nKkAAAAASUVORK5CYII=");
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP4/w8AAv8B/h10yjMAAAAASUVORK5CYII=");
 
         [Fact]
         public void CanBuildRichDeckAndValidate() {
@@ -24,7 +24,7 @@ namespace OfficeIMO.Tests {
                 using (PowerPointPresentation presentation = PowerPointPresentation.Create(filePath)) {
                     presentation.SetThemeColorForAllMasters(PowerPointThemeColor.Accent1, "4472C4");
 
-                    PowerPointSlide slide = presentation.AddSlide(SlideLayoutValues.TitleOnly);
+                    PowerPointSlide slide = presentation.AddSlide(PowerPointSlideLayoutType.TitleOnly);
                     slide.AddTitle("Functional Smoke Test");
                     PowerPointTextBox box = slide.AddTextBox("Agenda", PowerPointUnits.FromCentimeters(1), PowerPointUnits.FromCentimeters(3),
                         PowerPointUnits.FromCentimeters(6), PowerPointUnits.FromCentimeters(3));
@@ -119,9 +119,9 @@ namespace OfficeIMO.Tests {
                         majorComplexScript: "Arial",
                         minorComplexScript: "Arial"));
 
-                    PowerPointSlide cover = presentation.AddSlide(SlideLayoutValues.TitleOnly);
+                    PowerPointSlide cover = presentation.AddSlide(PowerPointSlideLayoutType.TitleOnly);
                     cover.BackgroundColor = "F8F5EF";
-                    cover.Transition = SlideTransition.Morph;
+                    cover.Transition = PowerPointSlideTransition.Morph;
                     PowerPointTextBox title = cover.AddTitle("Commercial Snapshot",
                         new PowerPointLayoutBox(PowerPointUnits.FromCentimeters(1.4), PowerPointUnits.FromCentimeters(1.0),
                             PowerPointUnits.FromCentimeters(18.0), PowerPointUnits.FromCentimeters(1.2)));
@@ -146,9 +146,9 @@ namespace OfficeIMO.Tests {
                     accent.OutlineColor = "F26A3D";
                     accent.SetGlow("F26A3D", radiusPoints: 8, transparencyPercent: 30);
 
-                    PowerPointSlide dashboard = presentation.AddSlide(SlideLayoutValues.Blank);
+                    PowerPointSlide dashboard = presentation.AddSlide(PowerPointSlideLayoutType.Blank);
                     dashboard.SetBackgroundImage(backgroundPath);
-                    dashboard.Transition = SlideTransition.Fade;
+                    dashboard.Transition = PowerPointSlideTransition.Fade;
 
                     PowerPointAutoShape panel = dashboard.AddRectangleCm(0.9, 0.7, 24.0, 12.0, "Dashboard Surface");
                     panel.FillColor = "F8F5EF";
@@ -164,7 +164,7 @@ namespace OfficeIMO.Tests {
                         });
                     PowerPointChart chart = dashboard.AddLineChartCm(data, 1.4, 1.3, 14.5, 7.0);
                     chart.SetTitle("Momentum Over Time");
-                    chart.SetLegend(C.LegendPositionValues.Bottom);
+                    chart.SetLegend(OfficeChartLegendPosition.Bottom);
                     chart.SetChartAreaStyle(fillColor: "FFFFFF", lineColor: "EFE8DA");
                     chart.SetPlotAreaStyle(fillColor: "FFFFFF", lineColor: "FFFFFF");
                     chart.SetSeriesLineColor("Revenue", "156082", widthPoints: 2.5);
@@ -231,6 +231,16 @@ namespace OfficeIMO.Tests {
                     $"ErrorType: {error.ErrorType}\n" +
                     $"Part: {error.Part?.Uri}\n" +
                     $"Path: {error.Path?.XPath}"));
+        }
+
+        private static string FormatValidationErrors(IEnumerable<OfficeOpenXmlValidationError> errors) {
+            return string.Join(Environment.NewLine + Environment.NewLine,
+                errors.Select(error =>
+                    $"Description: {error.Description}\n" +
+                    $"Id: {error.Id}\n" +
+                    $"ErrorType: {error.ErrorType}\n" +
+                    $"Part: {error.PartUri}\n" +
+                    $"Path: {error.Path}"));
         }
 
         private static string CreateTempFilePath(string extension) {

@@ -1,5 +1,6 @@
 using OfficeIMO.Html;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace OfficeIMO.OneNote.Html;
@@ -56,7 +57,7 @@ public static class HtmlOneNoteConverterExtensions {
             if (!budget.TryReserveSemanticContainer(out string containerLimit)) {
                 Add(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                     "Additional HTML sections were omitted because the shared page limit was reached.",
-                    HtmlDiagnosticSeverity.Error, HtmlConversionLossKind.Omission, containerLimit);
+                    HtmlDiagnosticSeverity.Error, OfficeConversionLossKind.Omission, containerLimit);
                 break;
             }
 
@@ -105,11 +106,29 @@ public static class HtmlOneNoteConverterExtensions {
         HtmlToOneNoteSectionResult result,
         HtmlImportBudget budget,
         int level) {
+        int? previousOrdinal = null;
         foreach (HtmlSemanticBlock item in list.Children) {
             OneNoteParagraph? paragraph = CreateParagraph(item, result, budget);
-            if (paragraph == null) break;
-            paragraph.List = new OneNoteListInfo { Ordered = list.Ordered, Level = level };
-            target.Add(paragraph);
+            if (paragraph == null && item.Text.Length > 0) break;
+            if (paragraph != null) {
+                int? displayIndex = null;
+                if (list.Ordered) {
+                    int ordinal = NormalizeOneNoteListOrdinal(item.ListItem?.Ordinal ?? 1, result);
+                    bool shouldRestart = !previousOrdinal.HasValue
+                        || item.ListItem?.ExplicitOrdinal.HasValue == true
+                        || list.List?.IsReversed == true
+                        || (long)ordinal != (long)previousOrdinal.Value + 1L;
+                    if (shouldRestart) displayIndex = ordinal;
+                    previousOrdinal = ordinal;
+                }
+                paragraph.List = new OneNoteListInfo {
+                    Ordered = list.Ordered,
+                    Level = level,
+                    DisplayIndex = displayIndex,
+                    Restart = displayIndex.HasValue
+                };
+                target.Add(paragraph);
+            }
             if (options.ImportImages) {
                 foreach (HtmlSemanticResource resource in item.InlineResources.Where(candidate => candidate.Kind == HtmlResourceKind.Image)) {
                     ImportImage(resource, target, result, budget);
@@ -119,6 +138,16 @@ public static class HtmlOneNoteConverterExtensions {
                 ImportList(nested, target, options, result, budget, level + 1);
             }
         }
+    }
+
+    private static int NormalizeOneNoteListOrdinal(int ordinal, HtmlToOneNoteSectionResult result) {
+        if (ordinal > 0) return ordinal;
+        Add(result, HtmlConversionDiagnosticCodes.ContentApproximated,
+            "A nonpositive HTML list ordinal was clamped to OneNote's minimum display index of 1.",
+            HtmlDiagnosticSeverity.Warning,
+            OfficeConversionLossKind.Approximation,
+            "Ordinal=" + ordinal.ToString(CultureInfo.InvariantCulture) + "; Supported=1..2147483647");
+        return 1;
     }
 
     private static OneNoteParagraph? CreateParagraph(
@@ -138,13 +167,13 @@ public static class HtmlOneNoteConverterExtensions {
         if (!budget.IsMetadataWithinLimit(plainText, out string metadataLimit)) {
             Add(result, HtmlConversionDiagnosticCodes.SemanticMetadataLimitExceeded,
                 "An HTML text block was omitted because it exceeded the shared field limit.",
-                HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission, metadataLimit);
+                HtmlDiagnosticSeverity.Warning, OfficeConversionLossKind.Omission, metadataLimit);
             return null;
         }
         if (!budget.TryReserveShape(out string shapeLimit)) {
             Add(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                 "Additional HTML blocks were omitted because the shared element limit was reached.",
-                HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission, shapeLimit);
+                HtmlDiagnosticSeverity.Warning, OfficeConversionLossKind.Omission, shapeLimit);
             return null;
         }
 
@@ -178,7 +207,7 @@ public static class HtmlOneNoteConverterExtensions {
         if (!budget.TryReserveTableWithShape(out string tableLimit)) {
             Add(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                 "An HTML table was omitted because the shared import limit was reached.",
-                HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission,
+                HtmlDiagnosticSeverity.Warning, OfficeConversionLossKind.Omission,
                 tableLimit);
             return;
         }
@@ -191,7 +220,7 @@ public static class HtmlOneNoteConverterExtensions {
                 if (++cells > maxTableCells) {
                     Add(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                         "Remaining HTML table cells were omitted because the configured table limit was reached.",
-                        HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission,
+                        HtmlDiagnosticSeverity.Warning, OfficeConversionLossKind.Omission,
                         "limit=" + maxTableCells);
                     break;
                 }
@@ -222,26 +251,20 @@ public static class HtmlOneNoteConverterExtensions {
         if (!HtmlImageDataUri.TryParse(resource.Source, out HtmlImageDataUri dataUri)) {
             Add(result, HtmlConversionDiagnosticCodes.ResourceTypeUnsupported,
                 "An HTML image was omitted because native import requires a bounded image data URI.",
-                HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission, resource.Source);
+                HtmlDiagnosticSeverity.Warning, OfficeConversionLossKind.Omission, resource.Source);
             return;
         }
-        if (!budget.IsImageWithinLimit(dataUri, out string imageLimit)) {
+        if (!budget.TryReserveImageWithShape(dataUri, out HtmlImportBudgetReservation imageReservation, out string imageLimit)) {
             Add(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                 "An embedded HTML image was omitted because the shared import limit was reached.",
-                HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission,
+                HtmlDiagnosticSeverity.Warning, OfficeConversionLossKind.Omission,
                 imageLimit);
             return;
         }
-        if (!budget.TryReserveImageWithShape(dataUri, out imageLimit)) {
-            Add(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
-                "An embedded HTML image was omitted because the shared import limit was reached.",
-                HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission,
-                imageLimit);
-            return;
-        }
+        using HtmlImportBudgetReservation imageReservationScope = imageReservation;
         if (!dataUri.TryDecodeBytes(out byte[] bytes)) {
             Add(result, HtmlConversionDiagnosticCodes.ResourceDecodeFailed,
-                "An embedded HTML image could not be decoded.", HtmlDiagnosticSeverity.Warning, HtmlConversionLossKind.Omission);
+                "An embedded HTML image could not be decoded.", HtmlDiagnosticSeverity.Warning, OfficeConversionLossKind.Omission);
             return;
         }
         target.Add(new OneNoteImage {
@@ -252,6 +275,7 @@ public static class HtmlOneNoteConverterExtensions {
         });
         result.Elements++;
         result.Images++;
+        imageReservation.Commit();
     }
 
     private static void TrimRuns(OneNoteParagraph paragraph) {
@@ -266,7 +290,7 @@ public static class HtmlOneNoteConverterExtensions {
         string code,
         string message,
         HtmlDiagnosticSeverity severity,
-        HtmlConversionLossKind lossKind,
+        OfficeConversionLossKind lossKind,
         string? detail = null) =>
         result.AddImportDiagnostic(new HtmlDiagnostic(ComponentName, code, message, severity, detail: detail, lossKind: lossKind));
 

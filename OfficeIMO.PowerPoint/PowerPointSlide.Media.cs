@@ -39,7 +39,7 @@ namespace OfficeIMO.PowerPoint {
         /// </summary>
         public PowerPointMedia AddVideo(Stream video, string contentType, string extension, long left = 0L, long top = 0L,
             long width = 3657600L, long height = 2057400L, Stream? posterImage = null,
-            ImagePartType posterImageType = ImagePartType.Png) {
+            OfficeImageFormat posterImageType = OfficeImageFormat.Png) {
             return AddMedia(video, contentType, extension, PowerPointMediaKind.Video, left, top, width, height, posterImage,
                 posterImageType);
         }
@@ -68,9 +68,44 @@ namespace OfficeIMO.PowerPoint {
             return AddMedia(audio, contentType, extension, PowerPointMediaKind.Audio, left, top, width, height);
         }
 
+        /// <summary>Adds a linked audio frame without copying the payload into the package.</summary>
+        public PowerPointMedia AddLinkedAudio(Uri source, long left = 0L,
+            long top = 0L, long width = 914400L, long height = 914400L) =>
+            AddLinkedMedia(source, PowerPointMediaKind.Audio, left, top, width, height);
+
+        /// <summary>Adds a linked video frame without copying the payload into the package.</summary>
+        public PowerPointMedia AddLinkedVideo(Uri source, long left = 0L,
+            long top = 0L, long width = 3657600L, long height = 2057400L) =>
+            AddLinkedMedia(source, PowerPointMediaKind.Video, left, top, width, height);
+
+        private PowerPointMedia AddLinkedMedia(Uri source, PowerPointMediaKind kind,
+            long left, long top, long width, long height) {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (!source.IsAbsoluteUri) throw new ArgumentException("A linked media URI must be absolute.", nameof(source));
+            if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
+            if (height <= 0) throw new ArgumentOutOfRangeException(nameof(height));
+            uint shapeId = AllocateShapeId();
+            string relationshipId = GetNextRelationshipId(_slidePart);
+            string relationshipType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/" +
+                (kind == PowerPointMediaKind.Audio ? "audio" : "video");
+            _slidePart.AddExternalRelationship(relationshipType, source, relationshipId);
+            ImagePart poster = AddGeneratedMediaPoster(kind);
+            string name = GenerateUniqueName(kind == PowerPointMediaKind.Audio ? "Linked Audio" : "Linked Video");
+            Picture picture = CreateMediaPicture(kind, shapeId, name,
+                relationshipId, relationshipId, _slidePart.GetIdOfPart(poster),
+                left, top, width, height);
+            P14.Media metadata = picture.Descendants<P14.Media>().Single();
+            metadata.Embed = null;
+            metadata.Link = relationshipId;
+            CommonSlideData data = SlideRoot.CommonSlideData ??= new CommonSlideData(new ShapeTree());
+            (data.ShapeTree ??= new ShapeTree()).Append(picture);
+            EnsureMediaTiming(shapeId, kind);
+            return TrackShape(new PowerPointMedia(picture, _slidePart, kind));
+        }
+
         private PowerPointMedia AddMedia(Stream media, string contentType, string extension, PowerPointMediaKind kind,
             long left, long top, long width, long height, Stream? posterImage = null,
-            ImagePartType posterImageType = ImagePartType.Png) {
+            OfficeImageFormat posterImageType = OfficeImageFormat.Png) {
             if (media == null) {
                 throw new ArgumentNullException(nameof(media));
             }
@@ -135,7 +170,7 @@ namespace OfficeIMO.PowerPoint {
         private ImagePart AddGeneratedMediaPoster(PowerPointMediaKind kind) {
             byte[] poster = CreateGeneratedMediaPosterPng(kind);
             using MemoryStream stream = new(poster);
-            return AddImagePartFromStream(stream, ImagePartType.Png);
+            return AddImagePartFromStream(stream, OfficeImageFormat.Png);
         }
 
         private static byte[] CreateGeneratedMediaPosterPng(PowerPointMediaKind kind) {
@@ -159,7 +194,7 @@ namespace OfficeIMO.PowerPoint {
             return OfficePngWriter.Encode(image);
         }
 
-        private ImagePart AddImagePartFromStream(Stream image, ImagePartType imageType) {
+        private ImagePart AddImagePartFromStream(Stream image, OfficeImageFormat imageType) {
             if (image == null) {
                 throw new ArgumentNullException(nameof(image));
             }
@@ -259,6 +294,10 @@ namespace OfficeIMO.PowerPoint {
                 }
             }
 
+            if (maxId == uint.MaxValue) {
+                throw new InvalidOperationException(
+                    "The imported timing identifier space is exhausted.");
+            }
             return maxId + 1;
         }
 

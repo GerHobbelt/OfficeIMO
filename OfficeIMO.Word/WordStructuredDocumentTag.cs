@@ -187,16 +187,16 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the underline style for the content control text.
         /// </summary>
-        public UnderlineValues? Underline {
+        public WordUnderlineStyle? Underline {
             get {
                 var runProperties = GetRunProperties();
-                return runProperties?.Underline?.Val?.Value;
+                return runProperties?.Underline?.Val?.Value.ToOfficeEnum();
             }
             set {
                 var runProperties = VerifyRunProperties();
                 if (value != null) {
                     runProperties.Underline ??= new Underline();
-                    runProperties.Underline.Val = value;
+                    runProperties.Underline.Val = value.Value.ToOpenXml();
                 } else {
                     runProperties.Underline?.Remove();
                 }
@@ -289,15 +289,15 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the highlight color applied to the content control text.
         /// </summary>
-        public HighlightColorValues? Highlight {
+        public WordHighlightColor? Highlight {
             get {
                 var runProperties = GetRunProperties();
-                return runProperties?.Highlight?.Val?.Value;
+                return runProperties?.Highlight?.Val?.Value.ToOfficeEnum();
             }
             set {
                 var runProperties = VerifyRunProperties();
                 if (value.HasValue) {
-                    runProperties.Highlight = new Highlight { Val = value.Value };
+                    runProperties.Highlight = new Highlight { Val = value.Value.ToOpenXml() };
                 } else {
                     runProperties.Highlight?.Remove();
                 }
@@ -310,7 +310,7 @@ namespace OfficeIMO.Word {
         /// <param name="document">Parent document.</param>
         /// <param name="paragraph">Paragraph that contains the content control.</param>
         /// <param name="stdRun">Underlying structured document run.</param>
-        public WordStructuredDocumentTag(WordDocument document, Paragraph paragraph, SdtRun stdRun) {
+        internal WordStructuredDocumentTag(WordDocument document, Paragraph paragraph, SdtRun stdRun) {
             this._document = document;
             this._paragraph = paragraph;
             this._stdRun = stdRun;
@@ -321,7 +321,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="document">Parent document.</param>
         /// <param name="sdtBlock">Structured document block.</param>
-        public WordStructuredDocumentTag(WordDocument document, SdtBlock sdtBlock) {
+        internal WordStructuredDocumentTag(WordDocument document, SdtBlock sdtBlock) {
             this._document = document;
             this._sdtBlock = sdtBlock;
         }
@@ -359,7 +359,7 @@ namespace OfficeIMO.Word {
         /// Sets the underline style and returns the instance for chaining.
         /// </summary>
         /// <param name="underline">Underline style, or <c>null</c> to clear.</param>
-        public WordStructuredDocumentTag SetUnderline(UnderlineValues? underline) {
+        public WordStructuredDocumentTag SetUnderline(WordUnderlineStyle? underline) {
             Underline = underline;
             return this;
         }
@@ -404,7 +404,7 @@ namespace OfficeIMO.Word {
         /// Sets the highlight color and returns the instance for chaining.
         /// </summary>
         /// <param name="highlight">Highlight color, or <c>null</c> to clear.</param>
-        public WordStructuredDocumentTag SetHighlight(HighlightColorValues? highlight) {
+        public WordStructuredDocumentTag SetHighlight(WordHighlightColor? highlight) {
             Highlight = highlight;
             return this;
         }

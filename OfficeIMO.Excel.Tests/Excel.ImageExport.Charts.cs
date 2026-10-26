@@ -712,6 +712,35 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportReportsUnsupportedMixedCategoryAndScatterAxes() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorksheet("ComboScatter");
+            sheet.CellValue(1, 1, "Month");
+            sheet.CellValue(1, 2, "Sales");
+            sheet.CellValue(1, 3, "Trend");
+            sheet.CellValue(1, 4, "Trend X");
+            sheet.CellValue(2, 1, "Jan");
+            sheet.CellValue(3, 1, "Feb");
+            sheet.CellValue(2, 2, 10);
+            sheet.CellValue(3, 2, 20);
+            sheet.CellValue(2, 3, 30);
+            sheet.CellValue(3, 3, 40);
+            sheet.CellValue(2, 4, 100);
+            sheet.CellValue(3, 4, 200);
+            sheet.AddChartFromRange("A1:C3", row: 1, column: 6, widthPixels: 260, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "Combo Scatter");
+            ConvertSecondBarSeriesToScatter(document);
+
+            OfficeImageExportResult result = sheet.Range("A1:J10").ExportImage(
+                OfficeImageExportFormat.Png,
+                new ExcelImageExportOptions { ShowGridlines = false });
+
+            Assert.Contains(result.Diagnostics, diagnostic =>
+                diagnostic.Code == ExcelImageExportDiagnosticCodes.ChartKindUnsupported
+                && diagnostic.Message.Contains("incompatible category and scatter axis models", StringComparison.Ordinal));
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportReadsNumericCategoryReferences() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
@@ -983,7 +1012,7 @@ namespace OfficeIMO.Tests {
                 showCategoryName: false,
                 showSeriesName: false,
                 showPercent: false,
-                position: DataLabelPositionValues.OutsideEnd,
+                position: OfficeChartDataLabelPosition.OutsideEnd,
                 numberFormat: "0");
             chart.SetDataLabelTextStyle(color: "EA580C");
 
@@ -1045,7 +1074,7 @@ namespace OfficeIMO.Tests {
                 showCategoryName: false,
                 showSeriesName: false,
                 showPercent: false,
-                position: DataLabelPositionValues.OutsideEnd,
+                position: OfficeChartDataLabelPosition.OutsideEnd,
                 numberFormat: "0");
             chart.SetDataLabelShapeStyle(fillColor: "FDE68A", lineColor: "B45309", lineWidthPoints: 1.5D);
             chart.SetDataLabelTextStyle(color: "7C2D12", bold: true);
@@ -1206,7 +1235,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(4, 1, "Mar");
             sheet.CellValue(4, 2, 160);
             ExcelChart chart = sheet.AddChartFromRange("A1:B4", row: 1, column: 4, widthPixels: 265, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "Text Sizes");
-            chart.SetLegend(LegendPositionValues.Right);
+            chart.SetLegend(OfficeChartLegendPosition.Right);
             chart.SetLegendTextStyle(fontSizePoints: 9D, color: "0F766E");
             chart.SetDataLabels(
                 showLegendKey: false,
@@ -1214,7 +1243,7 @@ namespace OfficeIMO.Tests {
                 showCategoryName: false,
                 showSeriesName: false,
                 showPercent: false,
-                position: DataLabelPositionValues.OutsideEnd,
+                position: OfficeChartDataLabelPosition.OutsideEnd,
                 numberFormat: "0");
             chart.SetDataLabelTextStyle(fontSizePoints: 11D, color: "0F766E");
             chart.SetCategoryAxisLabelTextStyle(fontSizePoints: 8D, color: "7C3AED");
@@ -1410,8 +1439,8 @@ namespace OfficeIMO.Tests {
             ExcelChartData data = new(
                 new[] { "Q1", "Q2", "Q3" },
                 new[] {
-                    new ExcelChartSeries("Sales", new[] { 120D, 180D, 160D }, ExcelChartType.ColumnClustered, ExcelChartAxisGroup.Primary),
-                    new ExcelChartSeries("Margin", new[] { 0.12D, 0.18D, 0.16D }, ExcelChartType.Line, ExcelChartAxisGroup.Secondary)
+                    new ExcelChartSeries("Sales", new[] { 120D, 180D, 160D }, ExcelChartType.ColumnClustered, OfficeChartAxisGroup.Primary),
+                    new ExcelChartSeries("Margin", new[] { 0.12D, 0.18D, 0.16D }, ExcelChartType.Line, OfficeChartAxisGroup.Secondary)
                 });
             sheet.AddChart(data, row: 1, column: 4, widthPixels: 265, heightPixels: 170,
                 type: ExcelChartType.ColumnClustered, title: "Combo");
@@ -1425,7 +1454,7 @@ namespace OfficeIMO.Tests {
             ExcelVisualChart visualChart = Assert.Single(snapshot.Charts);
             ExcelChartSeries margin = Assert.Single(visualChart.Snapshot.Data.Series,
                 series => series.Name == "Margin");
-            Assert.Equal(ExcelChartAxisGroup.Secondary, margin.AxisGroup);
+            Assert.Equal(OfficeChartAxisGroup.Secondary, margin.AxisGroup);
             Assert.DoesNotContain(png.Diagnostics,
                 item => item.Code == ExcelImageExportDiagnosticCodes.ChartSecondaryAxisUnsupported);
             Assert.DoesNotContain(png.Diagnostics, item => item.Severity == OfficeImageExportDiagnosticSeverity.Error);
@@ -1527,7 +1556,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(4, 1, "Mar");
             sheet.CellValue(4, 2, 160);
             sheet.AddChartFromRange("A1:B4", row: 1, column: 4, widthPixels: 265, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "No Category Labels")
-                .SetCategoryAxisTickLabelPosition(TickLabelPositionValues.None);
+                .SetCategoryAxisTickLabelPosition(OfficeChartAxisTickLabelPosition.None);
 
             ExcelRange range = sheet.Range("D1:H9");
             var options = new ExcelImageExportOptions { ShowGridlines = false, Scale = 2D };
@@ -1560,7 +1589,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(4, 2, 160);
             sheet.AddChartFromRange("A1:B4", row: 1, column: 4, widthPixels: 265, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "No Value Labels")
                 .SetValueAxisNumberFormat("0.0")
-                .SetValueAxisTickLabelPosition(TickLabelPositionValues.None);
+                .SetValueAxisTickLabelPosition(OfficeChartAxisTickLabelPosition.None);
 
             ExcelRange range = sheet.Range("D1:H9");
             var options = new ExcelImageExportOptions { ShowGridlines = false, Scale = 2D };
@@ -1654,7 +1683,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(4, 1, "Mar");
             sheet.CellValue(4, 2, 160);
             ExcelChart chart = sheet.AddChartFromRange("A1:B4", row: 1, column: 4, widthPixels: 265, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "Axis Ticks");
-            chart.SetValueAxisTickLabelPosition(TickLabelPositionValues.High);
+            chart.SetValueAxisTickLabelPosition(OfficeChartAxisTickLabelPosition.High);
 
             ExcelRange range = sheet.Range("A1:H9");
             var options = new ExcelImageExportOptions { ShowGridlines = false, Scale = 2D };
@@ -1805,7 +1834,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(4, 1, "Mar");
             sheet.CellValue(4, 2, 160);
             ExcelChart chart = sheet.AddChartFromRange("A1:B4", row: 1, column: 4, widthPixels: 265, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "Axis Crossing");
-            chart.SetValueAxisCrossing(CrossesValues.Maximum);
+            chart.SetValueAxisCrossing(OfficeChartAxisCrossingPosition.Maximum);
 
             ExcelRange range = sheet.Range("A1:H9");
             var options = new ExcelImageExportOptions { ShowGridlines = false, Scale = 2D };
@@ -1851,7 +1880,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(4, 1, "Mar");
             sheet.CellValue(4, 2, 160);
             ExcelChart chart = sheet.AddChartFromRange("A1:B4", row: 1, column: 4, widthPixels: 265, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "Category Crossing");
-            chart.SetCategoryAxisCrossing(CrossesValues.Maximum);
+            chart.SetCategoryAxisCrossing(OfficeChartAxisCrossingPosition.Maximum);
 
             ExcelRange range = sheet.Range("A1:H9");
             var options = new ExcelImageExportOptions { ShowGridlines = false, Scale = 2D };
@@ -1957,7 +1986,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(4, 1, "Mar");
             sheet.CellValue(4, 2, 160000);
             ExcelChart chart = sheet.AddChartFromRange("A1:B4", row: 1, column: 4, widthPixels: 265, heightPixels: 170, type: ExcelChartType.ColumnClustered, title: "Display Units");
-            chart.SetValueAxisDisplayUnits(BuiltInUnitValues.Thousands, "Thousands", showLabel: true);
+            chart.SetValueAxisDisplayUnits(OfficeChartDisplayUnit.Thousands, "Thousands", showLabel: true);
 
             ExcelRange range = sheet.Range("A1:H9");
             var options = new ExcelImageExportOptions { ShowGridlines = false, Scale = 2D };
@@ -2073,7 +2102,7 @@ namespace OfficeIMO.Tests {
             sheet.AddConditionalDataBar("A1:A3", OfficeColor.Blue);
             sheet.AddConditionalRule(
                 "A1:A3",
-                DocumentFormat.OpenXml.Spreadsheet.ConditionalFormattingOperatorValues.GreaterThan,
+                ExcelConditionalFormattingOperator.GreaterThan,
                 "0",
                 null,
                 "FFFF0000",
@@ -2109,7 +2138,7 @@ namespace OfficeIMO.Tests {
                 showCategoryName: false,
                 showSeriesName: false,
                 showPercent: false,
-                position: DataLabelPositionValues.OutsideEnd,
+                position: OfficeChartDataLabelPosition.OutsideEnd,
                 numberFormat: "0");
             chart.SetDataLabelTextStyle(color: "EA580C");
 

@@ -11,27 +11,56 @@ namespace OfficeIMO.Word.Html {
             IElement context,
             WordEquation equation,
             WordToHtmlOptions options) {
-            string label = equation.Text;
-            if (equation.Representation == WordEquationRepresentation.EquationField) {
-                // InspectExport charged the cached field result as ordinary Word text. The
-                // MathML projection replaces that source text, so release it before charging
-                // the generated mtext and accessibility label that actually reach the output.
-                ReleaseOutputCharacters(
-                    htmlDocument,
-                    GetHtmlEncodedLength(label, attributeValue: false));
-            }
-            long remaining = GetRemainingOutputCharacters(htmlDocument);
+            string label;
             string mathMl;
             try {
-                mathMl = equation.ToMathMl(GetMathMlParserInputLimit(remaining));
-            } catch (WordMathMlOutputLimitExceededException) {
+                long labelRemaining = GetRemainingOutputCharacters(htmlDocument);
+                try {
+                    label = equation.GetText(labelRemaining, options.MaxEquationNestingDepth);
+                } catch (WordMathMlOutputLimitExceededException exception) {
+                    ThrowExportLimitExceeded(
+                        options,
+                        "WordHtmlOutputLimitExceeded",
+                        "Generated equation accessibility text exceeds the configured HTML output-character limit before materialization.",
+                        "EquationAriaLabel",
+                        GetCumulativeOutputCharacters(options, exception),
+                        options.MaxOutputCharacters);
+                    return null;
+                }
+                if (equation.Representation == WordEquationRepresentation.EquationField) {
+                    // InspectExport charged the cached field result as ordinary Word text. The
+                    // MathML projection replaces that source text, so release it before charging
+                    // the generated mtext and accessibility label that actually reach the output.
+                    ReleaseOutputCharacters(
+                        htmlDocument,
+                        GetHtmlEncodedLength(label, attributeValue: false));
+                }
+                ReserveOutputCharacters(
+                    htmlDocument,
+                    " aria-label=\"\"".Length + GetHtmlEncodedLength(label, attributeValue: true),
+                    "Generated equation accessibility metadata exceeds the configured HTML output-character limit before DOM construction.",
+                    "EquationAriaLabel");
+                long remaining = GetRemainingOutputCharacters(htmlDocument);
+                // MathML text projection uses XML text escaping only. Bound the complete parser
+                // input by the remaining HTML budget before AngleSharp allocates a fragment DOM.
+                mathMl = equation.ToMathMl(remaining, options.MaxEquationNestingDepth);
+            } catch (WordMathMlOutputLimitExceededException exception) {
                 ThrowExportLimitExceeded(
                     options,
                     "WordHtmlOutputLimitExceeded",
                     "Generated MathML exceeds the configured HTML output-character limit before DOM construction.",
                     "EquationMathMl",
-                    SaturatingAdd(options.MaxOutputCharacters, 1),
+                    GetCumulativeOutputCharacters(options, exception),
                     options.MaxOutputCharacters);
+                return null;
+            } catch (InvalidDataException exception) {
+                ThrowExportLimitExceeded(
+                    options,
+                    "WordEquationDepthLimitExceeded",
+                    exception.Message,
+                    "EquationOmml",
+                    SaturatingAdd(options.MaxEquationNestingDepth, 1),
+                    options.MaxEquationNestingDepth);
                 return null;
             }
             IElement? mathNode = new HtmlParser()
@@ -46,20 +75,18 @@ namespace OfficeIMO.Word.Html {
                 countingWriter.CharacterCount,
                 "Generated MathML exceeds the configured HTML output-character limit before DOM construction.",
                 "EquationMathMl");
-            ReserveOutputCharacters(
-                htmlDocument,
-                " aria-label=\"\"".Length + GetHtmlEncodedLength(label, attributeValue: true),
-                "Generated equation accessibility metadata exceeds the configured HTML output-character limit before DOM construction.",
-                "EquationAriaLabel");
-            // The complete serialized aria-label attribute is reserved before DOM assignment.
+            // The complete serialized aria-label attribute was reserved before materializing
+            // either the MathML fragment DOM or the attribute value.
             mathNode.SetAttribute("aria-label", label);
             return mathNode;
         }
 
-        private static long GetMathMlParserInputLimit(long remainingOutputCharacters) =>
-            remainingOutputCharacters > long.MaxValue / 6L
-                ? long.MaxValue
-                : remainingOutputCharacters * 6L;
+        private static long GetCumulativeOutputCharacters(
+            WordToHtmlOptions options,
+            WordMathMlOutputLimitExceededException exception) {
+            long consumedBeforeProjection = Math.Max(0, options.MaxOutputCharacters - exception.Limit);
+            return SaturatingAdd(consumedBeforeProjection, exception.Actual);
+        }
 
         private INode CreateEquationAdjacentTextNode(
             IHtmlDocument htmlDocument,
@@ -93,11 +120,11 @@ namespace OfficeIMO.Word.Html {
                 underline.AppendChild(node);
                 node = underline;
             }
-            if (run.VerticalTextAlignment == VerticalPositionValues.Superscript) {
+            if (run.VerticalTextAlignment == WordVerticalTextPosition.Superscript) {
                 var superscript = CreateOutputElement(htmlDocument, "sup");
                 superscript.AppendChild(node);
                 node = superscript;
-            } else if (run.VerticalTextAlignment == VerticalPositionValues.Subscript) {
+            } else if (run.VerticalTextAlignment == WordVerticalTextPosition.Subscript) {
                 var subscript = CreateOutputElement(htmlDocument, "sub");
                 subscript.AppendChild(node);
                 node = subscript;
@@ -136,12 +163,12 @@ namespace OfficeIMO.Word.Html {
                 span.AppendChild(node);
                 node = span;
             }
-            if (run.CapsStyle == CapsStyle.SmallCaps || run.CapsStyle == CapsStyle.Caps) {
+            if (run.CapsStyle == WordCapsStyle.SmallCaps || run.CapsStyle == WordCapsStyle.Caps) {
                 var span = CreateOutputElement(htmlDocument, "span");
                 SetOutputAttribute(
                     span,
                     "style",
-                    run.CapsStyle == CapsStyle.SmallCaps
+                    run.CapsStyle == WordCapsStyle.SmallCaps
                         ? "font-variant:small-caps"
                         : "text-transform:uppercase",
                     "EquationRunFormatting:caps");
@@ -222,7 +249,7 @@ namespace OfficeIMO.Word.Html {
                     SetOutputAttribute(semanticNode, "style", $"background-color:{highlightCss}", "EquationSemanticFormatting:highlight");
                 } else if (normalizedRunBackground != null) {
                     SetOutputAttribute(semanticNode, "style", $"background-color:#{normalizedRunBackground}", "EquationSemanticFormatting:highlight");
-                } else if (run.Highlight == HighlightColorValues.None) {
+                } else if (run.Highlight == WordHighlightColor.None) {
                     SetOutputAttribute(semanticNode, "style", "background-color:transparent", "EquationSemanticFormatting:highlight");
                 }
             } else if (string.Equals(run.CharacterStyleId, "HtmlCite", StringComparison.OrdinalIgnoreCase)) {
@@ -234,9 +261,6 @@ namespace OfficeIMO.Word.Html {
                 bool hasImportedDateTime = HtmlSemanticMetadata.TryGetTimeDateTime(run, out string dateTime);
                 if (!hasImportedDateTime) {
                     dateTime = text;
-                    if (DateTime.TryParse(text, out DateTime parsed)) {
-                        dateTime = parsed.ToString("o");
-                    }
                 }
                 SetOutputAttribute(semanticNode, "datetime", dateTime, "EquationSemanticFormatting:datetime");
             } else if (string.Equals(run.CharacterStyleId, "HtmlCode", StringComparison.OrdinalIgnoreCase)) {

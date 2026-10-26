@@ -81,8 +81,8 @@ namespace OfficeIMO.Tests {
             for (int column = 1; column <= headers.Length; column++) {
                 sheet.CellValue(1, column, headers[column - 1]);
                 sheet.CellAt(1, column).SetFillColor("0F172A").SetFontColor("FFFFFF").SetBold().SetFontSize(12D);
-                sheet.CellAlign(1, column, HorizontalAlignmentValues.Center);
-                sheet.CellVerticalAlign(1, column, VerticalAlignmentValues.Center);
+                sheet.CellAlign(1, column, ExcelHorizontalAlignment.Center);
+                sheet.CellVerticalAlign(1, column, ExcelVerticalAlignment.Center);
             }
 
             AddHeaderFooterImageRow(sheet, 2, "North", "Avery", "Ready", 0.94D, "E7F6E7", "166534");
@@ -100,18 +100,18 @@ namespace OfficeIMO.Tests {
 
             for (int row = 1; row <= 4; row++) {
                 for (int column = 1; column <= 4; column++) {
-                    sheet.CellAt(row, column).SetBorder(BorderStyleValues.Thin, "94A3B8").SetFontSize(12D);
-                    sheet.CellVerticalAlign(row, column, VerticalAlignmentValues.Center);
+                    sheet.CellAt(row, column).SetBorder(ExcelBorderStyle.Thin, "94A3B8").SetFontSize(12D);
+                    sheet.CellVerticalAlign(row, column, ExcelVerticalAlignment.Center);
                 }
             }
 
             document.SetPrintTitles(sheet, firstRow: 1, lastRow: 1, firstCol: null, lastCol: null, save: false);
-            sheet.SetOrientation(ExcelPageOrientation.Landscape);
+            sheet.SetOrientation(OfficePageOrientation.Landscape);
             sheet.SetMargins(0.35D, 0.35D, 0.35D, 0.35D);
             sheet.SetPageSetup(fitToWidth: 1, fitToHeight: 0, paperSize: ExcelPaperSize.Letter);
             sheet.SetHeaderFooter(headerLeft: "&BHeader/Footer Image Baseline", footerCenter: "Rendered on page &P");
-            sheet.SetHeaderImage(HeaderFooterPosition.Center, CreateHeaderFooterHeaderLogoPng(), "image/png", widthPoints: 72D, heightPoints: 24D);
-            sheet.SetFooterImage(HeaderFooterPosition.Right, CreateHeaderFooterFooterLogoPng(), "image/png", widthPoints: 56D, heightPoints: 18D);
+            sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, CreateHeaderFooterHeaderLogoPng(), "image/png", widthPoints: 72D, heightPoints: 24D);
+            sheet.SetFooterImage(ExcelHeaderFooterPosition.Right, CreateHeaderFooterFooterLogoPng(), "image/png", widthPoints: 56D, heightPoints: 18D);
             sheet.AddManualRowPageBreak(2, save: false);
             return new ExcelBaselineFixture(document, sheet);
         }
@@ -125,7 +125,7 @@ namespace OfficeIMO.Tests {
                 .SetFillColor(row == 2 ? "F8FAFC" : "FFFFFF");
             sheet.CellAt(row, 3).SetFillColor(stateFill).SetFontColor(stateText).SetBold().SetFontSize(12D);
             sheet.CellAt(row, 4).Percent(0).SetBold().SetFontSize(12D);
-            sheet.CellAlign(row, 4, HorizontalAlignmentValues.Right);
+            sheet.CellAlign(row, 4, ExcelHorizontalAlignment.Right);
         }
 
         private static ExcelWorksheetImageExportOptions CreateHeaderFooterImagesBaselineOptions() =>

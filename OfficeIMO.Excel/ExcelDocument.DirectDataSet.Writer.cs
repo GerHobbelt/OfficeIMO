@@ -18,6 +18,31 @@ namespace OfficeIMO.Excel {
             private const int CachedCellReferencePrefixColumnLimit = 64;
             private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
             private static readonly DateTime ExcelMinimumSupportedDateTimeOffset = DateTime.FromOADate(2);
+#if NET7_0_OR_GREATER
+            private static readonly DateTime NineteenHundredFastDateSerialMinimum = new DateTime(1900, 3, 1);
+            private static readonly DateTime NineteenFourFastDateSerialMinimum = new DateTime(1904, 1, 1);
+            private static readonly string[] FiveDigitDayMinuteFractionSuffixes = CreateFiveDigitDayMinuteFractionSuffixes();
+            private static readonly ulong[] DecimalPowers = [
+                1UL,
+                10UL,
+                100UL,
+                1_000UL,
+                10_000UL,
+                100_000UL,
+                1_000_000UL,
+                10_000_000UL,
+                100_000_000UL,
+                1_000_000_000UL,
+                10_000_000_000UL,
+                100_000_000_000UL,
+                1_000_000_000_000UL,
+                10_000_000_000_000UL,
+                100_000_000_000_000UL,
+                1_000_000_000_000_000UL,
+                10_000_000_000_000_000UL,
+                100_000_000_000_000_000UL
+            ];
+#endif
             private static readonly string[] RawNonNegativeIntegerCellCache = CreateRawNonNegativeIntegerCellCache();
             private static readonly string?[] SharedStringCellCache = new string?[CachedSharedStringCellLimit];
             private static readonly string[][] CellReferencePrefixCache = CreateCellReferencePrefixCache();
@@ -26,20 +51,12 @@ namespace OfficeIMO.Excel {
                 DirectStylePlan stylePlan = DirectStylePlan.Create(model);
                 DirectColumnWritePlan[] columnWritePlans = CreateColumnWritePlans(model, stylePlan, ct);
                 var sharedStrings = disableSharedStrings ? null : DirectSharedStringTable.Create(model, columnWritePlans, ct);
-                using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
-                WriteContentTypes(archive, model.Sheets, sharedStrings != null);
-                WriteTextEntry(archive, "_rels/.rels",
-                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-                    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
-                    "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>" +
-                    "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>" +
-                    "</Relationships>");
-                WriteCoreProperties(archive);
-                WriteAppProperties(archive);
-                WriteWorkbook(archive, model);
-                WriteWorkbookRelationships(archive, model.Sheets.Count, sharedStrings != null);
-                WriteStyles(archive, stylePlan);
+                using var positionReportingDestination = stream.CanSeek
+                    ? null
+                    : new ExcelPositionReportingWriteStream(stream);
+                Stream packageDestination = positionReportingDestination ?? stream;
+                using var archive = new ZipArchive(packageDestination, ZipArchiveMode.Create, leaveOpen: true);
+                WritePackagePreamble(archive, model, stylePlan, sharedStrings != null);
                 if (sharedStrings != null) {
                     WriteSharedStrings(archive, sharedStrings);
                 }
@@ -62,6 +79,26 @@ namespace OfficeIMO.Excel {
                         WriteTable(archive, sheet);
                     }
                 }
+            }
+
+            private static void WritePackagePreamble(
+                ZipArchive archive,
+                DirectDataSetWorkbookModel model,
+                DirectStylePlan stylePlan,
+                bool includeSharedStrings) {
+                WriteContentTypes(archive, model.Sheets, includeSharedStrings);
+                WriteTextEntry(archive, "_rels/.rels",
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
+                    "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>" +
+                    "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>" +
+                    "</Relationships>");
+                WriteCoreProperties(archive);
+                WriteAppProperties(archive);
+                WriteWorkbook(archive, model);
+                WriteWorkbookRelationships(archive, model.Sheets.Count, includeSharedStrings);
+                WriteStyles(archive, stylePlan);
             }
 
             internal static bool TryCreateExtendedWritePlan(DirectDataSetWorkbookModel model, CancellationToken ct, out ExtendedDirectWritePlan? plan, bool disableSharedStrings = false) {
@@ -238,7 +275,7 @@ namespace OfficeIMO.Excel {
             private static void WriteSharedStrings(ZipArchive archive, DirectSharedStringTable sharedStrings) {
                 var entry = archive.CreateEntry("xl/sharedStrings.xml", CompressionLevel.Fastest);
                 using var stream = entry.Open();
-                using var writer = new StreamWriter(stream, Utf8NoBom, XmlWriterBufferSize);
+                using var writer = new PooledUtf8TextWriter(stream, Utf8NoBom, XmlWriterBufferSize);
 
                 writer.Write("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
                 writer.Write("<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"");

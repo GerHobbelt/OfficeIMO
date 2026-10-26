@@ -7,13 +7,13 @@ namespace OfficeIMO.Tests;
 public class WordAllSeverityBatch18SecurityTests {
     [Fact]
     public void TextBoxAlignmentAcceptsInsideAndDefaultsMalformedValues() {
-        Assert.Equal(WordHorizontalAlignmentValues.Inside, HorizontalAlignmentHelper.FromString(" inside "));
-        Assert.Equal("inside", HorizontalAlignmentHelper.ToString(WordHorizontalAlignmentValues.Inside));
-        Assert.Equal(WordHorizontalAlignmentValues.Center, HorizontalAlignmentHelper.FromString(null));
-        Assert.Equal(WordHorizontalAlignmentValues.Center, HorizontalAlignmentHelper.FromString(string.Empty));
-        Assert.Equal(WordHorizontalAlignmentValues.Center, HorizontalAlignmentHelper.FromString("future-value"));
-        Assert.Equal(3, (int)WordHorizontalAlignmentValues.Outside);
-        Assert.Equal(4, (int)WordHorizontalAlignmentValues.Inside);
+        Assert.Equal(WordTextBoxHorizontalAlignment.Inside, WordTextBoxHorizontalAlignmentSerializer.FromString(" inside "));
+        Assert.Equal("inside", WordTextBoxHorizontalAlignmentSerializer.ToString(WordTextBoxHorizontalAlignment.Inside));
+        Assert.Equal(WordTextBoxHorizontalAlignment.Center, WordTextBoxHorizontalAlignmentSerializer.FromString(null));
+        Assert.Equal(WordTextBoxHorizontalAlignment.Center, WordTextBoxHorizontalAlignmentSerializer.FromString(string.Empty));
+        Assert.Equal(WordTextBoxHorizontalAlignment.Center, WordTextBoxHorizontalAlignmentSerializer.FromString("future-value"));
+        Assert.Equal(3, (int)WordTextBoxHorizontalAlignment.Outside);
+        Assert.Equal(4, (int)WordTextBoxHorizontalAlignment.Inside);
     }
 
     [Fact]
@@ -21,8 +21,8 @@ public class WordAllSeverityBatch18SecurityTests {
         using WordDocument document = WordDocument.Create();
         var paragraph = new WordParagraph(document, newParagraph: true, newRun: false);
 
-        paragraph.VerticalTextAlignment = VerticalPositionValues.Superscript;
-        paragraph.Borders.LeftStyle = BorderValues.Single;
+        paragraph.VerticalTextAlignment = WordVerticalTextPosition.Superscript;
+        paragraph.Borders.LeftStyle = WordBorderStyle.Single;
         WordParagraph emptyText = paragraph.AddText(null);
 
         Assert.NotNull(paragraph._run);
@@ -43,9 +43,9 @@ public class WordAllSeverityBatch18SecurityTests {
             candidate => candidate.IsHyperLink);
         int directRunCount = paragraph._paragraph.Elements<Run>().Count();
 
-        hyperlinkParagraph.VerticalTextAlignment = VerticalPositionValues.Superscript;
+        hyperlinkParagraph.VerticalTextAlignment = WordVerticalTextPosition.Superscript;
 
-        Assert.Equal(VerticalPositionValues.Superscript, hyperlinkParagraph.VerticalTextAlignment);
+        Assert.Equal(WordVerticalTextPosition.Superscript, hyperlinkParagraph.VerticalTextAlignment);
         Assert.Equal(
             VerticalPositionValues.Superscript,
             hyperlinkParagraph.Hyperlink!._runProperties.VerticalTextAlignment?.Val?.Value);
@@ -116,7 +116,7 @@ public class WordAllSeverityBatch18SecurityTests {
             new Run(new Text("first")),
             new Run(new Text("second"), new Break(), new Text("third")));
 
-        document.CleanupDocument(DocumentCleanupOptions.MergeIdenticalRuns);
+        document.CleanupDocument(WordDocumentCleanupOptions.MergeIdenticalRuns);
 
         Run[] runs = paragraph._paragraph.Elements<Run>().ToArray();
         Assert.Equal(2, runs.Length);

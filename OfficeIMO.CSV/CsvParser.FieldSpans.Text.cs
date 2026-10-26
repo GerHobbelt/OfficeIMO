@@ -66,7 +66,7 @@ internal static partial class CsvParser
         char[]? scratch = null;
         var delimiterVector = System.Runtime.Intrinsics.Vector256<byte>.Zero;
         if (!trim &&
-            delimiter <= byte.MaxValue &&
+            CanUseAvx2PackedDelimiter(delimiter) &&
             System.Runtime.Intrinsics.X86.Avx2.IsSupported)
         {
             delimiterVector = System.Runtime.Intrinsics.Vector256.Create((byte)delimiter);
@@ -218,6 +218,29 @@ internal static partial class CsvParser
 #if NET8_0_OR_GREATER
         var encounteredQuote = false;
         if (useAvx2UnquotedFastPath &&
+            trim &&
+            CanUseAvx2PackedDelimiter(delimiter) &&
+            System.Runtime.Intrinsics.X86.Avx2.IsSupported &&
+            TryReadTextQuoteAwareRecordFieldSpansAvx2(
+                text,
+                delimiter,
+                trim: true,
+                allowEmpty,
+                emitFields,
+                recordIndex,
+                position,
+                unquotedDelimiterIndexCapacity,
+                ref position,
+                projectedFieldVisitor,
+                ref fieldVisitor,
+                ref scratch,
+                out fieldCount,
+                out firstFieldLength))
+        {
+            return true;
+        }
+
+        if (useAvx2UnquotedFastPath &&
             !trim &&
             !System.Runtime.Intrinsics.X86.Avx2.IsSupported &&
             System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated &&
@@ -261,7 +284,7 @@ internal static partial class CsvParser
 
         if (useAvx2UnquotedFastPath &&
             !trim &&
-            delimiter <= byte.MaxValue &&
+            CanUseAvx2PackedDelimiter(delimiter) &&
             System.Runtime.Intrinsics.X86.Avx2.IsSupported &&
             !textMayContainQuote &&
             TryReadTextQuoteFreeRecordFieldSpansAvx2(
@@ -282,7 +305,7 @@ internal static partial class CsvParser
 
         if (useAvx2UnquotedFastPath &&
             !trim &&
-            delimiter <= byte.MaxValue &&
+            CanUseAvx2PackedDelimiter(delimiter) &&
             System.Runtime.Intrinsics.X86.Avx2.IsSupported &&
             TryReadTextUnquotedRecordFieldSpansAvx2(
                 text,
@@ -351,6 +374,9 @@ internal static partial class CsvParser
 
         return true;
     }
+
+    private static bool CanUseAvx2PackedDelimiter(char delimiter) =>
+        delimiter > byte.MinValue && delimiter < byte.MaxValue;
 
     private static bool TryReadTextUnquotedRecordFieldSpansAvx2<TVisitor>(
         ReadOnlySpan<char> text,
@@ -425,6 +451,7 @@ internal static partial class CsvParser
                         TryReadTextQuoteAwareRecordFieldSpansAvx2FromCurrentChunk(
                             text,
                             delimiter,
+                            trim: false,
                             allowEmpty,
                             emitFields,
                             recordIndex,
@@ -810,6 +837,25 @@ internal static partial class CsvParser
             }
 
             pendingTrailingField = false;
+            if (!strictQuotes && trim && char.IsWhiteSpace(value))
+            {
+                var quotedFieldStart = position + 1;
+                while (quotedFieldStart < text.Length &&
+                    text[quotedFieldStart] != delimiter &&
+                    text[quotedFieldStart] != '\r' &&
+                    text[quotedFieldStart] != '\n' &&
+                    char.IsWhiteSpace(text[quotedFieldStart]))
+                {
+                    quotedFieldStart++;
+                }
+
+                if (quotedFieldStart < text.Length && text[quotedFieldStart] == '"')
+                {
+                    position = quotedFieldStart;
+                    value = '"';
+                }
+            }
+
             if (value == '"')
             {
                 if (!TryVisitTextQuotedField(text, delimiter, trim, emitFields, recordIndex, fieldIndex, ref position, projectedFieldVisitor, ref fieldVisitor, ref scratch, out var quotedLength))
@@ -1058,13 +1104,39 @@ internal static partial class CsvParser
             scratch = ArrayPool<char>.Shared.Rent(fieldLength);
         }
 
-        var readIndex = firstEscapedQuote >= 0 ? firstEscapedQuote : 0;
+        if (firstEscapedQuote < 0)
+        {
+            var read = 0;
+            var written = 0;
+            while (read < field.Length)
+            {
+                var value = field[read++];
+                scratch[written++] = value;
+                if (value == '"' && read < field.Length && field[read] == '"')
+                {
+                    read++;
+                }
+            }
+
+            return scratch.AsSpan(0, written);
+        }
+
+        var readIndex = firstEscapedQuote;
         if (readIndex > 0)
         {
             field.Slice(0, readIndex).CopyTo(scratch.AsSpan());
         }
 
         var writeIndex = readIndex;
+        if (firstEscapedQuote >= 0 &&
+            readIndex + 1 < field.Length &&
+            field[readIndex] == '"' &&
+            field[readIndex + 1] == '"')
+        {
+            scratch[writeIndex++] = '"';
+            readIndex += 2;
+        }
+
         while (readIndex < field.Length)
         {
             var quoteOffset = field.Slice(readIndex).IndexOf('"');

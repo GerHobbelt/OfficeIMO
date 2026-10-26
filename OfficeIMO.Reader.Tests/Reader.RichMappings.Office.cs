@@ -198,7 +198,7 @@ public sealed class ReaderOfficeRichMappingTests {
             sheet.Cell(1, 2, "Qty");
             sheet.Cell(2, 1, "Bandage");
             sheet.Cell(2, 2, 4);
-            sheet.AddTable("A1:B2", hasHeader: true, name: "InventoryTable", style: TableStyle.TableStyleMedium2);
+            sheet.AddTable("A1:B2", hasHeader: true, name: "InventoryTable", style: ExcelTableStyle.TableStyleMedium2);
             sheet.SetHyperlink(2, 1, "https://example.test/bandage", display: "Bandage");
             sheet.Cell(1, 4, "Loose");
             sheet.Cell(1, 5, "Value");
@@ -245,7 +245,7 @@ public sealed class ReaderOfficeRichMappingTests {
             sheet.CellFormula(2, 2, "1+1");
             sheet.Cell(3, 1, "Gauze");
             sheet.Cell(3, 2, 3);
-            sheet.AddTable("A1:B3", hasHeader: true, name: "InventoryTable", style: TableStyle.TableStyleMedium2);
+            sheet.AddTable("A1:B3", hasHeader: true, name: "InventoryTable", style: ExcelTableStyle.TableStyleMedium2);
             sheet.SetHyperlink(2, 1, "https://example.test/inside", display: "Bandage");
             sheet.SetComment(2, 1, "Inside comment");
             sheet.CellFormula(2, 4, "2+2");
@@ -341,7 +341,7 @@ public sealed class ReaderOfficeRichMappingTests {
     [Fact]
     public void DocumentReader_PowerPointRichMapping_HonorsHiddenShapeFilteringAcrossArtifacts() {
         byte[] png = Convert.FromBase64String(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
         uint hiddenImageFillId;
         using var stream = new MemoryStream();
         using (PowerPointPresentation presentation = PowerPointPresentation.Create(stream)) {
@@ -349,7 +349,7 @@ public sealed class ReaderOfficeRichMappingTests {
             PowerPointTextBox visible = slide.AddTextBox("Visible guidance");
             visible.Paragraphs[0].Runs[0].SetHyperlink("https://example.test/visible");
             PowerPointTextBox hiddenTitle = slide.AddTextBox("Hidden title");
-            hiddenTitle.PlaceholderType = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title;
+            hiddenTitle.PlaceholderType = PowerPointPlaceholderType.Title;
             hiddenTitle.Hidden = true;
             hiddenTitle.Paragraphs[0].Runs[0].SetHyperlink("https://example.test/hidden");
             PowerPointTable hiddenTable = slide.AddTable(1, 1);
@@ -361,10 +361,10 @@ public sealed class ReaderOfficeRichMappingTests {
             hiddenChart.Hidden = true;
 
             PowerPointPicture visiblePicture = slide.AddPicture(
-                new MemoryStream(png, writable: false), OfficeIMO.PowerPoint.ImagePartType.Png);
+                new MemoryStream(png, writable: false), OfficeIMO.Drawing.OfficeImageFormat.Png);
             visiblePicture.AltText = "Visible direct picture";
             PowerPointPicture hiddenPicture = slide.AddPicture(
-                new MemoryStream(png, writable: false), OfficeIMO.PowerPoint.ImagePartType.Png);
+                new MemoryStream(png, writable: false), OfficeIMO.Drawing.OfficeImageFormat.Png);
             hiddenPicture.AltText = "Hidden direct picture";
             hiddenPicture.Hidden = true;
 
@@ -374,7 +374,7 @@ public sealed class ReaderOfficeRichMappingTests {
 
             PowerPointTextBox hiddenGroupText = slide.AddTextBox("Hidden group guidance");
             PowerPointPicture hiddenGroupPicture = slide.AddPicture(
-                new MemoryStream(png, writable: false), OfficeIMO.PowerPoint.ImagePartType.Png);
+                new MemoryStream(png, writable: false), OfficeIMO.Drawing.OfficeImageFormat.Png);
             hiddenGroupPicture.AltText = "Hidden group picture";
             PowerPointGroupShape hiddenGroup = slide.GroupShapes(
                 new PowerPointShape[] { hiddenGroupText, hiddenGroupPicture }, "Hidden group");
@@ -382,10 +382,10 @@ public sealed class ReaderOfficeRichMappingTests {
 
             PowerPointTextBox visibleGroupText = slide.AddTextBox("Visible group guidance");
             PowerPointPicture visibleGroupPicture = slide.AddPicture(
-                new MemoryStream(png, writable: false), OfficeIMO.PowerPoint.ImagePartType.Png);
+                new MemoryStream(png, writable: false), OfficeIMO.Drawing.OfficeImageFormat.Png);
             visibleGroupPicture.AltText = "Visible group picture";
             PowerPointPicture hiddenGroupChildPicture = slide.AddPicture(
-                new MemoryStream(png, writable: false), OfficeIMO.PowerPoint.ImagePartType.Png);
+                new MemoryStream(png, writable: false), OfficeIMO.Drawing.OfficeImageFormat.Png);
             hiddenGroupChildPicture.AltText = "Hidden group child picture";
             hiddenGroupChildPicture.Hidden = true;
             slide.GroupShapes(

@@ -7,7 +7,7 @@ using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 
@@ -16,6 +16,10 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>Updates the native chart from the shared OfficeIMO chart contract.</summary>
         public PowerPointChart UpdateData(OfficeChartData data) {
             if (data == null) throw new ArgumentNullException(nameof(data));
+            PowerPointImportedChartReport imported = InspectImportedContent();
+            if (AdvancedChartProjections.ContainsKey(imported.Family)) {
+                return UpdateImportedData(data);
+            }
             if (!TryGetSnapshotForUpdate(out PowerPointChartSnapshot current)) {
                 throw new NotSupportedException(
                     "The current chart kind cannot be updated through the shared OfficeIMO chart contract.");

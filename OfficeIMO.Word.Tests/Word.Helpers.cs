@@ -1,6 +1,6 @@
 using System;
 using System.IO;
-using DocumentFormat.OpenXml.Packaging;
+using OfficeIMO.Drawing;
 using OfficeIMO.Word;
 using Xunit;
 
@@ -11,17 +11,27 @@ namespace OfficeIMO.Tests;
 /// </summary>
 public partial class Word {
     [Theory]
-    [InlineData("snail.bmp", CustomImagePartType.Bmp)]
-    [InlineData("example.gif", CustomImagePartType.Gif)]
-    [InlineData("Kulek.jpg", CustomImagePartType.Jpeg)]
-    [InlineData("BackgroundImage.png", CustomImagePartType.Png)]
-    [InlineData("saturn.tif", CustomImagePartType.Tiff)]
-    [InlineData("sample.emf", CustomImagePartType.Emf)]
-    public void Test_GetImageСharacteristics(string filename, CustomImagePartType expectedType) {
+    [InlineData("snail.bmp", OfficeImageFormat.Bmp)]
+    [InlineData("example.gif", OfficeImageFormat.Gif)]
+    [InlineData("Kulek.jpg", OfficeImageFormat.Jpeg)]
+    [InlineData("BackgroundImage.png", OfficeImageFormat.Png)]
+    [InlineData("saturn.tif", OfficeImageFormat.Tiff)]
+    public void Test_GetImageСharacteristics(string filename, OfficeImageFormat expectedType) {
         var filePath = Path.Combine(_directoryWithImages, filename);
         using var imageStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         var imageСharacteristics = Helpers.GetImageCharacteristics(imageStream, filename);
         Assert.Equal(expectedType, imageСharacteristics.Type);
+    }
+
+    [Fact]
+    public void Test_GetImageCharacteristics_ForCompleteEmf() {
+        using var imageStream = new MemoryStream(CreateCompleteEmf());
+
+        var imageCharacteristics = Helpers.GetImageCharacteristics(imageStream, "sample.emf");
+
+        Assert.Equal(OfficeImageFormat.Emf, imageCharacteristics.Type);
+        Assert.Equal(2, imageCharacteristics.Width);
+        Assert.Equal(2, imageCharacteristics.Height);
     }
 
     [Fact]
@@ -30,7 +40,7 @@ public partial class Word {
 
         var imageCharacteristics = Helpers.GetImageCharacteristics(imageStream, "sample.wmf");
 
-        Assert.Equal(CustomImagePartType.Wmf, imageCharacteristics.Type);
+        Assert.Equal(OfficeImageFormat.Wmf, imageCharacteristics.Type);
         Assert.Equal(192, imageCharacteristics.Width);
         Assert.Equal(96, imageCharacteristics.Height);
     }
@@ -44,19 +54,6 @@ public partial class Word {
         Assert.Contains("Webp", exception.Message);
     }
 
-    [Theory]
-    [InlineData(CustomImagePartType.Bmp, "image/bmp")]
-    [InlineData(CustomImagePartType.Gif, "image/gif")]
-    [InlineData(CustomImagePartType.Jpeg, "image/jpeg")]
-    [InlineData(CustomImagePartType.Png, "image/png")]
-    [InlineData(CustomImagePartType.Tiff, "image/tiff")]
-    [InlineData(CustomImagePartType.Emf, "image/x-emf")]
-    [InlineData(CustomImagePartType.Wmf, "image/x-wmf")]
-    [InlineData(CustomImagePartType.Svg, "image/svg+xml")]
-    public void Test_CustomImagePartType_ToOpenXmlImagePartType(CustomImagePartType imagePartType, string expectedContentType) {
-        Assert.Equal(expectedContentType, imagePartType.ToOpenXmlImagePartType());
-    }
-
     [Fact]
     public void Test_GetImageCharacteristics_FromNonSeekableStream() {
         var filePath = Path.Combine(_directoryWithImages, "Kulek.jpg");
@@ -64,7 +61,7 @@ public partial class Word {
 
         var imageCharacteristics = Helpers.GetImageCharacteristics(imageStream, "Kulek.jpg");
 
-        Assert.Equal(CustomImagePartType.Jpeg, imageCharacteristics.Type);
+        Assert.Equal(OfficeImageFormat.Jpeg, imageCharacteristics.Type);
         Assert.True(imageCharacteristics.Width > 0);
         Assert.True(imageCharacteristics.Height > 0);
     }
@@ -85,6 +82,23 @@ public partial class Word {
         WriteUInt16LittleEndian(wmf, 44, 0x0201);
         WriteInt32LittleEndian(wmf, 50, 3);
         return wmf;
+    }
+
+    private static byte[] CreateCompleteEmf() {
+        var emf = new byte[108];
+        WriteInt32LittleEndian(emf, 0, 1);
+        WriteInt32LittleEndian(emf, 4, 88);
+        WriteInt32LittleEndian(emf, 16, 2);
+        WriteInt32LittleEndian(emf, 20, 2);
+        WriteInt32LittleEndian(emf, 40, 0x464D4520);
+        WriteInt32LittleEndian(emf, 44, 0x00010000);
+        WriteInt32LittleEndian(emf, 48, emf.Length);
+        WriteInt32LittleEndian(emf, 52, 2);
+        WriteUInt16LittleEndian(emf, 56, 1);
+        WriteInt32LittleEndian(emf, 88, 14);
+        WriteInt32LittleEndian(emf, 92, 20);
+        WriteInt32LittleEndian(emf, 104, 20);
+        return emf;
     }
 
     private static void WriteInt16LittleEndian(byte[] data, int offset, short value) {

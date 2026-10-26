@@ -37,7 +37,7 @@ namespace OfficeIMO.Tests {
                     presentation.Save();
                 }
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     PowerPointTextBox text = presentation.Slides[0].TextBoxes.Single();
                     PowerPointAutoShape accent = presentation.Slides[0].Shapes.OfType<PowerPointAutoShape>().Single();
                     Assert.Equal("Slide title", text.Title);
@@ -116,6 +116,13 @@ namespace OfficeIMO.Tests {
             using var stream = new MemoryStream();
             using PowerPointPresentation presentation = PowerPointPresentation.Create(stream, new PowerPointCreateOptions());
             presentation.AddDesignerSectionSlide("Delivery and evidence", "Accessible by default");
+            presentation.AddDesignerExecutiveSummarySlide("Executive summary", "Accessible metrics",
+                new PowerPointExecutiveSummaryContent(
+                    new[] { new PowerPointMetric("14", "proof slides"), new PowerPointMetric("0", "hidden rows") },
+                    Array.Empty<PowerPointCardContent>()),
+                options: new PowerPointExecutiveSummarySlideOptions {
+                    Variant = PowerPointExecutiveSummaryLayoutVariant.MetricLead
+                });
             presentation.AddDesignerProcessSlide("A controlled workflow", "Every step remains editable", new[] {
                 new PowerPointProcessStep("Inspect", "Read the source"),
                 new PowerPointProcessStep("Generate", "Create native content"),
@@ -166,7 +173,7 @@ namespace OfficeIMO.Tests {
             using PowerPointPresentation presentation = PowerPointPresentation.Create(stream, new PowerPointCreateOptions());
             PowerPointSlide slide = presentation.AddSlide();
             PowerPointTextBox inheritedTitle = presentation.EnsureLayoutPlaceholderTextBox(0, slide.LayoutIndex,
-                PlaceholderValues.Title, bounds: PowerPointLayoutBox.FromCentimeters(1D, 1D, 20D, 2D));
+                PowerPointPlaceholderType.Title, bounds: PowerPointLayoutBox.FromCentimeters(1D, 1D, 20D, 2D));
             inheritedTitle.Text = "Click to add title";
 
             PowerPointAccessibilityReport report = presentation.InspectAccessibility();
@@ -370,7 +377,7 @@ namespace OfficeIMO.Tests {
                     presentation.Save();
                 }
 
-                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                using (PowerPointPresentation presentation = PowerPointPresentation.Load(filePath, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     PowerPointAccessibilityReport imported = presentation.InspectAccessibility();
                     Assert.Equal(generatedCodes, imported.Findings.Select(finding => finding.Code));
                     Assert.True(imported.IsSuccessful);

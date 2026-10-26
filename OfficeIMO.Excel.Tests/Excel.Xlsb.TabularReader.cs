@@ -25,6 +25,7 @@ public partial class Excel {
                 new XlsbImportOptions(),
                 new XlsbRecordReadBudget(100),
                 new XlsbCellReadBudget(100),
+                new XlsbLogicalRowReadBudget(100),
                 CancellationToken.None));
 
         Assert.True(worksheetPart.WasDisposed);
@@ -46,6 +47,24 @@ public partial class Excel {
         Assert.True(reader.Read());
         Assert.Equal("Data", reader.GetString(0));
         Assert.False(reader.Read());
+    }
+
+    [Fact]
+    public void XlsbTabularReader_ChargesSparseRowsAgainstLogicalRowBudget() {
+        using var worksheetPart = CreateTabularWorksheet(
+            (0, 0U),
+            (100, 1U));
+        using var reader = CreateTabularReader(
+            worksheetPart,
+            new[] { "Value", "Data" },
+            hasHeaderRow: true,
+            new XlsbCellReadBudget(10),
+            logicalRowBudget: new XlsbLogicalRowReadBudget(4));
+
+        Assert.True(reader.Read());
+        Assert.True(reader.Read());
+        Assert.True(reader.Read());
+        Assert.Throws<InvalidDataException>(() => reader.Read());
     }
 
     [Fact]
@@ -208,6 +227,65 @@ public partial class Excel {
         Assert.Equal(2.5, reader.GetDouble(0));
         Assert.False(reader.Read());
         Assert.Equal(typeof(double), reader.GetFieldType(0));
+    }
+
+    [Fact]
+    public void XlsbTabularReader_ReadsEveryValueFromStableDenseRows() {
+        using var worksheetPart = CreateTabularWorksheet(
+            (0, 0U),
+            (1, 1U),
+            (2, 2U),
+            (3, 3U),
+            (4, 4U));
+        string[] values = ["Zero", "One", "Two", "Three", "Four"];
+        using var reader = CreateTabularReader(
+            worksheetPart,
+            values,
+            hasHeaderRow: false,
+            new XlsbCellReadBudget(10));
+
+        var actual = new List<string>();
+        while (reader.Read()) {
+            actual.Add(reader.GetString(0));
+        }
+
+        Assert.Equal(values, actual);
+    }
+
+    [Fact]
+    public void XlsbTabularReader_FallsBackWhenDenseRowLayoutChanges() {
+        using var worksheetPart = CreateLayoutChangingTabularWorksheet();
+        using var reader = CreateTabularReader(
+            worksheetPart,
+            new[] { "Zero", "One", "Two", "Three" },
+            hasHeaderRow: false,
+            new XlsbCellReadBudget(10));
+
+        object[] expected = ["Zero", "One", "Two", 4.5D, "Three"];
+        var actual = new List<object>();
+        while (reader.Read()) {
+            actual.Add(reader.GetValue(0));
+        }
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void XlsbTabularReader_DoesNotExposeTrailingEmptyRowFromDensePlan() {
+        using var worksheetPart = CreateTabularWorksheetWithTrailingEmptyRow();
+        string[] values = ["Zero", "One", "Two"];
+        using var reader = CreateTabularReader(
+            worksheetPart,
+            values,
+            hasHeaderRow: false,
+            new XlsbCellReadBudget(10));
+
+        var actual = new List<string>();
+        while (reader.Read()) {
+            actual.Add(reader.GetString(0));
+        }
+
+        Assert.Equal(values, actual);
     }
 
     [Fact]
@@ -729,7 +807,8 @@ public partial class Excel {
         XlsbCellReadBudget cellBudget,
         ExcelReadOptions? options = null,
         XlsbRecordReadBudget? recordBudget = null,
-        bool dateStyle = false) =>
+        bool dateStyle = false,
+        XlsbLogicalRowReadBudget? logicalRowBudget = null) =>
         new(
             worksheetPart,
             sharedStrings,
@@ -740,6 +819,7 @@ public partial class Excel {
             new XlsbImportOptions(),
             recordBudget ?? new XlsbRecordReadBudget(100),
             cellBudget,
+            logicalRowBudget ?? new XlsbLogicalRowReadBudget(100),
             CancellationToken.None);
 
     private static MemoryStream CreateTabularWorksheet(params (int RowIndex, uint SharedStringIndex)[] rows) {
@@ -785,6 +865,43 @@ public partial class Excel {
         XlsbRecordWriter.Write(stream, 5, CreateRealCellPayload(0, 1.25));
         XlsbRecordWriter.Write(stream, 0, CreateTabularRowHeaderPayload(1));
         XlsbRecordWriter.Write(stream, 7, CreateSharedStringCellPayload(0, 0U));
+        XlsbRecordWriter.Write(stream, 146);
+        XlsbRecordWriter.Write(stream, 130);
+        stream.Position = 0;
+        return stream;
+    }
+
+    private static MemoryStream CreateLayoutChangingTabularWorksheet() {
+        var stream = new MemoryStream();
+        XlsbRecordWriter.Write(stream, 129);
+        XlsbRecordWriter.Write(stream, 148, CreateWorksheetDimensionPayload(0, 4, 0, 0));
+        XlsbRecordWriter.Write(stream, 145);
+        for (int rowIndex = 0; rowIndex < 3; rowIndex++) {
+            XlsbRecordWriter.Write(stream, 0, CreateTabularRowHeaderPayload(rowIndex));
+            XlsbRecordWriter.Write(stream, 7, CreateSharedStringCellPayload(0, (uint)rowIndex));
+        }
+
+        XlsbRecordWriter.Write(stream, 0, CreateTabularRowHeaderPayload(3));
+        XlsbRecordWriter.Write(stream, 5, CreateRealCellPayload(0, 4.5D));
+        XlsbRecordWriter.Write(stream, 0, CreateTabularRowHeaderPayload(4));
+        XlsbRecordWriter.Write(stream, 7, CreateSharedStringCellPayload(0, 3U));
+        XlsbRecordWriter.Write(stream, 146);
+        XlsbRecordWriter.Write(stream, 130);
+        stream.Position = 0;
+        return stream;
+    }
+
+    private static MemoryStream CreateTabularWorksheetWithTrailingEmptyRow() {
+        var stream = new MemoryStream();
+        XlsbRecordWriter.Write(stream, 129);
+        XlsbRecordWriter.Write(stream, 148, CreateWorksheetDimensionPayload(0, 3, 0, 0));
+        XlsbRecordWriter.Write(stream, 145);
+        for (int rowIndex = 0; rowIndex < 3; rowIndex++) {
+            XlsbRecordWriter.Write(stream, 0, CreateTabularRowHeaderPayload(rowIndex));
+            XlsbRecordWriter.Write(stream, 7, CreateSharedStringCellPayload(0, (uint)rowIndex));
+        }
+
+        XlsbRecordWriter.Write(stream, 0, CreateTabularRowHeaderPayload(3));
         XlsbRecordWriter.Write(stream, 146);
         XlsbRecordWriter.Write(stream, 130);
         stream.Position = 0;

@@ -23,7 +23,7 @@ namespace OfficeIMO.Tests {
             Assert.DoesNotContain(new string('x', 256), result.RequireValue(), StringComparison.Ordinal);
             Assert.Contains(result.Report.Diagnostics, diagnostic =>
                 diagnostic.Code == "TrackedRevisionTextOmitted" &&
-                diagnostic.LossKind == HtmlConversionLossKind.Omission);
+                diagnostic.LossKind == OfficeConversionLossKind.Omission);
         }
 
         [Fact]
@@ -191,10 +191,10 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create();
             document.AddParagraph("First section");
             for (int index = 1; index < 32; index++) {
-                document.AddSection(SectionMarkValues.NextPage).AddParagraph("Section " + index);
+                document.AddSection(WordSectionBreakType.NextPage).AddParagraph("Section " + index);
             }
             foreach (WordSection section in document.Sections) {
-                section.PageOrientation = PageOrientationValues.Landscape;
+                section.PageOrientation = OfficePageOrientation.Landscape;
                 section.PageSettings.PageSize = WordPageSize.Letter;
                 section.Margins.Top = 1440;
                 section.Margins.Right = 1200;
@@ -528,12 +528,12 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create();
             document.AddParagraph("Body");
             WordSection firstSection = document.Sections[0];
-            firstSection.GetOrCreateHeader(HeaderFooterValues.Default)
+            firstSection.GetOrCreateHeader(WordHeaderFooterType.Default)
                 .AddParagraph(new string('H', 1024));
             string relationshipId = firstSection._sectionProperties
                 .GetFirstChild<HeaderReference>()!.Id!;
             for (int index = 0; index < 8; index++) {
-                WordSection section = document.AddSection(SectionMarkValues.NextPage);
+                WordSection section = document.AddSection(WordSectionBreakType.NextPage);
                 section._sectionProperties.InsertAt(new HeaderReference {
                     Type = HeaderFooterValues.Default,
                     Id = relationshipId
@@ -560,7 +560,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Body");
             WordSection firstSection = document.Sections[0];
             WordParagraph headerParagraph = firstSection
-                .GetOrCreateHeader(HeaderFooterValues.Default)
+                .GetOrCreateHeader(WordHeaderFooterType.Default)
                 .AddParagraph();
             headerParagraph._paragraph.Append(new Run(
                 new RunProperties(new RunFonts { Ascii = new string('F', 2048) }),
@@ -568,7 +568,7 @@ namespace OfficeIMO.Tests {
             string relationshipId = firstSection._sectionProperties
                 .GetFirstChild<HeaderReference>()!.Id!;
             for (int index = 0; index < 2; index++) {
-                WordSection section = document.AddSection(SectionMarkValues.NextPage);
+                WordSection section = document.AddSection(WordSectionBreakType.NextPage);
                 section._sectionProperties.InsertAt(new HeaderReference {
                     Type = HeaderFooterValues.Default,
                     Id = relationshipId
@@ -591,7 +591,7 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
-        public void Test_WordToHtml_OutputBudgetBoundsMathMlBeforeFragmentParsing() {
+        public void Test_WordToHtml_OutputBudgetBoundsEquationLabelBeforeMaterialization() {
             using WordDocument document = WordDocument.Create();
             document.AddParagraph()._paragraph.Append(
                 new M.OfficeMath(new M.Run(new M.Text(new string('&', 4096)))));
@@ -603,8 +603,10 @@ namespace OfficeIMO.Tests {
                 }));
 
             Assert.Equal("WordHtmlOutputLimitExceeded", exception.Code);
-            Assert.Equal("EquationMathMl", exception.LimitSource);
+            Assert.Equal("EquationAriaLabel", exception.LimitSource);
+            Assert.Equal(4096, exception.Limit);
             Assert.True(exception.Actual > exception.Limit);
+            Assert.Equal($"Actual={exception.Actual}; Limit={exception.Limit}", exception.Detail);
         }
 
         [Fact]

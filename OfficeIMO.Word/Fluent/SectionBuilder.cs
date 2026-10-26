@@ -26,14 +26,14 @@ namespace OfficeIMO.Word.Fluent {
         /// Starts a new section on the next page.
         /// </summary>
         public SectionBuilder New() {
-            return New(SectionMarkValues.NextPage);
+            return New(WordSectionBreakType.NextPage);
         }
 
         /// <summary>
-        /// Starts a new section using the specified break type.
+        /// Starts a new section using the specified OfficeIMO break type.
         /// </summary>
         /// <param name="breakType">Section break type.</param>
-        public SectionBuilder New(SectionMarkValues breakType) {
+        public SectionBuilder New(WordSectionBreakType breakType) {
             var section = _fluent.Document.AddSection(breakType);
             return new SectionBuilder(_fluent, section);
         }
@@ -56,7 +56,7 @@ namespace OfficeIMO.Word.Fluent {
         /// </summary>
         /// <param name="format">Number format.</param>
         /// <param name="restart">Restart numbering at 1.</param>
-        public SectionBuilder PageNumbering(NumberFormatValues format, bool restart = false) {
+        public SectionBuilder PageNumbering(WordNumberFormat format, bool restart = false) {
             if (_section == null) {
                 throw new InvalidOperationException("No section available to configure.");
             }
@@ -108,7 +108,7 @@ namespace OfficeIMO.Word.Fluent {
         /// Sets the page orientation for the section.
         /// </summary>
         /// <param name="orientation">Orientation value.</param>
-        public SectionBuilder Orientation(PageOrientationValues orientation) {
+        public SectionBuilder Orientation(OfficePageOrientation orientation) {
             if (_section == null) {
                 throw new InvalidOperationException("No section available to configure. Call New() before setting orientation.");
             }
@@ -134,9 +134,9 @@ namespace OfficeIMO.Word.Fluent {
         /// Adds a paragraph to the section.
         /// </summary>
         /// <param name="action">Configuration action for the paragraph.</param>
-        public SectionBuilder Paragraph(Action<ParagraphBuilder> action) {
+        public SectionBuilder Paragraph(Action<WordParagraphBuilder> action) {
             var paragraph = _section != null ? _section.AddParagraph() : _fluent.Document.AddParagraph();
-            action(new ParagraphBuilder(_fluent, paragraph));
+            action(new WordParagraphBuilder(_fluent, paragraph));
             return this;
         }
 
@@ -144,12 +144,12 @@ namespace OfficeIMO.Word.Fluent {
         /// Adds a table to the section.
         /// </summary>
         /// <param name="action">Configuration action for the table.</param>
-        public SectionBuilder Table(Action<TableBuilder> action) {
+        public SectionBuilder Table(Action<WordTableBuilder> action) {
             if (_section != null) {
                 var table = _section.AddTable(1, 1);
-                action(new TableBuilder(_fluent, table));
+                action(new WordTableBuilder(_fluent, table));
             } else {
-                action(new TableBuilder(_fluent));
+                action(new WordTableBuilder(_fluent));
             }
             return this;
         }

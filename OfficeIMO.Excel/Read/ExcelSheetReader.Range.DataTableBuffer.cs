@@ -17,7 +17,7 @@ namespace OfficeIMO.Excel {
         /// Reads a rectangular range to a DataTable. If headersInFirstRow = true, first row becomes column names.
         /// </summary>
         [UnconditionalSuppressMessage("Trimming", "IL2062", Justification = "Inferred worksheet column types are normalized to OfficeIMO's closed scalar set and are used only as DataColumn conversion tokens.")]
-        public DataTable ReadRangeAsDataTable(string a1Range, bool headersInFirstRow = true, OfficeIMO.Excel.ExecutionMode? mode = null, CancellationToken ct = default) {
+        public DataTable ReadRangeAsDataTable(string a1Range, bool headersInFirstRow = true, OfficeIMO.Excel.ExcelExecutionMode? mode = null, CancellationToken ct = default) {
             var (r1, c1, r2, c2) = A1.ParseRange(a1Range);
             if (r1 > r2 || c1 > c2) throw new ArgumentException($"Invalid range '{a1Range}'.");
 
@@ -37,37 +37,22 @@ namespace OfficeIMO.Excel {
             var policy = _opt.Execution;
             var decided = mode ?? policy.Mode;
             int workload = checked((int)cellCount);
-            if (decided == OfficeIMO.Excel.ExecutionMode.Automatic) {
-                if (CanUseAutomaticXmlReadFastPath(policy)) {
-                    if (TryFillDataTableXmlBufferedSinglePass(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, workload, ct)) {
-                        return dt;
-                    }
+            bool automaticDecision = decided == OfficeIMO.Excel.ExcelExecutionMode.Automatic;
+            if (TryFillDataTableXmlBufferedSinglePass(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, workload, ct)
+                || TryFillDataTableXmlFast(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, ct)
+                || TryFillDataTableSequentialSinglePass(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, ct)) {
+                policy.ReportDecision("ReadRangeAsDataTable", workload, OfficeIMO.Excel.ExcelExecutionMode.Sequential);
 
-                    if (TryFillDataTableXmlFast(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, ct)) {
-                        return dt;
-                    }
-
-                    if (TryFillDataTableSequentialSinglePass(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, ct)) {
-                        return dt;
-                    }
-                }
-
-                decided = policy.Decide("ReadRangeAsDataTable", workload);
+                return dt;
             }
 
-            if (decided == OfficeIMO.Excel.ExecutionMode.Sequential) {
-                if (TryFillDataTableXmlBufferedSinglePass(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, workload, ct)) {
-                    return dt;
-                }
+            if (automaticDecision) {
+                decided = policy.Decide("ReadRangeAsDataTable", workload);
+            } else {
+                policy.ReportDecision("ReadRangeAsDataTable", workload, decided);
+            }
 
-                if (TryFillDataTableXmlFast(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, ct)) {
-                    return dt;
-                }
-
-                if (TryFillDataTableSequentialSinglePass(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, ct)) {
-                    return dt;
-                }
-
+            if (decided == OfficeIMO.Excel.ExcelExecutionMode.Sequential) {
                 FillDataTableSequential(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, ct);
                 return dt;
             }

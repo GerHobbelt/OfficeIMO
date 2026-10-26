@@ -20,23 +20,23 @@ namespace OfficeIMO.Examples.Word {
                 table.ConditionalFormatting(
                     "Status",
                     "Done",
-                    TextMatchType.Equals,
+                    WordTextMatchType.Equals,
                     matchFillColorHex: "92d050",
                     noMatchFillColorHex: "ff0000",
                     matchTextFormat: p => p.SetBold(),
-                    noMatchTextFormat: p => p.SetUnderline(UnderlineValues.Single));
+                    noMatchTextFormat: p => p.SetUnderline(WordUnderlineStyle.Single));
 
                 table.ConditionalFormatting(
                     new[] {
-                        ("Status", "Done", TextMatchType.Equals),
-                        ("Name", "Task1", TextMatchType.StartsWith)
+                        ("Status", "Done", WordTextMatchType.Equals),
+                        ("Name", "Task1", WordTextMatchType.StartsWith)
                     },
                     matchAll: true,
                     matchFillColorHex: "92d050",
                     noMatchFillColorHex: "ff0000",
                     highlightColumns: new[] { "Name" },
                     matchTextFormat: p => p.SetBold(),
-                    noMatchTextFormat: p => p.SetUnderline(UnderlineValues.Single));
+                    noMatchTextFormat: p => p.SetUnderline(WordUnderlineStyle.Single));
 
                 document.Save();
                 if (openWord) document.OpenInApplication();

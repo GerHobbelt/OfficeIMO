@@ -13,6 +13,9 @@ If OfficeIMO saves you time, please consider supporting the work through [GitHub
 dotnet add package OfficeIMO.Word
 ```
 
+Upgrading from OfficeIMO 3.0? The regular create, load, edit, and save workflow
+keeps the same shape. Start with the [short Word-first 3.1 migration path](../MIGRATION.md#start-here-most-officeimoword-applications) for the package, enum, and type replacements most Word applications need.
+
 Document authoring, reading, signature inspection, and safe signed-package handling do not require the security
 package. Install it only when the application creates or cryptographically validates OPC or VBA signatures:
 
@@ -37,6 +40,20 @@ table.Rows[1].Cells[0].Paragraphs[0].Text = "Documents";
 table.Rows[1].Cells[1].Paragraphs[0].Text = "Generated";
 table.RepeatHeaderRowAtTheTopOfEachPage = true;
 table.Style = WordTableStyle.TableGrid;
+
+document.Save();
+```
+
+`AsFluent()` wraps the same `WordDocument`; `End()` returns that document for
+direct object-model work:
+
+```csharp
+using var document = WordDocument.Create("report.docx");
+
+document.AsFluent()
+    .H1("Quarterly report")
+    .Paragraph(paragraph => paragraph.Text("Created with OfficeIMO.Word."))
+    .End();
 
 document.Save();
 ```
@@ -126,6 +143,36 @@ document.AddParagraph("Chapter 1").Style = WordParagraphStyles.Heading1;
 document.AddParagraph("Section 1.1").Style = WordParagraphStyles.Heading2;
 document.Paragraphs[0].AddField(WordFieldType.TOC);
 ```
+
+### Plain DOCX templates
+
+Use ordinary `{{Name}}` placeholders when a Word-authored layout should bind directly to an application model. Scalar placeholders retain the formatting of the first template run, while repeated and conditional marker paragraphs can surround paragraphs, lists, or tables.
+
+```csharp
+using var document = WordDocument.Load("invoice-template.docx");
+
+var values = new Dictionary<string, object?> {
+    ["Customer"] = new Dictionary<string, object?> { ["Name"] = "Northwind Traders" },
+    ["Lines"] = new object[] {
+        new Dictionary<string, object?> { ["Description"] = "Assessment", ["Amount"] = 1200m },
+        new Dictionary<string, object?> { ["Description"] = "Implementation", ["Amount"] = 3400m }
+    },
+    ["Portal"] = new WordTemplateHyperlink("Open invoice", new Uri("https://example.com/invoices/42"))
+};
+
+WordTemplateResult result = WordTemplate.Apply(document, values).EnsureComplete();
+document.Save("invoice-42.docx");
+```
+
+Inside the DOCX, use `{{Customer.Name}}` for values and put block markers on their own paragraphs:
+
+```text
+{{#each Lines}}
+{{Description}} — {{Amount}}
+{{/each Lines}}
+```
+
+The dictionary overload is trimming and NativeAOT safe. A POCO overload is available for convenience and is annotated because it reflects over public properties. See the [template guide](https://officeimo.com/docs/word/templates/) for conditions, nested blocks, images, diagnostics, and the executable proof workflow.
 
 ### Mail merge fields
 
@@ -310,7 +357,7 @@ richer note body structures, and richer header/footer or section shapes are
 diagnosed or blocked rather than silently flattened. `WordDocument.Convert(...)`
 uses those same load and save paths and blocks legacy sources with unsupported
 or preserve-only content by default. Set `LossPolicy` to
-`WordConversionLossPolicy.Allow` on `WordDocumentConversionOptions` or
+`OfficeConversionLossPolicy.Allow` on `WordDocumentConversionOptions` or
 `WordSaveOptions` only when that loss has been reviewed and is intentional.
 See [DOC and DOCX compatibility](../Docs/officeimo.word.legacy-doc-compatibility.md)
 for the current capability matrix and safety contract. Use the
@@ -322,7 +369,7 @@ for the current capability matrix and safety contract. Use the
 using DocumentFormat.OpenXml.Wordprocessing;
 
 document.Settings.ProtectionPassword = "owner-password";
-document.Settings.ProtectionType = DocumentProtectionValues.ReadOnly;
+document.Settings.ProtectionType = WordDocumentProtectionType.ReadOnly;
 ```
 
 ### Editable equations from the shared math model
@@ -363,12 +410,13 @@ byte[] webp = document.ToWebp(new WordImageExportOptions { PageIndex = 0, Scale 
 
 document.ToImage()
     .Page(0)
+    .FitWithin(1600, 1200)
     .AsJpeg()
     .WithRasterEncoding(raster => raster.Jpeg.Quality = 90)
     .Save("page-1.jpg");
 ```
 
-The document package owns Word pagination and diagnostics; `OfficeIMO.Drawing` owns pixels and encoding. `SaveAsJpeg`, `SaveAsTiff`, and `SaveAsWebp` are thin convenience wrappers over the same builder.
+The document package owns Word pagination and diagnostics; `OfficeIMO.Drawing` owns sizing, pixels, and encoding. The same fit limit applies to SVG and raster output. `SaveAsJpeg`, `SaveAsTiff`, and `SaveAsWebp` are thin convenience wrappers over the same builder.
 
 ## Adjacent packages
 
@@ -397,7 +445,7 @@ Runnable samples live under [OfficeIMO.Examples/Word](../OfficeIMO.Examples/Word
 ## Dependency footprint
 
 - **External:** Open XML SDK for `.docx` package mechanics. Microsoft BCL compatibility packages are used on older targets.
-- **OfficeIMO:** `OfficeIMO.Drawing`. The fluent model, native OMML adapter, legacy `.doc` reader/writer, lifecycle, validation, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
+- **OfficeIMO:** `OfficeIMO.Core`. The fluent model, native OMML adapter, legacy `.doc` reader/writer, lifecycle, validation, and PNG/JPEG/TIFF/WebP/SVG export are first-party.
 - **Optional security:** install `OfficeIMO.Security` and pass `OfficeSecurityProvider.Default` only for OPC/VBA signing or cryptographic validation. It is not a transitive Word dependency.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

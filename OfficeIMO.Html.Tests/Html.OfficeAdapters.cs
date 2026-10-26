@@ -11,7 +11,7 @@ using Xunit;
 
 namespace OfficeIMO.Tests;
 
-public class HtmlOfficeAdapters {
+public partial class HtmlOfficeAdapters {
     private static readonly byte[] OnePixelPng = Convert.FromBase64String(
         "iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABFSURBVEhLY1BNfv2flpgBXYDaeBhaILCzkSKMbt6oBRgY3bxRCzAwunmjFmBgdPNGLcDA6OaNWoCB0c3DsIDaeNQCghgAFxBXzP1LTe4AAAAASUVORK5CYII=");
 
@@ -74,7 +74,7 @@ public class HtmlOfficeAdapters {
         });
 
         Assert.Contains("data-officeimo-profile=\"ExcelVisualReview\"", html, StringComparison.Ordinal);
-        Assert.Contains("data-officeimo-visual-owner=\"OfficeIMO.Drawing\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-officeimo-visual-owner=\"OfficeIMO.Core\"", html, StringComparison.Ordinal);
         Assert.Contains("<svg", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Ready", html, StringComparison.Ordinal);
         Assert.Contains("Visual Chart", html, StringComparison.Ordinal);
@@ -520,7 +520,7 @@ public class HtmlOfficeAdapters {
         HtmlDiagnostic diagnostic = Assert.Single(result.Report.Diagnostics);
         Assert.Equal(HtmlConversionDiagnosticCodes.SemanticContentMissing, diagnostic.Code);
         Assert.Equal(HtmlDiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(HtmlConversionLossKind.Failure, diagnostic.LossKind);
+        Assert.Equal(OfficeConversionLossKind.Failure, diagnostic.LossKind);
         Assert.Contains("No semantic Excel sheet sections", diagnostic.Message, StringComparison.Ordinal);
     }
 
@@ -692,7 +692,7 @@ public class HtmlOfficeAdapters {
         using var stream = new MemoryStream();
         imported.Save(stream);
         stream.Position = 0;
-        using ExcelDocument persisted = ExcelDocument.Load(stream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+        using ExcelDocument persisted = ExcelDocument.Load(stream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
         ExcelSheet importedSheet = Assert.Single(persisted.Sheets);
 
         Assert.True(importedSheet.TryGetCellValueSnapshot(1, 1, out ExcelCellValueSnapshot? snapshot));
@@ -1060,7 +1060,7 @@ public class HtmlOfficeAdapters {
         slide.AddTextBox("HTML end to end");
         slide.Notes.Text = "Presenter reminder";
         using (var image = new MemoryStream(OnePixelPng)) {
-            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 72, 140, 72, 72);
+            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 72, 140, 72, 72);
             picture.Name = "Architecture badge";
             picture.AltText = "Reusable renderer badge";
         }
@@ -1095,7 +1095,7 @@ public class HtmlOfficeAdapters {
         PowerPointSlide slide = presentation.AddSlide();
         slide.AddTextBoxPoints("Positioned", 72, 96, 240, 60);
         using (var image = new MemoryStream(OnePixelPng)) {
-            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 72, 180, 72, 72);
+            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 72, 180, 72, 72);
             picture.AltText = "Positioned image";
         }
 
@@ -1114,7 +1114,7 @@ public class HtmlOfficeAdapters {
         Assert.Contains("Positioned", html, StringComparison.Ordinal);
         Assert.Contains("data:image/png;base64", html, StringComparison.Ordinal);
         Assert.Contains("officeimo-chart-rendered", html, StringComparison.Ordinal);
-        Assert.Contains("data-officeimo-visual-owner=\"OfficeIMO.Drawing\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-officeimo-visual-owner=\"OfficeIMO.Core\"", html, StringComparison.Ordinal);
         Assert.Contains("data-officeimo-chart-kind=\"ColumnClustered\"", html, StringComparison.Ordinal);
         Assert.Contains("<svg", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Positioned Pipeline", html, StringComparison.Ordinal);
@@ -1128,7 +1128,7 @@ public class HtmlOfficeAdapters {
         PowerPointTextBox hidden = slide.AddTextBox("Hidden briefing");
         hidden.Hidden = true;
         using (var image = new MemoryStream(OnePixelPng)) {
-            PowerPointPicture hiddenPicture = slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 80, 90, 120, 72);
+            PowerPointPicture hiddenPicture = slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 80, 90, 120, 72);
             hiddenPicture.Name = "Hidden image marker";
             hiddenPicture.Hidden = true;
         }
@@ -1219,7 +1219,7 @@ public class HtmlOfficeAdapters {
         slide.AddTextBoxPoints("Positioned proof", 72, 96, 240, 60);
         slide.Notes.Text = "Gallery notes";
         using (var image = new MemoryStream(OnePixelPng)) {
-            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 72, 180, 72, 72);
+            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 72, 180, 72, 72);
             picture.AltText = "Gallery picture";
         }
 
@@ -1270,7 +1270,7 @@ public class HtmlOfficeAdapters {
         Assert.Contains("Rich proof", File.ReadAllText(visualPath), StringComparison.Ordinal);
         string visualHtml = File.ReadAllText(visualPath);
         Assert.Contains("officeimo-chart-rendered", visualHtml, StringComparison.Ordinal);
-        Assert.Contains("data-officeimo-visual-owner=\"OfficeIMO.Drawing\"", visualHtml, StringComparison.Ordinal);
+        Assert.Contains("data-officeimo-visual-owner=\"OfficeIMO.Core\"", visualHtml, StringComparison.Ordinal);
         Assert.Contains("<svg", visualHtml, StringComparison.OrdinalIgnoreCase);
 
         string manifestJson = File.ReadAllText(manifestJsonPath);
@@ -1300,7 +1300,7 @@ public class HtmlOfficeAdapters {
         slide.AddTextBoxPoints("HTML end to end", 72, 96, 240, 60);
         slide.Notes.Text = "Presenter reminder";
         using (var image = new MemoryStream(OnePixelPng)) {
-            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 72, 180, 72, 72);
+            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 72, 180, 72, 72);
             picture.Name = "Architecture badge";
             picture.AltText = "Reusable renderer badge";
         }
@@ -1374,7 +1374,7 @@ public class HtmlOfficeAdapters {
         using PowerPointPresentation presentation = PowerPointPresentation.Create(new MemoryStream());
         PowerPointSlide slide = presentation.AddSlide();
         using (var image = new MemoryStream(OnePixelPng)) {
-            slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, -18, -12, 72, 72);
+            slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, -18, -12, 72, 72);
         }
 
         string html = presentation.ToHtml(new PowerPointHtmlSaveOptions {
@@ -1395,7 +1395,7 @@ public class HtmlOfficeAdapters {
         using PowerPointPresentation presentation = PowerPointPresentation.Create(new MemoryStream());
         PowerPointSlide slide = presentation.AddSlide();
         using (var image = new MemoryStream(OnePixelPng)) {
-            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 80, 90, 120, 72);
+            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 80, 90, 120, 72);
             picture.Name = "Transformed picture";
             picture.AltText = "Transformed alt";
             picture.Rotation = 23.5D;
@@ -1435,7 +1435,7 @@ public class HtmlOfficeAdapters {
         using PowerPointPresentation presentation = PowerPointPresentation.Create(new MemoryStream());
         PowerPointSlide slide = presentation.AddSlide();
         using (var image = new MemoryStream(OnePixelPng)) {
-            slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 40, 40, 80, 60)
+            slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 40, 40, 80, 60)
                 .Crop(10D, 0D, 10D, 0D);
         }
         string html = presentation.ToHtml(new PowerPointHtmlSaveOptions {
@@ -1469,7 +1469,7 @@ public class HtmlOfficeAdapters {
         chart.HorizontalFlip = true;
         chart.VerticalFlip = true;
         using (var image = new MemoryStream(OnePixelPng)) {
-            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 96, 100, 80, 64);
+            PowerPointPicture picture = slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 96, 100, 80, 64);
             picture.Name = "Top picture";
         }
 
@@ -1500,7 +1500,7 @@ public class HtmlOfficeAdapters {
         using PowerPointPresentation presentation = PowerPointPresentation.Create(new MemoryStream());
         PowerPointSlide slide = presentation.AddSlide();
         using (var image = new MemoryStream(OnePixelPng)) {
-            slide.AddPicturePoints(image, OfficeIMO.PowerPoint.ImagePartType.Png, 40, 50, 180, 60);
+            slide.AddPicturePoints(image, OfficeIMO.Drawing.OfficeImageFormat.Png, 40, 50, 180, 60);
         }
 
         string html = presentation.ToHtml(new PowerPointHtmlSaveOptions {

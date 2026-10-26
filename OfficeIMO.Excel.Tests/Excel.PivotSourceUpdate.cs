@@ -21,7 +21,7 @@ namespace OfficeIMO.Tests {
                     name: "SalesPivot",
                     rowFields: new[] { "Region" },
                     columnFields: new[] { "Product" },
-                    dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum, "Total Sales") },
+                    dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum, "Total Sales") },
                     options: new ExcelPivotTableOptions { SaveSourceData = true });
 
                 ExcelSheet mismatch = document.AddWorksheet("Mismatch");
@@ -68,7 +68,7 @@ namespace OfficeIMO.Tests {
                 Assert.Empty(records.ChildElements);
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelPivotTableInfo pivot = Assert.Single(document.GetPivotTables());
                 Assert.Equal("Expanded", pivot.SourceSheet);
                 Assert.Equal("A1:C5", pivot.SourceRange);
@@ -91,7 +91,7 @@ namespace OfficeIMO.Tests {
                     destinationCell: "E2",
                     name: "SalesPivot",
                     rowFields: new[] { "Region" },
-                    dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum) });
+                    dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum) });
 
                 PivotTableCacheDefinitionPart cachePart = original.WorksheetPart.PivotTableParts
                     .Single()
@@ -122,7 +122,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -139,7 +139,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "E2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum) });
+                dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum) });
 
             ExcelSheet renamed = document.AddWorksheet("Renamed");
             WritePivotSource(renamed, "Area", "Item", "Amount", 4);

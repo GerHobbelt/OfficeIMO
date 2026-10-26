@@ -1,3 +1,5 @@
+using OfficeIMO.Data;
+
 namespace OfficeIMO.Excel.Fluent {
     /// <summary>
     /// Simple multi-column layout for placing lightweight blocks side by side.
@@ -83,32 +85,41 @@ namespace OfficeIMO.Excel.Fluent {
             /// </summary>
             public string TableFrom<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicProperties | System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicFields)] T>(IEnumerable<T> items, string? title = null,
                 System.Action<ObjectFlattenerOptions>? configure = null,
-                TableStyle style = TableStyle.TableStyleMedium9,
+                ExcelTableStyle style = ExcelTableStyle.TableStyleMedium9,
                 bool autoFilter = true,
                 System.Action<TableVisualOptions>? visuals = null) {
                 if (!string.IsNullOrWhiteSpace(title)) Section(title!);
 
                 var opts = new ObjectFlattenerOptions();
                 configure?.Invoke(opts);
+                opts.MaxColumns = System.Math.Min(opts.MaxColumns, A1.MaxColumns);
                 var flattener = new ObjectFlattener();
+                int availableSheetColumns = A1.MaxColumns - _baseCol + 1;
+                int maximumRenderedColumns = _maxTableColumns.HasValue
+                    ? Math.Min(_maxTableColumns.Value, availableSheetColumns)
+                    : availableSheetColumns;
+                int? renderedColumnCountForCellLimit = _maxTableColumns.HasValue &&
+                                                       _overflowMode != OverflowMode.Throw
+                    ? maximumRenderedColumns
+                    : null;
 
-                var rows = FlattenTableRows(items, flattener, opts);
+                ObjectTableProjection projection = flattener.FlattenRows(
+                    items,
+                    opts,
+                    "ColumnComposer TableFrom",
+                    headerRowCount: 1,
+                    enforceEmptyProjectionLimits: false,
+                    renderedColumnCountForCellLimit: renderedColumnCountForCellLimit);
+                IReadOnlyList<Dictionary<string, object?>> rows = projection.Rows;
                 if (rows.Count == 0) {
                     _sheet.Cell(_row, _baseCol, "(no data)");
                     _row++;
                     return $"{SheetComposer.ColumnLetter(_baseCol)}{_row - 1}:{SheetComposer.ColumnLetter(_baseCol)}{_row - 1}";
                 }
 
-                var paths = opts.Columns?.ToList();
-                if (paths == null) {
-                    paths = rows.SelectMany(r => r.Keys)
-                        .Where(k => !string.IsNullOrWhiteSpace(k))
-                        .Distinct(System.StringComparer.OrdinalIgnoreCase)
-                        .OrderBy(s => s, System.StringComparer.Ordinal)
-                        .ToList();
-                    // Respect selection (Ignore/Exclude/Include) and ordering (Pinned/Priority)
-                    paths = flattener.ResolvePaths(paths, opts);
-                }
+                List<string> paths = opts.Columns == null
+                    ? projection.Columns.OrderBy(path => path, System.StringComparer.Ordinal).ToList()
+                    : projection.Columns.ToList();
                 if (paths.Count == 0) {
                     _sheet.Cell(_row, _baseCol, "(no tabular columns)");
                     _row++;
@@ -121,14 +132,14 @@ namespace OfficeIMO.Excel.Fluent {
                 bool summarize = false;
                 List<string>? summarizedPaths = null;
                 List<string>? summarizedLabels = null;
-                if (_maxTableColumns.HasValue && paths.Count > _maxTableColumns.Value) {
+                if (paths.Count > maximumRenderedColumns) {
                     if (_overflowMode == OverflowMode.Throw)
-                        throw new InvalidOperationException($"Table has {paths.Count} columns but only {_maxTableColumns.Value} fit in the fixed grid. Increase columnWidth or use ColumnsAdaptive(...).");
+                        throw new InvalidOperationException($"Table has {paths.Count} columns but only {maximumRenderedColumns} fit in the fixed grid and worksheet boundary. Increase columnWidth, move the table, or use ColumnsAdaptive(...).");
                     if (_overflowMode == OverflowMode.Shrink) {
-                        effPaths = paths.Take(_maxTableColumns.Value).ToList();
+                        effPaths = paths.Take(maximumRenderedColumns).ToList();
                         _sheet.EffectiveExecution.ReportInfo($"[Columns Shrink] Sheet='{_sheet.Name}', baseCol={_baseCol}, kept={effPaths.Count}, dropped={paths.Count - effPaths.Count}");
                     } else if (_overflowMode == OverflowMode.Summarize) {
-                        int keep = Math.Max(0, _maxTableColumns.Value - 1);
+                        int keep = Math.Max(0, maximumRenderedColumns - 1);
                         if (keep <= 0) {
                             effPaths = new List<string> { "__More__" };
                         } else {
@@ -140,6 +151,11 @@ namespace OfficeIMO.Excel.Fluent {
                         summarizedLabels = BuildTransformedHeaders(summarizedPaths, opts);
                         _sheet.EffectiveExecution.ReportInfo($"[Columns Summarize] Sheet='{_sheet.Name}', baseCol={_baseCol}, kept={(effPaths.Contains("__More__") ? effPaths.Count - 1 : effPaths.Count)}, summarized={paths.Count - (effPaths.Contains("__More__") ? effPaths.Count - 1 : effPaths.Count)}");
                     }
+                }
+
+                if (effPaths.Count > availableSheetColumns) {
+                    throw new InvalidDataException(
+                        $"ColumnComposer TableFrom exceeds the {availableSheetColumns}-column worksheet boundary at column {_baseCol}.");
                 }
 
                 var headersT = effPaths.Select(p => p == "__More__" ? "More" : SheetComposer.TransformHeader(p, opts)).ToList();
@@ -184,10 +200,6 @@ namespace OfficeIMO.Excel.Fluent {
                 }
 
                 _sheet.CellValues(cells);
-                for (int i = 0; i < headersT.Count; i++) {
-                    _sheet.CellBold(headerRow, _baseCol + i, true);
-                    _sheet.CellBackground(headerRow, _baseCol + i, _theme.KeyFillHex);
-                }
 
                 int lastRow = _row - 1;
                 string start = SheetComposer.ColumnLetter(_baseCol) + headerRow.ToString();

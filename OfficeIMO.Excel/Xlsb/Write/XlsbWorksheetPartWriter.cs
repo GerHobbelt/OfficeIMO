@@ -1,5 +1,6 @@
 using OfficeIMO.Excel.Xlsb.Biff12;
 using DocumentFormat.OpenXml.Spreadsheet;
+using System.Threading;
 
 namespace OfficeIMO.Excel.Xlsb.Write {
     /// <summary>Rewrites a worksheet cell table while preserving all records outside it and unknown in-table metadata.</summary>
@@ -20,6 +21,28 @@ namespace OfficeIMO.Excel.Xlsb.Write {
         private const int BrtBeginSheetData = 145;
         private const int BrtEndSheetData = 146;
         private const int BrtWsDim = 148;
+        private const int BrtEndSheet = 130;
+        private const int BrtMargins = 476;
+        private const int BrtPrintOptions = 477;
+        private const int BrtPageSetup = 478;
+        private const int BrtBeginHeaderFooter = 479;
+        private const int BrtEndHeaderFooter = 480;
+        private const int BrtHLink = 494;
+        private const int BrtBeginRowBreaks = 392;
+        private const int BrtBeginColumnBreaks = 394;
+        private const int BrtDrawing = 550;
+        private const int BrtLegacyDrawing = 551;
+        private const int BrtLegacyDrawingHeaderFooter = 552;
+        private const int BrtBeginWebPublishItems = 554;
+        private const int BrtBackgroundImage = 562;
+        private const int BrtBeginDataValidations = 573;
+        private const int BrtBeginSmartTags = 594;
+        private const int BrtBeginCellWatches = 605;
+        private const int BrtBigName = 625;
+        private const int BrtBeginOleObjects = 638;
+        private const int BrtBeginActiveXControls = 643;
+        private const int BrtBeginCellIgnoreErrors = 648;
+        private const int BrtBeginTableParts = 660;
 
         private static readonly byte[] DefaultRowProperties = {
             0x00, 0x00, 0x00, 0x00,
@@ -86,9 +109,129 @@ namespace OfficeIMO.Excel.Xlsb.Write {
             return output.ToArray();
         }
 
-        internal static byte[] Rewrite(byte[] originalPart, IReadOnlyList<XlsbWriteCell> cells) {
+        internal static bool TryCreateDirectTabular(
+            ExcelDirectTabularSource source,
+            CancellationToken cancellationToken,
+            out ArraySegment<byte> worksheetPart) {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            IExcelSheetTabularRowSource rows = source.Rows;
+            int rowOffset = source.IncludeHeaders ? 1 : 0;
+            int totalRows = checked(rows.RowCount + rowOffset);
+            if (totalRows > 1_048_576 || rows.ColumnCount > 16_384) {
+                throw new NotSupportedException("Native XLSB saving supports 1,048,576 rows and 16,384 columns per worksheet.");
+            }
+
+            using var output = new MemoryStream(EstimateDirectWorksheetCapacity(totalRows, rows.ColumnCount));
+            using var writer = new XlsbDirectRecordWriter(output);
+            writer.WriteRecord(129); // BrtBeginSheet
+            writer.WriteHeader(BrtWsDim, 16);
+            WriteDirectDimension(writer, totalRows, rows.ColumnCount);
+            writer.WriteRecord(BrtBeginSheetData);
+
+            if (source.IncludeHeaders && rows.ColumnCount != 0) {
+                WriteDirectRowHeader(writer, 0, rows.ColumnCount);
+                for (int column = 0; column < rows.ColumnCount; column++) {
+                    WriteDirectTextCell(writer, column, rows.GetColumnName(column));
+                }
+            }
+
+            for (int row = 0; row < rows.RowCount; row++) {
+                if ((row & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
+                int zeroBasedRow = row + rowOffset;
+                if (rows.ColumnCount != 0) {
+                    WriteDirectRowHeader(writer, zeroBasedRow, rows.ColumnCount);
+                }
+                for (int column = 0; column < rows.ColumnCount; column++) {
+                    ExcelDirectTabularValue value = ExcelDirectTabularValue.Normalize(rows.GetValue(row, column));
+                    switch (value.Kind) {
+                        case ExcelDirectTabularValueKind.Empty:
+                            break;
+                        case ExcelDirectTabularValueKind.Text:
+                            WriteDirectTextCell(writer, column, value.Text ?? string.Empty);
+                            break;
+                        case ExcelDirectTabularValueKind.Number:
+                            WriteDirectNumberCell(writer, column, value.Number);
+                            break;
+                        case ExcelDirectTabularValueKind.Boolean:
+                            WriteDirectBooleanCell(writer, column, value.Boolean);
+                            break;
+                        default:
+                            worksheetPart = default;
+                            return false;
+                    }
+                }
+            }
+
+            writer.WriteRecord(BrtEndSheetData);
+            writer.WriteRecord(BrtEndSheet);
+            worksheetPart = new ArraySegment<byte>(output.GetBuffer(), 0, checked((int)output.Length));
+            return true;
+        }
+
+        private static void WriteDirectDimension(XlsbDirectRecordWriter writer, int rowCount, int columnCount) {
+            int lastRow = Math.Max(1, rowCount);
+            int lastColumn = Math.Max(1, columnCount);
+            writer.WriteUInt32(0U);
+            writer.WriteUInt32(checked((uint)(lastRow - 1)));
+            writer.WriteUInt32(0U);
+            writer.WriteUInt32(checked((uint)(lastColumn - 1)));
+        }
+
+        private static void WriteDirectRowHeader(
+            XlsbDirectRecordWriter writer,
+            int zeroBasedRow,
+            int columnCount) {
+            writer.WriteRowHeader(BrtRowHdr, zeroBasedRow, columnCount, DefaultRowProperties);
+        }
+
+        private static void WriteDirectTextCell(
+            XlsbDirectRecordWriter writer,
+            int zeroBasedColumn,
+            string value) {
+            CoerceValueHelper.ValidateSharedStringLength(value, nameof(value));
+            writer.WriteTextCell(BrtCellSt, zeroBasedColumn, value);
+        }
+
+        private static void WriteDirectNumberCell(XlsbDirectRecordWriter writer, int zeroBasedColumn, double value) {
+            writer.WriteNumberCell(BrtCellReal, zeroBasedColumn, value);
+        }
+
+        private static void WriteDirectBooleanCell(XlsbDirectRecordWriter writer, int zeroBasedColumn, bool value) {
+            writer.WriteBooleanCell(BrtCellBool, zeroBasedColumn, value);
+        }
+
+        private static int EstimateDirectWorksheetCapacity(int rowCount, int columnCount) {
+            const int maximumInitialCapacity = 16 * 1024 * 1024;
+            int spanCount = checked((columnCount + 1023) / 1024);
+            // Bound the dense-cell assumption so a very wide, sparse table does not
+            // reserve a large buffer before the actual values establish its density.
+            int estimatedDenseColumns = Math.Min(columnCount, 128);
+            long bytesPerRow = 19L + spanCount * 8L + estimatedDenseColumns * 24L;
+            long estimate = 64L + rowCount * bytesPerRow;
+            return (int)Math.Max(256L, Math.Min(maximumInitialCapacity, estimate));
+        }
+
+        internal static byte[] Rewrite(byte[] originalPart, IReadOnlyList<XlsbWriteCell> cells) =>
+            Rewrite(
+                originalPart,
+                cells,
+                Array.Empty<XlsbGeneratedRecord>(),
+                rewriteAutoFilter: false,
+                Array.Empty<XlsbGeneratedRecord>(),
+                rewriteHyperlinks: false);
+
+        internal static byte[] Rewrite(
+            byte[] originalPart,
+            IReadOnlyList<XlsbWriteCell> cells,
+            IReadOnlyList<XlsbGeneratedRecord> autoFilterRecords,
+            bool rewriteAutoFilter,
+            IReadOnlyList<XlsbGeneratedRecord> hyperlinkRecords,
+            bool rewriteHyperlinks) {
             if (originalPart == null) throw new ArgumentNullException(nameof(originalPart));
             if (cells == null) throw new ArgumentNullException(nameof(cells));
+            if (autoFilterRecords == null) throw new ArgumentNullException(nameof(autoFilterRecords));
+            if (hyperlinkRecords == null) throw new ArgumentNullException(nameof(hyperlinkRecords));
 
             IReadOnlyList<XlsbRecord> records;
             using (var input = new MemoryStream(originalPart, writable: false)) {
@@ -107,6 +250,12 @@ namespace OfficeIMO.Excel.Xlsb.Write {
                 .ToDictionary(group => group.Key, group => (IReadOnlyList<XlsbWriteCell>)group.OrderBy(cell => cell.Column).ToArray());
             int[] rowIndexes = layout.Rows.Keys.Concat(cellsByRow.Keys).Distinct().OrderBy(row => row).ToArray();
             byte[]? dimensionPayload = CreateExpandedDimensionPayload(records, cells);
+            int hyperlinkInsertionIndex = rewriteHyperlinks
+                ? FindHyperlinkInsertionIndex(records, endIndex)
+                : -1;
+            (int Begin, int End) autoFilterBounds = rewriteAutoFilter
+                ? FindAutoFilterBounds(records, endIndex)
+                : (-1, -1);
 
             using var output = new MemoryStream(originalPart.Length + Math.Max(256, cells.Count * 24));
             for (int index = 0; index <= beginIndex; index++) {
@@ -135,11 +284,85 @@ namespace OfficeIMO.Excel.Xlsb.Write {
             }
 
             for (int index = endIndex; index < records.Count; index++) {
+                if (rewriteAutoFilter && index == autoFilterBounds.Begin) {
+                    foreach (XlsbGeneratedRecord autoFilter in autoFilterRecords) {
+                        XlsbRecordWriter.Write(output, autoFilter.Type, autoFilter.Payload);
+                    }
+                }
+                if (rewriteAutoFilter
+                    && index >= autoFilterBounds.Begin
+                    && index <= autoFilterBounds.End) {
+                    continue;
+                }
+                if (rewriteHyperlinks && index == hyperlinkInsertionIndex) {
+                    foreach (XlsbGeneratedRecord hyperlink in hyperlinkRecords) {
+                        XlsbRecordWriter.Write(output, hyperlink.Type, hyperlink.Payload);
+                    }
+                }
+                if (rewriteHyperlinks && records[index].Type == BrtHLink) continue;
                 WriteRecord(output, records[index]);
             }
 
             return output.ToArray();
         }
+
+        private static (int Begin, int End) FindAutoFilterBounds(
+            IReadOnlyList<XlsbRecord> records,
+            int endSheetDataIndex) {
+            const int BrtBeginAFilter = 161;
+            const int BrtEndAFilter = 162;
+            int begin = FindSingleRecord(records, BrtBeginAFilter, "BrtBeginAFilter");
+            int end = FindSingleRecord(records, BrtEndAFilter, "BrtEndAFilter");
+            int endSheet = FindSingleRecord(records, BrtEndSheet, "BrtEndSheet");
+            if (begin <= endSheetDataIndex || end < begin || end >= endSheet) {
+                throw new InvalidDataException("The XLSB worksheet has an invalid AutoFilter record boundary order.");
+            }
+            return (begin, end);
+        }
+
+        private static int FindHyperlinkInsertionIndex(IReadOnlyList<XlsbRecord> records, int endSheetDataIndex) {
+            int endSheetIndex = FindSingleRecord(records, BrtEndSheet, "BrtEndSheet");
+            int firstHyperlinkIndex = -1;
+            for (int index = 0; index < records.Count; index++) {
+                if (records[index].Type != BrtHLink) continue;
+                if (index <= endSheetDataIndex || index >= endSheetIndex) {
+                    throw new InvalidDataException("The XLSB worksheet contains a BrtHLink record outside the supported worksheet-metadata region.");
+                }
+                if (firstHyperlinkIndex < 0) firstHyperlinkIndex = index;
+            }
+            if (firstHyperlinkIndex >= 0) return firstHyperlinkIndex;
+
+            for (int index = endSheetDataIndex + 1; index < endSheetIndex; index++) {
+                int type = records[index].Type;
+                if (IsHyperlinkSuccessorRecord(type)) {
+                    return index;
+                }
+            }
+            return endSheetIndex;
+        }
+
+        private static bool IsHyperlinkSuccessorRecord(int type) =>
+            type == BrtPrintOptions
+            || type == BrtMargins
+            || type == BrtPageSetup
+            || type == BrtBeginHeaderFooter
+            || type == BrtEndHeaderFooter
+            || type == BrtBeginRowBreaks
+            || type == BrtBeginColumnBreaks
+            || type == BrtBigName
+            || type == BrtBeginCellWatches
+            || type == BrtBeginCellIgnoreErrors
+            || type == BrtBeginSmartTags
+            || type == BrtDrawing
+            || type == BrtLegacyDrawing
+            || type == BrtLegacyDrawingHeaderFooter
+            || type == BrtBackgroundImage
+            || type == BrtBeginOleObjects
+            || type == BrtBeginActiveXControls
+            || type == BrtBeginWebPublishItems
+            || type == BrtBeginTableParts
+            || type == BrtBeginDataValidations
+            || type == BrtEndSheet;
 
         private static byte[] CreateRowHeaderPayload(
             int zeroBasedRow,
@@ -148,6 +371,19 @@ namespace OfficeIMO.Excel.Xlsb.Write {
             byte[]? newProperties) {
             if (sourcePayload != null && sourcePayload.Length < 17) {
                 throw new InvalidDataException($"The XLSB row header for row {zeroBasedRow + 1} is truncated.");
+            }
+
+            if (sourcePayload == null
+                && newProperties == null
+                && cells.Count > 0
+                && (cells[0].Column - 1) / 1024 == (cells[cells.Count - 1].Column - 1) / 1024) {
+                var compactPayload = new byte[25];
+                WriteUInt32(compactPayload, 0, checked((uint)zeroBasedRow));
+                Buffer.BlockCopy(DefaultRowProperties, 0, compactPayload, 4, DefaultRowProperties.Length);
+                WriteUInt32(compactPayload, 13, 1);
+                WriteUInt32(compactPayload, 17, checked((uint)(cells[0].Column - 1)));
+                WriteUInt32(compactPayload, 21, checked((uint)(cells[cells.Count - 1].Column - 1)));
+                return compactPayload;
             }
 
             var spans = ReadSourceSpans(sourcePayload, zeroBasedRow);
@@ -323,30 +559,35 @@ namespace OfficeIMO.Excel.Xlsb.Write {
                 return;
             }
 
+            switch (cell.Kind) {
+                case XlsbWriteCellKind.Blank:
+                    WriteSimpleCellHeader(output, BrtCellBlank, payloadLength: 8, cell);
+                    return;
+                case XlsbWriteCellKind.Number:
+                    WriteSimpleCellHeader(output, BrtCellReal, payloadLength: 16, cell);
+                    WriteDouble(output, Convert.ToDouble(cell.Value, System.Globalization.CultureInfo.InvariantCulture));
+                    return;
+                case XlsbWriteCellKind.Text:
+                    string text = (string?)cell.Value ?? string.Empty;
+                    int textPayloadLength = checked(12 + (text.Length * 2));
+                    WriteSimpleCellHeader(output, BrtCellSt, textPayloadLength, cell);
+                    WriteWideString(output, text);
+                    return;
+                case XlsbWriteCellKind.Boolean:
+                    WriteSimpleCellHeader(output, BrtCellBool, payloadLength: 9, cell);
+                    output.WriteByte((bool)cell.Value! ? (byte)1 : (byte)0);
+                    return;
+                case XlsbWriteCellKind.Error:
+                    WriteSimpleCellHeader(output, BrtCellError, payloadLength: 9, cell);
+                    output.WriteByte((byte)cell.Value!);
+                    return;
+            }
+
             using var payload = new MemoryStream();
             WriteUInt32(payload, checked((uint)(cell.Column - 1)));
             WriteUInt32(payload, cell.StyleIndex & 0x00FFFFFFU);
             int recordType;
             switch (cell.Kind) {
-                case XlsbWriteCellKind.Blank:
-                    recordType = BrtCellBlank;
-                    break;
-                case XlsbWriteCellKind.Number:
-                    recordType = BrtCellReal;
-                    WriteDouble(payload, Convert.ToDouble(cell.Value, System.Globalization.CultureInfo.InvariantCulture));
-                    break;
-                case XlsbWriteCellKind.Text:
-                    recordType = BrtCellSt;
-                    WriteWideString(payload, (string?)cell.Value ?? string.Empty);
-                    break;
-                case XlsbWriteCellKind.Boolean:
-                    recordType = BrtCellBool;
-                    payload.WriteByte((bool)cell.Value! ? (byte)1 : (byte)0);
-                    break;
-                case XlsbWriteCellKind.Error:
-                    recordType = BrtCellError;
-                    payload.WriteByte((byte)cell.Value!);
-                    break;
                 case XlsbWriteCellKind.FormulaNumber:
                     recordType = BrtFmlaNum;
                     WriteDouble(payload, Convert.ToDouble(cell.Value, System.Globalization.CultureInfo.InvariantCulture));
@@ -374,6 +615,12 @@ namespace OfficeIMO.Excel.Xlsb.Write {
             XlsbRecordWriter.Write(output, recordType, payload.ToArray());
         }
 
+        private static void WriteSimpleCellHeader(Stream output, int recordType, int payloadLength, XlsbWriteCell cell) {
+            XlsbRecordWriter.WriteHeader(output, recordType, payloadLength);
+            WriteUInt32(output, checked((uint)(cell.Column - 1)));
+            WriteUInt32(output, cell.StyleIndex & 0x00FFFFFFU);
+        }
+
         private static void WriteFormula(Stream payload, byte[]? formulaPayload) {
             byte[] bytes = formulaPayload ?? throw new InvalidOperationException("Formula cell has no preserved BIFF12 formula payload.");
             payload.Write(bytes, 0, bytes.Length);
@@ -381,13 +628,24 @@ namespace OfficeIMO.Excel.Xlsb.Write {
 
         private static void WriteWideString(Stream stream, string value) {
             WriteUInt32(stream, checked((uint)value.Length));
-            byte[] bytes = Encoding.Unicode.GetBytes(value);
-            stream.Write(bytes, 0, bytes.Length);
+            for (int index = 0; index < value.Length; index++) {
+                ushort character = value[index];
+                stream.WriteByte((byte)character);
+                stream.WriteByte((byte)(character >> 8));
+            }
         }
 
         private static void WriteDouble(Stream stream, double value) {
-            byte[] bytes = BitConverter.GetBytes(value);
-            stream.Write(bytes, 0, bytes.Length);
+            ulong bits = unchecked((ulong)BitConverter.DoubleToInt64Bits(value));
+            WriteUInt32(stream, unchecked((uint)bits));
+            WriteUInt32(stream, unchecked((uint)(bits >> 32)));
+        }
+
+        private static void WriteUInt32(byte[] buffer, int offset, uint value) {
+            buffer[offset] = (byte)value;
+            buffer[offset + 1] = (byte)(value >> 8);
+            buffer[offset + 2] = (byte)(value >> 16);
+            buffer[offset + 3] = (byte)(value >> 24);
         }
 
         private static void WriteUInt32(Stream stream, uint value) {

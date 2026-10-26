@@ -67,11 +67,11 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the underline style for the run.
         /// </summary>
-        public UnderlineValues? Underline {
+        public WordUnderlineStyle? Underline {
             get {
                 var runProperties = IsHyperLink ? this.Hyperlink?._runProperties : _runProperties;
                 if (runProperties != null && runProperties.Underline != null) {
-                    return runProperties.Underline.Val?.Value;
+                    return runProperties.Underline.Val?.Value.ToOfficeEnum();
                 }
                 return null;
             }
@@ -88,7 +88,7 @@ namespace OfficeIMO.Word {
                         runProperties.Underline = new Underline();
                     }
 
-                    runProperties.Underline.Val = value;
+                    runProperties.Underline.Val = value.Value.ToOpenXml();
                 } else {
                     if (runProperties.Underline != null) runProperties.Underline.Remove();
                 }
@@ -273,14 +273,24 @@ namespace OfficeIMO.Word {
         /// </summary>
         public int? FontSize {
             get {
+                double? points = FontSizePoints;
+                return points.HasValue ? checked((int)points.Value) : null;
+            }
+            set => FontSizePoints = value;
+        }
+
+        /// <summary>
+        /// Gets or sets the font size in points with Word's native half-point precision.
+        /// Values finer than half a point are rounded away from zero to the nearest representable size.
+        /// </summary>
+        public double? FontSizePoints {
+            get {
                 var runProperties = IsHyperLink ? this.Hyperlink?._runProperties : _runProperties;
-                if (runProperties != null && runProperties.FontSize != null) {
-                    var val = runProperties.FontSize.Val;
-                    if (!string.IsNullOrEmpty(val) && int.TryParse(val, out var fontSizeInHalfPoint)) {
-                        return fontSizeInHalfPoint / 2;
-                    }
-                }
-                return null;
+                string? value = runProperties?.FontSize?.Val?.Value;
+                return int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out int halfPoints)
+                    ? halfPoints / 2D
+                    : (double?)null;
             }
             set {
                 RunProperties runProperties;
@@ -291,9 +301,14 @@ namespace OfficeIMO.Word {
                     runProperties = VerifyRunProperties();
                 }
                 if (value != null) {
-                    FontSize fontSize = new FontSize();
-                    fontSize.Val = (value * 2).ToString();
-                    runProperties.FontSize = fontSize;
+                    if (double.IsNaN(value.Value) || double.IsInfinity(value.Value) ||
+                        value.Value < 0D || value.Value > int.MaxValue / 2D) {
+                        throw new ArgumentOutOfRangeException(nameof(value));
+                    }
+                    int halfPoints = checked((int)Math.Round(value.Value * 2D, MidpointRounding.AwayFromZero));
+                    runProperties.FontSize = new FontSize {
+                        Val = halfPoints.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    };
                 } else {
                     if (runProperties.FontSize != null) runProperties.FontSize.Remove();
                 }
@@ -349,11 +364,11 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the theme color applied to the run.
         /// </summary>
-        public ThemeColorValues? ThemeColor {
+        public WordThemeColor? ThemeColor {
             get {
                 var runProperties = IsHyperLink ? this.Hyperlink?._runProperties : _runProperties;
                 if (runProperties != null && runProperties.Color != null && runProperties.Color.ThemeColor != null) {
-                    return runProperties.Color.ThemeColor?.Value;
+                    return runProperties.Color.ThemeColor?.Value.ToOfficeEnum();
                 }
                 return null;
             }
@@ -368,7 +383,7 @@ namespace OfficeIMO.Word {
                 if (value != null) {
                     var color = new DocumentFormat.OpenXml.Wordprocessing.Color {
                         ThemeColor = new EnumValue<ThemeColorValues> {
-                            Value = value.Value
+                            Value = value.Value.ToOpenXml()
                         }
                     };
                     runProperties.Color = color;
@@ -381,11 +396,11 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the highlight color applied to the run.
         /// </summary>
-        public HighlightColorValues? Highlight {
+        public WordHighlightColor? Highlight {
             get {
                 var runProperties = IsHyperLink ? this.Hyperlink?._runProperties : _runProperties;
                 if (runProperties != null && runProperties.Highlight != null) {
-                    return runProperties.Highlight.Val?.Value;
+                    return runProperties.Highlight.Val?.Value.ToOfficeEnum();
                 }
                 return null;
             }
@@ -404,7 +419,7 @@ namespace OfficeIMO.Word {
                     runProperties = VerifyRunProperties();
                 }
                 var highlight = new Highlight {
-                    Val = value.Value
+                    Val = value.Value.ToOpenXml()
                 };
                 runProperties.Highlight = highlight;
             }
@@ -413,15 +428,15 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the capitalization style for the run.
         /// </summary>
-        public CapsStyle CapsStyle {
+        public WordCapsStyle CapsStyle {
             get {
                 var runProperties = IsHyperLink ? this.Hyperlink?._runProperties : _runProperties;
                 if (IsOnOffPropertyEnabled(runProperties?.Caps)) {
-                    return CapsStyle.Caps;
+                    return WordCapsStyle.Caps;
                 } else if (IsOnOffPropertyEnabled(runProperties?.SmallCaps)) {
-                    return CapsStyle.SmallCaps;
+                    return WordCapsStyle.SmallCaps;
                 } else {
-                    return CapsStyle.None;
+                    return WordCapsStyle.None;
                 }
             }
             set {
@@ -432,13 +447,13 @@ namespace OfficeIMO.Word {
                 } else {
                     runProperties = VerifyRunProperties();
                 }
-                if (value == CapsStyle.None) {
+                if (value == WordCapsStyle.None) {
                     runProperties.Caps = null;
                     runProperties.SmallCaps = null;
-                } else if (value == CapsStyle.Caps) {
+                } else if (value == WordCapsStyle.Caps) {
                     runProperties.Caps = new Caps();
                     runProperties.SmallCaps = null;
-                } else if (value == CapsStyle.SmallCaps) {
+                } else if (value == WordCapsStyle.SmallCaps) {
                     runProperties.SmallCaps = new SmallCaps();
                     runProperties.Caps = null;
                 }

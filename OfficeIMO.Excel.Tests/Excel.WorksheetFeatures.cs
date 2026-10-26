@@ -54,7 +54,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -92,7 +92,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document.Sheets.First();
                 var comments = sheet.GetComments().OrderBy(comment => comment.CellReference).ToList();
 
@@ -150,7 +150,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("FF0563C1", runs[1].RunProperties!.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Color>()!.Rgb!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var comment = Assert.Single(document.Sheets.First().GetComments());
                 Assert.Equal("Bob (BB)", comment.Author);
                 Assert.Equal("Reviewed item", comment.Text);
@@ -217,7 +217,7 @@ namespace OfficeIMO.Tests {
                 Assert.Same(threadedComment, cell.ThreadedComment);
 
                 var feature = Assert.Single(document.InspectFeatures().FindFeatures("Threaded comments"));
-                Assert.Equal(ExcelFeatureSupportLevel.PartiallyEditable, feature.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.PartiallyEditable, feature.SupportLevel);
                 Assert.Equal(1, feature.Count);
                 document.Save();
             }
@@ -236,7 +236,7 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void Test_WorksheetImages_MetadataAndSizing() {
             var filePath = Path.Combine(_directoryWithFiles, "ExcelWorksheetImages.Metadata.xlsx");
-            var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
+            var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
 
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorksheet("Images");
@@ -306,7 +306,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
 
@@ -353,7 +353,7 @@ namespace OfficeIMO.Tests {
                 }
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -395,7 +395,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("H2:H2", sparkline.GetFirstChild<OfficeReferenceSequence>()!.Text);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -429,7 +429,7 @@ namespace OfficeIMO.Tests {
                     sparklines.Select(s => s.GetFirstChild<OfficeReferenceSequence>()!.Text).ToArray());
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -463,7 +463,7 @@ namespace OfficeIMO.Tests {
                     sparklines.Select(s => s.GetFirstChild<OfficeReferenceSequence>()!.Text).ToArray());
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -638,7 +638,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(row.Collapsed!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelSheet sheet = document.Sheets.First();
                 ExcelColumnSnapshot column = Assert.Single(sheet.GetColumnDefinitions());
                 ExcelRowSnapshot row = Assert.Single(sheet.GetRowDefinitions());
@@ -673,7 +673,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("FF336699", tabColor.Rgb!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelWorksheetSnapshot worksheet = Assert.Single(document.CreateInspectionSnapshot().Worksheets);
                 Assert.Equal("FF336699", worksheet.TabColorArgb);
             }
@@ -740,7 +740,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document.Sheets.First();
                 ExcelWorksheetViewInfo view = sheet.GetViewInfo();
 
@@ -778,7 +778,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(SheetViewValues.PageLayout, sheetView.View!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document.Sheets.First();
                 ExcelWorksheetViewInfo view = sheet.GetViewInfo();
                 Assert.False(view.ShowGridlines);
@@ -800,7 +800,7 @@ namespace OfficeIMO.Tests {
         public void Test_WorksheetViewOptions_StreamBackedWorkbookPersistsOnDispose() {
             using var stream = new MemoryStream();
             using (var document = ExcelDocument.Create(stream, new ExcelCreateOptions {
-                PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose
+                PersistenceMode = OfficeIMO.DocumentPersistenceMode.SaveOnDispose
             })) {
                 var sheet = document.AddWorksheet("View");
                 sheet.CellValue(1, 1, "Header");
@@ -844,7 +844,7 @@ namespace OfficeIMO.Tests {
                 }
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelWorkbookSnapshot snapshot = document.CreateInspectionSnapshot();
                 Assert.Equal(1, snapshot.ActiveWorksheetIndex);
                 Assert.Equal("Details", snapshot.ActiveWorksheetName);
@@ -900,7 +900,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(columnD.Collapsed!.Value);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 ExcelWorksheetSnapshot worksheet = Assert.Single(document.CreateInspectionSnapshot().Worksheets);
                 Assert.True(worksheet.OutlineSummaryBelow);
                 Assert.True(worksheet.OutlineSummaryRight);

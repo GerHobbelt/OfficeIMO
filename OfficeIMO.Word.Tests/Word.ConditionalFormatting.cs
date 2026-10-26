@@ -22,11 +22,11 @@ namespace OfficeIMO.Tests {
                 table.ConditionalFormatting(
                     "Status",
                     "Done",
-                    TextMatchType.Equals,
+                    WordTextMatchType.Equals,
                     matchFillColorHex: "92D050",
                     noMatchFillColorHex: "FF0000",
                     matchTextFormat: p => p.SetBold(),
-                    noMatchTextFormat: p => p.SetUnderline(UnderlineValues.Single));
+                    noMatchTextFormat: p => p.SetUnderline(WordUnderlineStyle.Single));
 
                 document.Save();
             }
@@ -36,7 +36,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("92D050", table.Rows[1].Cells[1].ShadingFillColorHex);
                 Assert.Equal("FF0000", table.Rows[2].Cells[1].ShadingFillColorHex);
                 Assert.True(table.Rows[1].Cells[1].Paragraphs[0].Bold);
-                Assert.Equal(UnderlineValues.Single, table.Rows[2].Cells[1].Paragraphs[0].Underline);
+                Assert.Equal(WordUnderlineStyle.Single, table.Rows[2].Cells[1].Paragraphs[0].Underline);
             }
         }
 
@@ -64,19 +64,19 @@ namespace OfficeIMO.Tests {
                 builder.AddRule(
                     "Status",
                     "Done",
-                    TextMatchType.Equals,
+                    WordTextMatchType.Equals,
                     Color.LightGreen,
                     Color.Black,
                     Color.LightPink,
                     Color.Black,
                     highlightColumns: new[] { "Name" },
                     matchTextFormat: p => p.SetBold(),
-                    noMatchTextFormat: p => p.SetUnderline(UnderlineValues.Single));
+                    noMatchTextFormat: p => p.SetUnderline(WordUnderlineStyle.Single));
 
                 builder.AddRule(
                     "Status",
                     "Pending",
-                    TextMatchType.Equals,
+                    WordTextMatchType.Equals,
                     Color.Yellow,
                     null,
                     highlightColumns: new[] { "Name" },
@@ -84,15 +84,15 @@ namespace OfficeIMO.Tests {
 
                 builder.AddRule(
                     new[] {
-                        ("Status", "Done", TextMatchType.Equals),
-                        ("Name", "Task4", TextMatchType.StartsWith)
+                        ("Status", "Done", WordTextMatchType.Equals),
+                        ("Name", "Task4", WordTextMatchType.StartsWith)
                     },
                     matchAll: true,
                     Color.LightSkyBlue,
                     highlightColumns: new[] { "Name" },
                     matchTextFormat: p => {
                         p.SetBold();
-                        p.SetUnderline(UnderlineValues.Single);
+                        p.SetUnderline(WordUnderlineStyle.Single);
                     });
 
                 builder.Apply();
@@ -115,9 +115,9 @@ namespace OfficeIMO.Tests {
                 Assert.True(table.Rows[1].Cells[1].Paragraphs[0].Bold);
                 Assert.True(table.Rows[1].Cells[0].Paragraphs[0].Bold);
                 Assert.True(table.Rows[2].Cells[1].Paragraphs[0].Italic);
-                Assert.Equal(UnderlineValues.Single, table.Rows[3].Cells[1].Paragraphs[0].Underline);
+                Assert.Equal(WordUnderlineStyle.Single, table.Rows[3].Cells[1].Paragraphs[0].Underline);
                 Assert.True(table.Rows[4].Cells[0].Paragraphs[0].Bold);
-                Assert.Equal(UnderlineValues.Single, table.Rows[4].Cells[0].Paragraphs[0].Underline);
+                Assert.Equal(WordUnderlineStyle.Single, table.Rows[4].Cells[0].Paragraphs[0].Underline);
             }
         }
     }

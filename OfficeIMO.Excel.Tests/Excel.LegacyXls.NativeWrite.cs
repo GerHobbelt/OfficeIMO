@@ -18,7 +18,7 @@ using OfficeIMO.Excel.LegacyXls;
 using OfficeIMO.Excel.LegacyXls.Compound;
 using OfficeIMO.Excel.LegacyXls.Model;
 using OfficeIMO.Excel.LegacyXls.Write;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using System.Globalization;
 using System.Threading.Tasks;
 using Xunit;
@@ -109,7 +109,7 @@ namespace OfficeIMO.Tests {
                     document.Save();
                 }
 
-                using (ExcelDocument document = ExcelDocument.Load(openXmlPath, new OfficeIMO.Excel.ExcelLoadOptions { PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose })) {
+                using (ExcelDocument document = ExcelDocument.Load(openXmlPath, new OfficeIMO.Excel.ExcelLoadOptions { PersistenceMode = OfficeIMO.DocumentPersistenceMode.SaveOnDispose })) {
                     ExcelSheet sheet = document.Sheets.Single();
                     sheet.CellValue(1, 1, "Native XLS target");
                     document.Save(xlsOutputPath);
@@ -120,7 +120,7 @@ namespace OfficeIMO.Tests {
                 LegacyXlsCell cell = Assert.Single(Assert.Single(result.Workbook.Worksheets).Cells, item => item.Row == 1 && item.Column == 1);
                 Assert.Equal("Native XLS target", Assert.IsType<string>(cell.Value));
 
-                using ExcelDocument sourceDocument = ExcelDocument.Load(openXmlPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using ExcelDocument sourceDocument = ExcelDocument.Load(openXmlPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 ExcelSheet sourceSheet = Assert.Single(sourceDocument.Sheets);
                 Assert.True(sourceSheet.TryGetCellValueSnapshot(1, 1, out ExcelCellValueSnapshot? sourceValue));
                 Assert.Equal("OpenXML source", sourceValue!.Text);
@@ -134,7 +134,7 @@ namespace OfficeIMO.Tests {
         public void LegacyXls_NativeStreamSave_DisablesAutoSaveCopyBackOnDispose() {
             using var stream = new MemoryStream();
 
-            using (ExcelDocument document = ExcelDocument.Create(stream, new OfficeIMO.Excel.ExcelCreateOptions { PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose })) {
+            using (ExcelDocument document = ExcelDocument.Create(stream, new OfficeIMO.Excel.ExcelCreateOptions { PersistenceMode = OfficeIMO.DocumentPersistenceMode.SaveOnDispose })) {
                 ExcelSheet sheet = document.AddWorksheet("StreamXls");
                 sheet.CellValue(1, 1, "Native stream XLS");
 
@@ -225,7 +225,7 @@ namespace OfficeIMO.Tests {
 
             using var allowedOutput = new MemoryStream();
             document.Save(allowedOutput, ExcelFileFormat.Xls, new ExcelSaveOptions {
-                LossPolicy = ExcelConversionLossPolicy.Allow
+                LossPolicy = OfficeConversionLossPolicy.Allow
             });
             Assert.Equal(
                 olePayload,
@@ -253,7 +253,7 @@ namespace OfficeIMO.Tests {
 
             using var allowedOutput = new MemoryStream();
             document.Save(allowedOutput, ExcelFileFormat.Xls, new ExcelSaveOptions {
-                LossPolicy = ExcelConversionLossPolicy.Allow
+                LossPolicy = OfficeConversionLossPolicy.Allow
             });
             Assert.Equal(
                 signatureStream,
@@ -790,7 +790,7 @@ namespace OfficeIMO.Tests {
                     sheet.CellValue(1, 1, "Printable sheet");
                     sheet.CellValue(20, 5, 42d);
                     sheet.SetMargins(0.25d, 0.35d, 0.45d, 0.55d, 0.2d, 0.25d);
-                    sheet.SetOrientation(ExcelPageOrientation.Landscape);
+                    sheet.SetOrientation(OfficePageOrientation.Landscape);
                     sheet.SetPageSetup(fitToWidth: 1U, fitToHeight: 0U, scale: 90U, pageOrder: ExcelPageOrder.OverThenDown);
                     sheet.SetPrintOptions(printGridLines: true, printHeadings: true, horizontalCentered: true, verticalCentered: false);
                     sheet.SetHeaderFooter("Left header", "Page &P", "Right header", "Left footer", "Generated", "Page &P of &N");
@@ -806,7 +806,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(loaded.SourceFormat == ExcelFileFormat.Xls);
 
                 ExcelSheetPageSetup pageSetup = loadedSheet.GetPageSetup();
-                Assert.Equal(ExcelPageOrientation.Landscape, pageSetup.Orientation);
+                Assert.Equal(OfficePageOrientation.Landscape, pageSetup.Orientation);
                 Assert.Equal(1U, pageSetup.FitToWidth);
                 Assert.Equal(0U, pageSetup.FitToHeight);
                 Assert.Equal(90U, pageSetup.Scale);
@@ -825,7 +825,7 @@ namespace OfficeIMO.Tests {
                 Assert.True(printOptions.HorizontalCentered);
                 Assert.False(printOptions.VerticalCentered);
 
-                ExcelSheet.HeaderFooterSnapshot headerFooter = loadedSheet.GetHeaderFooter();
+                ExcelSheet.ExcelHeaderFooterSnapshot headerFooter = loadedSheet.GetHeaderFooter();
                 Assert.Equal("Left header", headerFooter.HeaderLeft);
                 Assert.Equal("Page &P", headerFooter.HeaderCenter);
                 Assert.Equal("Right header", headerFooter.HeaderRight);
@@ -1004,7 +1004,7 @@ namespace OfficeIMO.Tests {
                 Assert.False(legacySheet.PageSetup.AlignHeaderFooterWithMargins);
 
                 using ExcelDocument loaded = ExcelDocument.Load(xlsOutputPath);
-                ExcelSheet.HeaderFooterSnapshot headerFooter = loaded.Sheets.Single().GetHeaderFooter();
+                ExcelSheet.ExcelHeaderFooterSnapshot headerFooter = loaded.Sheets.Single().GetHeaderFooter();
                 Assert.Equal("Odd header", headerFooter.HeaderCenter);
                 Assert.Equal("Odd footer", headerFooter.FooterRight);
                 Assert.Equal("First left", headerFooter.FirstHeaderLeft);
@@ -1560,11 +1560,11 @@ namespace OfficeIMO.Tests {
                 using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
                     ExcelSheet sheet = document.AddWorksheet("Alignment");
                     sheet.CellValue(1, 1, "Wrapped text");
-                    sheet.CellAlign(1, 1, DocumentFormat.OpenXml.Spreadsheet.HorizontalAlignmentValues.Center);
-                    sheet.CellVerticalAlign(1, 1, DocumentFormat.OpenXml.Spreadsheet.VerticalAlignmentValues.Bottom);
+                    sheet.CellAlign(1, 1, ExcelHorizontalAlignment.Center);
+                    sheet.CellVerticalAlign(1, 1, ExcelVerticalAlignment.Bottom);
                     sheet.CellWrapText(1, 1);
                     sheet.CellValue(2, 1, "Top aligned text");
-                    sheet.CellVerticalAlign(2, 1, DocumentFormat.OpenXml.Spreadsheet.VerticalAlignmentValues.Top);
+                    sheet.CellVerticalAlign(2, 1, ExcelVerticalAlignment.Top);
 
                     document.Save(xlsOutputPath);
                 }
@@ -1607,7 +1607,7 @@ namespace OfficeIMO.Tests {
                 using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
                     ExcelSheet sheet = document.AddWorksheet("Alignment");
                     sheet.CellValue(1, 1, "Extended alignment");
-                    sheet.CellAlign(1, 1, DocumentFormat.OpenXml.Spreadsheet.HorizontalAlignmentValues.Right);
+                    sheet.CellAlign(1, 1, ExcelHorizontalAlignment.Right);
 
                     DocumentFormat.OpenXml.Spreadsheet.Stylesheet stylesheet = document.WorkbookPartRoot!.WorkbookStylesPart!.Stylesheet!;
                     DocumentFormat.OpenXml.Spreadsheet.Cell cell = sheet.WorksheetPart.Worksheet!.Descendants<DocumentFormat.OpenXml.Spreadsheet.Cell>().Single();
@@ -1675,8 +1675,8 @@ namespace OfficeIMO.Tests {
                     sheet.CellValue(1, 1, "Bordered");
                     sheet.CellAt(1, 1)
                         .SetFillColor("#ABCDEF")
-                        .SetBorder(DocumentFormat.OpenXml.Spreadsheet.BorderStyleValues.Thin, "#654321")
-                        .SetDiagonalBorder(DocumentFormat.OpenXml.Spreadsheet.BorderStyleValues.Dotted, "#123456", diagonalUp: true, diagonalDown: true);
+                        .SetBorder(ExcelBorderStyle.Thin, "#654321")
+                        .SetDiagonalBorder(ExcelBorderStyle.Dotted, "#123456", diagonalUp: true, diagonalDown: true);
 
                     document.Save(xlsOutputPath);
                 }
@@ -1744,7 +1744,7 @@ namespace OfficeIMO.Tests {
                 using (ExcelDocument document = ExcelDocument.Create(openXmlPath)) {
                     ExcelSheet sheet = document.AddWorksheet("AutoBorder");
                     sheet.CellValue(1, 1, "Automatic border");
-                    sheet.CellAt(1, 1).SetBorder(DocumentFormat.OpenXml.Spreadsheet.BorderStyleValues.Thin);
+                    sheet.CellAt(1, 1).SetBorder(ExcelBorderStyle.Thin);
 
                     document.Save(xlsOutputPath);
                 }
@@ -2873,13 +2873,13 @@ namespace OfficeIMO.Tests {
                 Assert.NotNull(workbook.Protection);
                 Assert.False(workbook.Protection!.IsProtected);
                 Assert.Equal("CAFE", workbook.Protection.LegacyPasswordHash);
-                Assert.Null(workbook.WindowsLocked);
+                Assert.False(workbook.WindowsLocked);
 
                 DocumentFormat.OpenXml.Spreadsheet.WorkbookProtection projectedProtection = result.Document.WorkbookRoot
                     .GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.WorkbookProtection>()!;
                 Assert.Equal("CAFE", projectedProtection.WorkbookPassword!.Value);
-                Assert.Null(projectedProtection.LockStructure);
-                Assert.Null(projectedProtection.LockWindows);
+                Assert.False(projectedProtection.LockStructure!.Value);
+                Assert.False(projectedProtection.LockWindows!.Value);
             } finally {
                 TryDelete(openXmlPath);
                 TryDelete(xlsOutputPath);
@@ -3261,12 +3261,12 @@ namespace OfficeIMO.Tests {
                         Prompt = "Pick a status.",
                         ErrorTitle = "Invalid status",
                         Error = "Use one of the listed statuses.",
-                        ErrorStyle = OpenXmlDataValidationErrorStyleValues.Warning,
+                        ErrorStyle = ExcelDataValidationErrorStyle.Warning,
                         SuppressDropDown = true
                     });
-                    sheet.ValidationWholeNumber("C2:C5", OpenXmlDataValidationOperatorValues.Between, 1, 10, errorTitle: "Invalid quantity", errorMessage: "Use 1-10.");
-                    sheet.ValidationDecimal("D2:D5", OpenXmlDataValidationOperatorValues.GreaterThan, 5.5d, allowBlank: false, errorTitle: "Invalid discount", errorMessage: "Use a value greater than 5.5.");
-                    sheet.ValidationTime("E2:E5", OpenXmlDataValidationOperatorValues.Equal, TimeSpan.FromHours(9), allowBlank: true, errorTitle: "Invalid time", errorMessage: "Use 09:00.");
+                    sheet.ValidationWholeNumber("C2:C5", ExcelDataValidationOperator.Between, 1, 10, errorTitle: "Invalid quantity", errorMessage: "Use 1-10.");
+                    sheet.ValidationDecimal("D2:D5", ExcelDataValidationOperator.GreaterThan, 5.5d, allowBlank: false, errorTitle: "Invalid discount", errorMessage: "Use a value greater than 5.5.");
+                    sheet.ValidationTime("E2:E5", ExcelDataValidationOperator.Equal, TimeSpan.FromHours(9), allowBlank: true, errorTitle: "Invalid time", errorMessage: "Use 09:00.");
 
                     document.Save(xlsOutputPath);
                 }
@@ -3382,8 +3382,8 @@ namespace OfficeIMO.Tests {
                     sheet.CellValue(2, 4, 1d);
                     sheet.CellValue(3, 4, -1d);
 
-                    sheet.AddConditionalRule("B2:B5", OpenXmlConditionalFormattingOperatorValues.GreaterThan, "10");
-                    sheet.AddConditionalRule("C2:C5", OpenXmlConditionalFormattingOperatorValues.Between, "1", "5");
+                    sheet.AddConditionalRule("B2:B5", ExcelConditionalFormattingOperator.GreaterThan, "10");
+                    sheet.AddConditionalRule("C2:C5", ExcelConditionalFormattingOperator.Between, "1", "5");
                     sheet.AddConditionalFormulaRule("D2:D5", "D2>0");
 
                     document.Save(xlsOutputPath);
@@ -3480,6 +3480,9 @@ namespace OfficeIMO.Tests {
                     document.Save(xlsOutputPath);
                 }
 
+                AssertWorkbookOpensViaExcelComWhenAvailable(
+                    xlsOutputPath,
+                    "The XLS workbook with multiple comments failed to open in desktop Excel.");
                 LegacyXlsLoadResult result = ExcelDocument.LoadLegacyXlsWithReport(xlsOutputPath);
                 result.EnsureNoImportErrors();
                 Assert.False(result.HasUnsupportedFeatures, FormatUnsupportedFeatures(result.UnsupportedFeatures));
@@ -3489,9 +3492,13 @@ namespace OfficeIMO.Tests {
                 byte[] drawingGroupPayload = Assert.Single(GetBiffRecordPayloads(xlsOutputPath, 0x00eb));
                 Assert.True(drawingGroupPayload.Length > 8);
                 IReadOnlyList<byte[]> drawingPayloads = GetBiffRecordPayloads(xlsOutputPath, 0x00ec);
-                Assert.Equal(2, drawingPayloads.Count);
-                Assert.All(drawingPayloads, payload => AssertCommentDrawingInfo(payload, expectedShapeCount: 2, expectedLastShapeId: 1026));
-                AssertBiffRecordOccursBefore(xlsOutputPath, 0x00eb, 0x0085);
+                Assert.Equal(4, drawingPayloads.Count);
+                AssertCommentDrawingInfo(drawingPayloads[0], expectedShapeCount: 3, expectedLastShapeId: 1026);
+                Assert.Equal(8, drawingPayloads[1].Length);
+                Assert.True(drawingPayloads[2].Length > 8);
+                Assert.Equal(8, drawingPayloads[3].Length);
+                AssertBiffRecordOccursBefore(xlsOutputPath, 0x0085, 0x00eb);
+                AssertBiffRecordOccursBefore(xlsOutputPath, 0x00eb, 0x00fc);
 
                 LegacyXlsComment firstLegacyComment = Assert.Single(legacySheet.Comments, comment => comment.Row == 1 && comment.Column == 1);
                 Assert.Equal("Review this cell", firstLegacyComment.Text);
@@ -4078,7 +4085,7 @@ namespace OfficeIMO.Tests {
             AssertNativeXlsSaveNotSupported("tables", (document, sheet) => {
                 sheet.CellValue(1, 1, "Name");
                 sheet.CellValue(2, 1, "Alpha");
-                sheet.AddTable("A1:A2", hasHeader: true, name: "UnsupportedTable", TableStyle.TableStyleMedium2);
+                sheet.AddTable("A1:A2", hasHeader: true, name: "UnsupportedTable", ExcelTableStyle.TableStyleMedium2);
             });
         }
 
@@ -4204,6 +4211,68 @@ namespace OfficeIMO.Tests {
             }
 
             return payloads;
+        }
+
+        private static void AssertBiffIndexMatchesDimensions(
+            byte[] xlsBytes,
+            uint expectedDataFirstRow,
+            uint expectedDataRowAfterLast,
+            uint expectedDimensionFirstRow,
+            uint expectedDimensionRowAfterLast) {
+            byte[] workbookStream = ReadCompoundStream(xlsBytes, "Workbook");
+            byte[]? indexPayload = null;
+            byte[]? dimensionsPayload = null;
+            int defaultColumnWidthOffset = -1;
+            var dbCellOffsets = new List<int>();
+            int bofCount = 0;
+            bool inFirstWorksheet = false;
+
+            int offset = 0;
+            while (offset + 4 <= workbookStream.Length) {
+                ushort type = ReadUInt16(workbookStream, offset);
+                ushort length = ReadUInt16(workbookStream, offset + 2);
+                int payloadOffset = offset + 4;
+                Assert.True(payloadOffset + length <= workbookStream.Length);
+
+                if (type == 0x0809) {
+                    bofCount++;
+                    inFirstWorksheet = bofCount == 2;
+                } else if (inFirstWorksheet && type == 0x000a) {
+                    break;
+                } else if (inFirstWorksheet) {
+                    if (type == 0x020b) {
+                        indexPayload = new byte[length];
+                        Buffer.BlockCopy(workbookStream, payloadOffset, indexPayload, 0, length);
+                    } else if (type == 0x0055) {
+                        defaultColumnWidthOffset = offset;
+                    } else if (type == 0x0200) {
+                        dimensionsPayload = new byte[length];
+                        Buffer.BlockCopy(workbookStream, payloadOffset, dimensionsPayload, 0, length);
+                    } else if (type == 0x00d7) {
+                        dbCellOffsets.Add(offset);
+                    }
+                }
+
+                offset = payloadOffset + length;
+            }
+
+            Assert.NotNull(indexPayload);
+            Assert.NotNull(dimensionsPayload);
+            Assert.True(defaultColumnWidthOffset >= 0, "The worksheet DefColWidth record was not found.");
+            Assert.Equal(expectedDataFirstRow, ReadUInt32(indexPayload!, 4));
+            Assert.Equal(expectedDataRowAfterLast, ReadUInt32(indexPayload!, 8));
+            Assert.Equal((uint)defaultColumnWidthOffset, ReadUInt32(indexPayload!, 12));
+            Assert.Equal(expectedDimensionFirstRow, ReadUInt32(dimensionsPayload!, 0));
+            Assert.Equal(expectedDimensionRowAfterLast, ReadUInt32(dimensionsPayload!, 4));
+
+            int expectedRowBlockCount = expectedDimensionRowAfterLast <= expectedDimensionFirstRow
+                ? 0
+                : checked((int)((expectedDimensionRowAfterLast - expectedDimensionFirstRow + 31U) / 32U));
+            Assert.Equal(expectedRowBlockCount, dbCellOffsets.Count);
+            Assert.Equal(16 + (expectedRowBlockCount * 4), indexPayload!.Length);
+            for (int index = 0; index < dbCellOffsets.Count; index++) {
+                Assert.Equal((uint)dbCellOffsets[index], ReadUInt32(indexPayload, 16 + (index * 4)));
+            }
         }
 
         private static void AssertBiffRecordOccursBefore(string xlsPath, ushort beforeRecordType, ushort afterRecordType) {

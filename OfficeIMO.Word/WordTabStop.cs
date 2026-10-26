@@ -28,24 +28,24 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the alignment type for the tab stop.
         /// </summary>
-        public TabStopValues Alignment {
+        public WordTabAlignment Alignment {
             get {
-                return _tabStop.Val ?? TabStopValues.Left;
+                return (_tabStop.Val?.Value ?? TabStopValues.Left).ToOfficeEnum();
             }
             set {
-                _tabStop.Val = value;
+                _tabStop.Val = value.ToOpenXml();
             }
         }
 
         /// <summary>
         /// Gets or sets the leader character displayed before the tab stop.
         /// </summary>
-        public TabStopLeaderCharValues Leader {
+        public WordTabLeader Leader {
             get {
-                return _tabStop.Leader ?? TabStopLeaderCharValues.None;
+                return (_tabStop.Leader?.Value ?? TabStopLeaderCharValues.None).ToOfficeEnum();
             }
             set {
-                _tabStop.Leader = value;
+                _tabStop.Leader = value.ToOpenXml();
             }
         }
 
@@ -75,7 +75,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="wordParagraph">The paragraph to which this tab stop belongs.</param>
         /// <param name="tab">The underlying Open XML tab stop element.</param>
-        public WordTabStop(WordParagraph wordParagraph, TabStop tab) {
+        internal WordTabStop(WordParagraph wordParagraph, TabStop tab) {
             _paragraph = wordParagraph;
             _tabStop = tab;
         }

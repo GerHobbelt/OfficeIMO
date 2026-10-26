@@ -98,7 +98,7 @@ internal static class ReaderComparisonCorpus {
             table.GetCell(1, 0).Text = "Presentation table marker";
             table.GetCell(1, 1).Text = "42";
             using var image = new MemoryStream(Convert.FromBase64String(TinyPngBase64));
-            slide.AddPicture(image, OfficeIMO.PowerPoint.ImagePartType.Png);
+            slide.AddPicture(image, OfficeIMO.Drawing.OfficeImageFormat.Png);
             slide.Notes.Text = "Presenter notes retention marker";
             presentation.Save();
             presentation.BuiltinDocumentProperties.Created = FixedPackageTimestamp;
@@ -116,12 +116,12 @@ internal static class ReaderComparisonCorpus {
     }
 
     private static ReaderComparisonCase CreatePdf() {
-        PdfDocument document = PdfDocument.Create();
-        document.H1("PDF evidence heading");
-        document.Paragraph(value => value.Text("PDF first-page retention marker."));
-        document.PageBreak();
-        document.H1("PDF second page");
-        document.Paragraph(value => value.Text("PDF second-page retention marker."));
+        PdfDocument document = PdfDocument.Create(pdf => pdf.Content(content => content
+            .H1("PDF evidence heading")
+            .Paragraph(value => value.Text("PDF first-page retention marker."))
+            .PageBreak()
+            .H1("PDF second page")
+            .Paragraph(value => value.Text("PDF second-page retention marker."))));
 
         return Case("pdf", "evidence-report.pdf", document.ToBytes(),
             Probe("heading", ReaderComparisonProbeKind.MarkdownHeading, "PDF evidence heading"),

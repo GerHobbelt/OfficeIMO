@@ -7,7 +7,266 @@ This guide contains version-to-version changes that require application code, pa
 - Use support matrices for current coverage and limits.
 - Use this guide when an upgrade no longer compiles or changes an existing workflow.
 
-The repository source is on the coordinated `3.1.x` line; the latest NuGet release is `3.0.3`. Keep every OfficeIMO package in one application on the same published compatibility line and perform a clean restore after changing versions.
+OfficeIMO 3.2 is a coordinated package-ownership cleanup. Upgrade every OfficeIMO package in an application to the same `3.2.x` version and perform a clean restore after changing versions.
+
+## OfficeIMO 3.2: bounded object-table and MHTML ingestion defaults
+
+Direct `ObjectFlattener.Flatten`, `GetPaths`, and `ResolvePaths` calls and object-backed Excel and PowerPoint tables now default to at most 16,384 projected columns. Object tables additionally default to at most 1,000,000 cells, including the header row. Set `ObjectFlattenerOptions.MaxColumns` or `MaxCells` explicitly when a trusted workflow needs a different application-level limit. Excel output remains constrained by worksheet dimensions. The object and explicit-binding `PowerPointSlide.AddTable` overloads apply stricter format-safety ceilings of 1,024 columns and 100,000 cells; split larger trusted datasets into multiple tables.
+
+The aggregate Reader now limits MHT/MHTML input to 64 MiB by default through `OfficeDocumentReaderBuilderMhtmlExtensions.DefaultMaxInputBytes`. Applications can lower or raise that limit by passing `new ReaderOptions { MaxInputBytes = ... }` to the read operation after registering `AddMhtmlHandler()`; use a larger value only for trusted archives with an application-owned resource policy.
+
+## OfficeIMO 3.2: bounded Visio shape-data projection
+
+Visio document projection now retains at most 200 Shape Data rows per page by default. The limit applies to projected tables, Markdown, and block text, preventing untrusted diagrams from causing unbounded row materialization.
+
+Trusted workflows that need more rows can set an explicit limit:
+
+```csharp
+OfficeDocumentModel model = document.ToOfficeDocumentModel(
+    options: new VisioDocumentProjectionOptions { MaxTableRows = 5_000 });
+```
+
+Use `int.MaxValue` only when trusted input must preserve the former effectively unbounded behavior and the application enforces its own resource policy.
+
+## OfficeIMO 3.2: complete image validation at ingestion boundaries
+
+Excel file and URL image methods now validate the complete bounded payload instead of trusting a filename extension or image header. They throw `ArgumentException` for truncated, corrupt, or unsupported content that older versions could package. When a valid image has a misleading filename extension or remote content type, OfficeIMO uses the format detected from its payload.
+
+Applications that intentionally import opaque package bytes can keep using the byte-array `AddImage(...)` overload with an explicit content type. That is the low-level package path; it does not turn invalid content into a renderable image. Use `OfficeImageReader.TryValidateContent(...)` before ingestion when the application needs to report validation failures itself.
+
+Direct `OfficeImageExportResult` construction now applies the same complete-content check. A recognizable header is no longer enough: truncated, corrupt, undecodable, or dimension-mismatched bytes throw `ArgumentException`. Call `OfficeImageReader.TryValidateContent(...)` before construction when the application needs to handle invalid output without an exception.
+
+Word/RTF result conversions now validate and inventory images across the document body, section headers and footers, fields, revisions, notes, and comments. Images that the target format cannot emit remain in the conversion report instead of disappearing silently. Use `ToRtfDocumentResult(...)` or `ToWordDocumentResult(...)`, inspect `Report`, and call `RequireNoLoss()` when omitted image content must stop the workflow.
+
+Word-to-ODT and PowerPoint-to-ODP conversion now preserves only images that pass `OfficeImageReader.TryValidateContent(...)`. Valid payloads with misleading extensions are stored under the detected format; corrupt, truncated, unsupported, and general WebP payloads outside OfficeIMO's managed decoder subset are omitted and reported as unsupported. Each conversion validates at most 256 image payloads, 128 MiB of aggregate encoded image data, and 100 million aggregate raster pixels; later images are omitted and reported once a ceiling is reached. Split larger trusted documents before conversion when every image must be retained. Inspect the returned `OdfConversionResult<T>.Report`, call `RequireNoLoss()`, or set the conversion option `LossPolicy` when image loss must fail the conversion.
+
+Direct ODT and ODP byte-array `AddImage(...)` methods now validate complete image content. When the filename has a recognized image extension, it must agree with the detected format. These methods throw `ArgumentException` for corrupt, truncated, or mislabeled payloads instead of creating an OpenDocument package entry whose media type does not match its bytes.
+
+## OfficeIMO 3.2: one PDF authoring and operation model
+
+`PdfDocument` no longer duplicates every heading, paragraph, table, image, form,
+and page-layout method on the root object. New PDFs use the composition callback;
+an existing generated document can receive another composition through
+`Compose(...)`.
+
+```csharp
+// OfficeIMO 3.1
+PdfDocument.Create(options)
+    .H1("Service report")
+    .Paragraph(paragraph => paragraph.Text("Ready"))
+    .Save("report.pdf");
+
+// OfficeIMO 3.2
+PdfDocument.Create(pdf => pdf.Content(content => content
+        .H1("Service report")
+        .Paragraph(paragraph => paragraph.Text("Ready"))), options)
+    .Save("report.pdf");
+```
+
+Document-wide settings still belong in `PdfOptions`. Page-scoped headers,
+footers, backgrounds, watermarks, and layout use `pdf.Page(page => ...)`.
+Reusable content stays on `PdfItemCompose`, so adapters and applications share
+one authoring vocabulary.
+
+Specialized existing-document operations now use capability objects:
+
+| OfficeIMO 3.1 usage | OfficeIMO 3.2 replacement |
+| --- | --- |
+| `document.Encrypt(options)` | `document.Security.Encrypt(options)` |
+| `document.ValidateSignatures(provider)` | `document.Security.ValidateSignatures(provider)` |
+| `document.PlanRedactions(areas)` | `document.Redactions.Plan(areas)` |
+| `document.ApplyRedactions(plan)` | `document.Redactions.Apply(plan)` |
+| `document.AnalyzeOptimization()` | `document.Optimization.Analyze()` |
+| `document.Optimize(profile)` | `document.Optimization.Apply(profile)` |
+| `document.CompareVisual(actual)` | `document.Proof.CompareVisual(actual)` |
+| `document.AssessRewritePreservation(rewritten)` | `document.Proof.AssessRewritePreservation(rewritten)` |
+
+`Pages`, `Read`, `Forms`, `Attachments`, `Bookmarks`, `Annotations`, and `Stamp`
+keep their existing capability-object shape. The former static implementation
+engines remain internal; applications should not replace the removed root
+methods with calls to those engines.
+
+## OfficeIMO 3.2: bounded RTF reads by default
+
+`RtfReadOptions` now defaults to the bounded OfficeIMO profile. Embedded objects and file-table references are not materialized, hyperlink fields are restricted to web and mail schemes, and byte, character, token, group, payload, image, object, and semantic-block limits apply.
+
+Applications that intentionally rely on the former permissive behavior for trusted files must opt in:
+
+```csharp
+RtfReadResult result = RtfDocument.Load(
+    "trusted-legacy.rtf",
+    RtfReadOptions.CreateCompatibilityProfile());
+```
+
+Do not use the compatibility profile for uploads or other untrusted inputs. Lossless byte output from character-only reads now fails when the source cannot be represented exactly; use byte, stream, or file input when exact original bytes are required.
+
+## OfficeIMO 3.2: bounded LaTeX byte input by default
+
+LaTeX file and stream loading now rejects encoded input larger than 64 MiB before decoding, independently of the existing decoded-character limit. Applications that intentionally load larger trusted documents must raise or disable the byte limit explicitly:
+
+```csharp
+LatexParseResult result = LatexDocument.Load(
+    "trusted-large-document.tex",
+    new LatexParseOptions { MaximumInputBytes = null });
+```
+
+Keep the default for uploads and other untrusted input. Set `MaximumInputBytes` to a larger finite value when the application has a known document-size ceiling; use `null` only for a trusted source with a separate resource policy.
+
+### PDF OCR provider coordinates
+
+`PdfOcrRequest.PageWidth` and `PageHeight` now describe the rendered visual page
+after applying the crop box and page rotation. In earlier versions they exposed
+the unrotated logical dimensions even though `Png`, `PixelWidth`, and
+`PixelHeight` represented the rendered page. For pages rotated 90 or 270
+degrees, the point dimensions are therefore swapped.
+
+Existing `IPdfOcrProvider` implementations should map their pixel-space
+`PdfOcrWord` results against these visual dimensions. Providers that cached or
+recomputed unrotated media-box dimensions should instead use the request's
+`PageWidth`, `PageHeight`, and `Scale`, which now describe the same visual
+coordinate space as the supplied PNG.
+
+## OfficeIMO 3.2: neutral conversion model
+
+Direct format conversion no longer uses Reader as its intermediate ownership
+layer. `OfficeIMO.Core` now contains the dependency-free `OfficeDocumentModel`,
+source formats project into that model, and destination packages own their
+output policy.
+
+| OfficeIMO 3.1 usage | OfficeIMO 3.2 replacement |
+| --- | --- |
+| `OfficeIMO.Reader.ReaderPdfProjectionOptions` | `OfficeIMO.Pdf.PdfProjectionOptions` |
+| `ReaderPdfPagePolicy` | `PdfProjectionPagePolicy` |
+| `ReaderPdfAssetPolicy` | `PdfProjectionAssetPolicy` |
+| `ReaderPdfLinkPolicy` | `PdfProjectionLinkPolicy` |
+| `ReaderPdfFormPolicy` | `PdfProjectionFormPolicy` |
+| Reader options passed through `VisioPdfSaveOptions` | `VisioDocumentProjectionOptions` for source projection and `PdfProjectionOptions` for PDF output |
+
+`OfficeIMO.Visio.Pdf` now depends only on `OfficeIMO.Core`, `OfficeIMO.Visio`,
+and `OfficeIMO.Pdf`; it no longer installs `OfficeIMO.Reader.Visio` or
+`OfficeIMO.Reader.Pdf`. Existing Reader-result-to-PDF calls remain available
+through a thin `OfficeIMO.Reader.Pdf` compatibility bridge, but the projection
+implementation and options belong to `OfficeIMO.Pdf`.
+
+## OfficeIMO 3.2: explicit HTML and MHTML bridges
+
+`OfficeIMO.Html` is now the lean HTML engine. It no longer makes ordinary HTML, Markdown, Office-conversion, Reader, or EPUB applications acquire Email or RTF packages. Cross-format behavior moved to packages whose names describe both sides of the operation.
+
+| Existing workflow | 3.2 package and code change |
+| --- | --- |
+| HTML to/from RTF | Add `OfficeIMO.Html.Rtf`. Existing APIs remain in the `OfficeIMO.Html` namespace. |
+| Load or save MHT/MHTML | Add `OfficeIMO.Mhtml` and replace `using OfficeIMO.Html;` for `MhtmlDocument` or `MhtmlResource` with `using OfficeIMO.Mhtml;`. |
+| Render an `EmailDocument` to images | Add `OfficeIMO.Email.Image`. Existing APIs remain in the `OfficeIMO.Email` namespace. |
+| Convert MHT/MHTML to PDF | Add `OfficeIMO.Mhtml.Pdf` plus `OfficeIMO.Mhtml`; use the `OfficeIMO.Mhtml` extension namespace. Plain HTML/PDF remains in `OfficeIMO.Html.Pdf`. |
+| Register HTML with Reader | `AddHtmlHandler()` now registers `.html`, `.htm`, and `.xhtml` only. |
+| Register MHT/MHTML with Reader | Reference `OfficeIMO.Reader.Email`, import `OfficeIMO.Reader.Email`, and call `AddMhtmlHandler()`. `AddEmailHandlers()` and `OfficeIMO.Reader.All` include it automatically. |
+| Read EPUB through Reader | No source change. `OfficeIMO.Reader.Epub` still reuses the HTML projection but no longer receives Email, RTF, or MHTML transitively. |
+
+No `OfficeIMO.Html.Core`, separate document-model package, or `OfficeIMO.Reader.Mhtml` package was introduced. The base HTML and Reader APIs stay focused; optional bridges carry the extra dependency edges.
+
+## OfficeIMO 3.1
+
+OfficeIMO 3.1 was a coordinated breaking release. The sections below describe upgrades from 3.0 to aligned `3.1.x` packages.
+
+## Start here: most OfficeIMO.Word applications
+
+If an application references `OfficeIMO.Word` and uses the high-level Word object
+model, start here. The usual create, load, edit, and save workflow keeps the same
+shape. Most migration work is replacing enum or type names reported by the
+compiler; applications do not need to rewrite ordinary paragraph, table, image,
+header, footer, or section workflows.
+
+Use this upgrade sequence:
+
+1. Upgrade `OfficeIMO.Word` and every other OfficeIMO package in the application
+   to the same `3.1.x` version.
+2. If the project explicitly references the `OfficeIMO.Drawing` package, replace
+   that package reference with `OfficeIMO.Core`. A project that references only
+   `OfficeIMO.Word` receives Core through the Word package dependency.
+3. Delete stale `bin` and `obj` output, restore packages, and build the application.
+4. Fix compiler errors using the Word and shared replacement tables below. Remove
+   `DocumentFormat.OpenXml.Wordprocessing` imports that were present only for
+   high-level OfficeIMO enum values.
+5. Run the application's document tests. Review the focused behavior notes only
+   for APIs the application actually uses, especially table layout, low-level
+   style/page settings, signatures, or converters.
+
+A typical enum migration is local:
+
+```csharp
+// OfficeIMO 3.0
+using DocumentFormat.OpenXml.Wordprocessing;
+using OfficeIMO.Word;
+
+title.SetAlignment(JustificationValues.Center);
+document.AddSection(SectionMarkValues.Continuous);
+```
+
+```csharp
+// OfficeIMO 3.1
+using OfficeIMO.Word;
+
+title.SetAlignment(WordParagraphAlignment.Center);
+document.AddSection(WordSectionBreakType.Continuous);
+```
+
+Estimate the likely migration from the APIs the application uses:
+
+| Application shape | Likely work |
+| --- | --- |
+| `OfficeIMO.Word` with the regular document object model | Mostly compiler-guided enum and type replacements. |
+| Word fluent APIs without storing concrete builder types | The `AsFluent()` entry point remains; rename any builder types referenced explicitly. |
+| Word code using Open XML values as high-level options | Replace them with the corresponding `Word*` or shared `Office*` enums. |
+| Word code receiving Open XML styles, page sizes, note settings, or page-number elements from OfficeIMO | Move to the OfficeIMO-owned definitions and settings described under [cross-format contract and naming cleanup](#cross-format-contract-and-naming-cleanup). |
+| Word plus PDF, HTML, Markdown, RTF, or Google Docs adapters | Also replace format-specific conversion diagnostics and policies with the shared `OfficeConversion*` contracts. |
+| Word, Excel, and PowerPoint in one application | Expect more renames, but fewer ambiguous types afterward because genuinely shared contracts now have one `Office*` name. |
+| Removed Excel reader APIs or the old PowerPoint fluent/composer surface | Follow the dedicated [CSV and Excel tabular reads](#csv-and-excel-tabular-reads) or [PowerPoint lifecycle, composition, and inspection](#powerpoint-lifecycle-composition-and-inspection) sections; these are the migrations most likely to require workflow changes. |
+
+The rest of this guide is a lookup reference. An application does not need to
+apply sections for packages or features it does not use.
+
+## Shared foundation package: Drawing to Core
+
+The zero-dependency shared package, project, and assembly have been renamed from
+`OfficeIMO.Drawing` to `OfficeIMO.Core`:
+
+```xml
+<PackageReference Include="OfficeIMO.Core" Version="3.1.0" />
+```
+
+This is a rename of the existing shared foundation, not a split into another
+dependency layer. Drawing originally absorbed the shared primitives so Word,
+Excel, PowerPoint, Visio, PDF, and the conversion packages would not require a
+Core package that then depended on a separate Drawing package. Over time that
+assembly also became the owner of lifecycle, package-security, embedded-payload,
+and neutral data-mapping contracts, so `OfficeIMO.Drawing` no longer described
+the package honestly.
+
+Actual drawing types such as `OfficeColor`, `OfficeShape`, and
+`OfficeRenderingProfile` remain in the `OfficeIMO.Drawing` namespace. Security
+provider APIs remain in `OfficeIMO.Security`. Cross-document lifecycle and
+package contracts, compatibility models, capability catalogs, and conversion
+reports move to the root `OfficeIMO` namespace. Neutral object-flattening and
+row-mapping contracts use `OfficeIMO.Data`:
+
+| OfficeIMO 3.0 | OfficeIMO 3.1 |
+| --- | --- |
+| Package/assembly `OfficeIMO.Drawing` | Package/assembly `OfficeIMO.Core` |
+| `OfficeIMO.Drawing.DocumentAccessMode` | `OfficeIMO.DocumentAccessMode` |
+| `OfficeIMO.Drawing.DocumentPersistenceMode` | `OfficeIMO.DocumentPersistenceMode` |
+| `OfficeIMO.Drawing.DocumentCreateOptions` | `OfficeIMO.DocumentCreateOptions` |
+| `OfficeIMO.Drawing.DocumentLoadOptions` | `OfficeIMO.DocumentLoadOptions` |
+| `OfficeIMO.Drawing.OfficePackageSecurityOptions` and related package contracts | Root `OfficeIMO` namespace |
+| `OfficeIMO.Drawing.OfficeFormatDescriptor`, compatibility models, and capability catalogs | Root `OfficeIMO` namespace |
+| `OfficeIMO.Drawing.IOfficeConversionReport` | `OfficeIMO.IOfficeConversionReport` |
+| `OfficeIMO.Drawing.ObjectFlattener`, `ObjectFlattenerOptions`, and `CollectionColumnMapping` | `OfficeIMO.Data` namespace |
+| `OfficeIMO.Drawing.HeaderCase`, `NullPolicy`, and `CollectionMode` | `OfficeIMO.Data` namespace |
+
+Replace the package reference and add `using OfficeIMO;` where lifecycle or
+package, compatibility, capability, or conversion-report contracts are used.
+Add `using OfficeIMO.Data;` for row mapping and object flattening. Keep
+`using OfficeIMO.Drawing;` for actual drawing, color, image, chart, font, and
+rendering APIs.
 
 | Version in the application | Upgrade path |
 | --- | --- |
@@ -27,6 +286,150 @@ The repository source is on the coordinated `3.1.x` line; the latest NuGet relea
 | Cryptographic operations reached through a format package's transitive `OfficeIMO.Security` dependency | Install `OfficeIMO.Security` explicitly and pass `OfficeSecurityProvider.Default` through the format API. |
 
 There is no replacement umbrella OpenDocument PDF package. The focused packages keep Word, Excel, and PowerPoint dependencies out of applications that do not use those routes.
+
+### OpenXML value types are now OfficeIMO enums
+
+OpenXML SDK 3 changed schema value types such as `SectionMarkValues` from CLR enums into generated value structs. Those structs work as OpenXML serialization values, but they are poor high-level API contracts: PowerShell cannot bind them like enums, and applications become coupled to an SDK implementation detail.
+
+OfficeIMO 3.1 public APIs therefore accept and return OfficeIMO-owned CLR enums. This is an intentional breaking change. Remove `DocumentFormat.OpenXml` imports that were used only to select a high-level OfficeIMO option, and use the corresponding `Word*`, `PowerPoint*`, or `Excel*` enum. Direct package-element editing can still use OpenXML SDK types at that low level.
+
+Common Word changes are:
+
+| OfficeIMO 3.0 | OfficeIMO 3.1 |
+| --- | --- |
+| `document.AddSection(SectionMarkValues.Continuous)` | `document.AddSection(WordSectionBreakType.Continuous)` |
+| `paragraph.AddBreak(BreakValues.Page)` | `paragraph.AddBreak(WordBreakType.Page)` |
+| `paragraph.SetUnderline(UnderlineValues.Double)` | `paragraph.SetUnderline(WordUnderlineStyle.Double)` |
+| `paragraph.SetAlignment(JustificationValues.Center)` | `paragraph.SetAlignment(WordParagraphAlignment.Center)` |
+| `section.GetOrCreateHeader(HeaderFooterValues.First)` | `section.GetOrCreateHeader(WordHeaderFooterType.First)` |
+| `PageOrientationValues`, `WordPageOrientation`, `ExcelPageOrientation`, or `PdfPageOrientation` | `OfficePageOrientation` |
+| `NumberFormatValues` | `WordNumberFormat` |
+| `BorderValues` | `WordBorderStyle` |
+| `HighlightColorValues` | `WordHighlightColor` |
+| `ShadingPatternValues` | `WordShadingPattern` |
+| `TabStopValues` / `TabStopLeaderCharValues` | `WordTabAlignment` / `WordTabLeader` |
+| `TableLayoutValues` / `TableOverlapValues` | `WordTableLayoutMode` / `WordTableOverlap` |
+| `TableRowAlignmentValues` / `TableWidthUnitValues` | `WordTableAlignment` / `WordTableWidthUnit` |
+| `TableVerticalAlignmentValues` / `TextDirectionValues` | `WordTableVerticalAlignment` / `WordTextDirection` |
+| `HorizontalRelativePositionValues` / `VerticalRelativePositionValues` | `WordHorizontalRelativePosition` / `WordVerticalRelativePosition` |
+| `HorizontalAnchorValues` / `VerticalAnchorValues` | `WordTableHorizontalAnchor` / `WordTableVerticalAnchor` |
+| `HorizontalAlignmentValues` / `VerticalAlignmentValues` | `WordTableHorizontalAlignment` / `WordTableVerticalPositionAlignment` |
+| `VerticalPositionValues` / `VerticalTextAlignmentValues` | `WordVerticalTextPosition` / `WordVerticalCharacterAlignment` |
+| `DocumentProtectionValues` | `WordDocumentProtectionType` |
+| `FootnotePositionValues` / `EndnotePositionValues` / `RestartNumberValues` | `WordFootnotePosition` / `WordEndnotePosition` / `WordNoteNumberRestart` |
+| `LevelJustificationValues` / `LevelSuffixValues` | `WordListLevelAlignment` / `WordListLevelSuffix` |
+| `ShapeTypeValues` / `BlipCompressionValues` / `BlackWhiteModeValues` | `OfficePresetShapeType` / `WordImageCompressionQuality` / `WordImageBlackWhiteMode` |
+| `WordImage.BlackWiteMode` | `WordImage.BlackWhiteMode` (the misspelled member remains as an obsolete forwarding alias) |
+| chart `BarDirectionValues`, `BarGroupingValues`, and `LegendPositionValues` | `WordChartBarDirection`, `WordChartBarGrouping`, and `OfficeChartLegendPosition` |
+
+PowerPoint uses the same rule:
+
+| OfficeIMO 3.0 | OfficeIMO 3.1 |
+| --- | --- |
+| `AddSlideWithLayoutType(...)` / `SetLayoutWithType(...)` / `GetLayoutIndexWithType(...)` | `AddSlide(...)` / `SetLayout(...)` / `GetLayoutIndex(...)` with `PowerPointSlideLayoutType` |
+| `SlideLayoutValues` | `PowerPointSlideLayoutType` |
+| `ShapeTypeValues` | `OfficePresetShapeType` |
+| `TextAlignmentTypeValues` / `TextAnchoringTypeValues` / `TextVerticalValues` | `PowerPointTextAlignment` / `PowerPointTextVerticalAlignment` / `PowerPointTextDirection` |
+| `TextAutoNumberSchemeValues` / `TextUnderlineValues` | `PowerPointNumberingScheme` / `PowerPointUnderlineStyle` |
+| `LineEndValues` / `LineEndLengthValues` / `LineEndWidthValues` | `OfficeLineMarkerKind` / `PowerPointLineEndLength` / `PowerPointLineEndWidth` |
+| `PresetLineDashValues` / `RectangleAlignmentValues` | `PowerPointLineDashStyle` / `PowerPointRectangleAlignment` |
+| `PlaceholderValues` / `PlaceholderSizeValues` / `DirectionValues` | `PowerPointPlaceholderType` / `PowerPointPlaceholderSize` / `PowerPointPlaceholderDirection` |
+| `SlideSizeValues` | `PowerPointSlideSizeType` |
+| chart `BuiltInUnitValues`, `CrossBetweenValues`, `CrossesValues`, and `TickLabelPositionValues` | `OfficeChartDisplayUnit`, `OfficeChartAxisCrossBetween`, `OfficeChartAxisCrossingPosition`, and `OfficeChartAxisTickLabelPosition` |
+| chart `DataLabelPositionValues`, `GroupingValues`, `LegendPositionValues`, `MarkerStyleValues`, and `TrendlineValues` | the corresponding `PowerPointChart*` enum |
+
+Excel replacements include:
+
+| OfficeIMO 3.0 | OfficeIMO 3.1 |
+| --- | --- |
+| `BorderStyleValues` / `HorizontalAlignmentValues` / `VerticalAlignmentValues` | `ExcelBorderStyle` / `ExcelHorizontalAlignment` / `ExcelVerticalAlignment` |
+| `CellValues` / `UnderlineValues` / `VerticalAlignmentRunValues` | `ExcelCellValueType` / `ExcelUnderlineStyle` / `ExcelVerticalTextAlignment` |
+| `ConditionalFormatValues` / `ConditionalFormattingOperatorValues` / `TimePeriodValues` | `ExcelConditionalFormatType` / `ExcelConditionalFormattingOperator` / `ExcelConditionalTimePeriod` |
+| `DataValidationErrorStyleValues` / `DataValidationOperatorValues` | `ExcelDataValidationErrorStyle` / `ExcelDataValidationOperator` |
+| `IconSetValues` | `ExcelIconSet` |
+| `SparklineTypeValues` | `ExcelSparklineType` |
+| `TotalsRowFunctionValues` | `ExcelTableTotalsFunction` |
+| `DataConsolidateFunctionValues` / `FieldSortValues` / `GroupByValues` | `ExcelPivotDataFunction` / `ExcelPivotFieldSort` / `ExcelPivotGroupBy` |
+| `PivotFilterValues` / `PivotTableAxisValues` / `ShowDataAsValues` | `ExcelPivotFilterType` / `ExcelPivotTableAxis` / `ExcelPivotShowDataAs` |
+| chart `BuiltInUnitValues`, `CrossBetweenValues`, `CrossesValues`, and `TickLabelPositionValues` | `OfficeChartDisplayUnit`, `OfficeChartAxisCrossBetween`, `OfficeChartAxisCrossingPosition`, and `OfficeChartAxisTickLabelPosition` |
+| chart `DataLabelPositionValues`, `LegendPositionValues`, `MarkerStyleValues`, and `TrendlineValues` | the corresponding `ExcelChart*` enum |
+
+The OpenXML member named `ShowDataAsValues.PercentOfRaw` serializes the token `percentOfRow`. OfficeIMO exposes the corrected spelling `ExcelPivotShowDataAs.PercentOfRow`.
+
+### Cross-format contract and naming cleanup
+
+OfficeIMO applications commonly import Word, Excel, PowerPoint, PDF, and one or
+more converters together. Format-owned types therefore carry their format name,
+while contracts with the same meaning in several formats live once in
+`OfficeIMO.Core` with an `Office*` name. This avoids ambiguous `using`
+directives and prevents converters from defining parallel policy enums.
+
+Shared replacements include:
+
+| OfficeIMO 3.0 or early 3.1 preview | OfficeIMO 3.1 |
+| --- | --- |
+| Format-specific conversion loss and destination-conflict enums | `OfficeConversionLossPolicy` / `OfficeConversionFileConflictPolicy` |
+| Format-specific conversion diagnostic category, severity, and failure enums | `OfficeConversionDiagnosticCategory`, `OfficeConversionDiagnosticSeverity`, and `OfficeConversionFailureReason` |
+| Format-specific feature-support enums | `OfficeFeatureSupportLevel` |
+| Open XML SDK `OpenSettings` in Word, Excel, or PowerPoint load options | `OfficeOpenXmlLoadSettings` |
+| Open XML SDK `FileFormatVersions` in public validation APIs | `OfficeOpenXmlFileFormatVersion` |
+| Open XML SDK validation errors | `OfficeOpenXmlValidationError` |
+| Word/Excel/PowerPoint copies of common chart positions, markers, line ends, and preset shapes | `OfficeChart*`, `OfficeLineMarkerKind`, and `OfficePresetShapeType` from `OfficeIMO.Core` |
+| Word/PowerPoint image-part format enums | `OfficeImageFormat` from `OfficeIMO.Core` |
+
+Format-specific public type renames include:
+
+| OfficeIMO 3.0 or early 3.1 preview | OfficeIMO 3.1 |
+| --- | --- |
+| Word `ApplicationProperties` / `BuiltinDocumentProperties` | `WordApplicationProperties` / `WordBuiltinDocumentProperties` |
+| Excel `ApplicationProperties` / `BuiltinDocumentProperties` | `ExcelApplicationProperties` / `ExcelBuiltinDocumentProperties` |
+| `CapsStyle` / `CompatibilityMode` / `CoverPageTemplate` | `WordCapsStyle` / `WordCompatibilityMode` / `WordCoverPageTemplate` |
+| `CustomImagePartType` / `WordImagePartType` / `ImageFillMode` / `WrapTextImage` | `OfficeImageFormat` / `WordImageFillMode` / `WordImageTextWrapping` |
+| `ShapeType` / `SmartArtType` | `WordShapeType` / `WordSmartArtType` |
+| `TableOfContentStyle` / `TargetFrame` / `TextMatchType` | `WordTableOfContentsStyle` / `WordHyperlinkTargetFrame` / `WordTextMatchType` |
+| Word `DocumentCleanupOptions` / `PropertyTypes` | `WordDocumentCleanupOptions` / `WordCustomPropertyType` |
+| Excel `ExecutionMode` / `ExecutionPolicy` | `ExcelExecutionMode` / `ExcelExecutionPolicy` |
+| Excel `HeaderFooterPosition` / `NameValidationMode` | `ExcelHeaderFooterPosition` / `ExcelDefinedNameValidationMode` |
+| Excel `TableStyle` | `ExcelTableStyle` |
+| Excel `SheetNameValidationMode` / `TableNameValidationMode` / `WorksheetValidationMode` | `ExcelSheetNameValidationMode` / `ExcelTableNameValidationMode` / `ExcelWorksheetValidationMode` |
+| PowerPoint `ImagePartType` / `PowerPointImagePartType` | `OfficeImageFormat` |
+| `SlideTransition` / `SlideTransitionSpeed` / `TableCellBorders` | `PowerPointSlideTransition` / `PowerPointSlideTransitionSpeed` / `PowerPointTableCellBorders` |
+| Excel or PowerPoint format-specific signature mutation policy | `OfficeSignatureMutationPolicy` |
+| `OfficeImageExportLossKind`, `HtmlConversionLossKind`, or `WordMarkdownConversionLossKind` | `OfficeConversionLossKind` |
+| `GoogleDocsImportMode`, `GoogleSheetsImportMode`, or `GoogleSlidesImportMode` | `GoogleWorkspaceImportMode` |
+| `GoogleDocsDiffKind`, `GoogleSheetsDiffKind`, or `GoogleSlidesDiffKind` | `GoogleWorkspaceDiffKind` |
+
+Word high-level APIs no longer expose package elements for ordinary formatting:
+
+| OfficeIMO 3.0 or early 3.1 preview | OfficeIMO 3.1 |
+| --- | --- |
+| Open XML `Style` arguments and results on paragraph-style APIs | `WordParagraphStyleDefinition` |
+| Open XML page-size values | `WordPageSizeDefinition` |
+| Open XML `FootnoteProperties`, `EndnoteProperties`, or `PageNumberType` | `WordFootnoteSettings`, `WordEndnoteSettings`, and `WordPageNumberSettings` |
+| Open XML numeric wrappers on margins and borders | `uint` / `ushort` values |
+| `WordHorizontalAlignmentValues` for text boxes | `WordTextBoxHorizontalAlignment` |
+| Generic fluent `HorizontalAlignment` / `VerticalAlignment` | `WordParagraphAlignment` or `WordTableAlignment`, according to the owning builder |
+| `WordTableLayoutType`, raw `WordTableLayoutMode`, `WordTable.LayoutType`, or `SetTableLayout(...)` | `WordTableLayoutMode.AutoFit` / `Fixed` and `WordTable.LayoutMode`; use `AutoFitToContents()`, `AutoFitToWindow()`, or `SetFixedWidth(percent)` when width changes are also intended |
+| Word fluent `ParagraphBuilder` / Markdown `ParagraphBuilder` | `WordParagraphBuilder` / `MarkdownParagraphBuilder` |
+| PDF `TextRun` / Markdown `TextRun` | `PdfTextRun` / `MarkdownTextRun` |
+
+The early 3.1-preview values `AutoFitToContents`, `AutoFitToWindow`, and
+`FixedWidth` mixed Word's two layout algorithms with width presets and could not
+round-trip unambiguously. `WordTable.LayoutMode` now changes only the real
+layout algorithm and preserves table and cell preferred widths. The explicit
+width helpers retain their action-oriented behavior. `SetFixedWidth(percent)`
+sets the table width only; it no longer rewrites each cell to an equal width.
+
+Excel package-metadata creation methods now return `ExcelPackagePartInfo`
+instead of an Open XML SDK package part. Use its `RelationshipId`, `Uri`,
+`ContentType`, and `RelationshipType` properties. Applications that intentionally
+perform low-level package editing can still start from
+`ExcelDocument.OpenXmlDocument`.
+
+`ExcelSheet.BeginNoLock()` is no longer public. Use `ExcelSheet.Batch(...)` to
+group worksheet mutations under one write lock.
+
+`OfficeIMO.Markup` now emits the same OfficeIMO-owned enums in generated C#. Its PowerShell starter output uses canonical PSWriteOffice commands and string enum member names so it remains compatible with the packaged module's isolated dependency context. Regenerate previously emitted starter code, review any emitted `TODO` comments for chart-data binding, or replace remaining `DocumentFormat.OpenXml.*Values` arguments with the matching enum above before compiling or running against 3.1.
 
 ### Optional security provider
 
@@ -117,10 +520,86 @@ Replace the removed public reader roots as follows:
 | `ExcelDocumentReader.Open(...)` | `ExcelDocument.OpenDataReader(...)` |
 | `ExcelRead.*`, `ExcelDocument.Read().Sheet().Range()`, or `ExcelSheetReader` | `ExcelDocument.OpenDataReader(...)` for streaming, or `ExcelDocument.Load(...)` for editing |
 | Concrete `ExcelDocumentReader` / `ExcelSheetReader` use | `ExcelWorkbookDataReader` returned by `ExcelDocument.OpenDataReader(...)` or `workbook.CreateDataReader(...)` |
+| `ExcelSheet.Rows(...)` | `workbook.CreateDataReader(...)` to read the current open workbook (including unsaved edits), `ExcelDocument.OpenDataReader(...)` for an unopened file/stream, or deferred `ExcelSheet.RowsAs<T>(...)` projection |
+| `ExcelSheet.RowsObjects(...)`, `RowEdit`, or `CellEdit` | Direct `ExcelSheet` cell APIs such as `CellValue(...)`, `CellFormula(...)`, and `FormatCell(...)` |
+| `ExcelSheet.GetUsedRangeA1()` | `ExcelSheet.UsedRangeA1` |
 
 `CsvLoadOptions.Mode`, `CsvLoadMode`, and `CsvDocument.Mode` are no longer
 public. Use `CsvDocument.OpenDataReader` for a forward-only read and
 `CsvDocument.Load` for a materialized model.
+
+`CsvDocument.Materialize()` is also no longer public because `Load` and `Parse`
+always return a materialized document. There is no public streaming-document
+state to convert; use `OpenDataReader` when rows should remain forward-only.
+
+### CSV and Excel typed-row cleanup
+
+OfficeIMO 3.1 has one package-native typed-row writer for Excel and one typed-row
+projection name for CSV. Replace the removed overlapping entry points as follows:
+
+| Removed 3.1 preview API | Current 3.1 API |
+| --- | --- |
+| `ExcelDocument.WriteObjects(..., IReadOnlyList<(string Header, Func<T, object?> Selector)>, ...)` | `ExcelDocument.WriteRows(..., headers, (writer, row) => writer.Write(...), ...)` |
+| `ExcelTabularColumn<T>` and its `ExcelDocument.WriteObjects` overload | `ExcelDocument.WriteRows(...)` |
+| `CsvDocument.Map<T>(...)` | `CsvDocument.RowsAs<T>(...)` |
+| `RowMapper<T>` | `OfficeIMO.Data.RowMapper<T>` |
+| `CsvObjectWriter` | `CsvRowWriter` |
+| `CsvObjectWriter.WriteTrustedRow(...)` / `WriteTrustedTextRow(...)` | `CsvRowWriter.WriteRow(...)` / `WriteTextRow(...)`; the established column schema still controls the overloads without a columns argument |
+
+The generic `DbDataReader.RowsAs<T>()` extensions now live in the neutral
+`OfficeIMO.Data` namespace supplied by `OfficeIMO.Core`; add
+`using OfficeIMO.Data;`. CSV and Excel readers use the same mapping plan and
+conversion rules. Mapping failures from this shared path throw
+`DataMappingException`.
+
+On .NET 8 and later, explicit `DateOnly` and `TimeOnly` targets work through
+`RowsAs<T>`, `DbDataReader.GetFieldValue<T>`, and CSV schema columns. Default
+CSV and Excel schema inference remains `DateTime`; OfficeIMO does not remap
+inferred dates based on the target framework. Set
+`CsvLoadOptions.MappingErrorValuePolicy` or
+`ExcelReadOptions.MappingErrorValuePolicy` to `Redact` when typed mapping errors
+must omit source values and custom-converter details.
+
+Shared typed-row conversion now parses `DateTime` text with
+`DateTimeStyles.RoundtripKind`. ISO 8601 round-trip values therefore preserve
+their encoded UTC, local, or unspecified `DateTime.Kind` instead of being parsed
+with the previous `DateTimeStyles.None` behavior. Consumers that intentionally
+discard zone-kind information should normalize the mapped value explicitly.
+
+The low-level `CsvFile` compression helper is no longer public. Use
+`CsvDocument.Load`, `OpenDataReader`, `Save`, `WriteDataReader`, or caller-owned
+`TextReader` / `TextWriter` streams so file and compression behavior stays with
+the operation being performed.
+
+CSV `LoadAsync` and `SaveAsync` use asynchronous source or destination I/O but
+still materialize the document or serialized output. Use `OpenDataReader` for a
+bounded forward-only cursor. That reader remains synchronous and can be cast to
+`ICsvDataReaderPositionMetadata` for logical record numbers and available
+physical start/end line numbers.
+
+`WriteRows` keeps typed cell dispatch without boxing when its typed `Write`
+overloads are used. Use `WriteRowsAsync` for an `IAsyncEnumerable<T>` source; it
+consumes and disposes the source one row at a time and supports cancellation.
+The async overload rejects `CreateTable` and `AutoFit` because those features
+require the final row range or column widths before package output starts.
+
+`ExcelSheet.RowsAs<T>()` is now the single typed projection name and enumerates
+rows lazily while the owning workbook remains open. Replace preview
+`RowsAsStream<T>()` calls with `RowsAs<T>()`; call `ToList()` or `ToArray()` when
+an eagerly materialized collection is required. Use the overload accepting
+`Action<RowMapper<T>>` for explicit, NativeAOT-friendly column assignments.
+That mapper still requires `T : new()`. For positional records and other
+constructor-bound models, use the `factory:` overload accepting
+`Func<IDataRecord, T>`; it does not require a public parameterless constructor.
+Named cancellation arguments on `RowsAs`, `EnumerateCells`, and `EnumerateRange`
+use `cancellationToken` instead of `ct`.
+
+Use `CsvDocument.Load(...).RowsAs<T>()` when a mutable/materialized CSV document
+is required. For a forward-only typed read, use
+`CsvDocument.OpenDataReader(...).RowsAs<T>()`; the same automatic and explicit
+mapping definitions and the constructor factory are supported without exposing
+another CSV reader type.
+
 `ExcelDocument.Sheets` now exposes `IReadOnlyList<ExcelSheet>` instead of
 `List<ExcelSheet>`. Enumerate or index the property as before, use the workbook's
 worksheet operations to edit the collection, or call `document.Sheets.ToList()`
@@ -130,8 +609,10 @@ Excel exposes worksheets as ordered `ExcelWorkbookDataReader` results through
 `A1Range` to select a range, `CurrentSheetName` / `CurrentSheetIndex` to identify the
 workbook sheet, and `CurrentResultIndex` to identify its position in the selected results.
 
-The Excel/CSV adapter in `OfficeIMO.Reader.Excel` now uses the native CSV reader
-and writer pipelines. Replace `ImportDelimitedFile` with `ImportCsvFile`, and
+The Excel/CSV adapter has moved from `OfficeIMO.Reader.Excel` to the dedicated
+`OfficeIMO.Excel.Csv` package and namespace. It uses the native CSV reader and
+writer pipelines without making either core format package depend on the other.
+Replace `ImportDelimitedFile` with `ImportCsvFile`, and
 replace decoded-text `ImportDelimitedText` and worksheet `FromCsv` calls with
 `ImportCsvText`. Use `ImportCsv` when the source is a `CsvDocument` or `Stream`.
 Replace `ExcelDelimitedImportOptions` and `ExcelDelimitedImportResult` with
@@ -155,7 +636,7 @@ For example, an explicit semicolon import now uses nested options:
 ```csharp
 using System.Globalization;
 using OfficeIMO.CSV;
-using OfficeIMO.Reader.Excel;
+using OfficeIMO.Excel.Csv;
 
 var options = new ExcelCsvImportOptions {
     SheetName = "Import",
@@ -184,7 +665,7 @@ former `FromCsv` no-table and string-valued parsing behavior:
 
 ```csharp
 using OfficeIMO.CSV;
-using OfficeIMO.Reader.Excel;
+using OfficeIMO.Excel.Csv;
 
 ExcelCsvImportResult imported = sheet.ImportCsvText(
     csvText,
@@ -211,9 +692,11 @@ use the worksheet `ToCsv` / `SaveAsCsv` methods instead. Calls that passed
 `ToCsv` arguments positionally should use the current `headersInFirstRow`,
 `csvOptions`, `readOptions`, and `cancellationToken` parameter names. Replace
 old import-result properties
-`TableName`, `RowCount`, `ColumnCount`, `Delimiter`, and `Warnings` with the
-current `ExcelCsvImportResult.SheetName` and `Range`; inspect the configured CSV
-reader options or the resulting worksheet/table when those details are needed.
+`RowCount`, `ColumnCount`, and `Warnings` with the current
+`ExcelCsvImportResult.SheetName`, `TableName`, `Range`, and `Delimiter`.
+`TableName` reports the sanitized, unique name actually created by OfficeIMO;
+inspect the resulting worksheet/table when row or column counts are needed. `Delimiter`
+reports the actual delimiter used, including one selected by detection.
 
 CSV reader configuration remains in `CsvDataReaderOptions`. Excel reader safety limits remain in `ExcelReadOptions`: `MaxXlsbCells` limits aggregate workbook cells and `MaxDataReaderBufferedCells` limits a reader operation's buffer. Raise either limit only for trusted, intentionally larger workbooks.
 
@@ -375,7 +858,7 @@ Detailed `LegacyXlsImportReport` record-family counters such as `CommentsByObjec
 
 `LegacyXlsLoadResult.AdvancedWorkbook` is the public imported workbook. Replace `LegacyXlsLoadResult.CreateAdvancedImportReport()` and the old `ImportReport` property with the cached `CreateImportReport()` result.
 
-The `OfficeIMO.Drawing` target-framework compatibility type `System.Runtime.CompilerServices.IsExternalInit` is internal in the `netstandard2.0` and `net472` assets. Remove any application reference to that shim; normal record and `init` usage remains supported.
+The `OfficeIMO.Core` target-framework compatibility type `System.Runtime.CompilerServices.IsExternalInit` is internal in the `netstandard2.0` and `net472` assets. Remove any application reference to that shim; normal record and `init` usage remains supported.
 
 Markdown-to-Word callers should parse through `OfficeIMO.Word.Markdown` rather than calling the removed inline-run helper directly. `ConvertDotxToDocx(...)` also resolves relative template paths before package URI construction, so relative and absolute template paths use the same behavior.
 
@@ -413,9 +896,9 @@ OfficeIMO 2.0 established the shared lifecycle and result vocabulary used by the
 
 ### Shared foundation package
 
-The compiled `OfficeIMO.Shared` implementation package no longer exists. `OfficeIMO.SharedSource` is source-only and is not a runtime package replacement. Move direct package references and namespace imports to the public owner of each reusable value: shared colors, fonts, images, charts, lifecycle options, stream contracts, export results, and dependency-free security provider contracts belong to `OfficeIMO.Drawing`; normalized Reader contracts belong to `OfficeIMO.Reader.Core`; the optional concrete CMS, XML DSig, X.509, and RFC 3161 provider belongs to `OfficeIMO.Security`. Native document behavior remains in its format package.
+The compiled `OfficeIMO.Shared` implementation package no longer exists. `OfficeIMO.SharedSource` is source-only and is not a runtime package replacement. Move direct package references to the public owner of each reusable value: shared colors, fonts, images, charts, lifecycle options, stream contracts, export results, and dependency-free security provider contracts belong to `OfficeIMO.Core`; normalized Reader contracts belong to `OfficeIMO.Reader.Core`; the optional concrete CMS, XML DSig, X.509, and RFC 3161 provider belongs to `OfficeIMO.Security`. Drawing APIs remain in the `OfficeIMO.Drawing` namespace, lifecycle APIs use the root `OfficeIMO` namespace, and native document behavior remains in its format package.
 
-There is no `OfficeIMO.Core` package and no `.Drawing`-to-`.Core` rename. Native packages own parsing, loading, editing, validation, and serialization for their formats. Adapter packages project one native model into another rather than exposing another parser or document model. `OfficeIMO.Html` owns the canonical HTML source model and resource policy; format adapters consume it. These ownership changes replace direct use of the former shared implementation layer rather than introducing a catch-all dependency.
+OfficeIMO 3.1 introduces the zero-dependency `OfficeIMO.Core` package by renaming the former `OfficeIMO.Drawing` package, project, and assembly; actual drawing APIs remain in the `OfficeIMO.Drawing` namespace. Native packages still own parsing, loading, editing, validation, and serialization for their formats. Adapter packages project one native model into another rather than exposing another parser or document model. `OfficeIMO.Html` owns the canonical HTML source model and resource policy; format adapters consume it. These ownership changes replace direct use of the former shared implementation layer without introducing another dependency tier.
 
 ### Document lifecycle
 
@@ -459,20 +942,12 @@ The canonical forward PDF result method is `ToPdfDocumentResult()`. Reverse PDF 
 limit before opening the package. For trusted documents that intentionally
 exceed that size, pass `new VisioLoadOptions { MaxInputBytes = null }`. The
 options-first async overload keeps cancellation explicit:
-`LoadAsync(path, options, cancellationToken)`. Existing two-argument calls such
-as `LoadAsync(path, default)` continue to bind to the `CancellationToken`
-overload; use a typed or named token when the argument's purpose is not obvious.
-The former positional three-argument shape `LoadAsync(path, default, default)`
-is ambiguous while both the token-first compatibility overload and the
-options-first 3.1 overload are available. Replace it with
-`LoadAsync(path, options: null, cancellationToken: default)` (and use the same
-named arguments for the stream overload), or pass explicitly typed values.
-
-The modular Visio reader now registers `.vsdx` only. Earlier handler metadata
-listed `.vsdm`, `.vstx`, and `.vstm`, but the document loader did not accept
-their distinct main-part content types. Convert those files to `.vsdx` before
-using the document reader; use the dedicated stencil package APIs for `.vstx`
-master catalogs.
+`LoadAsync(path, options, cancellationToken)`. The token-first overloads were
+removed. Replace `LoadAsync(path, cancellationToken)` with
+`LoadAsync(path, cancellationToken: cancellationToken)`, and replace
+`LoadAsync(path, cancellationToken, options)` with
+`LoadAsync(path, options, cancellationToken)`. Use the same ordering for the
+stream overload.
 
 ### Common member replacements
 
@@ -521,7 +996,7 @@ master catalogs.
 
 Format-spelling aliases such as `SaveToPdf`, `SaveAsBytesToPdf`, and generic `WriteToBytes` were removed. Use `SaveAsPdf(...)` for a destination and `ToPdf()` or `ToBytes()` for an in-memory result. Ambiguous `SaveImage` / `SaveAsImage` names were replaced by explicit encodings such as `SaveAsPng(...)`, or by `SaveAsImages(...)` for multi-page and multi-sheet output.
 
-Image export uses `OfficeImageExportResult` and `OfficeImageExportFormat` from `OfficeIMO.Drawing`. Replace the removed scale presets as follows:
+Image export uses `OfficeImageExportResult` and `OfficeImageExportFormat` from the `OfficeIMO.Drawing` namespace supplied by `OfficeIMO.Core`. Replace the removed scale presets as follows:
 
 | Removed member | Replacement |
 | --- | --- |

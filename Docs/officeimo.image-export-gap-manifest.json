@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "runtimeDependencyPolicy": "first-party-only",
   "allowedRuntimeRenderingOwners": [
-    "OfficeIMO.Drawing",
+    "OfficeIMO.Core",
     "OfficeIMO.Excel",
     "OfficeIMO.Word",
     "OfficeIMO.PowerPoint",
@@ -14,7 +14,7 @@
   "workstreams": [
     {
       "id": "drawing-engine",
-      "owner": "OfficeIMO.Drawing",
+      "owner": "OfficeIMO.Core",
       "runtimeDependencyPolicy": "first-party-only",
       "currentContract": "Own shared encoding, density metadata, paths, fonts, policies, save behavior, production batch controls, raster safety, image projection, chart primitives, diagnostics, and visual-quality helpers.",
       "boundary": "Document packages retain source semantics; bounded codec variants and managed text-shaping approximations remain diagnosed explicitly.",
@@ -62,9 +62,9 @@
     },
     {
       "id": "html-format-conformance",
-      "owner": "OfficeIMO.Html",
+      "owner": "OfficeIMO.Html, OfficeIMO.Email.Image, and OfficeIMO.Epub.Image",
       "runtimeDependencyPolicy": "first-party-only",
-      "currentContract": "Render continuous and paged HTML, email, and EPUB output through the shared five-format image API with bounded resource policies.",
+      "currentContract": "Render continuous and paged HTML output through the shared five-format image API, with explicit Email.Image and Epub.Image bridges for their source models.",
       "boundary": "HTML owns layout and resource semantics while Drawing owns reusable raster and SVG encoding.",
       "evidence": [
         "OfficeIMO.Html.Tests/Html.Rendering.cs",

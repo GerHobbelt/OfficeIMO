@@ -2,7 +2,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Office2013.Word;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.Word.LegacyDoc.Model;
 using System.Text;
 
@@ -148,7 +148,7 @@ namespace OfficeIMO.Word.LegacyDoc.Write {
                 || (document.LegacyDocUnsupportedFeatures.Count == 0
                     && document.LegacyDocPreservedFeatures.Count == 0
                     && document.LegacyDocCompoundFeatures.Count == 0)
-                || options?.LossPolicy == WordConversionLossPolicy.Allow) {
+                || options?.LossPolicy == OfficeConversionLossPolicy.Allow) {
                 return;
             }
 

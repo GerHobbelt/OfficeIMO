@@ -19,7 +19,7 @@ public static partial class HtmlExcelConverterExtensions {
                 if (!budget.TryReserveSemanticContainerWithTable(out string tableContainerLimit)) {
                     AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                         "Additional HTML tables were omitted because the shared worksheet or table limit was reached.",
-                        HtmlDiagnosticSeverity.Error, HtmlConversionLossKind.Omission, detail: tableContainerLimit);
+                        HtmlDiagnosticSeverity.Error, OfficeConversionLossKind.Omission, detail: tableContainerLimit);
                     break;
                 }
 
@@ -41,21 +41,21 @@ public static partial class HtmlExcelConverterExtensions {
         }
 
         bool hasNarrative = tables.Count == 0 || document.Sections
-            .Any(section => section.Blocks.Any(block => IsSectionNarrativeBlock(section, block)));
+            .Any(HasSectionNarrative);
         ExcelSheet? narrativeSheet = null;
         int row = 1;
         if (hasNarrative) {
             if (!budget.TryReserveSemanticContainer(out string textContainerLimit)) {
                 AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                     "HTML text could not be imported because the shared worksheet limit was reached.",
-                    HtmlDiagnosticSeverity.Error, HtmlConversionLossKind.Omission, detail: textContainerLimit);
+                    HtmlDiagnosticSeverity.Error, OfficeConversionLossKind.Omission, detail: textContainerLimit);
             } else {
                 narrativeSheet = workbook.AddWorksheet(GetUniqueSheetName("Imported", usedNames));
                 result.Sheets++;
                 int maxTableCells = budget.Limits.MaxTableCells;
                 foreach (HtmlSemanticSection section in document.Sections) {
                     if (row > maxTableCells || row > A1.MaxRows) break;
-                    bool sectionHasNarrative = section.Blocks.Any(block => IsSectionNarrativeBlock(section, block));
+                    bool sectionHasNarrative = HasSectionNarrative(section);
                     if (!sectionHasNarrative && tables.Count > 0) continue;
                     if (TrySetCellTextValue(narrativeSheet, row, 1, section.Title, result, budget)) {
                         narrativeSheet.CellAt(row, 1).SetBold();
@@ -67,7 +67,7 @@ public static partial class HtmlExcelConverterExtensions {
                         if (row > maxTableCells || row > A1.MaxRows) {
                             AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                                 "Remaining HTML text blocks were omitted because the configured cell limit was reached.",
-                                lossKind: HtmlConversionLossKind.Omission, detail: "limit=" + maxTableCells);
+                                lossKind: OfficeConversionLossKind.Omission, detail: "limit=" + maxTableCells);
                             break;
                         }
                         if (TrySetCellTextValue(narrativeSheet, row, 1, block.Text, result, budget)) {
@@ -85,7 +85,7 @@ public static partial class HtmlExcelConverterExtensions {
             ExcelSheet imageSheet = narrativeSheet ?? workbook.Sheets[0];
             int imageRow = narrativeSheet != null ? row : 2;
             if (narrativeSheet == null
-                && A1.TryParseRange(imageSheet.GetUsedRangeA1(), out _, out _, out int lastRow, out _)) {
+                && A1.TryParseRange(imageSheet.UsedRangeA1, out _, out _, out int lastRow, out _)) {
                 imageRow = Math.Min(A1.MaxRows, lastRow + 2);
             }
             ImportGenericImages(document, imageSheet, result, budget, ref imageRow);
@@ -102,6 +102,10 @@ public static partial class HtmlExcelConverterExtensions {
         && !(block.Kind == HtmlSemanticBlockKind.Heading
             && string.Equals(block.Text, section.Title, StringComparison.Ordinal));
 
+    private static bool HasSectionNarrative(HtmlSemanticSection section) =>
+        (section.Blocks.Count == 0 && section.TitleSource == HtmlSemanticSectionTitleSource.Heading)
+        || section.Blocks.Any(block => IsSectionNarrativeBlock(section, block));
+
     private static void ImportGenericImages(
         HtmlSemanticDocument document,
         ExcelSheet sheet,
@@ -112,26 +116,21 @@ public static partial class HtmlExcelConverterExtensions {
             if (!HtmlImageDataUri.TryParse(resource.Source, out HtmlImageDataUri dataUri)) {
                 AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.ResourceTypeUnsupported,
                     "A generic worksheet image was omitted because synchronous native import currently requires a bounded image data URI.",
-                    lossKind: HtmlConversionLossKind.Omission, source: resource.Source);
+                    lossKind: OfficeConversionLossKind.Omission, source: resource.Source);
                 continue;
             }
             if (!IsSupportedExcelImage(dataUri, result, resource.Source)) continue;
-            if (!budget.IsImageWithinLimit(dataUri, out string imageLimit)) {
-                AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
-                    "An embedded generic worksheet image was omitted because the shared image limit was reached.",
-                    lossKind: HtmlConversionLossKind.Omission, source: resource.Source, detail: imageLimit);
-                continue;
-            }
-            if (!budget.TryReserveImageWithShape(dataUri, out imageLimit)) {
+            if (!budget.TryReserveImageWithShape(dataUri, out HtmlImportBudgetReservation imageReservation, out string imageLimit)) {
                 AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                     "An embedded generic worksheet image was omitted because the shared image or drawing limit was reached.",
-                    lossKind: HtmlConversionLossKind.Omission, source: resource.Source, detail: imageLimit);
+                    lossKind: OfficeConversionLossKind.Omission, source: resource.Source, detail: imageLimit);
                 continue;
             }
+            using HtmlImportBudgetReservation imageReservationScope = imageReservation;
             if (!dataUri.TryDecodeBytes(out byte[] bytes)) {
                 AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.ResourceDecodeFailed,
                     "An embedded generic worksheet image could not be decoded.",
-                    lossKind: HtmlConversionLossKind.Omission, source: resource.Source);
+                    lossKind: OfficeConversionLossKind.Omission, source: resource.Source);
                 continue;
             }
             if (row > A1.MaxRows) break;
@@ -141,6 +140,7 @@ public static partial class HtmlExcelConverterExtensions {
                 name: null,
                 altText: string.IsNullOrWhiteSpace(resource.AlternateText) ? null : resource.AlternateText);
             result.Images++;
+            imageReservation.Commit();
             row = Math.Min(A1.MaxRows + 1, row + Math.Max(2, (height + 19) / 20 + 1));
         }
     }
@@ -167,7 +167,7 @@ public static partial class HtmlExcelConverterExtensions {
             if (row > A1.MaxRows) {
                 AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                     "Semantic table formatting beyond the native Excel row limit was omitted.",
-                    lossKind: HtmlConversionLossKind.Omission, detail: "MaxRows=" + A1.MaxRows);
+                    lossKind: OfficeConversionLossKind.Omission, detail: "MaxRows=" + A1.MaxRows);
                 break;
             }
 
@@ -176,7 +176,7 @@ public static partial class HtmlExcelConverterExtensions {
                 if (column > A1.MaxColumns) {
                     AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                         "Semantic table formatting beyond the native Excel column limit was omitted.",
-                        lossKind: HtmlConversionLossKind.Omission, detail: "MaxColumns=" + A1.MaxColumns);
+                        lossKind: OfficeConversionLossKind.Omission, detail: "MaxColumns=" + A1.MaxColumns);
                     break;
                 }
 
@@ -188,7 +188,7 @@ public static partial class HtmlExcelConverterExtensions {
                 if (boundedSpan < requestedSpan) {
                     AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.TargetLimitExceeded,
                         "A semantic table column span was clamped to the native Excel column limit.",
-                        lossKind: HtmlConversionLossKind.Approximation, detail: "MaxColumns=" + A1.MaxColumns);
+                        lossKind: OfficeConversionLossKind.Approximation, detail: "MaxColumns=" + A1.MaxColumns);
                 }
                 column = boundedSpan == remainingColumns ? A1.MaxColumns + 1 : column + boundedSpan;
             }
@@ -214,7 +214,7 @@ public static partial class HtmlExcelConverterExtensions {
             } else {
                 AddImportDiagnostic(result, HtmlConversionDiagnosticCodes.SemanticMetadataLimitExceeded,
                     "Cell " + BuildCellReference(row, column) + " rich text formatting was omitted because the normalized runs exceeded a semantic or native Excel field limit.",
-                    lossKind: HtmlConversionLossKind.Approximation, detail: detail);
+                    lossKind: OfficeConversionLossKind.Approximation, detail: detail);
             }
         }
         if (isHeader) cell.SetBold();

@@ -37,7 +37,7 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
 
             WordParagraph title = document.AddParagraph("Shared Word renderer");
-            title.SetFontSize(18).SetFontFamily("Calibri").SetColor(OfficeColor.FromRgb(17, 34, 51)).SetBold().SetAlignment(JustificationValues.Center);
+            title.SetFontSize(18).SetFontFamily("Calibri").SetColor(OfficeColor.FromRgb(17, 34, 51)).SetBold().SetAlignment(WordParagraphAlignment.Center);
             document.AddParagraph("This body paragraph is projected through OfficeIMO.Drawing text primitives.");
 
             OfficeImageExportResult png = document.ExportImage(OfficeImageExportFormat.Png, new WordImageExportOptions { Scale = 2D, BackgroundColor = OfficeColor.White });
@@ -86,6 +86,22 @@ namespace OfficeIMO.Tests {
             Assert.Equal(png.Width, image!.Width);
             Assert.Equal(png.Height, image.Height);
             AssertNoUnexpectedDiagnostics(png.Diagnostics);
+        }
+
+        [Fact]
+        public void WordDocument_FitWithinAppliesIdenticallyToRasterAndSvg() {
+            using var stream = new MemoryStream();
+            using WordDocument document = WordDocument.Create(stream);
+            document.PageSettings.PageSize = WordPageSize.A4;
+            document.AddParagraph("Bounded preview");
+
+            OfficeImageExportResult png = document.ToImage().WithScale(4D).FitWithin(300, 300).AsPng().Export();
+            OfficeImageExportResult svg = document.ToImage().WithScale(4D).FitWithin(300, 300).AsSvg().Export();
+
+            Assert.Equal(png.Width, svg.Width);
+            Assert.Equal(png.Height, svg.Height);
+            Assert.True(png.Width <= 300);
+            Assert.True(png.Height <= 300);
         }
 
         [Fact]
@@ -153,7 +169,7 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
             document.AddParagraph("Before shape");
-            WordShape wordShape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 96D, 40D);
+            WordShape wordShape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 96D, 40D);
             wordShape.FillColor = OfficeColor.FromRgb(14, 165, 233);
             wordShape.StrokeColor = OfficeColor.FromRgb(15, 23, 42);
             wordShape.StrokeWeight = 2D;
@@ -193,7 +209,7 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
-            WordShape wordShape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 96D, 40D, 144D, 36D);
+            WordShape wordShape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 96D, 40D, 144D, 36D);
             wordShape.FillColor = OfficeColor.FromRgb(34, 197, 94);
             wordShape.StrokeColor = OfficeColor.FromRgb(21, 128, 61);
             wordShape.StrokeWeight = 2D;
@@ -234,7 +250,7 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
-            WordShape wordShape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 96D, 40D, 144D, 36D);
+            WordShape wordShape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 96D, 40D, 144D, 36D);
             wordShape.FillColor = OfficeColor.FromRgb(14, 165, 233);
             wordShape.StrokeColor = OfficeColor.FromRgb(12, 74, 110);
             wordShape.StrokeWeight = 2D;
@@ -274,7 +290,7 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
-            WordShape wordShape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 96D, 40D, 144D, 18D);
+            WordShape wordShape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 96D, 40D, 144D, 18D);
             wordShape.FillColor = OfficeColor.FromRgb(168, 85, 247);
             wordShape.StrokeColor = OfficeColor.FromRgb(88, 28, 135);
             wordShape.StrokeWeight = 2D;
@@ -317,7 +333,7 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
-            WordShape wordShape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 96D, 40D, 144D, 36D);
+            WordShape wordShape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 96D, 40D, 144D, 36D);
             wordShape.FillColor = OfficeColor.FromRgb(245, 158, 11);
             wordShape.StrokeColor = OfficeColor.FromRgb(146, 64, 14);
             wordShape.StrokeWeight = 2D;
@@ -357,7 +373,7 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
 
             document.AddParagraph("Foreground text should paint above the behind shape.");
-            WordShape wordShape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 96D, 40D, 144D, 36D);
+            WordShape wordShape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 96D, 40D, 144D, 36D);
             wordShape.FillColor = OfficeColor.FromRgb(59, 130, 246);
             wordShape.StrokeColor = OfficeColor.FromRgb(30, 64, 175);
             DW.Anchor anchor = wordShape._drawing!.GetFirstChild<DW.Anchor>()!;
@@ -392,7 +408,7 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
 
-            WordShape drawingShape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 96D, 40D);
+            WordShape drawingShape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 96D, 40D);
             drawingShape.FillColor = OfficeColor.FromRgb(99, 102, 241);
             drawingShape.StrokeColor = OfficeColor.FromRgb(49, 46, 129);
             drawingShape.StrokeWeight = 2D;
@@ -403,7 +419,7 @@ namespace OfficeIMO.Tests {
             drawingTransform.HorizontalFlip = true;
 
             WordShape vmlShape = document.AddParagraph().AddShape(
-                ShapeType.Rectangle,
+                WordShapeType.Rectangle,
                 84D,
                 30D,
                 OfficeColor.FromRgb(251, 146, 60),
@@ -451,10 +467,10 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
 
-            document.AddParagraph().AddShape(ShapeType.Rectangle, 84D, 30D, OfficeColor.FromRgb(248, 113, 113), OfficeColor.FromRgb(127, 29, 29), 2D);
-            document.AddParagraph().AddShape(ShapeType.Ellipse, 72D, 32D, OfficeColor.FromRgb(96, 165, 250), OfficeColor.FromRgb(30, 64, 175), 1.5D);
-            document.AddParagraph().AddShape(ShapeType.RoundedRectangle, 90D, 34D, OfficeColor.FromRgb(250, 204, 21), OfficeColor.FromRgb(161, 98, 7), 2D, 0.2D);
-            document.AddParagraph().AddShape(ShapeType.Line, 70D, 18D, OfficeColor.Transparent, OfficeColor.FromRgb(22, 163, 74), 3D);
+            document.AddParagraph().AddShape(WordShapeType.Rectangle, 84D, 30D, OfficeColor.FromRgb(248, 113, 113), OfficeColor.FromRgb(127, 29, 29), 2D);
+            document.AddParagraph().AddShape(WordShapeType.Ellipse, 72D, 32D, OfficeColor.FromRgb(96, 165, 250), OfficeColor.FromRgb(30, 64, 175), 1.5D);
+            document.AddParagraph().AddShape(WordShapeType.RoundedRectangle, 90D, 34D, OfficeColor.FromRgb(250, 204, 21), OfficeColor.FromRgb(161, 98, 7), 2D, 0.2D);
+            document.AddParagraph().AddShape(WordShapeType.Line, 70D, 18D, OfficeColor.Transparent, OfficeColor.FromRgb(22, 163, 74), 3D);
             WordShape.AddPolygon(document.AddParagraph(), "0,30 30,0 60,30", "#C084FC", "#6B21A8");
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
@@ -496,7 +512,7 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
 
             document.AddParagraph("Before text boxes");
-            document.AddParagraph().AddTextBox("DrawingML text box content", WrapTextImage.InLineWithText);
+            document.AddParagraph().AddTextBox("DrawingML text box content", WordImageTextWrapping.InLineWithText);
             document.AddParagraph().AddTextBoxVml("Legacy VML text box content");
             document.AddParagraph("After text boxes");
 
@@ -530,8 +546,8 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
 
-            WordTextBox textBox = document.AddParagraph().AddTextBox("Tight floating text box", WrapTextImage.Tight);
-            textBox.HorizontalAlignment = WordHorizontalAlignmentValues.Left;
+            WordTextBox textBox = document.AddParagraph().AddTextBox("Tight floating text box", WordImageTextWrapping.Tight);
+            textBox.HorizontalAlignment = WordTextBoxHorizontalAlignment.Left;
             document.AddParagraph("After tight text box wraps beside the marker.");
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
@@ -564,8 +580,8 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
 
-            WordTextBox textBox = document.AddParagraph().AddTextBox("Top-bottom floating text box", WrapTextImage.TopAndBottom);
-            textBox.HorizontalAlignment = WordHorizontalAlignmentValues.Left;
+            WordTextBox textBox = document.AddParagraph().AddTextBox("Top-bottom floating text box", WordImageTextWrapping.TopAndBottom);
+            textBox.HorizontalAlignment = WordTextBoxHorizontalAlignment.Left;
             document.AddParagraph("After top-bottom text box flows below the marker.");
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
@@ -597,8 +613,8 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
 
             document.AddParagraph("Foreground text should paint above the behind text box.");
-            WordTextBox textBox = document.AddParagraph().AddTextBox("Behind box", WrapTextImage.BehindText);
-            textBox.HorizontalAlignment = WordHorizontalAlignmentValues.Left;
+            WordTextBox textBox = document.AddParagraph().AddTextBox("Behind box", WordImageTextWrapping.BehindText);
+            textBox.HorizontalAlignment = WordTextBoxHorizontalAlignment.Left;
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
             OfficeImageExportResult png = document.ExportImage(OfficeImageExportFormat.Png, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -632,13 +648,13 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
 
             document.AddParagraph("Foreground text should stay above the changed behind text box.");
-            WordTextBox textBox = document.AddParagraph().AddTextBox("Changed behind box", WrapTextImage.Square);
-            textBox.HorizontalAlignment = WordHorizontalAlignmentValues.Left;
-            textBox.WrapText = WrapTextImage.BehindText;
+            WordTextBox textBox = document.AddParagraph().AddTextBox("Changed behind box", WordImageTextWrapping.Square);
+            textBox.HorizontalAlignment = WordTextBoxHorizontalAlignment.Left;
+            textBox.WrapText = WordImageTextWrapping.BehindText;
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
 
-            Assert.Equal(WrapTextImage.BehindText, textBox.WrapText);
+            Assert.Equal(WordImageTextWrapping.BehindText, textBox.WrapText);
             AssertNoUnexpectedDiagnostics(snapshot.Diagnostics);
             List<OfficeDrawingElement> elements = snapshot.Drawing.Elements.ToList();
             int behindTextIndex = elements.FindIndex(element =>
@@ -656,7 +672,7 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
 
-            WordTextBox drawingTextBox = document.AddParagraph().AddTextBox("DrawingML bottom text box", WrapTextImage.InLineWithText);
+            WordTextBox drawingTextBox = document.AddParagraph().AddTextBox("DrawingML bottom text box", WordImageTextWrapping.InLineWithText);
             drawingTextBox.TextBodyProperties.Anchor = A.TextAnchoringTypeValues.Bottom;
 
             document.AddParagraph().AddTextBoxVml("VML middle text box");
@@ -696,7 +712,7 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
 
-            WordTextBox drawingTextBox = document.AddParagraph().AddTextBox("placeholder", WrapTextImage.InLineWithText);
+            WordTextBox drawingTextBox = document.AddParagraph().AddTextBox("placeholder", WordImageTextWrapping.InLineWithText);
             TextBoxContent drawingContent = drawingTextBox.Content!;
             Paragraph drawingParagraph = drawingContent.GetFirstChild<Paragraph>()!;
             drawingParagraph.RemoveAllChildren<Run>();
@@ -755,12 +771,12 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
 
-            WordTextBox drawingTextBox = document.AddParagraph().AddTextBox("Rotated Word text", WrapTextImage.InLineWithText);
+            WordTextBox drawingTextBox = document.AddParagraph().AddTextBox("Rotated Word text", WordImageTextWrapping.InLineWithText);
             A.Transform2D drawingTransform = drawingTextBox.DrawingShapeProperties!.GetFirstChild<A.Transform2D>()!;
             drawingTransform.Rotation = 900000;
             drawingTransform.HorizontalFlip = true;
 
-            WordTextBox richTextBox = document.AddParagraph().AddTextBox("placeholder", WrapTextImage.InLineWithText);
+            WordTextBox richTextBox = document.AddParagraph().AddTextBox("placeholder", WordImageTextWrapping.InLineWithText);
             Paragraph richParagraph = richTextBox.Content!.GetFirstChild<Paragraph>()!;
             richParagraph.RemoveAllChildren<Run>();
             richParagraph.Append(
@@ -942,23 +958,23 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 4200 };
             WordTableCell cell = table.Rows[0].Cells[0];
             cell.Paragraphs[0].Text = "Bordered";
             cell.ShadingFillColor = OfficeColor.FromRgb(248, 250, 252);
-            cell.Borders.TopStyle = BorderValues.Single;
+            cell.Borders.TopStyle = WordBorderStyle.Single;
             cell.Borders.TopColorHex = "DC2626";
             cell.Borders.TopSize = 16U;
-            cell.Borders.RightStyle = BorderValues.Dashed;
+            cell.Borders.RightStyle = WordBorderStyle.Dashed;
             cell.Borders.RightColorHex = "16A34A";
             cell.Borders.RightSize = 24U;
-            cell.Borders.BottomStyle = BorderValues.Dotted;
+            cell.Borders.BottomStyle = WordBorderStyle.Dotted;
             cell.Borders.BottomColorHex = "2563EB";
             cell.Borders.BottomSize = 8U;
-            cell.Borders.LeftStyle = BorderValues.DotDash;
+            cell.Borders.LeftStyle = WordBorderStyle.DotDash;
             cell.Borders.LeftColorHex = "9333EA";
             cell.Borders.LeftSize = 32U;
 
@@ -995,13 +1011,13 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 4200 };
             WordTableCell cell = table.Rows[0].Cells[0];
             cell.Paragraphs[0].Text = "Double";
-            cell.Borders.TopStyle = BorderValues.Double;
+            cell.Borders.TopStyle = WordBorderStyle.Double;
             cell.Borders.TopColorHex = "DC2626";
             cell.Borders.TopSize = 16U;
 
@@ -1032,16 +1048,16 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 4200 };
             WordTableCell cell = table.Rows[0].Cells[0];
             cell.Paragraphs[0].Text = "Diagonal";
-            cell.Borders.TopLeftToBottomRightStyle = BorderValues.DotDash;
+            cell.Borders.TopLeftToBottomRightStyle = WordBorderStyle.DotDash;
             cell.Borders.TopLeftToBottomRightColorHex = "DC2626";
             cell.Borders.TopLeftToBottomRightSize = 16U;
-            cell.Borders.TopRightToBottomLeftStyle = BorderValues.Dotted;
+            cell.Borders.TopRightToBottomLeftStyle = WordBorderStyle.Dotted;
             cell.Borders.TopRightToBottomLeftColorHex = "2563EB";
             cell.Borders.TopRightToBottomLeftSize = 24U;
 
@@ -1079,19 +1095,19 @@ namespace OfficeIMO.Tests {
             SetThemeColor(document, "accent3", "ABCDEF");
 
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 4200 };
             WordTableCell cell = table.Rows[0].Cells[0];
             cell.Paragraphs[0].Text = "Theme cell";
             cell.ShadingFillColorHex = "FFFFFF";
             cell._tableCellProperties!.Shading!.ThemeFill = ThemeColorValues.Accent1;
-            cell.Borders.TopStyle = BorderValues.Single;
+            cell.Borders.TopStyle = WordBorderStyle.Single;
             cell.Borders.TopColorHex = "FFFFFF";
             cell.Borders.TopSize = 16U;
             cell._tableCellProperties!.TableCellBorders!.TopBorder!.ThemeColor = ThemeColorValues.Accent2;
-            cell.Borders.TopLeftToBottomRightStyle = BorderValues.Single;
+            cell.Borders.TopLeftToBottomRightStyle = WordBorderStyle.Single;
             cell.Borders.TopLeftToBottomRightColorHex = "FFFFFF";
             cell.Borders.TopLeftToBottomRightSize = 24U;
             cell._tableCellProperties.TableCellBorders.TopLeftToBottomRightCellBorder!.ThemeColor = ThemeColorValues.Accent3;
@@ -1131,13 +1147,13 @@ namespace OfficeIMO.Tests {
             SetThemeColor(document, "accent3", "ABCDEF");
 
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 4200 };
             WordParagraph paragraph = table.Rows[0].Cells[0].Paragraphs[0];
             paragraph.Text = "Theme table text";
-            paragraph.ThemeColor = ThemeColorValues.Accent3;
+            paragraph.ThemeColor = WordThemeColor.Accent3;
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
             OfficeImageExportResult svg = document.ExportImage(OfficeImageExportFormat.Svg, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -1186,9 +1202,9 @@ namespace OfficeIMO.Tests {
                 });
 
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 4200 };
             table._tableProperties!.TableStyle = new TableStyle { Val = derivedStyleId };
             table.Rows[0].Cells[0].Paragraphs[0].Text = "Style table cell";
@@ -1257,9 +1273,9 @@ namespace OfficeIMO.Tests {
                 });
 
             WordTable table = document.AddTable(5, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 4200 };
             table._tableProperties!.TableStyle = new TableStyle { Val = tableStyleId };
             table.ConditionalFormattingFirstRow = true;
@@ -1329,9 +1345,9 @@ namespace OfficeIMO.Tests {
                 });
 
             WordTable table = document.AddTable(1, 5);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 5000;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 1000, 1000, 1000, 1000, 1000 };
             table._tableProperties!.TableStyle = new TableStyle { Val = tableStyleId };
             table.ConditionalFormattingFirstRow = false;
@@ -1395,9 +1411,9 @@ namespace OfficeIMO.Tests {
                 });
 
             WordTable table = document.AddTable(2, 2);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 4200;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 2100, 2100 };
             table._tableProperties!.TableStyle = new TableStyle { Val = tableStyleId };
             table.ConditionalFormattingLastRow = true;
@@ -1483,7 +1499,7 @@ namespace OfficeIMO.Tests {
             paragraph.Text = "Plain ";
             paragraph.SetFontFamily("Aptos").SetFontSize(11).SetColor(OfficeColor.FromRgb(17, 24, 39));
             paragraph.AddText("Red").SetColor(OfficeColor.FromRgb(220, 38, 38)).SetBold();
-            paragraph.AddText(" italic").SetColor(OfficeColor.FromRgb(37, 99, 235)).SetItalic().SetUnderline(UnderlineValues.Single);
+            paragraph.AddText(" italic").SetColor(OfficeColor.FromRgb(37, 99, 235)).SetItalic().SetUnderline(WordUnderlineStyle.Single);
             cell.MarginLeftWidth = 300;
             cell.MarginTopWidth = 100;
             cell.MarginRightWidth = 200;
@@ -1531,7 +1547,7 @@ namespace OfficeIMO.Tests {
             WordParagraph paragraph = cell.Paragraphs[0];
             paragraph.Text = "Marked cell";
             paragraph.SetFontSize(14);
-            paragraph.SetHighlight(HighlightColorValues.Cyan);
+            paragraph.SetHighlight(WordHighlightColor.Cyan);
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
             OfficeImageExportResult png = document.ExportImage(OfficeImageExportFormat.Png, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -1560,16 +1576,16 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
             WordTable outer = document.AddTable(1, 1);
-            outer.WidthType = TableWidthUnitValues.Dxa;
+            outer.WidthType = WordTableWidthUnit.Dxa;
             outer.Width = 7200;
-            outer.ColumnWidthType = TableWidthUnitValues.Dxa;
+            outer.ColumnWidthType = WordTableWidthUnit.Dxa;
             outer.ColumnWidth = new List<int> { 7200 };
             WordTableCell hostCell = outer.Rows[0].Cells[0];
             hostCell.ShadingFillColor = OfficeColor.FromRgb(243, 244, 246);
             WordTable nested = hostCell.AddTable(1, 2, removePrecedingParagraph: true);
-            nested.WidthType = TableWidthUnitValues.Dxa;
+            nested.WidthType = WordTableWidthUnit.Dxa;
             nested.Width = 6000;
-            nested.ColumnWidthType = TableWidthUnitValues.Dxa;
+            nested.ColumnWidthType = WordTableWidthUnit.Dxa;
             nested.ColumnWidth = new List<int> { 3000, 3000 };
             nested.Rows[0].Cells[0].Paragraphs[0].Text = "Inner A";
             nested.Rows[0].Cells[1].Paragraphs[0].Text = "Inner B";
@@ -1693,7 +1709,7 @@ namespace OfficeIMO.Tests {
             WordParagraph paragraph = document.AddParagraph("Plain ");
             paragraph.SetFontFamily("Aptos").SetFontSize(11).SetColor(OfficeColor.FromRgb(17, 24, 39));
             paragraph.AddText("Red").SetColor(OfficeColor.FromRgb(220, 38, 38)).SetBold();
-            paragraph.AddText(" italic").SetColor(OfficeColor.FromRgb(37, 99, 235)).SetItalic().SetUnderline(UnderlineValues.Single);
+            paragraph.AddText(" italic").SetColor(OfficeColor.FromRgb(37, 99, 235)).SetItalic().SetUnderline(WordUnderlineStyle.Single);
 
             OfficeImageExportResult png = document.ExportImage(OfficeImageExportFormat.Png, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
             OfficeImageExportResult svg = document.ExportImage(OfficeImageExportFormat.Svg, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -1732,10 +1748,10 @@ namespace OfficeIMO.Tests {
             SetThemeColor(document, "accent3", "ABCDEF");
 
             WordParagraph plain = document.AddParagraph("Theme body");
-            plain.ThemeColor = ThemeColorValues.Accent1;
+            plain.ThemeColor = WordThemeColor.Accent1;
             WordParagraph rich = document.AddParagraph("Theme ");
-            rich.ThemeColor = ThemeColorValues.Accent2;
-            rich.AddText("rich").ThemeColor = ThemeColorValues.Accent3;
+            rich.ThemeColor = WordThemeColor.Accent2;
+            rich.AddText("rich").ThemeColor = WordThemeColor.Accent3;
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
             OfficeImageExportResult svg = document.ExportImage(OfficeImageExportFormat.Svg, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -1766,7 +1782,7 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
             WordParagraph paragraph = document.AddParagraph("Marked");
-            paragraph.SetHighlight(HighlightColorValues.Yellow);
+            paragraph.SetHighlight(WordHighlightColor.Yellow);
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
             OfficeImageExportResult png = document.ExportImage(OfficeImageExportFormat.Png, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -1868,11 +1884,11 @@ namespace OfficeIMO.Tests {
 
             WordParagraph paragraph = document.AddParagraph("Framed paragraph");
             paragraph.ShadingFillColor = OfficeColor.FromRgb(226, 239, 218);
-            paragraph.Borders.TopStyle = BorderValues.Single;
+            paragraph.Borders.TopStyle = WordBorderStyle.Single;
             paragraph.Borders.TopColorHex = "FFFFFF";
-            paragraph.Borders.TopThemeColor = ThemeColorValues.Accent1;
+            paragraph.Borders.TopThemeColor = WordThemeColor.Accent1;
             paragraph.Borders.TopSize = 16U;
-            paragraph.Borders.LeftStyle = BorderValues.DotDash;
+            paragraph.Borders.LeftStyle = WordBorderStyle.DotDash;
             paragraph.Borders.LeftColorHex = "DC2626";
             paragraph.Borders.LeftSize = 24U;
 
@@ -2077,7 +2093,7 @@ namespace OfficeIMO.Tests {
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
             WordParagraph paragraph = document.AddParagraph("Justified Word paragraph wraps across the exported preview and distributes text through the shared renderer.");
-            paragraph.SetFontSize(12).SetAlignment(JustificationValues.Both);
+            paragraph.SetFontSize(12).SetAlignment(WordParagraphAlignment.Both);
 
             OfficeImageExportResult svg = document.ExportImage(OfficeImageExportFormat.Svg, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
@@ -2666,7 +2682,7 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
             document.AddParagraph("First page marker before text box");
             document.AddPageBreak();
-            WordTextBox textBox = document.AddParagraph().AddTextBox("placeholder", WrapTextImage.InLineWithText);
+            WordTextBox textBox = document.AddParagraph().AddTextBox("placeholder", WordImageTextWrapping.InLineWithText);
             TextBoxContent content = textBox.Content!;
             content.RemoveAllChildren<Paragraph>();
             content.Append(
@@ -2736,11 +2752,11 @@ namespace OfficeIMO.Tests {
             firstSection.PageSettings.PageSize = WordPageSize.A4;
             firstSection.SetMargins(WordMargin.Narrow);
             firstSection.AddParagraph("First section body");
-            WordSection secondSection = document.AddSection(SectionMarkValues.NextPage);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.NextPage);
             secondSection.PageSettings.PageSize = WordPageSize.A4;
             secondSection.SetMargins(WordMargin.Narrow);
-            secondSection.AddPageNumbering(3, NumberFormatValues.LowerRoman);
-            secondSection.GetOrCreateFooter(HeaderFooterValues.Default)._footer.Append(
+            secondSection.AddPageNumbering(3, WordNumberFormat.LowerRoman);
+            secondSection.GetOrCreateFooter(WordHeaderFooterType.Default)._footer.Append(
                 new Paragraph(
                     new Run(new Text("Section page ")),
                     new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
@@ -2807,10 +2823,10 @@ namespace OfficeIMO.Tests {
             firstSection.SetMargins(WordMargin.Narrow);
             firstSection.AddParagraph("First section body");
 
-            WordSection secondSection = document.AddSection(SectionMarkValues.NextPage);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.NextPage);
             secondSection.PageSettings.PageSize = WordPageSize.A4;
             secondSection.SetMargins(WordMargin.Narrow);
-            secondSection.GetOrCreateFooter(HeaderFooterValues.Default)._footer.Append(
+            secondSection.GetOrCreateFooter(WordHeaderFooterType.Default)._footer.Append(
                 new Paragraph(
                     new Run(new Text("Section pages ")),
                     new SimpleField(new Run(new Text("9"))) { Instruction = " SECTIONPAGES \\* ROMAN " }));
@@ -2839,10 +2855,10 @@ namespace OfficeIMO.Tests {
             firstSection.SetMargins(WordMargin.Narrow);
             firstSection.AddParagraph("First section body");
 
-            WordSection secondSection = document.AddSection(SectionMarkValues.NextPage);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.NextPage);
             secondSection.PageSettings.PageSize = WordPageSize.A4;
             secondSection.SetMargins(WordMargin.Narrow);
-            secondSection.GetOrCreateFooter(HeaderFooterValues.Default)._footer.Append(
+            secondSection.GetOrCreateFooter(WordHeaderFooterType.Default)._footer.Append(
                 new Paragraph(
                     new Run(new Text("Section ")),
                     new SimpleField(new Run(new Text("9"))) { Instruction = " SECTION \\* ArabicZero " },
@@ -2870,7 +2886,7 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Width = (UInt32Value)10000U;
             section.PageSettings.Height = (UInt32Value)6000U;
             section.SetMargins(WordMargin.Narrow);
-            section.GetOrCreateFooter(HeaderFooterValues.Default)._footer.Append(
+            section.GetOrCreateFooter(WordHeaderFooterType.Default)._footer.Append(
                 new Paragraph(
                     new Run(new Text("Section pages ")),
                     new SimpleField(new Run(new Text("1"))) { Instruction = " SECTIONPAGES " }));
@@ -2901,13 +2917,13 @@ namespace OfficeIMO.Tests {
             using var stream = new MemoryStream();
             using WordDocument document = WordDocument.Create(stream);
             WordSection firstSection = document.Sections[0];
-            WordSection secondSection = document.AddSection(SectionMarkValues.NextPage);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.NextPage);
             firstSection.PageSettings.Width = (UInt32Value)5000U;
             firstSection.PageSettings.Height = (UInt32Value)3000U;
             firstSection.SetMargins(WordMargin.Narrow);
             firstSection.AddHeadersAndFooters();
-            firstSection.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("First automatic header");
-            firstSection.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("First automatic footer");
+            firstSection.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("First automatic header");
+            firstSection.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("First automatic footer");
             for (int index = 1; index <= 7; index++) {
                 firstSection.AddParagraph(
                     "Automatic section routing marker " +
@@ -3121,7 +3137,7 @@ namespace OfficeIMO.Tests {
             using var stream = new MemoryStream();
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
-            WordSmartArt smartArt = document.AddParagraph().AddSmartArt(SmartArtType.BasicProcess);
+            WordSmartArt smartArt = document.AddParagraph().AddSmartArt(WordSmartArtType.BasicProcess);
             while (smartArt.NodeCount < 3) {
                 smartArt.AddNode("Node " + smartArt.NodeCount.ToString(CultureInfo.InvariantCulture));
             }
@@ -3160,7 +3176,7 @@ namespace OfficeIMO.Tests {
             using var stream = new MemoryStream();
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
-            WordSmartArt smartArt = document.AddParagraph().AddSmartArt(SmartArtType.CustomSmartArt1);
+            WordSmartArt smartArt = document.AddParagraph().AddSmartArt(WordSmartArtType.CustomSmartArt1);
             smartArt.ReplaceTexts("One", "Two", "Three", "Four", "Five");
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
@@ -3196,7 +3212,7 @@ namespace OfficeIMO.Tests {
             using var stream = new MemoryStream();
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
-            WordSmartArt smartArt = document.AddParagraph().AddSmartArt(SmartArtType.Cycle);
+            WordSmartArt smartArt = document.AddParagraph().AddSmartArt(WordSmartArtType.Cycle);
             while (smartArt.NodeCount < 4) {
                 smartArt.AddNode("Cycle " + smartArt.NodeCount.ToString(CultureInfo.InvariantCulture));
             }
@@ -3230,9 +3246,9 @@ namespace OfficeIMO.Tests {
         }
 
         [Theory]
-        [InlineData(SmartArtType.Hierarchy)]
-        [InlineData(SmartArtType.PictureOrgChart)]
-        public void WordDocument_ProjectsHierarchySmartArtNodeTextThroughFallbackOrganizationDrawing(SmartArtType type) {
+        [InlineData(WordSmartArtType.Hierarchy)]
+        [InlineData(WordSmartArtType.PictureOrgChart)]
+        public void WordDocument_ProjectsHierarchySmartArtNodeTextThroughFallbackOrganizationDrawing(WordSmartArtType type) {
             using var stream = new MemoryStream();
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
@@ -3292,8 +3308,8 @@ namespace OfficeIMO.Tests {
             document.HeaderDefaultOrCreate.AddParagraph("Default header");
             document.FooterDefaultOrCreate.AddParagraph("Default footer");
             document.DifferentFirstPage = true;
-            document.HeaderFirstOrCreate.AddParagraph("First page header").SetAlignment(JustificationValues.Center);
-            document.FooterFirstOrCreate.AddParagraph("First page footer").SetAlignment(JustificationValues.Center);
+            document.HeaderFirstOrCreate.AddParagraph("First page header").SetAlignment(WordParagraphAlignment.Center);
+            document.FooterFirstOrCreate.AddParagraph("First page footer").SetAlignment(WordParagraphAlignment.Center);
             document.AddParagraph("Body starts below header");
 
             OfficeImageExportResult svg = document.ExportImage(OfficeImageExportFormat.Svg, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -3373,11 +3389,11 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
             document.DifferentFirstPage = true;
             WordParagraph header = document.HeaderFirstOrCreate.AddParagraph("Head ");
-            header.SetFontFamily("Aptos").SetFontSize(11).SetColor(OfficeColor.FromRgb(17, 24, 39)).SetAlignment(JustificationValues.Center);
+            header.SetFontFamily("Aptos").SetFontSize(11).SetColor(OfficeColor.FromRgb(17, 24, 39)).SetAlignment(WordParagraphAlignment.Center);
             header.AddText("Red").SetColor(OfficeColor.FromRgb(220, 38, 38)).SetBold();
-            header.AddText(" blue").SetColor(OfficeColor.FromRgb(37, 99, 235)).SetItalic().SetUnderline(UnderlineValues.Single);
+            header.AddText(" blue").SetColor(OfficeColor.FromRgb(37, 99, 235)).SetItalic().SetUnderline(WordUnderlineStyle.Single);
             WordParagraph footer = document.FooterFirstOrCreate.AddParagraph("Foot ");
-            footer.SetFontFamily("Aptos").SetFontSize(10).SetColor(OfficeColor.FromRgb(55, 65, 81)).SetAlignment(JustificationValues.Center);
+            footer.SetFontFamily("Aptos").SetFontSize(10).SetColor(OfficeColor.FromRgb(55, 65, 81)).SetAlignment(WordParagraphAlignment.Center);
             footer.AddText("Green").SetColor(OfficeColor.FromRgb(22, 163, 74)).SetBold();
             document.AddParagraph("Body starts below rich header");
 
@@ -3557,7 +3573,7 @@ namespace OfficeIMO.Tests {
             using var headerStream = new MemoryStream(headerPng);
             WordImage headerImage = document.HeaderFirstOrCreate
                 .AddParagraph()
-                .InsertImage(headerStream, "header-floating-red.png", 32, 24, WrapTextImage.Square, "Header floating red marker");
+                .InsertImage(headerStream, "header-floating-red.png", 32, 24, WordImageTextWrapping.Square, "Header floating red marker");
             headerImage.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             headerImage.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(72D) };
             headerImage.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Page;
@@ -3568,7 +3584,7 @@ namespace OfficeIMO.Tests {
             using var footerStream = new MemoryStream(footerPng);
             WordImage footerImage = document.FooterFirstOrCreate
                 .AddParagraph()
-                .InsertImage(footerStream, "footer-floating-green.png", 28, 20, WrapTextImage.Square, "Footer floating green marker");
+                .InsertImage(footerStream, "footer-floating-green.png", 28, 20, WordImageTextWrapping.Square, "Footer floating green marker");
             footerImage.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             footerImage.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(72D) };
             footerImage.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Page;
@@ -3622,7 +3638,7 @@ namespace OfficeIMO.Tests {
 
             WordShape headerShape = document.HeaderFirstOrCreate
                 .AddParagraph()
-                .AddShapeDrawing(ShapeType.RightArrow, 54D, 24D, 72D, 24D);
+                .AddShapeDrawing(WordShapeType.RightArrow, 54D, 24D, 72D, 24D);
             headerShape.FillColor = OfficeColor.FromRgb(248, 113, 113);
             headerShape.StrokeColor = OfficeColor.FromRgb(127, 29, 29);
             headerShape.StrokeWeight = 2D;
@@ -3630,7 +3646,7 @@ namespace OfficeIMO.Tests {
 
             WordShape footerShape = document.FooterFirstOrCreate
                 .AddParagraph()
-                .AddShapeDrawing(ShapeType.RightArrow, 50D, 22D, 72D, 758D);
+                .AddShapeDrawing(WordShapeType.RightArrow, 50D, 22D, 72D, 758D);
             footerShape.FillColor = OfficeColor.FromRgb(34, 197, 94);
             footerShape.StrokeColor = OfficeColor.FromRgb(21, 128, 61);
             footerShape.StrokeWeight = 2D;
@@ -3688,23 +3704,23 @@ namespace OfficeIMO.Tests {
 
             WordTextBox headerTextBox = document.HeaderFirstOrCreate
                 .AddParagraph()
-                .AddTextBox("Header floating text box", WrapTextImage.Square);
+                .AddTextBox("Header floating text box", WordImageTextWrapping.Square);
             headerTextBox.Width = (long)Math.Round(120D * 12700D);
             headerTextBox.Height = (long)Math.Round(32D * 12700D);
-            headerTextBox.HorizontalPositionRelativeFrom = DW.HorizontalRelativePositionValues.Page;
+            headerTextBox.HorizontalPositionRelativeFrom = WordHorizontalRelativePosition.Page;
             headerTextBox.HorizontalPositionOffset = int.Parse(PointsToEmusText(72D), CultureInfo.InvariantCulture);
-            headerTextBox.VerticalPositionRelativeFrom = DW.VerticalRelativePositionValues.Page;
+            headerTextBox.VerticalPositionRelativeFrom = WordVerticalRelativePosition.Page;
             headerTextBox.VerticalPositionOffset = int.Parse(PointsToEmusText(24D), CultureInfo.InvariantCulture);
             document.HeaderFirstOrCreate.AddParagraph("Header text wraps after text box");
 
             WordTextBox footerTextBox = document.FooterFirstOrCreate
                 .AddParagraph()
-                .AddTextBox("Footer floating text box", WrapTextImage.Square);
+                .AddTextBox("Footer floating text box", WordImageTextWrapping.Square);
             footerTextBox.Width = (long)Math.Round(116D * 12700D);
             footerTextBox.Height = (long)Math.Round(32D * 12700D);
-            footerTextBox.HorizontalPositionRelativeFrom = DW.HorizontalRelativePositionValues.Page;
+            footerTextBox.HorizontalPositionRelativeFrom = WordHorizontalRelativePosition.Page;
             footerTextBox.HorizontalPositionOffset = int.Parse(PointsToEmusText(72D), CultureInfo.InvariantCulture);
-            footerTextBox.VerticalPositionRelativeFrom = DW.VerticalRelativePositionValues.Page;
+            footerTextBox.VerticalPositionRelativeFrom = WordVerticalRelativePosition.Page;
             footerTextBox.VerticalPositionOffset = int.Parse(PointsToEmusText(750D), CultureInfo.InvariantCulture);
             document.FooterFirstOrCreate.AddParagraph("Footer text wraps after text box");
 
@@ -3910,7 +3926,7 @@ namespace OfficeIMO.Tests {
             section.ColumnsSpace = 720;
 
             document.AddParagraph("ImageLeftColumnMarker starts in the first Word image export column.")
-                .AddBreak(BreakValues.Column);
+                .AddBreak(WordBreakType.Column);
             document.AddParagraph("ImageRightColumnMarker starts in the second Word image export column.");
 
             var options = new WordImageExportOptions { BackgroundColor = OfficeColor.White };
@@ -3982,9 +3998,9 @@ namespace OfficeIMO.Tests {
             section.ColumnCount = 2;
             section.ColumnsSpace = 720;
             WordTable table = document.AddTable(6, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 2400;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 2400 };
             for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++) {
                 int rowNumber = rowIndex + 1;
@@ -4188,12 +4204,12 @@ namespace OfficeIMO.Tests {
             document.PageSettings.PageSize = WordPageSize.A4;
             document.Margins.Type = WordMargin.Narrow;
             WordSection section = document.Sections[0];
-            section.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Default header marker");
-            section.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("Default footer marker");
-            section.GetOrCreateHeader(HeaderFooterValues.First).AddParagraph("First header marker");
-            section.GetOrCreateFooter(HeaderFooterValues.First).AddParagraph("First footer marker");
-            section.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Even header marker");
-            section.GetOrCreateFooter(HeaderFooterValues.Even).AddParagraph("Even footer marker");
+            section.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("Default header marker");
+            section.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("Default footer marker");
+            section.GetOrCreateHeader(WordHeaderFooterType.First).AddParagraph("First header marker");
+            section.GetOrCreateFooter(WordHeaderFooterType.First).AddParagraph("First footer marker");
+            section.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Even header marker");
+            section.GetOrCreateFooter(WordHeaderFooterType.Even).AddParagraph("Even footer marker");
             document.AddParagraph("First page body");
             document.AddPageBreak();
             document.AddParagraph("Second page body");
@@ -4223,10 +4239,10 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
             WordSection section = document.Sections[0];
             section.AddPageNumbering(2);
-            section.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Odd/default numbered header");
-            section.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("Odd/default numbered footer");
-            section.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Even-numbered header");
-            section.GetOrCreateFooter(HeaderFooterValues.Even).AddParagraph("Even-numbered footer");
+            section.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("Odd/default numbered header");
+            section.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("Odd/default numbered footer");
+            section.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Even-numbered header");
+            section.GetOrCreateFooter(WordHeaderFooterType.Even).AddParagraph("Even-numbered footer");
             document.AddParagraph("Even-numbered first page body");
 
             var options = new WordImageExportOptions { PageIndex = 0, BackgroundColor = OfficeColor.White };
@@ -4253,17 +4269,17 @@ namespace OfficeIMO.Tests {
             WordSection firstSection = document.Sections[0];
             firstSection.PageSettings.PageSize = WordPageSize.A4;
             firstSection.SetMargins(WordMargin.Narrow);
-            firstSection.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Section one default header");
-            firstSection.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("Section one default footer");
+            firstSection.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("Section one default header");
+            firstSection.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("Section one default footer");
             firstSection.AddParagraph("Section one first page body");
 
-            WordSection secondSection = document.AddSection(SectionMarkValues.NextPage);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.NextPage);
             secondSection.PageSettings.PageSize = WordPageSize.A5;
             secondSection.SetMargins(WordMargin.Narrow);
-            secondSection.GetOrCreateHeader(HeaderFooterValues.First).AddParagraph("Section two first header");
-            secondSection.GetOrCreateFooter(HeaderFooterValues.First).AddParagraph("Section two first footer");
-            secondSection.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Section two even header");
-            secondSection.GetOrCreateFooter(HeaderFooterValues.Even).AddParagraph("Section two even footer");
+            secondSection.GetOrCreateHeader(WordHeaderFooterType.First).AddParagraph("Section two first header");
+            secondSection.GetOrCreateFooter(WordHeaderFooterType.First).AddParagraph("Section two first footer");
+            secondSection.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Section two even header");
+            secondSection.GetOrCreateFooter(WordHeaderFooterType.Even).AddParagraph("Section two even footer");
             secondSection.AddParagraph("Section two first page body");
 
             var options = new WordImageExportOptions { PageIndex = 1, BackgroundColor = OfficeColor.White };
@@ -4298,15 +4314,15 @@ namespace OfficeIMO.Tests {
             WordSection firstSection = document.Sections[0];
             firstSection.PageSettings.PageSize = WordPageSize.A4;
             firstSection.SetMargins(WordMargin.Narrow);
-            firstSection.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Section one header");
-            firstSection.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("Section one footer");
+            firstSection.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("Section one header");
+            firstSection.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("Section one footer");
             firstSection.AddParagraph("Section one body");
 
-            WordSection secondSection = document.AddSection(SectionMarkValues.NextPage);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.NextPage);
             secondSection.PageSettings.PageSize = WordPageSize.A5;
             secondSection.SetMargins(WordMargin.Narrow);
-            secondSection.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Section two header");
-            secondSection.GetOrCreateFooter(HeaderFooterValues.Even).AddParagraph("Section two footer");
+            secondSection.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Section two header");
+            secondSection.GetOrCreateFooter(WordHeaderFooterType.Even).AddParagraph("Section two footer");
             secondSection.AddParagraph("Section two body");
 
             var options = new WordImageExportOptions { PageIndex = 1, BackgroundColor = OfficeColor.White };
@@ -4339,7 +4355,7 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)6000U;
             section.SetMargins(WordMargin.Narrow);
             document.AddParagraph("Continuous image section before");
-            document.AddSection(SectionMarkValues.Continuous);
+            document.AddSection(WordSectionBreakType.Continuous);
             document.AddParagraph("Continuous image section after");
 
             var options = new WordImageExportOptions { PageIndex = 0, BackgroundColor = OfficeColor.White };
@@ -4379,7 +4395,7 @@ namespace OfficeIMO.Tests {
             firstSection.SetMargins(WordMargin.Narrow);
             firstSection.AddParagraph("Continuous setup before");
 
-            WordSection secondSection = document.AddSection(SectionMarkValues.Continuous);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.Continuous);
             secondSection.PageSettings.PageSize = WordPageSize.A5;
             secondSection.SetMargins(WordMargin.Narrow);
             secondSection.AddParagraph("Continuous setup after");
@@ -4417,7 +4433,7 @@ namespace OfficeIMO.Tests {
             WordSection firstSection = document.Sections[0];
             firstSection.AddParagraph("Next-column section before");
 
-            WordSection secondSection = document.AddSection(SectionMarkValues.NextColumn);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.NextColumn);
             firstSection.PageSettings.PageSize = WordPageSize.A4;
             firstSection.SetMargins(WordMargin.Narrow);
             firstSection.ColumnCount = 2;
@@ -4460,11 +4476,11 @@ namespace OfficeIMO.Tests {
             firstSection.PageSettings.PageSize = WordPageSize.A4;
             firstSection.SetMargins(WordMargin.Narrow);
             firstSection.AddHeadersAndFooters();
-            firstSection.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Odd section first default header");
-            firstSection.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("Odd section first default footer");
+            firstSection.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("Odd section first default header");
+            firstSection.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("Odd section first default footer");
             firstSection.AddParagraph("Odd section first page body");
 
-            WordSection secondSection = document.AddSection(SectionMarkValues.OddPage);
+            WordSection secondSection = document.AddSection(WordSectionBreakType.OddPage);
             secondSection.PageSettings.PageSize = WordPageSize.A5;
             secondSection.SetMargins(WordMargin.Narrow);
             secondSection.AddParagraph("Odd section second body");
@@ -4531,12 +4547,12 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Width = (UInt32Value)5000U;
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
-            section.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Automatic default header");
-            section.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("Automatic default footer");
-            section.GetOrCreateHeader(HeaderFooterValues.First).AddParagraph("Automatic first header");
-            section.GetOrCreateFooter(HeaderFooterValues.First).AddParagraph("Automatic first footer");
-            section.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Automatic even header");
-            section.GetOrCreateFooter(HeaderFooterValues.Even).AddParagraph("Automatic even footer");
+            section.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("Automatic default header");
+            section.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("Automatic default footer");
+            section.GetOrCreateHeader(WordHeaderFooterType.First).AddParagraph("Automatic first header");
+            section.GetOrCreateFooter(WordHeaderFooterType.First).AddParagraph("Automatic first footer");
+            section.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Automatic even header");
+            section.GetOrCreateFooter(WordHeaderFooterType.Even).AddParagraph("Automatic even footer");
             for (int index = 1; index <= 10; index++) {
                 document.AddParagraph(
                     "Automatic header footer body " +
@@ -4570,12 +4586,12 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Width = (UInt32Value)6000U;
             section.PageSettings.Height = (UInt32Value)5000U;
             section.SetMargins(WordMargin.Narrow);
-            section.GetOrCreateHeader(HeaderFooterValues.Default).AddParagraph("Frame default header");
-            section.GetOrCreateFooter(HeaderFooterValues.Default).AddParagraph("Frame default footer");
-            section.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Frame even header line 1");
-            section.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Frame even header line 2");
-            section.GetOrCreateHeader(HeaderFooterValues.Even).AddParagraph("Frame even header line 3");
-            section.GetOrCreateFooter(HeaderFooterValues.Even).AddParagraph("Frame even footer");
+            section.GetOrCreateHeader(WordHeaderFooterType.Default).AddParagraph("Frame default header");
+            section.GetOrCreateFooter(WordHeaderFooterType.Default).AddParagraph("Frame default footer");
+            section.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Frame even header line 1");
+            section.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Frame even header line 2");
+            section.GetOrCreateHeader(WordHeaderFooterType.Even).AddParagraph("Frame even header line 3");
+            section.GetOrCreateFooter(WordHeaderFooterType.Even).AddParagraph("Frame even footer");
             for (int index = 1; index <= 8; index++) {
                 document.AddParagraph("Frame body " + index.ToString(CultureInfo.InvariantCulture));
             }
@@ -4607,7 +4623,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Automatic anchored image first page marker.");
             byte[] sourcePng = CreateSolidPng(48, 96, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "automatic-top-bottom.png", 48, 96, WrapTextImage.TopAndBottom, "Automatic top bottom marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "automatic-top-bottom.png", 48, 96, WordImageTextWrapping.TopAndBottom, "Automatic top bottom marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(72D) };
             anchored.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Page;
@@ -4636,12 +4652,12 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Width = (UInt32Value)5000U;
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
-            WordTextBox textBox = document.AddParagraph().AddTextBox("First page floating text box", WrapTextImage.Square);
+            WordTextBox textBox = document.AddParagraph().AddTextBox("First page floating text box", WordImageTextWrapping.Square);
             textBox.Width = (long)Math.Round(250D * 12700D);
             textBox.Height = (long)Math.Round(96D * 12700D);
-            textBox.HorizontalPositionRelativeFrom = DW.HorizontalRelativePositionValues.Page;
+            textBox.HorizontalPositionRelativeFrom = WordHorizontalRelativePosition.Page;
             textBox.HorizontalPositionOffset = int.Parse(PointsToEmusText(36D), CultureInfo.InvariantCulture);
-            textBox.VerticalPositionRelativeFrom = DW.VerticalRelativePositionValues.Page;
+            textBox.VerticalPositionRelativeFrom = WordVerticalRelativePosition.Page;
             textBox.VerticalPositionOffset = int.Parse(PointsToEmusText(36D), CultureInfo.InvariantCulture);
             document.AddParagraph(
                 string.Join(
@@ -4668,7 +4684,7 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Width = (UInt32Value)5000U;
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
-            WordShape shape = document.AddParagraph().AddShapeDrawing(ShapeType.RightArrow, 250D, 96D, 36D, 36D);
+            WordShape shape = document.AddParagraph().AddShapeDrawing(WordShapeType.RightArrow, 250D, 96D, 36D, 36D);
             shape.FillColor = OfficeColor.FromRgb(248, 113, 113);
             shape.StrokeColor = OfficeColor.FromRgb(127, 29, 29);
             document.AddParagraph(
@@ -4785,9 +4801,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(9, 2);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 1800, 1800 };
             for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++) {
                 int rowNumber = rowIndex + 1;
@@ -4825,9 +4841,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)5000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(2, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 2000;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 2000 };
             table.Rows[0].RepeatHeaderRowAtTheTopOfEachPage = true;
             table.Rows[0].Height = 600;
@@ -4874,9 +4890,9 @@ namespace OfficeIMO.Tests {
             section.SetMargins(WordMargin.Narrow);
             document.AddParagraph("Lead paragraph before partial table one");
             WordTable table = document.AddTable(2, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             table.Rows[0].Height = 480;
             table.Rows[1].Height = 480;
@@ -4912,9 +4928,9 @@ namespace OfficeIMO.Tests {
             }
 
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             table.Rows[0].AllowRowToBreakAcrossPages = true;
             table.Rows[0].Cells[0].Paragraphs[0].Text = string.Join(
@@ -4948,9 +4964,9 @@ namespace OfficeIMO.Tests {
             section.SetMargins(WordMargin.Narrow);
             document.AddParagraph("Table page break lead paragraph");
             WordTable table = document.AddTable(2, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             table.Rows[0].Height = 480;
             table.Rows[1].Height = 480;
@@ -4988,9 +5004,9 @@ namespace OfficeIMO.Tests {
             section.SetMargins(WordMargin.Narrow);
             document.AddParagraph("Hard break table lead paragraph");
             WordTable table = document.AddTable(2, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             table.Rows[0].Height = 480;
             table.Rows[1].Height = 480;
@@ -5030,9 +5046,9 @@ namespace OfficeIMO.Tests {
             section.ColumnCount = 2;
             section.ColumnsSpace = 720;
             WordTable table = document.AddTable(2, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3000;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3000 };
             table.Rows[0].Height = 480;
             table.Rows[1].Height = 480;
@@ -5069,9 +5085,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)15840U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(2, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3000;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3000 };
             table.Rows[0].Height = 240;
             table.Rows[0]._tableRow.TableRowProperties!.GetFirstChild<TableRowHeight>()!.HeightType = HeightRuleValues.AtLeast;
@@ -5100,9 +5116,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             table.Rows[0].Cells[0].Paragraphs[0].Text = string.Join(
                 " ",
@@ -5135,9 +5151,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             WordParagraph cellParagraph = table.Rows[0].Cells[0].Paragraphs[0];
             cellParagraph.Text = string.Empty;
@@ -5176,9 +5192,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             WordTableCell cell = table.Rows[0].Cells[0];
             cell.AddParagraph(
@@ -5222,9 +5238,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             WordTableCell cell = table.Rows[0].Cells[0];
             cell.Paragraphs[0].Text = string.Empty;
@@ -5262,9 +5278,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             WordTableCell cell = table.Rows[0].Cells[0];
             byte[] sourcePng = CreateSolidPng(48, 72, OfficeColor.FromRgb(37, 99, 235));
@@ -5299,15 +5315,15 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(1, 1);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 3600 };
             WordTableCell cell = table.Rows[0].Cells[0];
             WordTable nested = cell.AddTable(1, 1);
-            nested.WidthType = TableWidthUnitValues.Dxa;
+            nested.WidthType = WordTableWidthUnit.Dxa;
             nested.Width = 3000;
-            nested.ColumnWidthType = TableWidthUnitValues.Dxa;
+            nested.ColumnWidthType = WordTableWidthUnit.Dxa;
             nested.ColumnWidth = new List<int> { 3000 };
             nested.Rows[0].Cells[0].Paragraphs[0].Text = "Nested split row marker";
             cell.AddParagraph(
@@ -5338,9 +5354,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(1, 2);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 1800, 1800 };
             table.Rows[0].Cells[0].MergeHorizontally(1);
             table.Rows[0].Cells[0].Paragraphs[0].Text = string.Join(
@@ -5365,9 +5381,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(3, 2);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 1800, 1800 };
             table.Rows[0].MergeVertically(0, 2);
             table.Rows[0].Cells[0].Paragraphs[0].Text = string.Join(
@@ -5395,9 +5411,9 @@ namespace OfficeIMO.Tests {
             section.PageSettings.Height = (UInt32Value)3000U;
             section.SetMargins(WordMargin.Narrow);
             WordTable table = document.AddTable(9, 2);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 1800, 1800 };
             table.Rows[0].RepeatHeaderRowAtTheTopOfEachPage = true;
             table.Rows[0].Cells[0].Paragraphs[0].Text = "Repeated table header";
@@ -5444,9 +5460,9 @@ namespace OfficeIMO.Tests {
             document.AddPageBreak();
 
             WordTable table = document.AddTable(6, 2);
-            table.WidthType = TableWidthUnitValues.Dxa;
+            table.WidthType = WordTableWidthUnit.Dxa;
             table.Width = 3600;
-            table.ColumnWidthType = TableWidthUnitValues.Dxa;
+            table.ColumnWidthType = WordTableWidthUnit.Dxa;
             table.ColumnWidth = new List<int> { 1800, 1800 };
             table.Rows[0].RepeatHeaderRowAtTheTopOfEachPage = true;
             table.Rows[0].Cells[0].Paragraphs[0].Text = "LateHdr";
@@ -5504,8 +5520,8 @@ namespace OfficeIMO.Tests {
 
         [Fact]
         public void WordDocument_ProjectsTightAndThroughWrappedImagesWithLimitedTextExclusionDiagnostics() {
-            AssertLimitedSideWrappedImageProjection(WrapTextImage.Tight, "Tight");
-            AssertLimitedSideWrappedImageProjection(WrapTextImage.Through, "Through");
+            AssertLimitedSideWrappedImageProjection(WordImageTextWrapping.Tight, "Tight");
+            AssertLimitedSideWrappedImageProjection(WordImageTextWrapping.Through, "Through");
         }
 
         [Fact]
@@ -5537,7 +5553,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Line two before rotated image.");
             byte[] sourcePng = CreateSolidPng(240, 60, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage image = document.AddParagraph().InsertImage(imageStream, "rotated-inline-page.png", 240, 60, WrapTextImage.InLineWithText, "Rotated inline pagination marker");
+            WordImage image = document.AddParagraph().InsertImage(imageStream, "rotated-inline-page.png", 240, 60, WordImageTextWrapping.InLineWithText, "Rotated inline pagination marker");
             image.Rotation = 45;
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
@@ -5555,7 +5571,7 @@ namespace OfficeIMO.Tests {
             document.Margins.Type = WordMargin.Narrow;
             byte[] sourcePng = CreateSolidPng(420, 420, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage image = document.AddParagraph().InsertImage(imageStream, "rotated-inline.png", 420, 420, WrapTextImage.InLineWithText, "Rotated inline marker");
+            WordImage image = document.AddParagraph().InsertImage(imageStream, "rotated-inline.png", 420, 420, WordImageTextWrapping.InLineWithText, "Rotated inline marker");
             image.Rotation = 45;
 
             WordDocumentVisualSnapshot snapshot = document.CreateVisualSnapshot();
@@ -5564,7 +5580,7 @@ namespace OfficeIMO.Tests {
             Assert.Contains(snapshot.Diagnostics, diagnostic => diagnostic.Code == "unsupported-word-image" && diagnostic.Source == "Rotated inline marker");
         }
 
-        private static void AssertLimitedSideWrappedImageProjection(WrapTextImage wrapText, string label) {
+        private static void AssertLimitedSideWrappedImageProjection(WordImageTextWrapping wrapText, string label) {
             using var stream = new MemoryStream();
             using WordDocument document = WordDocument.Create(stream);
             document.Margins.Type = WordMargin.Narrow;
@@ -5608,7 +5624,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before square image");
             byte[] sourcePng = CreateSolidPng(48, 36, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            document.AddParagraph().AddImage(imageStream, "square.png", 48, 36, WrapTextImage.Square, "Square blue marker");
+            document.AddParagraph().AddImage(imageStream, "square.png", 48, 36, WordImageTextWrapping.Square, "Square blue marker");
             document.AddParagraph("After square image wraps beside the marker.");
 
             OfficeImageExportResult png = document.ExportImage(OfficeImageExportFormat.Png, new WordImageExportOptions { BackgroundColor = OfficeColor.White });
@@ -5646,7 +5662,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before polygon image");
             byte[] sourcePng = CreateSolidPng(160, 80, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "tight-polygon.png", 160, 80, WrapTextImage.Tight, "Tight polygon marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "tight-polygon.png", 160, 80, WordImageTextWrapping.Tight, "Tight polygon marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(96D) };
             DW.WrapTight tightWrap = anchored._Image.Anchor!.Elements<DW.WrapTight>().Single();
@@ -5691,7 +5707,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before transparent through image");
             byte[] sourcePng = CreateHalfTransparentPng(160, 80, OfficeColor.FromRgb(37, 99, 235), transparentRightHalf: true);
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "through-transparent.png", 160, 80, WrapTextImage.Through, "Transparent through marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "through-transparent.png", 160, 80, WordImageTextWrapping.Through, "Transparent through marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(96D) };
             string afterTextValue = "After transparent through image uses alpha space.";
@@ -5733,7 +5749,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before transparent tight image");
             byte[] sourcePng = CreateHalfTransparentPng(160, 80, OfficeColor.FromRgb(37, 99, 235), transparentRightHalf: true);
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "tight-transparent.png", 160, 80, WrapTextImage.Tight, "Transparent tight marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "tight-transparent.png", 160, 80, WordImageTextWrapping.Tight, "Transparent tight marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(96D) };
             string afterTextValue = "After transparent tight image uses alpha space.";
@@ -5781,7 +5797,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before square image distance margin");
             byte[] sourcePng = CreateSolidPng(48, 36, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "square-distance.png", 48, 36, WrapTextImage.Square, "square distance marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "square-distance.png", 48, 36, WordImageTextWrapping.Square, "square distance marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(220D) };
             anchored._Image.Anchor!.Elements<DW.WrapSquare>().Single().WrapText = DW.WrapTextValues.Right;
@@ -5823,13 +5839,13 @@ namespace OfficeIMO.Tests {
 
             byte[] leftPng = CreateSolidPng(48, 36, OfficeColor.FromRgb(37, 99, 235));
             using var leftStream = new MemoryStream(leftPng);
-            WordImage leftImage = document.AddParagraph().InsertImage(leftStream, "left-square.png", 48, 36, WrapTextImage.Square, "Left square marker");
+            WordImage leftImage = document.AddParagraph().InsertImage(leftStream, "left-square.png", 48, 36, WordImageTextWrapping.Square, "Left square marker");
             leftImage.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             leftImage.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(96D) };
 
             byte[] rightPng = CreateSolidPng(160, 80, OfficeColor.FromRgb(220, 38, 38));
             using var rightStream = new MemoryStream(rightPng);
-            WordImage rightImage = document.AddParagraph().InsertImage(rightStream, "right-square.png", 160, 80, WrapTextImage.Square, "Right square marker");
+            WordImage rightImage = document.AddParagraph().InsertImage(rightStream, "right-square.png", 160, 80, WordImageTextWrapping.Square, "Right square marker");
             rightImage.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             rightImage.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(420D) };
 
@@ -5874,7 +5890,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before " + sideLabel + " square image");
             byte[] sourcePng = CreateSolidPng(48, 36, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "square-side.png", 48, 36, WrapTextImage.Square, sideLabel + " square marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "square-side.png", 48, 36, WordImageTextWrapping.Square, sideLabel + " square marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(220D) };
             anchored._Image.Anchor!.Elements<DW.WrapSquare>().Single().WrapText = wrapSide;
@@ -5919,7 +5935,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before top-bottom image");
             byte[] sourcePng = CreateSolidPng(30, 20, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "topbottom.png", 30, 20, WrapTextImage.TopAndBottom, "Top bottom blue marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "topbottom.png", 30, 20, WordImageTextWrapping.TopAndBottom, "Top bottom blue marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(144D) };
             anchored.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Page;
@@ -5959,7 +5975,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before top-bottom image distance");
             byte[] sourcePng = CreateSolidPng(30, 20, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "topbottom-distance.png", 30, 20, WrapTextImage.TopAndBottom, "Top bottom distance marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "topbottom-distance.png", 30, 20, WordImageTextWrapping.TopAndBottom, "Top bottom distance marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(144D) };
             anchored.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Page;
@@ -5998,7 +6014,7 @@ namespace OfficeIMO.Tests {
             document.AddParagraph("Before anchored image");
             byte[] sourcePng = CreateSolidPng(32, 24, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "behind.png", 32, 24, WrapTextImage.BehindText, "Behind blue marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "behind.png", 32, 24, WordImageTextWrapping.BehindText, "Behind blue marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Page;
             anchored.horizontalPosition.PositionOffset = new DW.PositionOffset { Text = PointsToEmusText(126D) };
             anchored.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Page;
@@ -6049,7 +6065,7 @@ namespace OfficeIMO.Tests {
 
             byte[] sourcePng = CreateSolidPng(32, 24, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "margin-relative.png", 32, 24, WrapTextImage.Square, "Margin relative marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "margin-relative.png", 32, 24, WordImageTextWrapping.Square, "Margin relative marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.Margin;
             anchored.horizontalPosition.HorizontalAlignment = new DW.HorizontalAlignment { Text = "left" };
             anchored.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Margin;
@@ -6075,7 +6091,7 @@ namespace OfficeIMO.Tests {
 
             byte[] sourcePng = CreateSolidPng(32, 24, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "side-margin-relative.png", 32, 24, WrapTextImage.Square, "Side margin relative marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "side-margin-relative.png", 32, 24, WordImageTextWrapping.Square, "Side margin relative marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.RightMargin;
             anchored.horizontalPosition.HorizontalAlignment = new DW.HorizontalAlignment { Text = "right" };
             anchored.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.BottomMargin;
@@ -6117,7 +6133,7 @@ namespace OfficeIMO.Tests {
 
             byte[] sourcePng = CreateSolidPng(32, 24, OfficeColor.FromRgb(37, 99, 235));
             using var imageStream = new MemoryStream(sourcePng);
-            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "inside-margin-relative.png", 32, 24, WrapTextImage.Square, "Inside margin relative marker");
+            WordImage anchored = document.AddParagraph().InsertImage(imageStream, "inside-margin-relative.png", 32, 24, WordImageTextWrapping.Square, "Inside margin relative marker");
             anchored.horizontalPosition.RelativeFrom = DW.HorizontalRelativePositionValues.InsideMargin;
             anchored.horizontalPosition.HorizontalAlignment = new DW.HorizontalAlignment { Text = "left" };
             anchored.verticalPosition.RelativeFrom = DW.VerticalRelativePositionValues.Page;

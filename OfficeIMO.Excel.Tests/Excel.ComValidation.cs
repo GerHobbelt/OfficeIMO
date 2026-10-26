@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -12,6 +13,9 @@ using Xunit;
 namespace OfficeIMO.Tests {
     public partial class Excel {
         private static readonly TimeSpan ExcelComOpenTimeout = TimeSpan.FromMinutes(2);
+        private static readonly TimeSpan ExcelComLockTimeout = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan ExcelComWorkerTimeout = ExcelComLockTimeout + ExcelComOpenTimeout;
+        private const string ExcelComMutexName = @"Local\OfficeIMO.Excel.Tests.DesktopCom";
 
 #if NET5_0_OR_GREATER
         [SupportedOSPlatformGuard("windows")]
@@ -39,22 +43,48 @@ namespace OfficeIMO.Tests {
                 return;
             }
 
-            List<string> failures = new();
-            var thread = new Thread(() => OpenWorkbooksViaExcelCom(paths.ToList(), failures));
+            var failures = new ConcurrentQueue<string>();
+            var thread = new Thread(() => {
+                try {
+                    RunWithExcelComLock(() => OpenWorkbooksViaExcelCom(paths.ToList(), failures));
+                } catch (Exception ex) {
+                    failures.Enqueue(DescribeExcelComFailure(ex));
+                }
+            });
             thread.IsBackground = true;
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
-            if (!thread.Join(ExcelComOpenTimeout)) {
-                failures.Add($"Excel COM smoke test timed out after {ExcelComOpenTimeout.TotalSeconds:0} seconds.");
+            if (!thread.Join(ExcelComWorkerTimeout)) {
+                failures.Enqueue($"Excel COM smoke test timed out after {ExcelComWorkerTimeout.TotalSeconds:0} seconds, including up to {ExcelComLockTimeout.TotalSeconds:0} seconds waiting for the cross-process lock. The worker continues to own the lock until it exits.");
             }
 
-            Assert.True(failures.Count == 0, failureMessage + Environment.NewLine + string.Join(Environment.NewLine, failures));
+            Assert.True(failures.IsEmpty, failureMessage + Environment.NewLine + string.Join(Environment.NewLine, failures));
+        }
+
+        private static void RunWithExcelComLock(Action action) {
+            using var mutex = new Mutex(initiallyOwned: false, ExcelComMutexName);
+            bool acquired = false;
+            try {
+                try {
+                    acquired = mutex.WaitOne(ExcelComLockTimeout);
+                } catch (AbandonedMutexException) {
+                    acquired = true;
+                }
+
+                Assert.True(acquired,
+                    $"Timed out after {ExcelComLockTimeout.TotalSeconds:0} seconds waiting for another OfficeIMO Excel COM validation process.");
+                action();
+            } finally {
+                if (acquired) {
+                    mutex.ReleaseMutex();
+                }
+            }
         }
 
 #if NET5_0_OR_GREATER
         [SupportedOSPlatform("windows")]
 #endif
-        private static void OpenWorkbooksViaExcelCom(IReadOnlyList<string> paths, List<string> failures) {
+        private static void OpenWorkbooksViaExcelCom(IReadOnlyList<string> paths, ConcurrentQueue<string> failures) {
             object? excel = null;
             object? workbooks = null;
 
@@ -74,12 +104,12 @@ namespace OfficeIMO.Tests {
                         workbook = workbooks!.GetType().InvokeMember("Open", BindingFlags.InvokeMethod, null, workbooks,
                             new object[] { path, 0, true });
                     } catch (Exception ex) when (ex is COMException or InvalidOperationException or MissingMethodException or TargetInvocationException) {
-                        failures.Add($"{Path.GetFileName(path)}: {DescribeExcelComFailure(ex)}");
+                        failures.Enqueue($"{Path.GetFileName(path)}: {DescribeExcelComFailure(ex)}");
                     } finally {
                         try {
                             workbook?.GetType().InvokeMember("Close", BindingFlags.InvokeMethod, null, workbook, new object[] { false });
                         } catch (Exception ex) when (ex is COMException or MissingMethodException or TargetInvocationException) {
-                            failures.Add($"{Path.GetFileName(path)} close: {DescribeExcelComFailure(ex)}");
+                            failures.Enqueue($"{Path.GetFileName(path)} close: {DescribeExcelComFailure(ex)}");
                         }
 
                         if (workbook != null && Marshal.IsComObject(workbook)) {
@@ -88,12 +118,12 @@ namespace OfficeIMO.Tests {
                     }
                 }
             } catch (Exception ex) when (ex is COMException or InvalidOperationException or MissingMethodException or TargetInvocationException) {
-                failures.Add(DescribeExcelComFailure(ex));
+                failures.Enqueue(DescribeExcelComFailure(ex));
             } finally {
                 try {
                     excel?.GetType().InvokeMember("Quit", BindingFlags.InvokeMethod, null, excel, null);
                 } catch (Exception ex) when (ex is COMException or MissingMethodException or TargetInvocationException) {
-                    failures.Add("Excel quit: " + DescribeExcelComFailure(ex));
+                    failures.Enqueue("Excel quit: " + DescribeExcelComFailure(ex));
                 }
 
                 if (workbooks != null && Marshal.IsComObject(workbooks)) {
@@ -118,7 +148,7 @@ namespace OfficeIMO.Tests {
                 return;
             }
 
-            string directory = Path.Combine(_directoryWithFiles, "DesktopExcelSmoke");
+            string directory = Path.Combine(_directoryWithFiles, "DesktopExcelSmoke", GetCurrentTargetFrameworkLabel());
             Directory.CreateDirectory(directory);
 
             var files = new[] {
@@ -159,7 +189,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(2, 2, 80d);
             sheet.CellValue(3, 1, "South");
             sheet.CellValue(3, 2, 95d);
-            sheet.AddTable("A1:B3", true, "ScoresTable", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+            sheet.AddTable("A1:B3", true, "ScoresTable", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
             sheet.AddAutoFilter("A1:B3", new Dictionary<uint, IEnumerable<string>> {
                 { 0, new[] { "North", "South" } }
             });
@@ -176,7 +206,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(3, 1, 87d);
             sheet.AddConditionalColorScale("A2:A3", OfficeColor.Red, OfficeColor.Lime);
             sheet.AddConditionalDataBar("A2:A3", OfficeColor.Blue);
-            sheet.AddConditionalRule("A2:A3", ConditionalFormattingOperatorValues.GreaterThan, "50");
+            sheet.AddConditionalRule("A2:A3", ExcelConditionalFormattingOperator.GreaterThan, "50");
             document.Save();
             return filePath;
         }
@@ -189,14 +219,14 @@ namespace OfficeIMO.Tests {
             var data = new ExcelChartData(
                 new[] { "Q1", "Q2", "Q3", "Q4" },
                 new[] {
-                    new ExcelChartSeries("Sales", new[] { 10d, 20d, 25d, 30d }, ExcelChartType.ColumnClustered, ExcelChartAxisGroup.Primary),
-                    new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d, 35d }, ExcelChartType.Line, ExcelChartAxisGroup.Secondary)
+                    new ExcelChartSeries("Sales", new[] { 10d, 20d, 25d, 30d }, ExcelChartType.ColumnClustered, OfficeChartAxisGroup.Primary),
+                    new ExcelChartSeries("Trend", new[] { 12d, 18d, 28d, 35d }, ExcelChartType.Line, OfficeChartAxisGroup.Secondary)
                 });
 
             ExcelChart chart = sheet.AddChart(data, row: 2, column: 6, widthPixels: 640, heightPixels: 360,
                 type: ExcelChartType.ColumnClustered, title: "Sales vs Trend");
-            chart.SetSeriesDataLabels(1, showValue: true, position: DocumentFormat.OpenXml.Drawing.Charts.DataLabelPositionValues.Top)
-                 .SetSeriesDataLabelForPoint(1, 2, showValue: true, position: DocumentFormat.OpenXml.Drawing.Charts.DataLabelPositionValues.OutsideEnd);
+            chart.SetSeriesDataLabels(1, showValue: true, position: OfficeChartDataLabelPosition.Top)
+                 .SetSeriesDataLabelForPoint(1, 2, showValue: true, position: OfficeChartDataLabelPosition.OutsideEnd);
 
             document.Save();
             return filePath;
@@ -213,7 +243,7 @@ namespace OfficeIMO.Tests {
             sheet.CellValue(3, 2, 16d);
             sheet.CellValue(4, 1, "Mar");
             sheet.CellValue(4, 2, 13d);
-            sheet.AddTable("A1:B4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+            sheet.AddTable("A1:B4", hasHeader: true, name: "RevenueData", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
 
             sheet.AddRevenueTrendChart("A1:B4", row: 1, column: 5);
             sheet.AddTopNBarChart("A1:B4", row: 18, column: 5, title: "Top Revenue");
@@ -251,7 +281,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "E2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum, "Total Sales") });
+                dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum, "Total Sales") });
 
             ExcelSheet expanded = document.AddWorksheet("Expanded");
             WriteDesktopPivotSource(expanded, 4);

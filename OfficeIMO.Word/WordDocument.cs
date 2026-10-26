@@ -2,7 +2,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.Word.Fluent;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -15,7 +15,7 @@ namespace OfficeIMO.Word {
     /// </summary>
     public partial class WordDocument : IDisposable, IAsyncDisposable {
         internal int? _tableOfContentIndex;
-        internal TableOfContentStyle? _tableOfContentStyle;
+        internal WordTableOfContentsStyle? _tableOfContentStyle;
         private MemoryStream? _ownedPackageStream;
         // On .NET Framework, validation detaches the immutable encoded baseline from the
         // writable package stream so later unsaved edits can be flushed without corrupting it.
@@ -24,6 +24,7 @@ namespace OfficeIMO.Word {
         // Retain the validated load-time bytes until validation detaches that live stream.
         private byte[]? _legacyValidationEncodedPackageBytes;
         private bool _tableOfContentUpdateQueued;
+        private bool _styleDefinitionsInitialized;
         private bool _disposed;
         private DocumentPersistenceMode _persistenceMode = DocumentPersistenceMode.Explicit;
     }

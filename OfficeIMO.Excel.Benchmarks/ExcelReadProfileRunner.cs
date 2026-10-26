@@ -22,7 +22,8 @@ internal static class ExcelReadProfileRunner {
         string outputPath,
         int rowCount = DefaultRowCount,
         int warmupIterations = DefaultWarmupIterations,
-        int measuredIterations = DefaultMeasuredIterations) {
+        int measuredIterations = DefaultMeasuredIterations,
+        string? processorAffinity = null) {
         if (string.IsNullOrWhiteSpace(outputPath)) {
             throw new ArgumentException("Output path must not be empty.", nameof(outputPath));
         }
@@ -41,7 +42,7 @@ internal static class ExcelReadProfileRunner {
         string dataRange = ExcelBenchmarkScenarioFactory.BuildDataRange(rowCount);
         using var loadedDataReaderDocument = ExcelDocumentReader.Open(workbookBytes);
         var loadedDataReaderSheet = loadedDataReaderDocument.GetSheet("Data");
-        using var loadedHeaderDocument = ExcelDocument.Load(new MemoryStream(workbookBytes, writable: false), new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+        using var loadedHeaderDocument = ExcelDocument.Load(new MemoryStream(workbookBytes, writable: false), new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
         var loadedHeaderSheet = loadedHeaderDocument.GetSheet("Data");
         using var loadedHeaderOpsStream = new MemoryStream();
         loadedHeaderOpsStream.Write(workbookBytes, 0, workbookBytes.Length);
@@ -51,20 +52,20 @@ internal static class ExcelReadProfileRunner {
         byte[] mixedTypeWorkbookBytes = CreateMixedTypeWorkbookBytes(rowCount);
         byte[] sparseWorkbookBytes = CreateSparseWorkbookBytes(SparseLastRow);
         byte[] sharedStringHeavyWorkbookBytes = CreateSharedStringHeavyWorkbookBytes(rowCount);
-        using var loadedSharedStringHeaderDocument = ExcelDocument.Load(new MemoryStream(sharedStringHeavyWorkbookBytes, writable: false), new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+        using var loadedSharedStringHeaderDocument = ExcelDocument.Load(new MemoryStream(sharedStringHeavyWorkbookBytes, writable: false), new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
         var loadedSharedStringHeaderSheet = loadedSharedStringHeaderDocument.GetSheet("Data");
         string sparseRange = $"A1:A{SparseLastRow}";
 
         List<ExcelReadProfileScenario> scenarios = [];
         scenarios.AddRange(MeasureGroup("OfficeIMO.Excel", [
             new ReadProfileCase("ReadObjects", "Automatic execution policy.", () => OfficeImoReadObjects(workbookBytes, dataRange, null)),
-            new ReadProfileCase("ReadObjects.Sequential", "Forced sequential range conversion.", () => OfficeImoReadObjects(workbookBytes, dataRange, ExecutionMode.Sequential)),
-            new ReadProfileCase("ReadObjects.Parallel", "Forced parallel range conversion.", () => OfficeImoReadObjects(workbookBytes, dataRange, ExecutionMode.Parallel))
+            new ReadProfileCase("ReadObjects.Sequential", "Forced sequential range conversion.", () => OfficeImoReadObjects(workbookBytes, dataRange, ExcelExecutionMode.Sequential)),
+            new ReadProfileCase("ReadObjects.Parallel", "Forced parallel range conversion.", () => OfficeImoReadObjects(workbookBytes, dataRange, ExcelExecutionMode.Parallel))
         ], warmupIterations, measuredIterations));
         scenarios.AddRange(MeasureGroup("OfficeIMO.Excel", [
             new ReadProfileCase("ReadObjectsAs", "Typed object materialization with automatic execution policy.", () => OfficeImoReadObjectsAs(workbookBytes, dataRange, null)),
-            new ReadProfileCase("ReadObjectsAs.Sequential", "Typed object materialization with forced sequential range conversion.", () => OfficeImoReadObjectsAs(workbookBytes, dataRange, ExecutionMode.Sequential)),
-            new ReadProfileCase("ReadObjectsAs.Parallel", "Typed object materialization with forced parallel range conversion.", () => OfficeImoReadObjectsAs(workbookBytes, dataRange, ExecutionMode.Parallel)),
+            new ReadProfileCase("ReadObjectsAs.Sequential", "Typed object materialization with forced sequential range conversion.", () => OfficeImoReadObjectsAs(workbookBytes, dataRange, ExcelExecutionMode.Sequential)),
+            new ReadProfileCase("ReadObjectsAs.Parallel", "Typed object materialization with forced parallel range conversion.", () => OfficeImoReadObjectsAs(workbookBytes, dataRange, ExcelExecutionMode.Parallel)),
             new ReadProfileCase("ReadObjectsAs.CustomConverterFallback", "Typed object materialization through a custom converter hook that falls back to built-in conversion.", () => OfficeImoReadObjectsAsCustomConverterFallback(workbookBytes, dataRange)),
             new ReadProfileCase("ReadObjectsAs.CustomConverterCultureFallback", "Typed object materialization through a custom converter fallback with non-invariant culture.", () => OfficeImoReadObjectsAsCustomConverterCultureFallback(workbookBytes, dataRange))
         ], warmupIterations, measuredIterations));
@@ -75,23 +76,23 @@ internal static class ExcelReadProfileRunner {
         ], warmupIterations, measuredIterations));
         scenarios.AddRange(MeasureGroup("OfficeIMO.Excel", [
             new ReadProfileCase("ReadRange", "Dense 2D array read with automatic execution policy.", () => OfficeImoReadRange(workbookBytes, dataRange, null)),
-            new ReadProfileCase("ReadRange.Sequential", "Dense 2D array read with forced sequential conversion.", () => OfficeImoReadRange(workbookBytes, dataRange, ExecutionMode.Sequential)),
-            new ReadProfileCase("ReadRange.Parallel", "Dense 2D array read with forced parallel conversion.", () => OfficeImoReadRange(workbookBytes, dataRange, ExecutionMode.Parallel))
+            new ReadProfileCase("ReadRange.Sequential", "Dense 2D array read with forced sequential conversion.", () => OfficeImoReadRange(workbookBytes, dataRange, ExcelExecutionMode.Sequential)),
+            new ReadProfileCase("ReadRange.Parallel", "Dense 2D array read with forced parallel conversion.", () => OfficeImoReadRange(workbookBytes, dataRange, ExcelExecutionMode.Parallel))
         ], warmupIterations, measuredIterations));
         scenarios.AddRange(MeasureGroup("OfficeIMO.Excel", [
             new ReadProfileCase("ReadRangeAsDataTable", "Automatic execution policy.", () => OfficeImoReadDataTable(workbookBytes, dataRange, null)),
-            new ReadProfileCase("ReadRangeAsDataTable.Sequential", "Forced sequential range conversion.", () => OfficeImoReadDataTable(workbookBytes, dataRange, ExecutionMode.Sequential)),
-            new ReadProfileCase("ReadRangeAsDataTable.Parallel", "Forced parallel range conversion.", () => OfficeImoReadDataTable(workbookBytes, dataRange, ExecutionMode.Parallel)),
+            new ReadProfileCase("ReadRangeAsDataTable.Sequential", "Forced sequential range conversion.", () => OfficeImoReadDataTable(workbookBytes, dataRange, ExcelExecutionMode.Sequential)),
+            new ReadProfileCase("ReadRangeAsDataTable.Parallel", "Forced parallel range conversion.", () => OfficeImoReadDataTable(workbookBytes, dataRange, ExcelExecutionMode.Parallel)),
             new ReadProfileCase("ReadRangeAsDataTable.HeadersNoInference", "Header row with type inference disabled.", () => OfficeImoReadDataTableHeadersNoInference(workbookBytes, dataRange)),
             new ReadProfileCase("ReadRangeAsDataTable.NoHeadersNoInference", "Generated columns with type inference disabled.", () => OfficeImoReadDataTableNoHeadersNoInference(workbookBytes, dataRange)),
-            new ReadProfileCase("ReadRangeAsDataTable.MixedTypeInference", "Infer object columns from mixed-type data.", () => OfficeImoReadDataTable(mixedTypeWorkbookBytes, dataRange, ExecutionMode.Sequential)),
+            new ReadProfileCase("ReadRangeAsDataTable.MixedTypeInference", "Infer object columns from mixed-type data.", () => OfficeImoReadDataTable(mixedTypeWorkbookBytes, dataRange, ExcelExecutionMode.Sequential)),
             new ReadProfileCase("ReadRangeAsDataTable.CustomConverterFallback", "Sequential DataTable read through a custom converter hook that falls back to built-in conversion.", () => OfficeImoReadDataTableCustomConverterFallback(workbookBytes, dataRange)),
             new ReadProfileCase("ReadRangeAsDataTable.CustomConverterCultureFallback", "Sequential DataTable read through a custom converter fallback with non-invariant culture.", () => OfficeImoReadDataTableCustomConverterCultureFallback(workbookBytes, dataRange))
         ], warmupIterations, measuredIterations));
         scenarios.AddRange(MeasureGroup("OfficeIMO.Excel", [
             new ReadProfileCase("ReadRangeStream", "Streaming row chunks with automatic execution policy.", () => OfficeImoReadRangeStream(workbookBytes, dataRange, null)),
-            new ReadProfileCase("ReadRangeStream.Sequential", "Streaming row chunks with forced sequential conversion.", () => OfficeImoReadRangeStream(workbookBytes, dataRange, ExecutionMode.Sequential)),
-            new ReadProfileCase("ReadRangeStream.Parallel", "Streaming row chunks with forced parallel conversion.", () => OfficeImoReadRangeStream(workbookBytes, dataRange, ExecutionMode.Parallel)),
+            new ReadProfileCase("ReadRangeStream.Sequential", "Streaming row chunks with forced sequential conversion.", () => OfficeImoReadRangeStream(workbookBytes, dataRange, ExcelExecutionMode.Sequential)),
+            new ReadProfileCase("ReadRangeStream.Parallel", "Streaming row chunks with forced parallel conversion.", () => OfficeImoReadRangeStream(workbookBytes, dataRange, ExcelExecutionMode.Parallel)),
             new ReadProfileCase("ReadRangeStream.CustomConverterFallback", "Streaming row chunks through a custom converter hook that falls back to built-in conversion.", () => OfficeImoReadRangeStreamCustomConverterFallback(workbookBytes, dataRange)),
             new ReadProfileCase("ReadRangeStream.CustomConverterCultureFallback", "Streaming row chunks through a custom converter fallback with non-invariant culture.", () => OfficeImoReadRangeStreamCustomConverterCultureFallback(workbookBytes, dataRange))
         ], warmupIterations, measuredIterations));
@@ -130,6 +131,9 @@ internal static class ExcelReadProfileRunner {
             Framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
             MachineName = Environment.MachineName,
             BuildConfiguration = BuildConfiguration,
+            ProcessorAffinity = processorAffinity,
+            LogicalProcessorCount = Environment.ProcessorCount,
+            ServerGarbageCollection = System.Runtime.GCSettings.IsServerGC,
             RowCount = rowCount,
             WarmupIterations = warmupIterations,
             MeasuredIterations = measuredIterations,
@@ -203,12 +207,12 @@ internal static class ExcelReadProfileRunner {
         return scenarios;
     }
 
-    private static int OfficeImoReadObjects(byte[] workbookBytes, string dataRange, ExecutionMode? mode) {
+    private static int OfficeImoReadObjects(byte[] workbookBytes, string dataRange, ExcelExecutionMode? mode) {
         using var reader = ExcelDocumentReader.Open(workbookBytes);
         return reader.GetSheet("Data").ReadObjects(dataRange, mode).Count();
     }
 
-    private static int OfficeImoReadObjectsAs(byte[] workbookBytes, string dataRange, ExecutionMode? mode) {
+    private static int OfficeImoReadObjectsAs(byte[] workbookBytes, string dataRange, ExcelExecutionMode? mode) {
         using var reader = ExcelDocumentReader.Open(workbookBytes);
         return reader.GetSheet("Data").ReadObjects<ReadSalesRecord>(dataRange, mode).Count();
     }
@@ -218,7 +222,7 @@ internal static class ExcelReadProfileRunner {
             CellValueConverter = static _ => ExcelCellValue.NotHandled
         };
         using var reader = ExcelDocumentReader.Open(workbookBytes, options);
-        return reader.GetSheet("Data").ReadObjects<ReadSalesRecord>(dataRange, ExecutionMode.Sequential).Count();
+        return reader.GetSheet("Data").ReadObjects<ReadSalesRecord>(dataRange, ExcelExecutionMode.Sequential).Count();
     }
 
     private static int OfficeImoReadObjectsAsCustomConverterCultureFallback(byte[] workbookBytes, string dataRange) {
@@ -227,7 +231,7 @@ internal static class ExcelReadProfileRunner {
             CellValueConverter = static _ => ExcelCellValue.NotHandled
         };
         using var reader = ExcelDocumentReader.Open(workbookBytes, options);
-        return reader.GetSheet("Data").ReadObjects<ReadSalesRecord>(dataRange, ExecutionMode.Sequential).Count();
+        return reader.GetSheet("Data").ReadObjects<ReadSalesRecord>(dataRange, ExcelExecutionMode.Sequential).Count();
     }
 
     private static int OfficeImoReadObjectsStreamAs(byte[] workbookBytes, string dataRange) {
@@ -252,26 +256,26 @@ internal static class ExcelReadProfileRunner {
         return reader.GetSheet("Data").ReadObjectsStream<ReadSalesRecord>(dataRange).Count();
     }
 
-    private static int OfficeImoReadRange(byte[] workbookBytes, string dataRange, ExecutionMode? mode) {
+    private static int OfficeImoReadRange(byte[] workbookBytes, string dataRange, ExcelExecutionMode? mode) {
         using var reader = ExcelDocumentReader.Open(workbookBytes);
         var values = reader.GetSheet("Data").ReadRange(dataRange, mode);
         return values.GetLength(0) * values.GetLength(1);
     }
 
-    private static int OfficeImoReadDataTable(byte[] workbookBytes, string dataRange, ExecutionMode? mode) {
+    private static int OfficeImoReadDataTable(byte[] workbookBytes, string dataRange, ExcelExecutionMode? mode) {
         using var reader = ExcelDocumentReader.Open(workbookBytes);
         return reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: true, mode: mode).Rows.Count;
     }
 
     private static int OfficeImoReadDataTableHeadersNoInference(byte[] workbookBytes, string dataRange) {
         using var reader = ExcelDocumentReader.Open(workbookBytes, new ExcelReadOptions { InferDataTableColumnTypes = false });
-        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: true, mode: ExecutionMode.Sequential);
+        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: true, mode: ExcelExecutionMode.Sequential);
         return table.Rows.Count + table.Columns.Count;
     }
 
     private static int OfficeImoReadDataTableNoHeadersNoInference(byte[] workbookBytes, string dataRange) {
         using var reader = ExcelDocumentReader.Open(workbookBytes, new ExcelReadOptions { InferDataTableColumnTypes = false });
-        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: false, mode: ExecutionMode.Sequential);
+        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: false, mode: ExcelExecutionMode.Sequential);
         return table.Rows.Count + table.Columns.Count;
     }
 
@@ -280,7 +284,7 @@ internal static class ExcelReadProfileRunner {
             CellValueConverter = static _ => ExcelCellValue.NotHandled
         };
         using var reader = ExcelDocumentReader.Open(workbookBytes, options);
-        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: true, mode: ExecutionMode.Sequential);
+        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: true, mode: ExcelExecutionMode.Sequential);
         return table.Rows.Count + table.Columns.Count;
     }
 
@@ -290,11 +294,11 @@ internal static class ExcelReadProfileRunner {
             CellValueConverter = static _ => ExcelCellValue.NotHandled
         };
         using var reader = ExcelDocumentReader.Open(workbookBytes, options);
-        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: true, mode: ExecutionMode.Sequential);
+        DataTable table = reader.GetSheet("Data").ReadRangeAsDataTable(dataRange, headersInFirstRow: true, mode: ExcelExecutionMode.Sequential);
         return table.Rows.Count + table.Columns.Count;
     }
 
-    private static int OfficeImoReadRangeStream(byte[] workbookBytes, string dataRange, ExecutionMode? mode) {
+    private static int OfficeImoReadRangeStream(byte[] workbookBytes, string dataRange, ExcelExecutionMode? mode) {
         using var reader = ExcelDocumentReader.Open(workbookBytes);
         return CountRangeStreamRows(reader.GetSheet("Data"), dataRange, mode);
     }
@@ -332,7 +336,7 @@ internal static class ExcelReadProfileRunner {
             CellValueConverter = static _ => ExcelCellValue.NotHandled
         };
         using var reader = ExcelDocumentReader.Open(workbookBytes, options);
-        return CountRangeStreamRows(reader.GetSheet("Data"), dataRange, ExecutionMode.Sequential);
+        return CountRangeStreamRows(reader.GetSheet("Data"), dataRange, ExcelExecutionMode.Sequential);
     }
 
     private static int OfficeImoReadRangeStreamCustomConverterCultureFallback(byte[] workbookBytes, string dataRange) {
@@ -341,10 +345,10 @@ internal static class ExcelReadProfileRunner {
             CellValueConverter = static _ => ExcelCellValue.NotHandled
         };
         using var reader = ExcelDocumentReader.Open(workbookBytes, options);
-        return CountRangeStreamRows(reader.GetSheet("Data"), dataRange, ExecutionMode.Sequential);
+        return CountRangeStreamRows(reader.GetSheet("Data"), dataRange, ExcelExecutionMode.Sequential);
     }
 
-    private static int CountRangeStreamRows(ExcelSheetReader sheet, string dataRange, ExecutionMode? mode) {
+    private static int CountRangeStreamRows(ExcelSheetReader sheet, string dataRange, ExcelExecutionMode? mode) {
         int rows = 0;
         foreach (var chunk in sheet.ReadRangeStream(dataRange, chunkRows: 512, mode: mode)) {
             rows += chunk.RowCount;
@@ -442,7 +446,7 @@ internal static class ExcelReadProfileRunner {
 
     private static int OfficeImoGetHeaderMap(byte[] workbookBytes) {
         using var stream = new MemoryStream(workbookBytes, writable: false);
-        using var document = ExcelDocument.Load(stream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+        using var document = ExcelDocument.Load(stream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
         var map = document.GetSheet("Data").GetHeaderMap();
         return map.Count + map["Id"];
     }
@@ -685,6 +689,9 @@ internal static class ExcelReadProfileRunner {
         public string Framework { get; init; } = string.Empty;
         public string MachineName { get; init; } = string.Empty;
         public string BuildConfiguration { get; init; } = string.Empty;
+        public string? ProcessorAffinity { get; init; }
+        public int LogicalProcessorCount { get; init; }
+        public bool ServerGarbageCollection { get; init; }
         public int RowCount { get; init; }
         public int WarmupIterations { get; init; }
         public int MeasuredIterations { get; init; }

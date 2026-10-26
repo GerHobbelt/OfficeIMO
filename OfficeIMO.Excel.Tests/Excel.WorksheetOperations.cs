@@ -49,11 +49,11 @@ namespace OfficeIMO.Tests {
                 ExcelSheet copy = document.CopyWorksheet(source, "Copy:Source");
 
                 Assert.Equal("Copy_Source", copy.Name);
-                Assert.Equal("A1:B2", copy.GetUsedRangeA1());
+                Assert.Equal("A1:B2", copy.UsedRangeA1);
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Equal(new[] { "Source", "Copy_Source" }, document.GetSheetNames());
                 using var reader = document.CreateReader();
                 object?[,] values = reader.GetSheet("Copy_Source").ReadRange("A1:B2");
@@ -78,7 +78,7 @@ namespace OfficeIMO.Tests {
                 source.CellValue(2, 2, 100);
                 source.CellValue(3, 1, "EMEA");
                 source.CellValue(3, 2, 200);
-                source.AddTable("A1:B3", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:B3", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.CellFormula(4, 2, "SUM(SalesTable[Revenue])");
 
                 ExcelSheet copy = document.CopyWorksheet(source, "Copy");
@@ -87,7 +87,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.DocumentValidationErrors);
                 Assert.Equal("A1:B3", document.GetSheet("Copy").GetTableRange("SalesTable2"));
             }
@@ -120,7 +120,7 @@ namespace OfficeIMO.Tests {
                 ExcelSheet source = document.AddWorksheet("Source");
                 source.CellValue(1, 1, "Name");
                 source.CellValue(2, 1, "Ada");
-                source.AddTable("A1:A2", hasHeader: true, name: "People", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:A2", hasHeader: true, name: "People", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.WorksheetPart.Worksheet.Append(new WorksheetExtensionList(new WorksheetExtension { Uri = "{00000000-0000-0000-0000-000000000001}" }));
 
                 document.CopyWorksheet(source, "Copy");
@@ -155,8 +155,8 @@ namespace OfficeIMO.Tests {
                 source.CellValue(1, 5, "Revenue");
                 source.CellValue(2, 4, "EMEA");
                 source.CellValue(2, 5, 200);
-                source.AddTable("A1:B2", hasHeader: true, name: "Sales", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
-                source.AddTable("D1:E2", hasHeader: true, name: "Sales2", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:B2", hasHeader: true, name: "Sales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
+                source.AddTable("D1:E2", hasHeader: true, name: "Sales2", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.CellFormula(4, 1, "SUM(Sales[Revenue])+SUM(Sales2[Revenue])+\"Sales[Revenue]\"");
 
                 document.CopyWorksheet(source, "Copy");
@@ -194,16 +194,16 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 ExcelSheet copied = targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported");
 
                 Assert.Equal("Imported", copied.Name);
-                Assert.Equal("B2:C3", copied.GetUsedRangeA1());
+                Assert.Equal("B2:C3", copied.UsedRangeA1);
                 targetDocument.Save();
             }
 
-            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = targetDocument.CreateReader();
                 object?[,] values = reader.GetSheet("Imported").ReadRange("B2:C3");
                 Assert.Equal("Region", values[0, 0]);
@@ -229,11 +229,11 @@ namespace OfficeIMO.Tests {
                 source.CellValue(2, 2, 100);
                 source.CellValue(3, 1, "EMEA");
                 source.CellValue(3, 2, 200);
-                source.AddTable("A1:B3", hasHeader: true, name: "SourceSales", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:B3", hasHeader: true, name: "SourceSales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 ExcelSheet copied = targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported");
 
@@ -241,7 +241,7 @@ namespace OfficeIMO.Tests {
                 targetDocument.Save();
             }
 
-            using (var document = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.DocumentValidationErrors);
                 Assert.Equal("A1:B3", document.GetSheet("Imported").GetTableRange("SourceSales"));
             }
@@ -275,22 +275,22 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 targetDocument.AddWorksheet("Summary").CellValue(1, 1, "Summary");
-                ExcelSheet copied = targetDocument.CopyWorksheetFrom(sourceDocument, "Headers", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                ExcelSheet copied = targetDocument.CopyWorksheetFrom(sourceDocument, "Headers", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
 
                 Assert.Equal("Imported", copied.Name);
-                Assert.Equal("A1:B1", copied.GetUsedRangeA1());
+                Assert.Equal("A1:B1", copied.UsedRangeA1);
                 targetDocument.Save();
             }
 
-            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.True(targetDocument["Imported"].TryGetCellText(1, 1, out var header));
                 Assert.Equal("Region", header);
-                Assert.Equal("A1:B1", targetDocument["Imported"].GetUsedRangeA1());
+                Assert.Equal("A1:B1", targetDocument["Imported"].UsedRangeA1);
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(targetPath, false)) {
@@ -322,9 +322,9 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "External", "ExternalCopy", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "External", "ExternalCopy", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -355,10 +355,10 @@ namespace OfficeIMO.Tests {
 
             AddDefaultBoldFontStyle(sourcePath);
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 targetDocument.AddWorksheet("Existing").CellValue(1, 1, "Existing");
-                targetDocument.CopyWorksheetFrom(sourceDocument, "StyledDefault", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "StyledDefault", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -394,10 +394,10 @@ namespace OfficeIMO.Tests {
             AddDefaultBoldFontStyle(sourcePath);
             AddSourceRowAndColumnStyles(sourcePath, "Inherited");
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 targetDocument.AddWorksheet("Existing").CellValue(1, 1, "Existing");
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Inherited", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Inherited", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -438,16 +438,16 @@ namespace OfficeIMO.Tests {
 
             sourceStream.Position = 0;
             targetSeedStream.Position = 0;
-            using (var sourceDocument = ExcelDocument.Load(sourceStream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourceStream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetSeedStream)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save(savedStream);
             }
 
             savedStream.Position = 0;
-            using var reloaded = ExcelDocument.Load(savedStream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+            using var reloaded = ExcelDocument.Load(savedStream, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
             Assert.Equal(2, reloaded.Sheets.Count);
             Assert.True(reloaded["Imported"].TryGetCellText(1, 1, out var value));
             Assert.Equal("Copied", value);
@@ -474,9 +474,9 @@ namespace OfficeIMO.Tests {
 
             AddDummyDifferentialFormat(targetPath);
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Styled", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Styled", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -529,9 +529,9 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -566,13 +566,13 @@ namespace OfficeIMO.Tests {
                 table.Rows.Add("Beta", 2);
                 source.InsertDataTableAsTable(table, tableName: "Items");
 
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
             }
 
-            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.True(targetDocument["Imported"].TryGetCellText(1, 1, out var header));
                 Assert.True(targetDocument["Imported"].TryGetCellText(3, 1, out var value));
                 Assert.Equal("Name", header);
@@ -592,12 +592,12 @@ namespace OfficeIMO.Tests {
                 ExcelSheet source = sourceDocument.AddWorksheet("Source");
                 source.CellValue(1, 1, "Name");
                 source.CellValue(2, 1, "Ada");
-                source.AddTable("A1:A2", hasHeader: true, name: "People", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:A2", hasHeader: true, name: "People", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.CellValue(1, 3, "People");
                 source.CellValue(1, 4, "Amount");
                 source.CellValue(2, 3, "Ada");
                 source.CellValue(2, 4, 10);
-                source.AddTable("C1:D2", hasHeader: true, name: "Sales", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("C1:D2", hasHeader: true, name: "Sales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.ValidationCustomFormula("B2", "COUNTIF(People[Name],B2)>0");
                 source.CellFormula(3, 1, "ROWS(People)");
                 source.CellFormula(4, 1, "'People'!A1+ROWS(People)");
@@ -610,13 +610,13 @@ namespace OfficeIMO.Tests {
                 ExcelSheet existing = targetDocument.AddWorksheet("Existing");
                 existing.CellValue(1, 1, "Name");
                 existing.CellValue(2, 1, "Grace");
-                existing.AddTable("A1:A2", hasHeader: true, name: "People", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                existing.AddTable("A1:A2", hasHeader: true, name: "People", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 targetDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -653,7 +653,7 @@ namespace OfficeIMO.Tests {
                 ExcelSheet source = sourceDocument.AddWorksheet("Source");
                 source.CellValue(1, 1, "Value");
                 source.CellValue(2, 1, 10);
-                source.AddTable("A1:A2", hasHeader: true, name: "SUM", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:A2", hasHeader: true, name: "SUM", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.CellFormula(4, 1, "SUM(A2:A2)+ROWS(SUM)");
                 sourceDocument.Save();
             }
@@ -662,13 +662,13 @@ namespace OfficeIMO.Tests {
                 ExcelSheet existing = targetDocument.AddWorksheet("Existing");
                 existing.CellValue(1, 1, "Value");
                 existing.CellValue(2, 1, 20);
-                existing.AddTable("A1:A2", hasHeader: true, name: "SUM", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                existing.AddTable("A1:A2", hasHeader: true, name: "SUM", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 targetDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -695,7 +695,7 @@ namespace OfficeIMO.Tests {
                 ExcelSheet source = sourceDocument.AddWorksheet("Source");
                 source.CellValue(1, 1, "Amount");
                 source.CellValue(2, 1, 10);
-                source.AddTable("A1:A2", hasHeader: true, name: "Internal", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:A2", hasHeader: true, name: "Internal", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.CellFormula(4, 1, "SUM(Visible[Amount])");
                 sourceDocument.Save();
             }
@@ -706,13 +706,13 @@ namespace OfficeIMO.Tests {
                 ExcelSheet existing = targetDocument.AddWorksheet("Existing");
                 existing.CellValue(1, 1, "Amount");
                 existing.CellValue(2, 1, 20);
-                existing.AddTable("A1:A2", hasHeader: true, name: "Internal", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                existing.AddTable("A1:A2", hasHeader: true, name: "Internal", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 targetDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -742,10 +742,10 @@ namespace OfficeIMO.Tests {
                 ExcelSheet source = sourceDocument.AddWorksheet("Source");
                 source.CellValue(1, 1, "Amount");
                 source.CellValue(2, 1, 10);
-                source.AddTable("A1:A2", hasHeader: true, name: "Sales", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:A2", hasHeader: true, name: "Sales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.CellValue(4, 1, "Amount");
                 source.CellValue(5, 1, 20);
-                source.AddTable("A4:A5", hasHeader: true, name: "Sales2", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A4:A5", hasHeader: true, name: "Sales2", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 source.CellFormula(7, 1, "SUM(Sales[Amount])");
                 sourceDocument.Save();
             }
@@ -754,13 +754,13 @@ namespace OfficeIMO.Tests {
                 ExcelSheet existing = targetDocument.AddWorksheet("Existing");
                 existing.CellValue(1, 1, "Amount");
                 existing.CellValue(2, 1, 1);
-                existing.AddTable("A1:A2", hasHeader: true, name: "Sales", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                existing.AddTable("A1:A2", hasHeader: true, name: "Sales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 targetDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -795,10 +795,10 @@ namespace OfficeIMO.Tests {
 
             AddThemeAndIndexedStyle(sourcePath, "ThemeStyled");
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 targetDocument.AddWorksheet("Existing").CellValue(1, 1, "Existing");
-                targetDocument.CopyWorksheetFrom(sourceDocument, "ThemeStyled", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "ThemeStyled", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -843,9 +843,9 @@ namespace OfficeIMO.Tests {
 
             AddDummyCalculationChain(targetPath);
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "FormulaSource", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "FormulaSource", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -872,7 +872,7 @@ namespace OfficeIMO.Tests {
                 source.CellValue(1, 2, "Amount");
                 source.CellValue(2, 1, "Alpha");
                 source.CellValue(2, 2, 10);
-                source.AddTable("A1:B2", hasHeader: true, name: "People", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:B2", hasHeader: true, name: "People", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
 
                 ExcelSheet summary = document.AddWorksheet("Summary");
                 summary.CellFormula(1, 1, "SUM(People[Amount])");
@@ -906,9 +906,9 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Dates", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Dates", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -939,9 +939,9 @@ namespace OfficeIMO.Tests {
 
             MoveCellStyleToRow(sourcePath, "Dates", "A2");
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Dates", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Dates", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -972,9 +972,9 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Times", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Times", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -1004,9 +1004,9 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Dates", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Dates", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -1035,9 +1035,9 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Elapsed", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Elapsed", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -1071,9 +1071,9 @@ namespace OfficeIMO.Tests {
             AddExternalWorkbookReference(sourcePath);
             AddExternalWorkbookReference(targetPath);
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "External", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "External", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package,
                     CopyExternalWorkbookReferences = true
                 });
@@ -1111,9 +1111,9 @@ namespace OfficeIMO.Tests {
             AddDefinedName(sourcePath, "ExternalValue", "[1]Sheet1!A1");
             AddExternalWorkbookReference(targetPath);
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "External", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "External", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package,
                     CopyExternalWorkbookReferences = true
                 });
@@ -1139,7 +1139,7 @@ namespace OfficeIMO.Tests {
                 ExcelSheet source = sourceDocument.AddWorksheet("Structured");
                 source.CellValue(1, 1, "1");
                 source.CellValue(2, 1, 7);
-                source.AddTable("A1:A2", hasHeader: true, name: "People", style: OfficeIMO.Excel.TableStyle.TableStyleMedium2, includeAutoFilter: true);
+                source.AddTable("A1:A2", hasHeader: true, name: "People", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
                 source.CellFormula(4, 1, "SUM(People[1])");
                 sourceDocument.Save();
             }
@@ -1148,7 +1148,7 @@ namespace OfficeIMO.Tests {
                 ExcelSheet existing = targetDocument.AddWorksheet("Existing");
                 existing.CellValue(1, 1, "1");
                 existing.CellValue(2, 1, 3);
-                existing.AddTable("A1:A2", hasHeader: true, name: "People", style: OfficeIMO.Excel.TableStyle.TableStyleMedium2, includeAutoFilter: true);
+                existing.AddTable("A1:A2", hasHeader: true, name: "People", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
                 existing.CellFormula(4, 1, "[1]Sheet1!B1");
                 targetDocument.Save();
             }
@@ -1156,9 +1156,9 @@ namespace OfficeIMO.Tests {
             AddExternalWorkbookReference(sourcePath);
             AddExternalWorkbookReference(targetPath);
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Structured", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Structured", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package,
                     CopyExternalWorkbookReferences = true
                 });
@@ -1184,15 +1184,15 @@ namespace OfficeIMO.Tests {
                 ExcelSheet source = sourceDocument.AddWorksheet("Query");
                 source.CellValue(1, 1, "Name");
                 source.CellValue(2, 1, "Ada");
-                source.AddTable("A1:A2", hasHeader: true, name: "QueryTable", style: OfficeIMO.Excel.TableStyle.TableStyleMedium2, includeAutoFilter: true);
+                source.AddTable("A1:A2", hasHeader: true, name: "QueryTable", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
                 sourceDocument.Save();
             }
 
             AddTableQueryBindings(sourcePath, "Query");
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Query", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Query", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -1224,7 +1224,7 @@ namespace OfficeIMO.Tests {
                 source.CellValue(1, 2, "External");
                 source.CellValue(2, 1, "Ada");
                 source.CellValue(2, 2, 0);
-                source.AddTable("A1:B2", hasHeader: true, name: "ExternalTable", style: OfficeIMO.Excel.TableStyle.TableStyleMedium2, includeAutoFilter: true);
+                source.AddTable("A1:B2", hasHeader: true, name: "ExternalTable", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
                 sourceDocument.Save();
             }
 
@@ -1237,9 +1237,9 @@ namespace OfficeIMO.Tests {
             AddTableCalculatedColumnFormula(sourcePath, "TableFormula", "External", "[1]Sheet1!A1");
             AddExternalWorkbookReference(targetPath);
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Load(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "TableFormula", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "TableFormula", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package,
                     CopyExternalWorkbookReferences = true
                 });
@@ -1272,16 +1272,16 @@ namespace OfficeIMO.Tests {
             table.Columns.Add("Name", typeof(string));
             table.Rows.Add("Ada");
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 targetDocument.InsertDataSet(dataSet, createTables: true, autoFit: false);
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
             }
 
-            using (var reloaded = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var reloaded = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.True(reloaded["Pending"].TryGetCellText(2, 1, out var pendingValue));
                 Assert.Equal("Ada", pendingValue);
                 Assert.True(reloaded["Imported"].TryGetCellText(1, 1, out var copiedValue));
@@ -1312,9 +1312,9 @@ namespace OfficeIMO.Tests {
                 worksheetPart.Worksheet.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                targetDocument.CopyWorksheetFrom(sourceDocument, "Metadata", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                targetDocument.CopyWorksheetFrom(sourceDocument, "Metadata", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Package
                 });
                 targetDocument.Save();
@@ -1339,16 +1339,16 @@ namespace OfficeIMO.Tests {
                 source.CellValue(1, 1, "Name");
                 source.CellValue(2, 1, "Ada");
                 source.CellBold(1, 1, true);
-                ExcelSheet copied = document.CopyWorksheetFrom(document, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                ExcelSheet copied = document.CopyWorksheetFrom(document, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Values
                 });
 
                 Assert.Equal("Imported", copied.Name);
-                Assert.Equal("A1:A2", copied.GetUsedRangeA1());
+                Assert.Equal("A1:A2", copied.UsedRangeA1);
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.True(document["Imported"].TryGetCellText(2, 1, out var value));
                 Assert.Equal("Ada", value);
             }
@@ -1375,18 +1375,18 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
-                ExcelSheet copied = targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", SheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
+                ExcelSheet copied = targetDocument.CopyWorksheetFrom(sourceDocument, "Source", "Imported", ExcelSheetNameValidationMode.Sanitize, new ExcelWorksheetCopyOptions {
                     CopyMode = ExcelWorksheetCopyMode.Values
                 });
 
                 Assert.Equal("Imported", copied.Name);
-                Assert.Equal("A1:A2", copied.GetUsedRangeA1());
+                Assert.Equal("A1:A2", copied.UsedRangeA1);
                 targetDocument.Save();
             }
 
-            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var targetDocument = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.True(targetDocument["Imported"].TryGetCellText(2, 1, out var value));
                 Assert.Equal("Ada", value);
             }
@@ -1713,7 +1713,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = document.CreateReader();
                 object?[,] values = reader.GetSheet("Combined").ReadRange("A1:B4");
                 Assert.Equal("Region", values[0, 0]);
@@ -1759,7 +1759,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = document.CreateReader();
                 object?[,] values = reader.GetSheet("Combined").ReadRange("A1:B4");
                 Assert.Equal("Region", values[0, 0]);
@@ -1805,7 +1805,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = document.CreateReader();
                 object?[,] values = reader.GetSheet("Combined").ReadRange("B3:C5");
                 Assert.Equal("Region", values[0, 0]);
@@ -1859,7 +1859,7 @@ namespace OfficeIMO.Tests {
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 ExcelSheet target = targetDocument.AddWorksheet("Combined");
                 target.CellValue(1, 1, "Region");
@@ -1874,7 +1874,7 @@ namespace OfficeIMO.Tests {
                 targetDocument.Save();
             }
 
-            using (var document = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(targetPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = document.CreateReader();
                 object?[,] values = reader.GetSheet("Combined").ReadRange("A1:B2");
                 Assert.Equal("Region", values[0, 0]);
@@ -1936,7 +1936,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = document.CreateReader();
                 object?[,] values = reader.GetSheet("Target").ReadRange("D5:E6");
                 Assert.Equal("Name", values[0, 0]);
@@ -2001,7 +2001,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = document.CreateReader();
                 object?[,] values = reader.GetSheet("Target").ReadRange("D5:E6");
                 Assert.Equal("Name", values[0, 0]);

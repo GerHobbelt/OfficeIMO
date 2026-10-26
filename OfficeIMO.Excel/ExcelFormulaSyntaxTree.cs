@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 
@@ -21,6 +22,14 @@ namespace OfficeIMO.Excel {
     /// <summary>Quoted Excel formula string literal, including authored quotes.</summary>
     public sealed class ExcelFormulaStringSyntax : ExcelFormulaSyntaxNode {
         internal ExcelFormulaStringSyntax(string text) : base(text) { }
+    }
+
+    /// <summary>Parsed function identifier immediately followed by an opening parenthesis.</summary>
+    public sealed class ExcelFormulaFunctionSyntax : ExcelFormulaSyntaxNode {
+        internal ExcelFormulaFunctionSyntax(string text, string name) : base(text) { Name = name; }
+
+        /// <summary>Authored function name, including a compatibility prefix such as <c>_xlfn.</c>.</summary>
+        public string Name { get; }
     }
 
     /// <summary>Parsed cell, range, row, or column reference in a formula.</summary>
@@ -97,8 +106,12 @@ namespace OfficeIMO.Excel {
                     continue;
                 }
 
-                System.Text.RegularExpressions.Match match =
-                    ExcelFormulaReferenceRewriter.SharedFormulaReferenceAtCursorRegex.Match(formula, cursor);
+                if (TryReadErrorLiteral(formula, cursor, out int errorLength)) {
+                    cursor += errorLength;
+                    continue;
+                }
+
+                ExcelFormulaReferenceRewriter.TryReadReferenceAt(formula, cursor, out ExcelFormulaReferenceCandidate? match);
                 if (TryReadRepeatedQualifiedRange(formula, match, out int repeatedRangeLength, out ExcelReference? repeatedRange)) {
                     AddText(nodes, formula, textStart, cursor - textStart);
                     nodes.Add(new ExcelFormulaReferenceSyntax(
@@ -108,18 +121,12 @@ namespace OfficeIMO.Excel {
                     textStart = cursor;
                     continue;
                 }
-                if (match.Success
-                    && !IsSpacedFunctionCall(formula, match)
-                    && ExcelReference.TryParse(TrimSpill(match.Value), out ExcelReference? reference)) {
+                if (match != null
+                    && !IsSpacedFunctionCall(formula, match)) {
                     AddText(nodes, formula, textStart, cursor - textStart);
-                    nodes.Add(new ExcelFormulaReferenceSyntax(match.Value, reference!));
+                    nodes.Add(new ExcelFormulaReferenceSyntax(match.Text, match.Reference));
                     cursor += match.Length;
                     textStart = cursor;
-                    continue;
-                }
-
-                if (TryReadErrorLiteral(formula, cursor, out int errorLength)) {
-                    cursor += errorLength;
                     continue;
                 }
 
@@ -137,6 +144,15 @@ namespace OfficeIMO.Excel {
                     string text = formula.Substring(cursor, structuredLength);
                     nodes.Add(new ExcelFormulaStructuredReferenceSyntax(text, tableName, selector));
                     cursor += structuredLength;
+                    textStart = cursor;
+                    continue;
+                }
+
+                if (TryReadFunctionName(formula, cursor, out int functionLength)) {
+                    AddText(nodes, formula, textStart, cursor - textStart);
+                    string name = formula.Substring(cursor, functionLength);
+                    nodes.Add(new ExcelFormulaFunctionSyntax(name, name));
+                    cursor += functionLength;
                     textStart = cursor;
                     continue;
                 }
@@ -175,9 +191,8 @@ namespace OfficeIMO.Excel {
 
                 length = literal.Length;
                 if (deletedReference) {
-                    System.Text.RegularExpressions.Match deletedAddress =
-                        ExcelFormulaReferenceRewriter.SharedFormulaReferenceAtCursorRegex.Match(formula, end);
-                    if (deletedAddress.Success) {
+                    ExcelFormulaReferenceRewriter.TryReadReferenceAt(formula, end, out ExcelFormulaReferenceCandidate? deletedAddress);
+                    if (deletedAddress != null) {
                         length += deletedAddress.Length;
                     }
                 }
@@ -222,8 +237,7 @@ namespace OfficeIMO.Excel {
                 if (node is ExcelFormulaNameSyntax name
                     && !lexicalBindings.Any(binding => binding.Shadows(name.Name, nodeIndex, node.Text.Length))) {
                     builder.Append(rewriter(name.Name) ?? "#REF!");
-                }
-                else builder.Append(node.Text);
+                } else builder.Append(node.Text);
                 nodeIndex += node.Text.Length;
             }
             return builder.ToString();
@@ -264,60 +278,58 @@ namespace OfficeIMO.Excel {
             return builder.ToString();
         }
 
-        private static string TrimSpill(string value) => value.EndsWith("#", StringComparison.Ordinal) ? value.Substring(0, value.Length - 1) : value;
-
         private static bool TryReadRepeatedQualifiedRange(
             string formula,
-            System.Text.RegularExpressions.Match first,
+            ExcelFormulaReferenceCandidate? first,
             out int length,
             out ExcelReference? reference) {
             length = 0;
             reference = null;
-            if (!first.Success
-                || !first.Groups["qualifier"].Success
-                || first.Groups["cellEndColumn"].Success
-                || first.Groups["cellSpill"].Success) {
+            if (first == null
+                || !first.Reference.IsQualified
+                || first.Reference.Kind != ExcelReferenceKind.Cell
+                || first.HasSpill) {
                 return false;
             }
 
             int separator = first.Index + first.Length;
             if (separator >= formula.Length || formula[separator] != ':') return false;
-            System.Text.RegularExpressions.Match second =
-                ExcelFormulaReferenceRewriter.SharedFormulaReferenceAtCursorRegex.Match(formula, separator + 1);
-            if (!second.Success
-                || !second.Groups["qualifier"].Success
-                || second.Groups["cellEndColumn"].Success
-                || second.Groups["cellSpill"].Success
+            ExcelFormulaReferenceRewriter.TryReadReferenceAt(formula, separator + 1, out ExcelFormulaReferenceCandidate? second);
+            if (second == null
+                || !second.Reference.IsQualified
+                || second.Reference.Kind != ExcelReferenceKind.Cell
+                || second.HasSpill
                 || !string.Equals(
-                    first.Groups["qualifier"].Value,
-                    second.Groups["qualifier"].Value,
+                    first.Reference.Qualifier,
+                    second.Reference.Qualifier,
                     StringComparison.OrdinalIgnoreCase)) {
                 return false;
             }
 
-            string secondAddress = second.Value.Substring(second.Groups["qualifier"].Length);
-            string normalized = first.Value + ":" + secondAddress;
+            string secondAddress = second.Reference.ToString(ExcelReferenceStyle.A1);
+            int qualifierLength = secondAddress.LastIndexOf('!') + 1;
+            secondAddress = secondAddress.Substring(qualifierLength);
+            string normalized = first.Text + ":" + secondAddress;
             if (!ExcelReference.TryParse(normalized, out reference)) return false;
             length = first.Length + 1 + second.Length;
             return true;
         }
 
-        private static bool IsSpacedFunctionCall(string formula, System.Text.RegularExpressions.Match match) {
-            if (match.Groups["qualifier"].Success
-                || match.Groups["cellEndColumn"].Success
-                || match.Groups["cellSpill"].Success
-                || match.Groups["cellStartColumnAbsolute"].Value.Length > 0
-                || match.Groups["cellStartRowAbsolute"].Value.Length > 0) {
+        private static bool IsSpacedFunctionCall(string formula, ExcelFormulaReferenceCandidate match) {
+            if (match.Reference.IsQualified
+                || match.Reference.Kind != ExcelReferenceKind.Cell
+                || match.HasSpill
+                || match.Reference.Start.ColumnAbsolute
+                || match.Reference.Start.RowAbsolute) {
                 return false;
             }
 
             int cursor = match.Index + match.Length;
             int whitespaceStart = cursor;
             while (cursor < formula.Length && char.IsWhiteSpace(formula[cursor])) cursor++;
-            return cursor > whitespaceStart
-                && cursor < formula.Length
+            return cursor < formula.Length
                 && formula[cursor] == '('
-                && ExcelFormulaCapabilities.IsBuiltInFunction(match.Value);
+                && (cursor == whitespaceStart || ExcelFormulaCapabilities.IsBuiltInFunction(match.Text));
         }
 
         private static bool TryReadStructuredReference(
@@ -385,54 +397,62 @@ namespace OfficeIMO.Excel {
         }
 
         private static string RewriteStructuredSelector(string value, Func<string, string?> rewriteColumn) {
+            int[] matchingClosings = GetMatchedStructuredBrackets(value);
+            int[] nextOpenings = GetNextMatchedOpenings(matchingClosings);
             var builder = new StringBuilder(value.Length);
-            int cursor = 0;
-            while (cursor < value.Length) {
-                if (value[cursor] != '[' || IsEscapedStructuredCharacter(value, cursor)
-                    || !TryFindStructuredBracketEnd(value, cursor, out int end)) {
-                    builder.Append(value[cursor++]);
-                    continue;
-                }
-
-                string content = value.Substring(cursor + 1, end - cursor - 2);
-                if (ContainsUnescapedOpeningBracket(content)) {
-                    builder.Append('[').Append(RewriteStructuredSelector(content, rewriteColumn)).Append(']');
-                } else {
+            for (int cursor = 0; cursor < value.Length; cursor++) {
+                int closing = matchingClosings[cursor];
+                if (closing >= 0) {
+                    builder.Append('[');
+                    if (nextOpenings[cursor + 1] < closing) continue;
+                    string content = value.Substring(cursor + 1, closing - cursor - 1);
                     bool rowContext = content.Length > 0 && content[0] == '@';
                     string rawColumn = rowContext ? content.Substring(1) : content;
                     bool areaSpecifier = rawColumn.Length > 0 && rawColumn[0] == '#';
                     string? replacement = areaSpecifier ? null : rewriteColumn(rawColumn);
-                    builder.Append('[');
                     if (rowContext) builder.Append('@');
-                    builder.Append(replacement ?? rawColumn).Append(']');
+                    builder.Append(replacement ?? rawColumn);
+                    builder.Append(']');
+                    cursor = closing;
+                    continue;
                 }
-                cursor = end;
+                builder.Append(value[cursor]);
             }
             return builder.ToString();
         }
 
-        private static bool ContainsUnescapedOpeningBracket(string value) {
+        private static int[] GetMatchedStructuredBrackets(string value) {
+            int[] matchingClosings = Enumerable.Repeat(-1, value.Length).ToArray();
+            var pending = new Stack<int>();
+            int apostropheRun = 0;
             for (int index = 0; index < value.Length; index++) {
-                if (value[index] == '[' && !IsEscapedStructuredCharacter(value, index)) return true;
-            }
-            return false;
-        }
-
-        private static bool TryFindStructuredBracketEnd(string value, int start, out int end) {
-            int depth = 0;
-            for (int index = start; index < value.Length; index++) {
-                if (value[index] == '[' && !IsEscapedStructuredCharacter(value, index)) {
-                    depth++;
-                } else if (value[index] == ']' && !IsEscapedStructuredCharacter(value, index)) {
-                    depth--;
-                    if (depth == 0) {
-                        end = index + 1;
-                        return true;
-                    }
+                char current = value[index];
+                if (current == '\'') {
+                    apostropheRun++;
+                    continue;
+                }
+                bool escaped = (apostropheRun & 1) != 0;
+                apostropheRun = 0;
+                if (escaped) continue;
+                if (current == '[') {
+                    pending.Push(index);
+                } else if (current == ']' && pending.Count > 0) {
+                    int opening = pending.Pop();
+                    matchingClosings[opening] = index;
                 }
             }
-            end = start;
-            return false;
+            return matchingClosings;
+        }
+
+        private static int[] GetNextMatchedOpenings(int[] matchingClosings) {
+            var nextOpenings = new int[matchingClosings.Length + 1];
+            int next = matchingClosings.Length;
+            nextOpenings[matchingClosings.Length] = next;
+            for (int index = matchingClosings.Length - 1; index >= 0; index--) {
+                if (matchingClosings[index] >= 0) next = index;
+                nextOpenings[index] = next;
+            }
+            return nextOpenings;
         }
 
         internal static bool IsEscapedStructuredCharacter(string value, int position) {
@@ -478,6 +498,19 @@ namespace OfficeIMO.Excel {
             return true;
         }
 
+        private static bool TryReadFunctionName(string formula, int start, out int length) {
+            length = 0;
+            if (!IsNameStart(formula[start])
+                || (start > 0 && IsNamePart(formula[start - 1]))) return false;
+            int index = start + 1;
+            while (index < formula.Length && IsNamePart(formula[index])) index++;
+            int lookahead = index;
+            while (lookahead < formula.Length && char.IsWhiteSpace(formula[lookahead])) lookahead++;
+            if (lookahead >= formula.Length || formula[lookahead] != '(') return false;
+            length = index - start;
+            return true;
+        }
+
         private static bool TryReadQualifiedName(string formula, int start, out int length) {
             length = 0;
             if (start > 0 && IsNamePart(formula[start - 1])) return false;
@@ -514,7 +547,8 @@ namespace OfficeIMO.Excel {
             value == '_' || value == '\\' || char.IsLetter(value);
 
         private static bool IsNamePart(char value) =>
-            IsNameStart(value) || char.IsDigit(value) || value == '.';
+            IsNameStart(value) || char.IsDigit(value) || value == '.' ||
+            CharUnicodeInfo.GetUnicodeCategory(value) is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark;
 
         private static void AddText(List<ExcelFormulaSyntaxNode> nodes, string formula, int start, int length) {
             if (length > 0) nodes.Add(new ExcelFormulaTextSyntax(formula.Substring(start, length)));

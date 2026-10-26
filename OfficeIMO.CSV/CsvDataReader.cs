@@ -1,10 +1,13 @@
 #nullable enable
 
 using System.Collections;
+using System.Buffers;
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using CsvDataReaderTextRowSource = OfficeIMO.CSV.ICsvDataReaderTextRowSource;
 
 namespace OfficeIMO.CSV;
@@ -12,8 +15,258 @@ namespace OfficeIMO.CSV;
 /// <summary>
 /// Forward-only reader for CSV rows projected through an optional schema.
 /// </summary>
-internal sealed class CsvDataReader : DbDataReader
+internal sealed class CsvDataReader : DbDataReader, ICsvDataReaderMetadata, ICsvDataReaderPositionMetadata, IDataReaderMappingMetadata, IDataReaderMappingErrorMetadata, IDataReaderFastMappingValues, IDataReaderParallelBatchSource, IDataReaderParallelBatchInfo
 {
+#if NET8_0_OR_GREATER
+    bool IDataReaderParallelBatchSource.CanReadParallelBatches =>
+        !_closed && !_checkedForRows && _currentRawRow is null &&
+        _currentStringRow is null && !_hasCurrentTextRow &&
+        _textRowSource is CsvParser.CsvTextDataReaderRowSource { CanTakeParallelBatch: true };
+
+    int IDataReaderParallelBatchSource.PreferredParallelBatchSize =>
+        (_textRowSource as CsvParser.CsvTextDataReaderRowSource)?.PreferredParallelBatchSize ?? 128;
+#else
+    bool IDataReaderParallelBatchSource.CanReadParallelBatches => false;
+
+    int IDataReaderParallelBatchSource.PreferredParallelBatchSize => 128;
+#endif
+
+    bool IDataReaderFastMappingValues.HasOnlyNonNullFastValues => _useDirectTextSourceStrings;
+
+    int IDataReaderParallelBatchInfo.ParallelBatchRowCount =>
+        (_textRowSource as ICsvDataReaderParallelBatchInfo)?.RowCount ?? 0;
+
+    internal bool CanBenefitFromParallelProcessing =>
+        !_closed && _columns.Length != 0 && !_useRawStringValues;
+
+    internal int PreferredParallelProcessingBatchSize =>
+#if NET8_0_OR_GREATER
+        _textRowSource is CsvParser.CsvTextDataReaderRowSource ? 4096 : 256;
+#else
+        256;
+#endif
+
+    internal CancellationToken ProcessingCancellationToken => _processingCancellationToken;
+
+    bool IDataReaderParallelBatchSource.TryReadParallelBatch(
+        int preferredBatchSize,
+        CancellationToken cancellationToken,
+        out DbDataReader? batchReader)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        batchReader = null;
+#if NET8_0_OR_GREATER
+        if (_closed || _checkedForRows || _currentRawRow is not null ||
+            _currentStringRow is not null || _hasCurrentTextRow ||
+            _textRowSource is not CsvParser.CsvTextDataReaderRowSource textRows)
+        {
+            return false;
+        }
+
+        if (!textRows.TryTakeParallelBatch(
+                preferredBatchSize,
+                cancellationToken,
+                out ICsvDataReaderTextRowSource? batchRows))
+        {
+            return false;
+        }
+
+        if (batchRows is null)
+        {
+            return true;
+        }
+
+        int firstRowIndex = _rowIndex;
+        int batchRowCount = (batchRows as ICsvDataReaderParallelBatchInfo)?.RowCount ?? 0;
+        _rowIndex = checked(_rowIndex + batchRowCount);
+        batchReader = new CsvDataReader(
+            _columns,
+            batchRows,
+            _sourceColumnCount,
+            _stringRowOptions!,
+            _culture,
+            _dateTimeFormats,
+            initialRowIndex: firstRowIndex);
+        return true;
+#else
+        return false;
+#endif
+    }
+
+#if NET8_0_OR_GREATER
+    internal bool TryReadCsvRecordBatch(
+        int preferredBatchSize,
+        CancellationToken cancellationToken,
+        out CsvParser.CsvTextDataReaderBatch? batch)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        batch = null;
+        if (_closed || _checkedForRows || _currentRawRow is not null ||
+            _currentStringRow is not null || _hasCurrentTextRow ||
+            _textRowSource is not CsvParser.CsvTextDataReaderRowSource textRows)
+        {
+            return false;
+        }
+
+        if (!textRows.TryTakeParallelBatch(
+                preferredBatchSize,
+                cancellationToken,
+                out ICsvDataReaderTextRowSource? batchRows))
+        {
+            return false;
+        }
+
+        batch = batchRows as CsvParser.CsvTextDataReaderBatch;
+        batch?.SetNullValue(_stringNullValue);
+        return batchRows is null || batch is not null;
+    }
+
+    internal bool IsCurrentFieldMissing(int ordinal)
+    {
+        EnsureOpenRow();
+        if ((uint)ordinal >= (uint)_sourceColumnCount)
+        {
+            throw new IndexOutOfRangeException();
+        }
+
+        if (_textRowSource is not null)
+        {
+            return _textRowSource.IsMissing(ordinal);
+        }
+        if (_currentStringRow is not null)
+        {
+            return ordinal >= _currentStringRow.Count;
+        }
+        return ordinal >= _currentRawRow!.Length;
+    }
+
+    internal string GetCurrentSourceString(int ordinal)
+    {
+        EnsureOpenRow();
+        if ((uint)ordinal >= (uint)_sourceColumnCount)
+        {
+            throw new IndexOutOfRangeException();
+        }
+
+        return _textRowSource?.GetString(ordinal)
+            ?? throw new InvalidOperationException("The current CSV row is not backed by decoded source text.");
+    }
+#endif
+
+    internal CsvDataReaderRawBatch ReadRawBatch(
+        int preferredBatchSize,
+        CancellationToken cancellationToken,
+        out bool reachedEnd)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int rowCapacity = CsvDataReaderRawBatch.GetBoundedRowCapacity(preferredBatchSize, _columns.Length);
+        var batch = new CsvDataReaderRawBatch(rowCapacity, _columns.Length, includePositions: true);
+        reachedEnd = false;
+        try
+        {
+            while (batch.Count < rowCapacity)
+            {
+                if ((batch.Count & 63) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                bool hasRow;
+                try
+                {
+                    hasRow = Read();
+                }
+                catch (Exception exception) when (!(exception is OperationCanceledException))
+                {
+                    batch.SetError(batch.Count, exception);
+                    reachedEnd = true;
+                    break;
+                }
+
+                if (!hasRow)
+                {
+                    reachedEnd = true;
+                    break;
+                }
+
+                if (batch.Count == 0)
+                {
+                    batch.FirstRecordIndex = _rowIndex;
+                }
+
+                int offset = batch.Count * _columns.Length;
+                try
+                {
+                    for (int ordinal = 0; ordinal < _columns.Length; ordinal++)
+                    {
+                        batch.Values[offset + ordinal] = GetRawValue(ordinal);
+                    }
+                }
+                catch (Exception exception) when (!(exception is OperationCanceledException))
+                {
+                    batch.SetError(batch.Count, exception);
+                    reachedEnd = true;
+                    break;
+                }
+
+                batch.SetPosition(batch.Count, PhysicalLineNumber, PhysicalEndLineNumber);
+                batch.Count++;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return batch;
+        }
+        catch
+        {
+            batch.Dispose();
+            throw;
+        }
+    }
+
+    internal CsvDataReaderRawBatch ConvertRawBatch(
+        CsvDataReaderRawBatch batch,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            for (int row = 0; row < batch.Count; row++)
+            {
+                if ((row & 63) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                int offset = row * _columns.Length;
+                try
+                {
+                    for (int ordinal = 0; ordinal < _columns.Length; ordinal++)
+                    {
+                        batch.Values[offset + ordinal] = CsvDataProjectionConverter.ConvertValue(
+                            batch.Values[offset + ordinal],
+                            _columns[ordinal],
+                            batch.FirstRecordIndex + row,
+                            _culture,
+                            _dateTimeFormats,
+                            _mappingErrorValuePolicy);
+                    }
+                }
+                catch (Exception exception) when (!(exception is OperationCanceledException))
+                {
+                    batch.SetError(row, exception);
+                    break;
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return batch;
+        }
+        catch
+        {
+            batch.Dispose();
+            throw;
+        }
+    }
+
     private const string IsReadOnlyColumn = "IsReadOnly";
     private const string IsRowVersionColumn = "IsRowVersion";
     private const string IsAutoIncrementColumn = "IsAutoIncrement";
@@ -22,16 +275,31 @@ internal sealed class CsvDataReader : DbDataReader
     private readonly IEnumerator<object?[]>? _rows;
     private readonly IEnumerator<IReadOnlyList<string>>? _stringRows;
     private readonly CsvDataReaderTextRowSource? _textRowSource;
+#if NET8_0_OR_GREATER
+    private readonly CsvParser.CsvStreamDataReaderRowSource? _streamTextRowSource;
+    private readonly CsvParser.CsvUtf8StreamDataReaderRowSource? _utf8StreamTextRowSource;
+#endif
     private readonly CultureInfo _culture;
     private readonly IReadOnlyList<string>? _dateTimeFormats;
+
+    CultureInfo IDataReaderMappingMetadata.MappingCulture => _culture;
+
+    IReadOnlyList<string>? IDataReaderMappingMetadata.MappingDateTimeFormats => _dateTimeFormats;
+
+    Func<object, Type, CultureInfo, (bool ok, object? value)>? IDataReaderMappingMetadata.MappingTypeConverter => null;
+
+    bool IDataReaderMappingMetadata.RequireAllColumnsMapped => false;
+    DataMappingErrorValuePolicy IDataReaderMappingErrorMetadata.MappingErrorValuePolicy => _mappingErrorValuePolicy;
     private readonly IDisposable? _rowOwner;
     private readonly CsvLoadOptions? _stringRowOptions;
+    private readonly CancellationToken _processingCancellationToken;
     private readonly object?[]? _staticColumnValues;
     private readonly int _sourceColumnCount;
     private readonly bool _useRawStringValues;
     private readonly bool _useDirectTextSourceStrings;
     private readonly bool _useDirectValueConversion;
     private readonly bool _rawRowsAreParsedStringsOnly;
+    private readonly DataMappingErrorValuePolicy _mappingErrorValuePolicy;
     private readonly string? _stringNullValue;
     private Dictionary<string, int>? _ordinals;
     private object?[]? _currentRawRow;
@@ -51,14 +319,20 @@ internal sealed class CsvDataReader : DbDataReader
         IEnumerable<object?[]> rows,
         CultureInfo culture,
         IReadOnlyList<string>? dateTimeFormats,
+        char delimiter,
+        DataMappingErrorValuePolicy mappingErrorValuePolicy = DataMappingErrorValuePolicy.Include,
         bool rawRowsAreParsedStringsOnly = false,
-        IDisposable? rowOwner = null)
+        IDisposable? rowOwner = null,
+        CancellationToken processingCancellationToken = default)
     {
         _columns = columns;
         _rows = rows.GetEnumerator();
         _culture = culture;
         _dateTimeFormats = dateTimeFormats;
+        Delimiter = delimiter;
+        _mappingErrorValuePolicy = mappingErrorValuePolicy;
         _rowOwner = rowOwner;
+        _processingCancellationToken = processingCancellationToken;
         _useRawStringValues = CanUseRawStringValues(columns);
         _useDirectValueConversion = CanUseDirectValueConversion(columns);
         _rawRowsAreParsedStringsOnly = rawRowsAreParsedStringsOnly;
@@ -77,10 +351,13 @@ internal sealed class CsvDataReader : DbDataReader
         _stringRows = rows.GetEnumerator();
         _sourceColumnCount = sourceColumnCount;
         _stringRowOptions = options;
+        _processingCancellationToken = options.CancellationToken;
         _stringNullValue = options.NullValue;
         _staticColumnValues = CaptureStaticColumnValues(_stringRowOptions.StaticColumns);
         _culture = culture;
         _dateTimeFormats = dateTimeFormats;
+        _mappingErrorValuePolicy = options.MappingErrorValuePolicy;
+        Delimiter = CsvParser.GetDelimiterChar(options);
         _rowOwner = rowOwner;
         _useRawStringValues = CanUseRawStringValues(columns);
         _useDirectValueConversion = CanUseDirectValueConversion(columns);
@@ -92,15 +369,24 @@ internal sealed class CsvDataReader : DbDataReader
         int sourceColumnCount,
         CsvLoadOptions options,
         CultureInfo culture,
-        IReadOnlyList<string>? dateTimeFormats)
+        IReadOnlyList<string>? dateTimeFormats,
+        int initialRowIndex = -1)
     {
         _columns = columns;
         _textRowSource = rows;
+#if NET8_0_OR_GREATER
+        _streamTextRowSource = rows as CsvParser.CsvStreamDataReaderRowSource;
+        _utf8StreamTextRowSource = rows as CsvParser.CsvUtf8StreamDataReaderRowSource;
+#endif
         _sourceColumnCount = sourceColumnCount;
         _stringRowOptions = options;
+        _processingCancellationToken = options.CancellationToken;
         _stringNullValue = options.NullValue;
         _culture = culture;
         _dateTimeFormats = dateTimeFormats;
+        _mappingErrorValuePolicy = options.MappingErrorValuePolicy;
+        _rowIndex = initialRowIndex;
+        Delimiter = CsvParser.GetDelimiterChar(options);
         _useRawStringValues = CanUseRawStringValues(columns);
         _useDirectTextSourceStrings = _useRawStringValues && _stringNullValue is null;
         _useDirectValueConversion = CanUseDirectValueConversion(columns);
@@ -116,7 +402,26 @@ internal sealed class CsvDataReader : DbDataReader
     public override int Depth => 0;
 
     /// <inheritdoc />
+    public char Delimiter { get; }
+
+    /// <inheritdoc />
+    public long RecordNumber => IsPositionedOnRow ? _rowIndex + 1L : 0L;
+
+    /// <inheritdoc />
+    public int? PhysicalLineNumber => IsPositionedOnRow
+        ? (_textRowSource as ICsvDataReaderPositionSource)?.CurrentPhysicalLineNumber
+        : null;
+
+    /// <inheritdoc />
+    public int? PhysicalEndLineNumber => IsPositionedOnRow
+        ? (_textRowSource as ICsvDataReaderPositionSource)?.CurrentPhysicalEndLineNumber
+        : null;
+
+    /// <inheritdoc />
     public override int FieldCount => _columns.Length;
+
+    private bool IsPositionedOnRow => !_closed &&
+        (_currentRawRow is not null || _currentStringRow is not null || _hasCurrentTextRow);
 
     /// <inheritdoc />
     public override bool HasRows
@@ -140,8 +445,23 @@ internal sealed class CsvDataReader : DbDataReader
     public override int RecordsAffected => -1;
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override bool GetBoolean(int ordinal)
     {
+#if NET8_0_OR_GREATER
+        if (TryGetDirectTextSpan(ordinal, out var directText))
+        {
+            if (bool.TryParse(directText, out var directBoolean))
+            {
+                return directBoolean;
+            }
+
+            if (directText.Length == 1 && (directText[0] == '0' || directText[0] == '1'))
+            {
+                return directText[0] == '1';
+            }
+        }
+#endif
         var value = GetValue(ordinal);
         if (value is bool boolean)
         {
@@ -233,8 +553,20 @@ internal sealed class CsvDataReader : DbDataReader
     public override string GetDataTypeName(int ordinal) => GetFieldType(ordinal).Name;
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override DateTime GetDateTime(int ordinal)
     {
+#if NET8_0_OR_GREATER
+        if (TryGetDirectTextSpan(ordinal, out var directText) &&
+            CsvDataProjectionConverter.TryParseDateTime(
+                directText,
+                _culture,
+                _dateTimeFormats,
+                out var directDateTime))
+        {
+            return directDateTime;
+        }
+#endif
         var value = GetValue(ordinal);
         if (value is DateTime dateTime)
         {
@@ -250,8 +582,24 @@ internal sealed class CsvDataReader : DbDataReader
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override decimal GetDecimal(int ordinal)
     {
+#if NET8_0_OR_GREATER
+        if (TryGetDirectTextSpan(ordinal, out var directText))
+        {
+            if (ReferenceEquals(_culture, CultureInfo.InvariantCulture) &&
+                CsvDataProjectionConverter.TryParseInvariantDecimal(directText, out var directDecimal))
+            {
+                return directDecimal;
+            }
+
+            if (decimal.TryParse(directText, NumberStyles.Any, _culture, out directDecimal))
+            {
+                return directDecimal;
+            }
+        }
+#endif
         var value = GetValue(ordinal);
         if (value is decimal decimalValue)
         {
@@ -306,6 +654,25 @@ internal sealed class CsvDataReader : DbDataReader
     [return: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)]
     public override Type GetFieldType(int ordinal) => _columns[ordinal].DataType;
 
+#if NET6_0_OR_GREATER
+    /// <inheritdoc />
+    public override T GetFieldValue<T>(int ordinal)
+    {
+        Type destinationType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+        if (destinationType == typeof(DateOnly) || destinationType == typeof(TimeOnly))
+        {
+            object? sourceValue = IsDBNull(ordinal) ? null : GetValue(ordinal);
+            return DataValueConverter.ConvertTo<T>(
+                sourceValue,
+                _culture,
+                _dateTimeFormats,
+                errorValuePolicy: _mappingErrorValuePolicy)!;
+        }
+
+        return base.GetFieldValue<T>(ordinal);
+    }
+#endif
+
     /// <inheritdoc />
     public override float GetFloat(int ordinal)
     {
@@ -359,8 +726,24 @@ internal sealed class CsvDataReader : DbDataReader
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override int GetInt32(int ordinal)
     {
+#if NET8_0_OR_GREATER
+        if (TryGetDirectTextSpan(ordinal, out var directText))
+        {
+            if (ReferenceEquals(_culture, CultureInfo.InvariantCulture) &&
+                CsvDataProjectionConverter.TryParseInvariantInt32(directText, out var directInt32))
+            {
+                return directInt32;
+            }
+
+            if (int.TryParse(directText, NumberStyles.Any, _culture, out directInt32))
+            {
+                return directInt32;
+            }
+        }
+#endif
         var value = GetValue(ordinal);
         if (value is int int32)
         {
@@ -417,21 +800,12 @@ internal sealed class CsvDataReader : DbDataReader
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override string GetString(int ordinal)
     {
         if (_useDirectTextSourceStrings)
         {
-            if (_closed)
-            {
-                throw new InvalidOperationException("The reader is closed.");
-            }
-
-            if (!_hasCurrentTextRow)
-            {
-                throw new InvalidOperationException("The reader is not positioned on a row.");
-            }
-
-            return _textRowSource!.GetString(ordinal);
+            return GetDirectTextSourceString(ordinal);
         }
 
         EnsureOpenRow();
@@ -465,8 +839,14 @@ internal sealed class CsvDataReader : DbDataReader
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override object GetValue(int ordinal)
     {
+        if (_useDirectTextSourceStrings)
+        {
+            return GetDirectTextSourceString(ordinal);
+        }
+
         EnsureOpenRow();
         if (_useRawStringValues)
         {
@@ -499,11 +879,33 @@ internal sealed class CsvDataReader : DbDataReader
 #endif
         {
             var rawValue = GetRawValue(ordinal);
-            value = CsvDataProjectionConverter.ConvertValue(rawValue, _columns[ordinal], _rowIndex, _culture, _dateTimeFormats);
+            value = CsvDataProjectionConverter.ConvertValue(rawValue, _columns[ordinal], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy);
         }
 
         _currentConvertedRow[ordinal] = value;
         return value;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private string GetDirectTextSourceString(int ordinal)
+    {
+        if (!_hasCurrentTextRow)
+        {
+            ThrowInvalidTextReaderState();
+        }
+
+#if NET8_0_OR_GREATER
+        if (_utf8StreamTextRowSource is not null)
+        {
+            return _utf8StreamTextRowSource.GetString(ordinal);
+        }
+
+        if (_streamTextRowSource is not null)
+        {
+            return _streamTextRowSource.GetString(ordinal);
+        }
+#endif
+        return _textRowSource!.GetString(ordinal);
     }
 
     /// <inheritdoc />
@@ -538,7 +940,7 @@ internal sealed class CsvDataReader : DbDataReader
                     null => DBNull.Value,
                     DBNull => DBNull.Value,
                     string text => text,
-                    _ => CsvDataProjectionConverter.ConvertValue(rawValue, _columns[i], _rowIndex, _culture, _dateTimeFormats)
+                    _ => CsvDataProjectionConverter.ConvertValue(rawValue, _columns[i], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy)
                 };
             }
 
@@ -566,12 +968,12 @@ internal sealed class CsvDataReader : DbDataReader
             var rowValueCount = Math.Min(count, row.Length);
             for (var i = 0; i < rowValueCount; i++)
             {
-                values[i] = CsvDataProjectionConverter.ConvertValue(row[i], _columns[i], _rowIndex, _culture, _dateTimeFormats);
+                values[i] = CsvDataProjectionConverter.ConvertValue(row[i], _columns[i], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy);
             }
 
             for (var i = rowValueCount; i < count; i++)
             {
-                values[i] = CsvDataProjectionConverter.ConvertValue(null, _columns[i], _rowIndex, _culture, _dateTimeFormats);
+                values[i] = CsvDataProjectionConverter.ConvertValue(null, _columns[i], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy);
             }
 
             return count;
@@ -584,7 +986,7 @@ internal sealed class CsvDataReader : DbDataReader
             if (value is null)
             {
                 var rawValue = GetRawValue(i);
-                value = CsvDataProjectionConverter.ConvertValue(rawValue, _columns[i], _rowIndex, _culture, _dateTimeFormats);
+                value = CsvDataProjectionConverter.ConvertValue(rawValue, _columns[i], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy);
                 _currentConvertedRow[i] = value;
             }
 
@@ -598,6 +1000,16 @@ internal sealed class CsvDataReader : DbDataReader
     public override bool IsDBNull(int ordinal)
     {
         EnsureOpenRow();
+        if (_useDirectTextSourceStrings)
+        {
+            if ((uint)ordinal >= (uint)_columns.Length)
+            {
+                throw new IndexOutOfRangeException();
+            }
+
+            return false;
+        }
+
         var column = _columns[ordinal];
         if (column.ConversionKind != CsvDataConversionKind.General)
         {
@@ -628,6 +1040,7 @@ internal sealed class CsvDataReader : DbDataReader
     public override bool NextResult() => false;
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override bool Read()
     {
         if (_closed)
@@ -635,9 +1048,46 @@ internal sealed class CsvDataReader : DbDataReader
             return false;
         }
 
+        if (_useDirectTextSourceStrings && !_hasBufferedRow)
+        {
+#if NET8_0_OR_GREATER
+            _hasCurrentTextRow = _utf8StreamTextRowSource is not null
+                ? _utf8StreamTextRowSource.Read()
+                : _streamTextRowSource is not null
+                    ? _streamTextRowSource.Read()
+                    : _textRowSource!.Read();
+#else
+            _hasCurrentTextRow = _textRowSource!.Read();
+#endif
+            if (!_hasCurrentTextRow)
+            {
+                _hasRows ??= false;
+                _rowIndex = -1;
+                return false;
+            }
+
+            _hasRows ??= true;
+            _rowIndex++;
+            return true;
+        }
+
+        return ReadSlow();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool ReadSlow()
+    {
         if (_textRowSource is not null && !_hasBufferedRow)
         {
+#if NET8_0_OR_GREATER
+            _hasCurrentTextRow = _utf8StreamTextRowSource is not null
+                ? _utf8StreamTextRowSource.Read()
+                : _streamTextRowSource is not null
+                    ? _streamTextRowSource.Read()
+                    : _textRowSource.Read();
+#else
             _hasCurrentTextRow = _textRowSource.Read();
+#endif
             if (!_hasCurrentTextRow)
             {
                 _hasRows ??= false;
@@ -692,6 +1142,7 @@ internal sealed class CsvDataReader : DbDataReader
         }
 
         _closed = true;
+        _hasCurrentTextRow = false;
         _rows?.Dispose();
         _stringRows?.Dispose();
         _textRowSource?.Dispose();
@@ -857,6 +1308,36 @@ internal sealed class CsvDataReader : DbDataReader
         }
     }
 
+#if NET8_0_OR_GREATER
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool TryGetDirectTextSpan(int ordinal, out ReadOnlySpan<char> text)
+    {
+        if (_useDirectTextSourceStrings)
+        {
+            if (!_hasCurrentTextRow)
+            {
+                ThrowInvalidTextReaderState();
+            }
+
+            text = _textRowSource!.GetSpan(ordinal);
+            return true;
+        }
+
+        text = default;
+        return false;
+    }
+#endif
+
+#if NET6_0_OR_GREATER
+    [DoesNotReturn]
+#endif
+    private void ThrowInvalidTextReaderState()
+    {
+        throw new InvalidOperationException(_closed
+            ? "The reader is closed."
+            : "The reader is not positioned on a row.");
+    }
+
     private static bool CanUseRawStringValues(CsvDataColumnProjection[] columns)
     {
         for (var i = 0; i < columns.Length; i++)
@@ -929,7 +1410,7 @@ internal sealed class CsvDataReader : DbDataReader
                 null => DBNull.Value,
                 DBNull => DBNull.Value,
                 string staticText => staticText,
-                _ => CsvDataProjectionConverter.ConvertValue(staticValue, _columns[ordinal], _rowIndex, _culture, _dateTimeFormats)
+                _ => CsvDataProjectionConverter.ConvertValue(staticValue, _columns[ordinal], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy)
             };
         }
 
@@ -944,7 +1425,7 @@ internal sealed class CsvDataReader : DbDataReader
             return text;
         }
 
-        return CsvDataProjectionConverter.ConvertValue(rawValue, _columns[ordinal], _rowIndex, _culture, _dateTimeFormats);
+        return CsvDataProjectionConverter.ConvertValue(rawValue, _columns[ordinal], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy);
     }
 
     private object? GetRawValue(int ordinal)
@@ -1042,7 +1523,7 @@ internal sealed class CsvDataReader : DbDataReader
                 ? _staticColumnValues[staticIndex]
                 : null;
 
-            values[i] = CsvDataProjectionConverter.ConvertValue(staticValue, _columns[i], _rowIndex, _culture, _dateTimeFormats);
+            values[i] = CsvDataProjectionConverter.ConvertValue(staticValue, _columns[i], _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy);
         }
 
         return count;
@@ -1110,7 +1591,8 @@ internal sealed class CsvDataReader : DbDataReader
             column,
             _rowIndex,
             _culture,
-            _dateTimeFormats);
+            _dateTimeFormats,
+            _mappingErrorValuePolicy);
     }
 #endif
 
@@ -1182,7 +1664,7 @@ internal sealed class CsvDataReader : DbDataReader
                 break;
         }
 
-        return CsvDataProjectionConverter.ConvertValue(text, column, _rowIndex, _culture, _dateTimeFormats);
+        return CsvDataProjectionConverter.ConvertValue(text, column, _rowIndex, _culture, _dateTimeFormats, _mappingErrorValuePolicy);
     }
 
     private static int GetParsedStringRawRowValues(object?[] row, object[] values, int count)
@@ -1200,7 +1682,7 @@ internal sealed class CsvDataReader : DbDataReader
     private bool TryParseDateTime(string text, out DateTime dateTime)
     {
         if (_dateTimeFormats is { Count: > 0 } &&
-            DateTime.TryParseExact(text, _dateTimeFormats as string[] ?? _dateTimeFormats.ToArray(), _culture, DateTimeStyles.None, out dateTime))
+            DateTime.TryParseExact(text, _dateTimeFormats as string[] ?? _dateTimeFormats.ToArray(), _culture, DateTimeStyles.RoundtripKind, out dateTime))
         {
             return true;
         }
@@ -1212,7 +1694,7 @@ internal sealed class CsvDataReader : DbDataReader
             return true;
         }
 
-        return DateTime.TryParse(text, _culture, DateTimeStyles.None, out dateTime);
+        return DateTime.TryParse(text, _culture, DateTimeStyles.RoundtripKind, out dateTime);
     }
 
     private object GetParsedStringRawValue(object?[] row, int ordinal)

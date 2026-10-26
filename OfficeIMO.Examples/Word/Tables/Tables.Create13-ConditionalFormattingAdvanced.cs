@@ -31,20 +31,20 @@ namespace OfficeIMO.Examples.Word {
                 builder.AddRule(
                     "Status",
                     "Done",
-                    TextMatchType.Equals,
+                    WordTextMatchType.Equals,
                     Color.LightGreen,
                     Color.Black,
                     Color.LightPink,
                     Color.Black,
                     highlightColumns: new[] { "Name" },
                     matchTextFormat: p => p.SetBold(),
-                    noMatchTextFormat: p => p.SetUnderline(UnderlineValues.Single));
+                    noMatchTextFormat: p => p.SetUnderline(WordUnderlineStyle.Single));
 
                 // rule 2: highlight pending tasks using a color object
                 builder.AddRule(
                     "Status",
                     "Pending",
-                    TextMatchType.Equals,
+                    WordTextMatchType.Equals,
                     Color.Yellow,
                     null,
                     highlightColumns: new[] { "Name" },
@@ -53,15 +53,15 @@ namespace OfficeIMO.Examples.Word {
                 // rule 3: highlight row when task is done and name starts with Task4
                 builder.AddRule(
                     new[] {
-                        ("Status", "Done", TextMatchType.Equals),
-                        ("Name", "Task4", TextMatchType.StartsWith)
+                        ("Status", "Done", WordTextMatchType.Equals),
+                        ("Name", "Task4", WordTextMatchType.StartsWith)
                     },
                     matchAll: true,
                     Color.LightSkyBlue,
                     highlightColumns: new[] { "Name" },
                     matchTextFormat: p => {
                         p.SetBold();
-                        p.SetUnderline(UnderlineValues.Single);
+                        p.SetUnderline(WordUnderlineStyle.Single);
                     });
 
                 builder.Apply();

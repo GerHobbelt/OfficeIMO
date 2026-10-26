@@ -36,21 +36,21 @@ namespace OfficeIMO.Examples.Word {
                 document.Settings.FontFamilyHighAnsi = "Calibri Light";
                 document.Settings.Language = "pt-Br";
 
-                document.Settings.ZoomPreset = PresetZoomValues.BestFit;
+                document.Settings.ZoomPreset = WordZoomPreset.BestFit;
 
                 Console.WriteLine(document.CompatibilitySettings.CompatibilityMode);
 
-                document.CompatibilitySettings.CompatibilityMode = CompatibilityMode.Word2013;
+                document.CompatibilitySettings.CompatibilityMode = WordCompatibilityMode.Word2013;
 
                 Console.WriteLine(document.CompatibilitySettings.CompatibilityMode);
 
-                document.CompatibilitySettings.CompatibilityMode = CompatibilityMode.None;
+                document.CompatibilitySettings.CompatibilityMode = WordCompatibilityMode.None;
                 
                 Console.WriteLine(document.CompatibilitySettings.CompatibilityMode);
 
                 string title = "INSTRUMENTO PARTICULAR DE CONSTITUIÇÃO DE GARANTIA DE ALIENAÇÃO FIDUCIÁRIA DE IMÓVEL";
 
-                document.AddParagraph(title).SetBold().ParagraphAlignment = JustificationValues.Center;
+                document.AddParagraph(title).SetBold().ParagraphAlignment = WordParagraphAlignment.Center;
 
                 document.Save();
                 if (openWord) document.OpenInApplication();

@@ -36,14 +36,14 @@ namespace OfficeIMO.Tests {
                 string logoPath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
                 byte[]? logo = File.Exists(logoPath) ? File.ReadAllBytes(logoPath) : null;
                 sheet.SetHeaderFooter(headerCenter: "Domain Detective", headerRight: "Page &P of &N");
-                if (logo != null) sheet.SetHeaderImage(HeaderFooterPosition.Center, logo, "image/png", widthPoints: 96, heightPoints: 32);
+                if (logo != null) sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, logo, "image/png", widthPoints: 96, heightPoints: 32);
 
                 // Save and close
                 doc.Save();
             }
 
             // Reopen read-only and verify
-            using (var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             {
                 Assert.Equal("Roundtrip Title", verify.BuiltinDocumentProperties.Title);
                 Assert.Equal("Roundtrip Author", verify.BuiltinDocumentProperties.Creator);
@@ -72,7 +72,7 @@ namespace OfficeIMO.Tests {
                 var sheet = doc.AddWorksheet("Sheet1");
                 var pngPath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
                 var pngBytes = File.ReadAllBytes(pngPath);
-                sheet.SetHeaderImage(HeaderFooterPosition.Center, pngBytes, "image/png");
+                sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, pngBytes, "image/png");
                 doc.Save();
             }
 
@@ -85,7 +85,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("image/png", imagePart.ContentType);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -101,7 +101,7 @@ namespace OfficeIMO.Tests {
                 var sheet = doc.AddWorksheet("Sheet1");
                 var jpegPath = Path.Combine(_directoryWithImages, "Kulek.jpg");
                 var jpegBytes = File.ReadAllBytes(jpegPath);
-                sheet.SetHeaderImage(HeaderFooterPosition.Center, jpegBytes, " image/jpg; charset=binary ");
+                sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, jpegBytes, " image/jpg; charset=binary ");
                 doc.Save();
             }
 
@@ -114,7 +114,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(OfficeImageInfo.GetMimeType(OfficeImageFormat.Jpeg), imagePart.ContentType);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -130,7 +130,7 @@ namespace OfficeIMO.Tests {
                 var sheet = doc.AddWorksheet("Sheet1");
                 var jpegPath = Path.Combine(_directoryWithImages, "Kulek.jpg");
                 var jpegBytes = File.ReadAllBytes(jpegPath);
-                sheet.SetFooterImage(HeaderFooterPosition.Center, jpegBytes, "image/jpeg");
+                sheet.SetFooterImage(ExcelHeaderFooterPosition.Center, jpegBytes, "image/jpeg");
                 doc.Save();
             }
 
@@ -143,7 +143,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("image/jpeg", imagePart.ContentType);
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(document.ValidateOpenXml());
             }
         }
@@ -159,7 +159,7 @@ namespace OfficeIMO.Tests {
                 var sheet = doc.AddWorksheet("Sheet1");
                 var pngPath = Path.Combine(_directoryWithImages, "EvotecLogo.png");
                 var pngBytes = File.ReadAllBytes(pngPath);
-                sheet.SetHeaderImage(HeaderFooterPosition.Center, pngBytes, "image/png");
+                sheet.SetHeaderImage(ExcelHeaderFooterPosition.Center, pngBytes, "image/png");
                 sheet.SetHeaderFooter(headerCenter: "Plain header");
                 doc.Save();
             }
@@ -171,7 +171,7 @@ namespace OfficeIMO.Tests {
                 Assert.Null(sheetPart.Worksheet.Elements<DocumentFormat.OpenXml.Spreadsheet.LegacyDrawingHeaderFooter>().FirstOrDefault());
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document.Sheets.First();
                 var hf = sheet.GetHeaderFooter();
                 Assert.False(hf.HeaderHasPicturePlaceholder);
@@ -200,7 +200,7 @@ namespace OfficeIMO.Tests {
                 {
                     var sheet = doc.AddWorksheet("Sheet1");
                     await sheet.SetHeaderImageFromUrlAsync(
-                        HeaderFooterPosition.Center,
+                        ExcelHeaderFooterPosition.Center,
                         url,
                         new OfficeRemoteImageLoadOptions { AllowPrivateNetworkAddresses = true });
                     doc.Save();
@@ -240,7 +240,7 @@ namespace OfficeIMO.Tests {
                 {
                     var sheet = doc.AddWorksheet("Sheet1");
                     await sheet.SetFooterImageFromUrlAsync(
-                        HeaderFooterPosition.Center,
+                        ExcelHeaderFooterPosition.Center,
                         url,
                         new OfficeRemoteImageLoadOptions { AllowPrivateNetworkAddresses = true });
                     doc.Save();

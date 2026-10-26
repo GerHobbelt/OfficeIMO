@@ -224,7 +224,6 @@ namespace OfficeIMO.Excel {
     }
 
     public partial class ExcelDocument {
-        private static readonly Regex FormulaFunctionRegex = new Regex(@"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_\.]*)\s*\(", RegexOptions.Compiled);
         private static readonly HashSet<string> VolatileFormulaFunctions = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "NOW", "TODAY", "RAND", "RANDBETWEEN", "OFFSET", "INDIRECT", "INFO", "CELL"
         };
@@ -272,14 +271,15 @@ namespace OfficeIMO.Excel {
                     if (string.IsNullOrWhiteSpace(formulaText)) continue;
 
                     string address = cell.CellReference?.Value ?? string.Empty;
-                    var references = ExcelFormulaSyntaxTree.Parse(formulaText!).Nodes
+                    ExcelFormulaSyntaxTree syntaxTree = ExcelFormulaSyntaxTree.Parse(formulaText!);
+                    var references = syntaxTree.Nodes
                         .OfType<ExcelFormulaReferenceSyntax>()
                         .Select(reference => reference.Text)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToArray();
-                    var functions = FormulaFunctionRegex.Matches(formulaText!)
-                        .Cast<Match>()
-                        .Select(match => match.Groups[1].Value)
+                    var functions = syntaxTree.Nodes
+                        .OfType<ExcelFormulaFunctionSyntax>()
+                        .Select(function => function.Name)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToArray();
 
@@ -326,7 +326,7 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Renames an existing workbook or sheet-scoped defined name.
         /// </summary>
-        public bool RenameNamedRange(string oldName, string newName, ExcelSheet? scope = null, NameValidationMode validationMode = NameValidationMode.Sanitize, bool save = true) {
+        public bool RenameNamedRange(string oldName, string newName, ExcelSheet? scope = null, ExcelDefinedNameValidationMode validationMode = ExcelDefinedNameValidationMode.Sanitize, bool save = true) {
             if (string.IsNullOrWhiteSpace(oldName)) throw new ArgumentException("Old name is required.", nameof(oldName));
             if (string.IsNullOrWhiteSpace(newName)) throw new ArgumentException("New name is required.", nameof(newName));
 
@@ -337,7 +337,7 @@ namespace OfficeIMO.Excel {
                 .FirstOrDefault(item => string.Equals(item.Name, oldName, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(item.SheetName, scope?.Name, StringComparison.OrdinalIgnoreCase))?.Hidden ?? false;
 
-            string validatedName = EnsureValidDefinedName(newName, validationMode);
+            string validatedName = NormalizeDefinedName(newName, validationMode);
             string validatedReference = scope == null
                 ? NormalizeRange(reference, validationMode)
                 : NormalizeLocalNamedRange(scope, reference, validationMode);

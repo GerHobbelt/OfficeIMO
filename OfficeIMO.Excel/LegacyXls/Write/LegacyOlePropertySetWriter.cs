@@ -1,5 +1,5 @@
 using System.Globalization;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 
 namespace OfficeIMO.Excel.LegacyXls.Write {
     internal static class LegacyOlePropertySetWriter {
@@ -21,7 +21,7 @@ namespace OfficeIMO.Excel.LegacyXls.Write {
         }
 
         private static byte[]? CreateSummaryInformation(ExcelDocument document) {
-            BuiltinDocumentProperties properties = document.BuiltinDocumentProperties;
+            ExcelBuiltinDocumentProperties properties = document.BuiltinDocumentProperties;
             var oleProperties = new List<OfficeOleProperty> {
                 OfficeOleProperty.Int16(OfficeOlePropertySetWriter.CodePagePropertyId, 1200)
             };

@@ -31,11 +31,11 @@ namespace OfficeIMO.Tests {
                 document.AddParagraph("External ").AddHyperLink("site", new Uri("https://example.com"));
                 document.AddEmbeddedFragment("<html><body><p>Imported</p></body></html>", WordAlternativeFormatImportPartType.Html);
                 document.AddMacro(System.Text.Encoding.ASCII.GetBytes("OfficeIMO macro placeholder"));
-                document.ApplicationProperties.DigitalSignature = new DigitalSignature();
+                document.ApplicationProperties.HasDigitalSignatureMetadata = true;
                 document.Save(new WordSaveOptions { SignedDocumentPolicy = WordSignedDocumentSavePolicy.AllowSignatureInvalidation });
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
 
                 Assert.Contains(report.EditableFeatures, feature => feature.Name == "Paragraphs" && feature.Count > 0);
@@ -75,7 +75,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
 
                 Assert.Contains(report.EditableFeatures, feature => feature.Name == "Paragraphs" && feature.Count > 0);
@@ -85,7 +85,7 @@ namespace OfficeIMO.Tests {
                 Assert.Same(report, report.EnsureNoUnsupportedFeatures());
                 Assert.Same(report, report.EnsureNoAdvancedFeatures());
                 Assert.Empty(report.FindFeatures("Digital signatures"));
-                Assert.NotEmpty(report.FindFeatures(WordFeatureSupportLevel.Editable));
+                Assert.NotEmpty(report.FindFeatures(OfficeFeatureSupportLevel.Editable));
             }
         }
 
@@ -108,11 +108,11 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
                 WordFeatureFinding fields = Assert.Single(report.FindFeatures("Fields"));
 
-                Assert.Equal(WordFeatureSupportLevel.PartiallyEditable, fields.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.PartiallyEditable, fields.SupportLevel);
                 Assert.Equal(7, fields.Count);
                 Assert.Contains(fields.Details, detail => detail == "Simple fields: 6");
                 Assert.Contains(fields.Details, detail => detail == "Complex fields: 1");
@@ -166,11 +166,11 @@ namespace OfficeIMO.Tests {
                 mainPart.Document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
                 WordFeatureFinding dataBinding = Assert.Single(report.FindFeatures("Content-control data bindings"));
 
-                Assert.Equal(WordFeatureSupportLevel.PartiallyEditable, dataBinding.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.PartiallyEditable, dataBinding.SupportLevel);
                 Assert.Equal(1, dataBinding.Count);
                 Assert.Contains(dataBinding.Details, detail => detail.Contains("/root[1]/client[1]", StringComparison.OrdinalIgnoreCase));
 
@@ -188,26 +188,26 @@ namespace OfficeIMO.Tests {
                 var chart = document.AddChart("Revenue");
                 chart.AddChartAxisX(new List<string> { "Q1", "Q2" });
                 chart.AddLine("Sales", new List<int> { 10, 20 }, OfficeIMO.Drawing.OfficeColor.Blue);
-                document.AddSmartArt(SmartArtType.BasicProcess);
+                document.AddSmartArt(WordSmartArtType.BasicProcess);
                 const string omml = "<m:oMathPara xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\"><m:oMath><m:r><m:t>x=1</m:t></m:r></m:oMath></m:oMathPara>";
                 document.AddEquation(omml);
                 document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
 
                 WordFeatureFinding charts = Assert.Single(report.FindFeatures("Charts"));
                 WordFeatureFinding smartArt = Assert.Single(report.FindFeatures("SmartArt"));
                 WordFeatureFinding equations = Assert.Single(report.FindFeatures("Equations"));
 
-                Assert.Equal(WordFeatureSupportLevel.PartiallyEditable, charts.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.PartiallyEditable, charts.SupportLevel);
                 Assert.Equal(1, charts.Count);
                 Assert.Contains(charts.Details, detail => detail.Contains("chart", StringComparison.OrdinalIgnoreCase));
-                Assert.Equal(WordFeatureSupportLevel.Preserved, smartArt.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Preserved, smartArt.SupportLevel);
                 Assert.Equal(1, smartArt.Count);
                 Assert.Contains(smartArt.Details, detail => detail.Contains("diagrams", StringComparison.OrdinalIgnoreCase));
-                Assert.Equal(WordFeatureSupportLevel.PartiallyEditable, equations.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.PartiallyEditable, equations.SupportLevel);
                 Assert.Equal(1, equations.Count);
                 Assert.Contains(equations.Details, detail => detail.Contains("document.xml", StringComparison.OrdinalIgnoreCase));
 
@@ -223,7 +223,7 @@ namespace OfficeIMO.Tests {
 
             using (WordDocument document = WordDocument.Create(filePath)) {
                 document.SetDocumentVariable("ClientName", "Acme");
-                var source = new WordBibliographySource("S1", DataSourceValues.Book) {
+                var source = new WordBibliographySource("S1", WordBibliographySourceType.Book) {
                     Title = "Automation Notes",
                     Author = "OfficeIMO",
                     Year = "2026"
@@ -251,18 +251,18 @@ namespace OfficeIMO.Tests {
                 settingsPart.Settings.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
 
                 WordFeatureFinding variables = Assert.Single(report.FindFeatures("Document variables"));
                 WordFeatureFinding bibliography = Assert.Single(report.FindFeatures("Bibliography sources"));
                 WordFeatureFinding attachedTemplate = Assert.Single(report.FindFeatures("Attached templates"));
 
-                Assert.Equal(WordFeatureSupportLevel.Editable, variables.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Editable, variables.SupportLevel);
                 Assert.Equal(1, variables.Count);
-                Assert.Equal(WordFeatureSupportLevel.Editable, bibliography.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Editable, bibliography.SupportLevel);
                 Assert.True(bibliography.Count >= 1);
-                Assert.Equal(WordFeatureSupportLevel.Preserved, attachedTemplate.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Preserved, attachedTemplate.SupportLevel);
                 Assert.Equal(1, attachedTemplate.Count);
                 Assert.Contains(attachedTemplate.Details, detail => detail.Contains("attachedTemplate", StringComparison.OrdinalIgnoreCase));
                 Assert.Contains(attachedTemplate.Details, detail => detail.Contains("report.dotx", StringComparison.OrdinalIgnoreCase));
@@ -304,21 +304,21 @@ namespace OfficeIMO.Tests {
                     "<wetp:taskpanes xmlns:wetp=\"http://schemas.microsoft.com/office/webextensions/taskpanes/2010/11\" />");
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
 
                 WordFeatureFinding glossary = Assert.Single(report.FindFeatures("Building blocks and glossary"));
                 WordFeatureFinding modernComments = Assert.Single(report.FindFeatures("Modern comment metadata"));
                 WordFeatureFinding webExtensions = Assert.Single(report.FindFeatures("Web extensions and task panes"));
 
-                Assert.Equal(WordFeatureSupportLevel.Preserved, glossary.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Preserved, glossary.SupportLevel);
                 Assert.Equal(1, glossary.Count);
                 Assert.Contains(glossary.Details, detail => detail.Contains("glossary", StringComparison.OrdinalIgnoreCase));
-                Assert.Equal(WordFeatureSupportLevel.Preserved, modernComments.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Preserved, modernComments.SupportLevel);
                 Assert.Equal(2, modernComments.Count);
                 Assert.Contains(modernComments.Details, detail => detail.Contains("commentsExtended", StringComparison.OrdinalIgnoreCase));
                 Assert.Contains(modernComments.Details, detail => detail.Contains("commentsIds", StringComparison.OrdinalIgnoreCase));
-                Assert.Equal(WordFeatureSupportLevel.Preserved, webExtensions.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Preserved, webExtensions.SupportLevel);
                 Assert.Equal(2, webExtensions.Count);
                 Assert.Contains(webExtensions.Details, detail => detail.Contains("webextension", StringComparison.OrdinalIgnoreCase));
                 Assert.Contains(webExtensions.Details, detail => detail.Contains("taskpane", StringComparison.OrdinalIgnoreCase));
@@ -341,12 +341,12 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
 
                 WordFeatureFinding images = Assert.Single(report.FindFeatures("External linked images"));
 
-                Assert.Equal(WordFeatureSupportLevel.PartiallyEditable, images.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.PartiallyEditable, images.SupportLevel);
                 Assert.Equal(1, images.Count);
                 Assert.Contains(images.Details, detail => detail.Contains("relationships/image", StringComparison.OrdinalIgnoreCase));
                 Assert.Contains(images.Details, detail => detail.Contains("https://example.com/assets/logo.png", StringComparison.OrdinalIgnoreCase));
@@ -378,11 +378,11 @@ namespace OfficeIMO.Tests {
                     new byte[] { 1, 2, 3, 4 });
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
                 WordFeatureFinding activeX = Assert.Single(report.FindFeatures("ActiveX controls"));
 
-                Assert.Equal(WordFeatureSupportLevel.Preserved, activeX.SupportLevel);
+                Assert.Equal(OfficeFeatureSupportLevel.Preserved, activeX.SupportLevel);
                 Assert.Equal(2, activeX.Count);
                 Assert.Contains(activeX.Details, detail => detail.Contains("activeX", StringComparison.OrdinalIgnoreCase));
 
@@ -445,7 +445,7 @@ namespace OfficeIMO.Tests {
                 AssertPartBytes(mainPart, "activeX.bin", activeXBinaryBytes);
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 WordFeatureReport report = document.InspectFeatures();
 
                 Assert.Contains(report.PreservedFeatures, feature => feature.Name == "Building blocks and glossary"

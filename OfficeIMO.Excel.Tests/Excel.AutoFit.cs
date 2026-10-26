@@ -327,7 +327,7 @@ namespace OfficeIMO.Tests {
         public void Test_AutoFitColumns_DeferredWorksheetSavePersistsOnDispose() {
             string filePath = Path.Combine(_directoryWithFiles, "AutoFit.DeferredWorksheetSave.xlsx");
             using (var document = ExcelDocument.Create(filePath, new ExcelCreateOptions {
-                PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose
+                PersistenceMode = OfficeIMO.DocumentPersistenceMode.SaveOnDispose
             })) {
                 document.Execution.SaveWorksheetAfterAutoFit = false;
                 var sheet = document.AddWorksheet("Data");
@@ -736,7 +736,7 @@ namespace OfficeIMO.Tests {
                 using CancellationTokenSource cts = new();
                 cts.Cancel();
                 await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-                    await Task.Run(() => sheet.AutoFitColumns(ExecutionMode.Parallel, cts.Token))
+                    await Task.Run(() => sheet.AutoFitColumns(ExcelExecutionMode.Parallel, cts.Token))
                 );
             }
         }

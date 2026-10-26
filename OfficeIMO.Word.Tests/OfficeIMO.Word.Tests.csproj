@@ -33,7 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\OfficeIMO.Drawing\OfficeIMO.Drawing.csproj" />
+    <ProjectReference Include="..\OfficeIMO.Core\OfficeIMO.Core.csproj" />
     <ProjectReference Include="..\OfficeIMO.GoogleWorkspace\OfficeIMO.GoogleWorkspace.csproj" />
     <ProjectReference Include="..\OfficeIMO.Markdown\OfficeIMO.Markdown.csproj" />
     <ProjectReference Include="..\OfficeIMO.Pdf\OfficeIMO.Pdf.csproj" />
@@ -66,6 +66,7 @@
     <Using Include="System.Linq" />
     <Using Include="System.IO" />
     <Using Include="System.Threading.Tasks" />
+    <Using Include="OfficeIMO.Drawing" />
     <Using Include="OfficeIMO.Security.OfficePackageSignatureArchive" Alias="OfficePackageSignatureArchive" />
     <Using Include="OfficeIMO.Security.OfficePackageDigestResult" Alias="OfficePackageDigestResult" />
     <Using Include="OfficeIMO.Security.OfficePackageSigningOptions" Alias="OfficePackageSigningOptions" />

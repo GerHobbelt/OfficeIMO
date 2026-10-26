@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using OfficeIMO.Excel;
 using OfficeIMO.Excel.Fluent;
 using OfficeIMO.Drawing;
+using OfficeIMO.Data;
 using System.Linq;
 
 namespace OfficeIMO.Examples.Excel {
@@ -113,7 +114,7 @@ namespace OfficeIMO.Examples.Excel {
                     };
                     // Keep long text columns out of the summary table
                     opts.Ignore = new[] { nameof(MailDomainClassificationResult.Recommendations), nameof(MailDomainClassificationResult.Positives), nameof(MailDomainClassificationResult.References) };
-                }, style: TableStyle.TableStyleMedium9, visuals: viz => {
+                }, style: ExcelTableStyle.TableStyleMedium9, visuals: viz => {
                     viz.IconSetColumns.Add("Score");
                     (viz.TextBackgrounds["Status"], viz.BoldByText["Status"]) = StatusPalettes.Default;
                 });
@@ -193,7 +194,7 @@ namespace OfficeIMO.Examples.Excel {
                     }, visuals: v => {
                         // Example of explicit icon thresholds for demo purposes
                         v.IconSets["Value"] = new IconSetOptions {
-                            IconSet = DocumentFormat.OpenXml.Spreadsheet.IconSetValues.ThreeSymbols,
+                            IconSet = ExcelIconSet.ThreeSymbols,
                             ShowValue = true,
                             ReverseOrder = false,
                             PercentThresholds = new double[] { 0, 60, 85 } // 0-60 red, 60-85 yellow, 85-100 green
@@ -242,7 +243,7 @@ namespace OfficeIMO.Examples.Excel {
                 doc.Save();
 
                 // Re-open from disk and verify properties + header/footer
-                using (var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+                using (var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
                 {
                     Console.WriteLine("[=] Verifying saved workbook properties and header/footer...");
                     Console.WriteLine("    Title   : " + (verify.BuiltinDocumentProperties.Title ?? "<null>"));

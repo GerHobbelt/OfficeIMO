@@ -13,7 +13,47 @@ namespace OfficeIMO.Tests;
 
 public sealed class HtmlEpubImageExportTests {
     private static readonly byte[] PixelPng = Convert.FromBase64String(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X8m0WQAAAABJRU5ErkJggg==");
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNg+P//HwAF/gL9HjcXBgAAAABJRU5ErkJggg==");
+
+    [Fact]
+    public void EpubFitWithinBoundsHighRequestedScaleBeforeHtmlSurfaceValidation() {
+        using var package = new MemoryStream(CreateEpub());
+        EpubDocument book = EpubDocument.Load(
+            package,
+            new EpubReadOptions { IncludeRawHtml = true });
+
+        OfficeImageExportResult result = Assert.Single(book.ToImages()
+            .Continuous()
+            .WithScale(100D)
+            .FitWithin(360, 360)
+            .AsPng()
+            .Export());
+
+        Assert.True(result.Width <= 360);
+        Assert.True(result.Height <= 360);
+    }
+
+    [Fact]
+    public void ContinuousEpubRejectsPredictableOutputCountBeforeConsumerSideEffects() {
+        using var package = new MemoryStream(CreateEpub(includeSecondChapter: true));
+        EpubDocument book = EpubDocument.Load(
+            package,
+            new EpubReadOptions { IncludeRawHtml = true });
+        int consumed = 0;
+
+        OfficeImageExportBatchLimitException exception = Assert.Throws<OfficeImageExportBatchLimitException>(() =>
+            book.ExportImages(
+                OfficeImageExportFormat.Png,
+                _ => consumed++,
+                new EpubImageExportOptions {
+                    Mode = HtmlRenderMode.Continuous,
+                    MaximumOutputCount = 1
+                }));
+
+        Assert.Equal(0, consumed);
+        Assert.Equal(2, exception.Actual);
+        Assert.Equal(1, exception.Maximum);
+    }
 
     [Fact]
     public async Task RetainedEpubChapterAndResourcesRenderThroughHtml() {
@@ -172,7 +212,7 @@ public sealed class HtmlEpubImageExportTests {
             diagnostic => diagnostic.Code ==
                           "EPUB_IMAGE_RAW_HTML_UNAVAILABLE" &&
                           diagnostic.LossKind ==
-                          OfficeImageExportLossKind.Approximation);
+                          OfficeConversionLossKind.Approximation);
     }
 
     [Fact]
@@ -209,7 +249,7 @@ public sealed class HtmlEpubImageExportTests {
             exception.Diagnostics,
             diagnostic =>
                 diagnostic.Code == "EPUB_IMAGE_EPUB_RESOURCE_MISSING" &&
-                diagnostic.LossKind == OfficeImageExportLossKind.Omission);
+                diagnostic.LossKind == OfficeConversionLossKind.Omission);
     }
 
     [Fact]
@@ -233,7 +273,7 @@ public sealed class HtmlEpubImageExportTests {
             result.Diagnostics,
             diagnostic =>
                 diagnostic.Code == "EPUB_IMAGE_EPUB_PACKAGE_VERSION_MISSING" &&
-                diagnostic.LossKind == OfficeImageExportLossKind.Approximation);
+                diagnostic.LossKind == OfficeConversionLossKind.Approximation);
     }
 
     [Fact]
@@ -257,12 +297,13 @@ public sealed class HtmlEpubImageExportTests {
             exception.Diagnostics,
             diagnostic =>
                 diagnostic.Code == "EPUB_IMAGE_EPUB_CHAPTER_RAW_HTML_TOTAL_LIMIT" &&
-                diagnostic.LossKind == OfficeImageExportLossKind.Omission);
+                diagnostic.LossKind == OfficeConversionLossKind.Omission);
     }
 
     private static byte[] CreateEpub(
         bool includeImage = true,
-        bool includePackageVersion = true) {
+        bool includePackageVersion = true,
+        bool includeSecondChapter = false) {
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(
                    output,
@@ -282,11 +323,21 @@ public sealed class HtmlEpubImageExportTests {
                 "OEBPS/content.opf",
                 "<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\"" +
                 (includePackageVersion ? " version=\"3.0\"" : string.Empty) +
-                " unique-identifier=\"id\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"id\">book</dc:identifier><dc:title>Image Book</dc:title></metadata><manifest><item id=\"chapter\" href=\"chapter.xhtml\" media-type=\"application/xhtml+xml\"/><item id=\"styles\" href=\"styles/book.css\" media-type=\"text/css\"/><item id=\"pixel\" href=\"images/pixel.png\" media-type=\"image/png\"/></manifest><spine><itemref idref=\"chapter\"/></spine></package>");
+                " unique-identifier=\"id\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"id\">book</dc:identifier><dc:title>Image Book</dc:title></metadata><manifest><item id=\"chapter\" href=\"chapter.xhtml\" media-type=\"application/xhtml+xml\"/>" +
+                (includeSecondChapter ? "<item id=\"chapter2\" href=\"chapter2.xhtml\" media-type=\"application/xhtml+xml\"/>" : string.Empty) +
+                "<item id=\"styles\" href=\"styles/book.css\" media-type=\"text/css\"/><item id=\"pixel\" href=\"images/pixel.png\" media-type=\"image/png\"/></manifest><spine><itemref idref=\"chapter\"/>" +
+                (includeSecondChapter ? "<itemref idref=\"chapter2\"/>" : string.Empty) +
+                "</spine></package>");
             Write(
                 archive,
                 "OEBPS/chapter.xhtml",
                 "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Chapter One</title><link rel=\"stylesheet\" href=\"styles/book.css\" /></head><body><h1>Chapter One</h1><p>Rendered EPUB content</p><a href=\"next.xhtml\">Next chapter</a><img src=\"images/pixel.png\" alt=\"pixel\"/></body></html>");
+            if (includeSecondChapter) {
+                Write(
+                    archive,
+                    "OEBPS/chapter2.xhtml",
+                    "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Chapter Two</title></head><body><h1>Chapter Two</h1><p>Second rendered chapter.</p></body></html>");
+            }
             Write(
                 archive,
                 "OEBPS/styles/book.css",

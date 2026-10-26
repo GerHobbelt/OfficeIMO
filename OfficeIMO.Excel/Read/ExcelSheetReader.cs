@@ -279,13 +279,13 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Enumerates non-empty cells as (Row, Column, Value). Values are typed when possible.
         /// </summary>
-        public IEnumerable<CellValueInfo> EnumerateCells() {
+        public IEnumerable<ExcelCellValueInfo> EnumerateCells(CancellationToken ct = default) {
             return CanUseEnumerateCellsXmlReader()
-                ? EnumerateCellsXmlFast(CancellationToken.None)
-                : EnumerateCellsDom(CancellationToken.None);
+                ? EnumerateCellsXmlFast(ct)
+                : EnumerateCellsDom(ct);
         }
 
-        private IEnumerable<CellValueInfo> EnumerateCellsDom(CancellationToken ct) {
+        private IEnumerable<ExcelCellValueInfo> EnumerateCellsDom(CancellationToken ct) {
             bool canCancel = ct.CanBeCanceled;
             foreach (var row in EnumerateWorksheetRows(ct)) {
                 if (canCancel) {
@@ -301,12 +301,12 @@ namespace OfficeIMO.Excel {
                     int cIndex = A1.ParseColumnIndexFromCellReferenceFast(cell.CellReference?.Value);
                     var value = ConvertCell(cell);
                     if (value is not null || CellHasExplicitBlank(cell))
-                        yield return new CellValueInfo(rIndex, cIndex, value);
+                        yield return new ExcelCellValueInfo(rIndex, cIndex, value);
                 }
             }
         }
 
-        private IEnumerable<CellValueInfo> EnumerateCellsXmlFast(CancellationToken ct) {
+        private IEnumerable<ExcelCellValueInfo> EnumerateCellsXmlFast(CancellationToken ct) {
             using var stream = _wsPart.GetStream(FileMode.Open, FileAccess.Read);
             RewindWorksheetStream(stream);
             using var reader = OpenWorksheetXmlReader(stream);
@@ -357,7 +357,7 @@ namespace OfficeIMO.Excel {
                     if (hasCustomConverter) {
                         if (TryReadXmlCellValueForCellEnumeration(reader, rowIndex, columnIndex, out object? customValue, out bool explicitBlank)) {
                             if (customValue != null || explicitBlank) {
-                                yield return new CellValueInfo(rowIndex, columnIndex, customValue);
+                                yield return new ExcelCellValueInfo(rowIndex, columnIndex, customValue);
                             }
                         }
 
@@ -370,7 +370,7 @@ namespace OfficeIMO.Excel {
 
                     object? cellValue = ReadXmlCellValue(reader);
                     if (cellValue != null) {
-                        yield return new CellValueInfo(rowIndex, columnIndex, cellValue);
+                        yield return new ExcelCellValueInfo(rowIndex, columnIndex, cellValue);
                     }
                 }
             }
@@ -1091,7 +1091,7 @@ namespace OfficeIMO.Excel {
             // Custom converter hook (cell-level). If provided and handled, honor it.
             var hook = _opt.CellValueConverter;
             if (hook != null) {
-                var ctx = new ExcelCellContext(type, styleIndex, rawText, inlineText, _opt.Culture);
+                var ctx = new ExcelCellContext(type.ToOfficeEnum(), styleIndex, rawText, inlineText, _opt.Culture);
                 var res = hook(ctx);
                 if (res.Handled) return res.Value;
             }

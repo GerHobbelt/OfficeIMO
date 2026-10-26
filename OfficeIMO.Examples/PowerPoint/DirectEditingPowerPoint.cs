@@ -33,7 +33,7 @@ namespace OfficeIMO.Examples.PowerPoint {
                 bullets.AddBullet("No parallel builder vocabulary");
                 bullets.TextAutoFit = PowerPointTextAutoFit.Normal;
 
-                slide.AddShape(A.ShapeTypeValues.Rectangle,
+                slide.AddShape(OfficePresetShapeType.Rectangle,
                         PowerPointUnits.FromCentimeters(content.LeftCm + 12.0), PowerPointUnits.FromCentimeters(content.TopCm + 2.1),
                         PowerPointUnits.FromCentimeters(10.0), PowerPointUnits.FromCentimeters(4.0))
                     .Fill("E7F7FF")
@@ -41,7 +41,7 @@ namespace OfficeIMO.Examples.PowerPoint {
                 slide.Notes.Text = "Concrete objects can be edited immediately or after reopening the deck.";
 
                 using (PowerPointPresentation source = PowerPointPresentation.Load(sourcePath,
-                           new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                           new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     PowerPointSlide imported = presentation.ImportSlide(source, 0);
                     imported.AddTextBoxCm("Imported through the same presentation model.", 1.5, 5.0, 22.0, 0.8);
                 }

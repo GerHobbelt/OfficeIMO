@@ -25,10 +25,10 @@ if ([string]::IsNullOrWhiteSpace($RuntimeIdentifier)) {
 }
 
 $scenarios = @(
-    [ordered]@{ id = 'production-libraries'; title = 'Ordinary production library coverage: 88 fully rooted plus bounded Google adapter'; project = 'OfficeIMO.All.AotSmoke/OfficeIMO.All.AotSmoke.csproj'; targetFramework = 'net10.0' },
-    [ordered]@{ id = 'word'; title = 'Word create, save, and reload'; project = 'OfficeIMO.Word.AotSmoke/OfficeIMO.Word.AotSmoke.csproj' },
-    [ordered]@{ id = 'excel'; title = 'Excel typed table create, save, and reload'; project = 'OfficeIMO.Excel.AotSmoke/OfficeIMO.Excel.AotSmoke.csproj' },
-    [ordered]@{ id = 'powerpoint'; title = 'PowerPoint chart create, duplicate, save, and reload'; project = 'OfficeIMO.PowerPoint.AotSmoke/OfficeIMO.PowerPoint.AotSmoke.csproj' },
+    [ordered]@{ id = 'production-libraries'; title = 'Ordinary production library coverage: 93 fully rooted plus bounded Google adapter'; project = 'OfficeIMO.All.AotSmoke/OfficeIMO.All.AotSmoke.csproj'; targetFramework = 'net10.0' },
+    [ordered]@{ id = 'word'; title = 'Word dictionary template binding, save, and reload'; project = 'OfficeIMO.Word.AotSmoke/OfficeIMO.Word.AotSmoke.csproj' },
+    [ordered]@{ id = 'excel'; title = 'Excel DataReader, typed, and generic-only dictionary table create, save, and reload'; project = 'OfficeIMO.Excel.AotSmoke/OfficeIMO.Excel.AotSmoke.csproj' },
+    [ordered]@{ id = 'powerpoint'; title = 'PowerPoint chart and generic-only dictionary table create, duplicate, save, and reload'; project = 'OfficeIMO.PowerPoint.AotSmoke/OfficeIMO.PowerPoint.AotSmoke.csproj' },
     [ordered]@{ id = 'security'; title = 'Optional security provider CMS and XML DSig signing and verification'; project = 'OfficeIMO.Security.AotSmoke/OfficeIMO.Security.AotSmoke.csproj' },
     [ordered]@{ id = 'markdown'; title = 'Markdown fluent composition and rendering'; project = 'OfficeIMO.Markdown.AotSmoke/OfficeIMO.Markdown.AotSmoke.csproj' },
     [ordered]@{ id = 'csv'; title = 'CSV parse and schema inspection'; project = 'OfficeIMO.CSV.AotSmoke/OfficeIMO.CSV.AotSmoke.csproj' },
@@ -42,6 +42,39 @@ $artifactRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("OfficeIMO-AotValid
 New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 $results = [System.Collections.Generic.List[object]]::new()
 $failures = [System.Collections.Generic.List[string]]::new()
+
+function Remove-AotArtifactDirectory {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Path
+    )
+
+    if (-not [System.IO.Directory]::Exists($Path)) {
+        return
+    }
+
+    $maximumAttempts = 10
+    for ($attempt = 1; $attempt -le $maximumAttempts; $attempt++) {
+        try {
+            [System.IO.Directory]::Delete($Path, $true)
+            return
+        } catch [System.IO.IOException] {
+            if ($attempt -eq $maximumAttempts) {
+                throw
+            }
+
+            # Windows can retain the just-executed native image briefly while
+            # antivirus and process teardown release their file handles.
+            Start-Sleep -Milliseconds (100 * $attempt)
+        } catch [System.UnauthorizedAccessException] {
+            if ($attempt -eq $maximumAttempts) {
+                throw
+            }
+
+            Start-Sleep -Milliseconds (100 * $attempt)
+        }
+    }
+}
 
 try {
     foreach ($scenario in $scenarios) {
@@ -96,9 +129,7 @@ try {
         # so release that scenario before starting the next one instead of
         # making the final linker compete with every previous publish.
         foreach ($scenarioArtifactPath in @($publishPath, $sdkArtifactsPath)) {
-            if ([System.IO.Directory]::Exists($scenarioArtifactPath)) {
-                [System.IO.Directory]::Delete($scenarioArtifactPath, $true)
-            }
+            Remove-AotArtifactDirectory -Path $scenarioArtifactPath
         }
     }
 
@@ -121,7 +152,5 @@ try {
         throw "NativeAOT validation did not match the documented contract:`n- $($failures -join "`n- ")"
     }
 } finally {
-    if ([System.IO.Directory]::Exists($artifactRoot)) {
-        [System.IO.Directory]::Delete($artifactRoot, $true)
-    }
+    Remove-AotArtifactDirectory -Path $artifactRoot
 }

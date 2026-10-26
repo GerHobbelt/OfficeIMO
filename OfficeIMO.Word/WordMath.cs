@@ -1,5 +1,4 @@
 using DocumentFormat.OpenXml;
-using System.Text;
 using M = DocumentFormat.OpenXml.Math;
 
 namespace OfficeIMO.Word {
@@ -9,9 +8,22 @@ namespace OfficeIMO.Word {
     /// </summary>
     internal static partial class WordMath {
         internal const string MathNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+        internal const int DefaultMaximumProjectionDepth = 256;
 
-        internal static string GetText(OpenXmlElement element) {
-            var builder = new StringBuilder();
+        internal static string GetText(OpenXmlElement element) =>
+            GetText(element, DefaultMaximumProjectionDepth);
+
+        internal static string GetText(OpenXmlElement element, int maxDepth) {
+            return GetText(element, long.MaxValue, maxDepth);
+        }
+
+        internal static string GetText(OpenXmlElement element, long maxCharacters, int maxDepth) {
+            EnsureMaximumProjectionDepth(element, maxDepth);
+            return GetTextValidated(element, maxCharacters);
+        }
+
+        private static string GetTextValidated(OpenXmlElement element, long maxCharacters = long.MaxValue) {
+            var builder = new BoundedStringBuilder(maxCharacters);
             AppendText(builder, element);
             return builder.ToString();
         }
@@ -33,7 +45,7 @@ namespace OfficeIMO.Word {
             }
         }
 
-        private static void AppendText(StringBuilder builder, OpenXmlElement element) {
+        private static void AppendText(BoundedStringBuilder builder, OpenXmlElement element) {
             if (element is M.Text text) {
                 builder.Append(text.Text);
                 return;
@@ -45,27 +57,32 @@ namespace OfficeIMO.Word {
                     return;
                 case "sSup":
                     AppendChildText(builder, element, "e");
-                    AppendScriptText(builder, "^", ReadChildText(element, "sup"));
+                    AppendScriptText(builder, "^", element, "sup");
                     return;
                 case "sSub":
                     AppendChildText(builder, element, "e");
-                    AppendScriptText(builder, "_", ReadChildText(element, "sub"));
+                    AppendScriptText(builder, "_", element, "sub");
                     return;
                 case "sSubSup":
                     AppendChildText(builder, element, "e");
-                    AppendScriptText(builder, "_", ReadChildText(element, "sub"));
-                    AppendScriptText(builder, "^", ReadChildText(element, "sup"));
+                    AppendScriptText(builder, "_", element, "sub");
+                    AppendScriptText(builder, "^", element, "sup");
                     return;
                 case "sPre":
-                    AppendScriptText(builder, "^", ReadChildText(element, "sup"));
-                    AppendScriptText(builder, "_", ReadChildText(element, "sub"));
+                    AppendScriptText(builder, "^", element, "sup");
+                    AppendScriptText(builder, "_", element, "sub");
                     AppendChildText(builder, element, "e");
                     return;
                 case "rad":
-                    string degree = ReadChildText(element, "deg");
-                    string radicand = ReadChildText(element, "e");
-                    builder.Append(degree.Length == 0 ? "sqrt(" : "root(" + degree + ",");
-                    builder.Append(radicand);
+                    int degreeStart = builder.Length;
+                    AppendChildText(builder, element, "deg");
+                    if (builder.Length == degreeStart) {
+                        builder.Append("sqrt(");
+                    } else {
+                        builder.Insert(degreeStart, "root(");
+                        builder.Append(',');
+                    }
+                    AppendChildText(builder, element, "e");
                     builder.Append(')');
                     return;
                 case "nary":
@@ -73,19 +90,21 @@ namespace OfficeIMO.Word {
                     AppendNaryText(builder, element);
                     return;
                 case "func":
-                    string functionName = ReadChildText(element, "fName");
-                    string argument = ReadChildText(element, "e");
-                    if (functionName.Length > 0) {
-                        AppendFunctionText(builder, functionName, argument);
+                    int functionStart = builder.Length;
+                    AppendChildText(builder, element, "fName");
+                    if (builder.Length > functionStart) {
+                        builder.Append('(');
+                        AppendChildText(builder, element, "e");
+                        builder.Append(')');
                     } else {
-                        builder.Append(argument);
+                        AppendChildText(builder, element, "e");
                     }
                     return;
                 case "acc":
                     AppendAccentText(builder, element);
                     return;
                 case "bar":
-                    AppendFunctionText(builder, "bar", ReadChildText(element, "e"));
+                    AppendFunctionText(builder, "bar", element, "e");
                     return;
                 case "d":
                     AppendDelimiterText(builder, element);
@@ -103,11 +122,11 @@ namespace OfficeIMO.Word {
                     return;
                 case "limLow":
                     AppendChildText(builder, element, "e");
-                    AppendScriptText(builder, "_", ReadChildText(element, "lim"));
+                    AppendScriptText(builder, "_", element, "lim");
                     return;
                 case "limUpp":
                     AppendChildText(builder, element, "e");
-                    AppendScriptText(builder, "^", ReadChildText(element, "lim"));
+                    AppendScriptText(builder, "^", element, "lim");
                     return;
             }
 
@@ -116,27 +135,36 @@ namespace OfficeIMO.Word {
             }
         }
 
-        private static void AppendFractionText(StringBuilder builder, OpenXmlElement element) {
-            string numerator = ReadChildText(element, "num");
-            string denominator = ReadChildText(element, "den");
+        private static void AppendFractionText(BoundedStringBuilder builder, OpenXmlElement element) {
             switch (ReadFractionType(element)) {
                 case MathFractionType.Linear:
-                    builder.Append(numerator).Append('/').Append(denominator);
+                    AppendChildText(builder, element, "num");
+                    builder.Append('/');
+                    AppendChildText(builder, element, "den");
                     return;
                 case MathFractionType.NoBar:
-                    builder.Append("stack(").Append(numerator).Append(',').Append(denominator).Append(')');
+                    builder.Append("stack(");
+                    AppendChildText(builder, element, "num");
+                    builder.Append(',');
+                    AppendChildText(builder, element, "den");
+                    builder.Append(')');
                     return;
                 case MathFractionType.Skewed:
-                    builder.Append(numerator).Append('\u2044').Append(denominator);
+                    AppendChildText(builder, element, "num");
+                    builder.Append('\u2044');
+                    AppendChildText(builder, element, "den");
                     return;
                 default:
-                    builder.Append('(').Append(numerator).Append(")/(").Append(denominator).Append(')');
+                    builder.Append('(');
+                    AppendChildText(builder, element, "num");
+                    builder.Append(")/(");
+                    AppendChildText(builder, element, "den");
+                    builder.Append(')');
                     return;
             }
         }
 
-        private static void AppendAccentText(StringBuilder builder, OpenXmlElement element) {
-            string expression = ReadChildText(element, "e");
+        private static void AppendAccentText(BoundedStringBuilder builder, OpenXmlElement element) {
             string accent = ReadCharacterOrDefault(element, "chr", "\u0302");
             string functionName = accent switch {
                 "^" => "hat",
@@ -150,17 +178,17 @@ namespace OfficeIMO.Word {
                 _ => string.Empty
             };
             if (functionName.Length > 0) {
-                AppendFunctionText(builder, functionName, expression);
+                AppendFunctionText(builder, functionName, element, "e");
             } else {
                 builder.Append("accent(");
                 builder.Append(accent);
                 builder.Append(',');
-                builder.Append(expression);
+                AppendChildText(builder, element, "e");
                 builder.Append(')');
             }
         }
 
-        private static void AppendDelimiterText(StringBuilder builder, OpenXmlElement element) {
+        private static void AppendDelimiterText(BoundedStringBuilder builder, OpenXmlElement element) {
             MathCharacter begin = ReadCharacter(element, "begChr");
             MathCharacter end = ReadCharacter(element, "endChr");
             builder.Append(begin.Present ? begin.Value : "(");
@@ -168,7 +196,7 @@ namespace OfficeIMO.Word {
             builder.Append(end.Present ? end.Value : ")");
         }
 
-        private static void AppendGroupCharacterText(StringBuilder builder, OpenXmlElement element) {
+        private static void AppendGroupCharacterText(BoundedStringBuilder builder, OpenXmlElement element) {
             string character = ReadCharacterOrDefault(element, "chr", "\u23df");
             string functionName = character switch {
                 "\u23de" => "overbrace",
@@ -177,10 +205,10 @@ namespace OfficeIMO.Word {
                 "\u23b5" => "underbracket",
                 _ => "group"
             };
-            AppendFunctionText(builder, functionName, ReadChildText(element, "e"));
+            AppendFunctionText(builder, functionName, element, "e");
         }
 
-        private static void AppendMatrixText(StringBuilder builder, OpenXmlElement element) {
+        private static void AppendMatrixText(BoundedStringBuilder builder, OpenXmlElement element) {
             builder.Append("matrix(");
             bool firstRow = true;
             foreach (OpenXmlElement row in FindChildren(element, "mr")) {
@@ -196,26 +224,30 @@ namespace OfficeIMO.Word {
             builder.Append(')');
         }
 
-        private static void AppendFunctionText(StringBuilder builder, string functionName, string expression) {
+        private static void AppendFunctionText(
+            BoundedStringBuilder builder,
+            string functionName,
+            OpenXmlElement element,
+            string expressionLocalName) {
             builder.Append(functionName);
             builder.Append('(');
-            builder.Append(expression);
+            AppendChildText(builder, element, expressionLocalName);
             builder.Append(')');
         }
 
-        private static void AppendNaryText(StringBuilder builder, OpenXmlElement element) {
+        private static void AppendNaryText(BoundedStringBuilder builder, OpenXmlElement element) {
             builder.Append(ReadNaryOperatorText(element));
-            AppendScriptText(builder, "_", ReadChildText(element, "sub"));
-            AppendScriptText(builder, "^", ReadChildText(element, "sup"));
-            string expression = ReadChildText(element, "e");
-            if (expression.Length > 0) {
-                builder.Append('(');
-                builder.Append(expression);
+            AppendScriptText(builder, "_", element, "sub");
+            AppendScriptText(builder, "^", element, "sup");
+            int expressionStart = builder.Length;
+            AppendChildText(builder, element, "e");
+            if (builder.Length > expressionStart) {
+                builder.Insert(expressionStart, "(");
                 builder.Append(')');
             }
         }
 
-        private static void AppendJoinedChildText(StringBuilder builder, OpenXmlElement element, string localName, string separator) {
+        private static void AppendJoinedChildText(BoundedStringBuilder builder, OpenXmlElement element, string localName, string separator) {
             bool first = true;
             foreach (OpenXmlElement child in FindChildren(element, localName)) {
                 if (!first) builder.Append(separator);
@@ -224,22 +256,42 @@ namespace OfficeIMO.Word {
             }
         }
 
-        private static void AppendScriptText(StringBuilder builder, string marker, string value) {
-            if (value.Length == 0) return;
-            builder.Append(marker);
-            builder.Append('(');
-            builder.Append(value);
+        private static void AppendScriptText(
+            BoundedStringBuilder builder,
+            string marker,
+            OpenXmlElement element,
+            string valueLocalName) {
+            int valueStart = builder.Length;
+            AppendChildText(builder, element, valueLocalName);
+            if (builder.Length == valueStart) return;
+            builder.Insert(valueStart, marker + "(");
             builder.Append(')');
         }
 
-        private static void AppendChildText(StringBuilder builder, OpenXmlElement element, string localName) {
+        private static void AppendChildText(BoundedStringBuilder builder, OpenXmlElement element, string localName) {
             OpenXmlElement? child = FindFirstChild(element, localName);
             if (child != null) AppendText(builder, child);
         }
 
         private static string ReadChildText(OpenXmlElement element, string localName) {
             OpenXmlElement? child = FindFirstChild(element, localName);
-            return child == null ? string.Empty : GetText(child);
+            return child == null ? string.Empty : GetTextValidated(child);
+        }
+
+        private static void EnsureMaximumProjectionDepth(OpenXmlElement element, int maxDepth) {
+            if (maxDepth <= 0) throw new ArgumentOutOfRangeException(nameof(maxDepth));
+            var pending = new Stack<(OpenXmlElement Element, int Depth)>();
+            pending.Push((element, 1));
+            while (pending.Count > 0) {
+                (OpenXmlElement current, int depth) = pending.Pop();
+                if (depth > maxDepth) {
+                    throw new InvalidDataException(
+                        "OMML equation nesting exceeds the configured " + maxDepth + "-level projection limit.");
+                }
+                for (int index = current.ChildElements.Count - 1; index >= 0; index--) {
+                    pending.Push((current.ChildElements[index], depth + 1));
+                }
+            }
         }
 
         private static string ReadNaryOperatorText(OpenXmlElement element) {

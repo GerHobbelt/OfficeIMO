@@ -1,6 +1,8 @@
 using OfficeIMO.Excel.Xlsb.Biff12;
 using OfficeIMO.Excel.Xlsb.Package;
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace OfficeIMO.Excel.Xlsb.Read {
@@ -19,14 +21,17 @@ namespace OfficeIMO.Excel.Xlsb.Read {
             out int firstColumn,
             out int lastColumn,
             out int firstDataRow,
-            out int lastDataRow) {
+            out int lastDataRow,
+            out XlsbValidatedRowPlan? validatedRowPlan) {
             firstColumn = int.MaxValue;
             lastColumn = -1;
             firstDataRow = -1;
             lastDataRow = -1;
+            validatedRowPlan = null;
             int currentRow = -1;
             int previousCellColumn = -1;
             byte[] bytes = worksheetPart.Buffer;
+            ref byte data = ref MemoryMarshal.GetReference(bytes.AsSpan());
             int dataLength = worksheetPart.DataLength;
             int position = 0;
             {
@@ -40,6 +45,7 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                 int pendingRecordBudget = 0;
                 int pendingCellBudget = 0;
                 var currentRowSpanBounds = new int[32];
+                var rowPlanBuilder = new XlsbValidatedRowPlanBuilder();
                 int currentRowSpanCount = 0;
                 cancellationToken.ThrowIfCancellationRequested();
                 // Discovery is the full-buffer validation pass. Fuse BIFF12 framing with the
@@ -47,14 +53,14 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                 // method dispatch and record-object path for every cell.
                 while (position < dataLength) {
                     int recordOffset = position;
-                    int firstTypeByte = bytes[position++];
+                    int firstTypeByte = Unsafe.Add(ref data, position++);
                     int recordType = firstTypeByte & 0x7F;
                     if ((firstTypeByte & 0x80) != 0) {
                         if (position == dataLength) {
                             throw new EndOfStreamException(
                                 "The BIFF12 stream ended inside the record type header.");
                         }
-                        int secondTypeByte = bytes[position++];
+                        int secondTypeByte = Unsafe.Add(ref data, position++);
                         recordType |= (secondTypeByte & 0x7F) << 7;
                         if (recordType < 128) {
                             throw new InvalidDataException(
@@ -66,7 +72,7 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                         throw new EndOfStreamException(
                             "The BIFF12 stream ended inside the record size header.");
                     }
-                    int sizeByte = bytes[position++];
+                    int sizeByte = Unsafe.Add(ref data, position++);
                     int recordSize = sizeByte & 0x7F;
                     if ((sizeByte & 0x80) != 0) {
                         bool complete = false;
@@ -75,7 +81,7 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                                 throw new EndOfStreamException(
                                     "The BIFF12 stream ended inside the record size header.");
                             }
-                            sizeByte = bytes[position++];
+                            sizeByte = Unsafe.Add(ref data, position++);
                             recordSize |= (sizeByte & 0x7F) << (sizeIndex * 7);
                             if ((sizeByte & 0x80) == 0) {
                                 complete = true;
@@ -154,6 +160,9 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                                 "The XLSB worksheet contains BrtEndSheetData without a matching BrtBeginSheetData record.");
                         }
 
+                        if (previousCellColumn > lastColumn) {
+                            lastColumn = previousCellColumn;
+                        }
                         sawEndSheetData = true;
                         inSheetData = false;
                         currentRow = -1;
@@ -168,6 +177,9 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                         continue;
                     }
                     if (recordType == BrtRowHdr) {
+                        if (previousCellColumn > lastColumn) {
+                            lastColumn = previousCellColumn;
+                        }
                         int nextRow = ValidateRowHeader(
                             new XlsbRecordSlice(
                                 bytes,
@@ -184,6 +196,7 @@ namespace OfficeIMO.Excel.Xlsb.Read {
 
                         currentRow = nextRow;
                         previousCellColumn = -1;
+                        rowPlanBuilder.BeginRow(nextRow, position);
                         continue;
                     }
                     if (!IsCellRecord(recordType)) {
@@ -202,17 +215,13 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                     if (!useCachedFormulaResult) {
                         EnsureFormulaModeSupported(recordType, useCachedFormulaResult);
                     }
-                    if (firstDataRow < 0) {
-                        firstDataRow = currentRow;
-                    }
-                    lastDataRow = currentRow;
                     int column;
                     if (recordSize >= sizeof(int) + sizeof(uint)
                         && recordType is >= BrtCellBlank and <= BrtCellIsst) {
-                        column = BinaryPrimitives.ReadInt32LittleEndian(
-                            bytes.AsSpan(payloadOffset, sizeof(int)));
-                        uint styleIndex = BinaryPrimitives.ReadUInt32LittleEndian(
-                            bytes.AsSpan(payloadOffset + sizeof(int), sizeof(uint))) & 0x00FFFFFFU;
+                        ref byte payload = ref Unsafe.Add(ref data, payloadOffset);
+                        column = Unsafe.ReadUnaligned<int>(ref payload);
+                        uint styleIndex = Unsafe.ReadUnaligned<uint>(
+                            ref Unsafe.Add(ref payload, sizeof(int))) & 0x00FFFFFFU;
                         if (styleIndex >= styleCount) {
                             throw new InvalidDataException(
                                 $"The XLSB cell record at offset {recordOffset} refers to missing cell format " +
@@ -229,8 +238,8 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                             _ => false
                         };
                         if (validFixedPayload && recordType == BrtCellIsst) {
-                            uint sharedStringIndex = BinaryPrimitives.ReadUInt32LittleEndian(
-                                bytes.AsSpan(payloadOffset + sizeof(int) + sizeof(uint), sizeof(uint)));
+                            uint sharedStringIndex = Unsafe.ReadUnaligned<uint>(
+                                ref Unsafe.Add(ref payload, sizeof(int) + sizeof(uint)));
                             if (sharedStringIndex >= sharedStringCount) {
                                 throw new InvalidDataException(
                                     $"The XLSB cell record at offset {recordOffset} refers to missing shared string " +
@@ -265,11 +274,17 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                         throw new InvalidDataException(
                             $"The XLSB cell record at offset {recordOffset} contains invalid column index {column}.");
                     }
-                    if (column <= previousCellColumn) {
+                    bool firstCellInRow = previousCellColumn < 0;
+                    if (!firstCellInRow && column <= previousCellColumn) {
                         throw new InvalidDataException(
                             $"The XLSB cell record at offset {recordOffset} is duplicated or out of order within its row.");
                     }
                     previousCellColumn = column;
+                    rowPlanBuilder.ObserveCell(
+                        recordType,
+                        payloadOffset,
+                        recordSize,
+                        column);
                     bool covered = currentRowSpanCount == 1
                         ? currentRowSpanBounds[0] <= column && column <= currentRowSpanBounds[1]
                         : IsCoveredByRowSpan(currentRowSpanBounds, currentRowSpanCount, column);
@@ -278,11 +293,14 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                             $"The XLSB cell record at offset {recordOffset} for column {column} is not covered by its BrtRowHdr column spans.");
                     }
 
-                    if (column < firstColumn) {
-                        firstColumn = column;
-                    }
-                    if (column > lastColumn) {
-                        lastColumn = column;
+                    if (firstCellInRow) {
+                        if (firstDataRow < 0) {
+                            firstDataRow = currentRow;
+                        }
+                        lastDataRow = currentRow;
+                        if (column < firstColumn) {
+                            firstColumn = column;
+                        }
                     }
                 }
 
@@ -306,6 +324,7 @@ namespace OfficeIMO.Excel.Xlsb.Read {
                     throw new InvalidDataException(
                         "The XLSB worksheet ended before the required BrtEndSheetData record.");
                 }
+                validatedRowPlan = rowPlanBuilder.Build();
             }
         }
 

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OfficeIMO;
 using OfficeIMO.Drawing;
 using OfficeIMO.Excel;
 using OfficeIMO.PowerPoint;
@@ -90,15 +91,15 @@ static string CreateReadme(IEnumerable<(string Name, OfficeCapabilityCatalog Cat
     markdown.AppendLine("Regenerate:");
     markdown.AppendLine();
     markdown.AppendLine("```powershell");
-    markdown.AppendLine("dotnet run --project Build/CompatibilityCatalog/OfficeIMO.CompatibilityCatalog.Tool.csproj -- --output Docs/Compatibility/generated");
+    markdown.AppendLine("dotnet run --framework net8.0 --project Build/CompatibilityCatalog/OfficeIMO.CompatibilityCatalog.Tool.csproj -- --output Docs/Compatibility/generated");
     markdown.AppendLine("```");
     markdown.AppendLine();
-    markdown.AppendLine("The shared [conversion route catalog](conversion-routes.md) drives package documentation, MCP discovery, and the browser converter.");
+    markdown.AppendLine("Use the [conversion route catalog](conversion-routes.md) to find the focused package, representative API, fidelity model, browser availability, and result type for each route.");
     markdown.AppendLine();
     markdown.AppendLine("Verify:");
     markdown.AppendLine();
     markdown.AppendLine("```powershell");
-    markdown.AppendLine("dotnet run --project Build/CompatibilityCatalog/OfficeIMO.CompatibilityCatalog.Tool.csproj -- --output Docs/Compatibility/generated --verify");
+    markdown.AppendLine("dotnet run --framework net8.0 --project Build/CompatibilityCatalog/OfficeIMO.CompatibilityCatalog.Tool.csproj -- --output Docs/Compatibility/generated --verify");
     markdown.AppendLine("```");
     markdown.AppendLine();
     markdown.AppendLine("| Contract | Schema | Rows | JSON | Markdown |");

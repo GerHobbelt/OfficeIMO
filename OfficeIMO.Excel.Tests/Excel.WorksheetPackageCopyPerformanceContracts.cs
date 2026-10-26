@@ -20,17 +20,17 @@ namespace OfficeIMO.Tests {
                 source.CellValue(2, 2, 125.5m);
                 source.CellBold(1, 1, true);
                 source.CellBold(1, 2, true);
-                source.AddTable("A1:B2", hasHeader: true, name: "SourceSales", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                source.AddTable("A1:B2", hasHeader: true, name: "SourceSales", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
                 sourceDocument.Save();
             }
 
-            using (var sourceDocument = ExcelDocument.Load(sourcePath, new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly }))
+            using (var sourceDocument = ExcelDocument.Load(sourcePath, new ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly }))
             using (var targetDocument = ExcelDocument.Create(targetPath)) {
                 ExcelSheet copied = targetDocument.CopyWorksheetFrom(
                     sourceDocument,
                     "Source",
                     "Imported",
-                    SheetNameValidationMode.Sanitize,
+                    ExcelSheetNameValidationMode.Sanitize,
                     new ExcelWorksheetCopyOptions { CopyMode = ExcelWorksheetCopyMode.Package });
                 targetDocument.Save();
                 targetDocument.AddWorksheet("AfterCopy").CellValue(1, 1, "New shared string");
@@ -54,7 +54,7 @@ namespace OfficeIMO.Tests {
                 Assert.NotEqual(0U, header.StyleIndex!.Value);
             }
 
-            using (var targetDocument = ExcelDocument.Load(targetPath, new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var targetDocument = ExcelDocument.Load(targetPath, new ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 using var reader = targetDocument.CreateReader();
                 object?[,] values = reader.GetSheet("Imported").ReadRange("A1:B2");
                 Assert.Equal("Region", values[0, 0]);

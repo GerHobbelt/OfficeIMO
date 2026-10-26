@@ -2082,7 +2082,7 @@ public sealed class PdfConversionScenarioManifestTests {
             foreach (string scenarioId in adapterScenarioIds) Assert.Contains(scenarioId, scenarioIds);
         }
 
-        Assert.Equal(new[] { "asciidoc", "excel", "html", "latex", "markdown", "onenote", "powerpoint", "rtf", "word" },
+        Assert.Equal(new[] { "asciidoc", "excel", "html", "latex", "markdown", "mhtml", "onenote", "powerpoint", "rtf", "word" },
             catalogIds.OrderBy(id => id, StringComparer.Ordinal));
     }
 
@@ -2319,7 +2319,13 @@ public sealed class PdfConversionScenarioManifestTests {
             sheet.AddConditionalColorScale("B4:B7", "FFFFF2CC", "FF70AD47");
             sheet.AddConditionalDataBar("C4:C7", "FF5B9BD5");
             sheet.AddImage(10, 1, PdfPngTestImages.CreateRgbPng(2, 2), "image/png", widthPixels: 36, heightPixels: 24, name: "Dashboard badge", altText: "Dashboard badge");
-            sheet.AddChartFromRange("A3:C7", row: 1, column: 5, widthPixels: 320, heightPixels: 190, type: ExcelChartType.ColumnClustered, title: "KPI Trend");
+            var chartData = new ExcelChartData(
+                new[] { "Renewals", "New business", "Services", "Expansion" },
+                new[] {
+                    new ExcelChartSeries("Actual", new[] { 128D, 92D, 76D, 54D }, ExcelChartType.ColumnClustered, DrawingCore.OfficeChartAxisGroup.Primary),
+                    new ExcelChartSeries("Target", new[] { 120D, 105D, 70D, 65D }, ExcelChartType.Line, DrawingCore.OfficeChartAxisGroup.Secondary)
+                });
+            sheet.AddChart(chartData, row: 1, column: 5, widthPixels: 320, heightPixels: 190, type: ExcelChartType.ColumnClustered, title: "KPI Trend");
             sheet.SetHeaderFooter(headerCenter: "Excel Dashboard PDF Gate", footerRight: "Page &P of &N");
             sheet.SetPageSetup(fitToWidth: 1U, fitToHeight: 1U);
             document.SetPrintArea(sheet, "A1:H14", save: false);
@@ -2350,7 +2356,7 @@ public sealed class PdfConversionScenarioManifestTests {
         PowerPointTextBox marker = slide.AddTextBoxPoints("Grouped transform marker", 20, 58, 150, 20);
         marker.FontSize = 9;
         marker.Color = "0F172A";
-        PowerPointAutoShape preset = slide.AddShapePoints(DocumentFormat.OpenXml.Drawing.ShapeTypeValues.Triangle, 176, 44, 36, 36);
+        PowerPointAutoShape preset = slide.AddShapePoints(OfficeIMO.Drawing.OfficePresetShapeType.Triangle, 176, 44, 36, 36);
         preset.FillColor = "1F4E79";
         preset.OutlineColor = "1F4E79";
         PowerPointAutoShape first = slide.AddRectanglePoints(20, 20, 30, 20);

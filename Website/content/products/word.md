@@ -1,6 +1,6 @@
 ---
 title: "OfficeIMO.Word"
-description: "Create, read, edit, and convert DOC, DOCX, DOCM, DOT, and modern Word templates from .NET without Microsoft Word. Compare packages, examples, and limits."
+description: "Create and edit DOCX, work with documented DOC and DOT subsets, and inspect compatibility limits from .NET without Microsoft Word."
 layout: product
 product_color: "#2563eb"
 install: "dotnet add package OfficeIMO.Word"
@@ -20,7 +20,7 @@ meta.software.price_currency: "USD"
 
 OfficeIMO.Word helps .NET applications create, read, edit, and convert modern `.docx` documents and supported Word 97–2003 `.doc` files without COM interop or Microsoft Word. It is a good fit for reports, contracts, invoices, archive modernization, and other structured workflows where code needs control over content, layout, compatibility, and packaging.
 
-Modern Word files use the complete OfficeIMO object model. Legacy files load through the same `WordDocument.Load(...)` entry point, project supported content into that model, and use preflight diagnostics before native DOC output. Unsupported content is reported, preserved, converted through an explicit fallback, or blocked—it is not silently presented as native support.
+Modern Word files use the main OfficeIMO object model. Legacy files load through the same `WordDocument.Load(...)` entry point, project supported content into that model, and use preflight diagnostics before native DOC output. Unsupported content is reported, preserved, converted through an explicit fallback, or blocked—it is not silently presented as native support.
 
 ## Features
 
@@ -33,6 +33,7 @@ Modern Word files use the complete OfficeIMO object model. Legacy files load thr
 - **Bookmarks & hyperlinks** — internal cross-references and external links
 - **Charts** — pie, bar, line, area, and combo charts with series data, legends, and axis formatting
 - **Content controls** — checkboxes, drop-down lists, combo boxes, date pickers, and rich text controls
+- **Model-driven templates** — bind `{{Name}}` placeholders, nested repeated blocks, conditions, images, and hyperlinks while the DOCX retains layout ownership
 - **Document protection** — read-only, password protection, and editing restrictions
 - **Footnotes & endnotes** — numbered references with custom formatting
 - **Sections & page numbering** — multiple sections with independent orientation, margins, and numbering
@@ -44,6 +45,7 @@ Modern Word files use the complete OfficeIMO object model. Legacy files load thr
 | Workflow | Recommended route | What remains visible |
 |----------|-------------------|----------------------|
 | Create a new report, contract, or invoice | Author DOCX with `WordDocument.Create(...)` | Paragraphs, tables, sections, fields, images, charts, controls, and validation |
+| Fill an approved DOCX template | Bind a dictionary or POCO with `WordTemplate.Apply(...)` | Replacement counts, missing values, repeated blocks, conditions, images, and links |
 | Modernize an archive | Load DOC and save DOCX | Import warnings, preserved source metadata, and unsupported features |
 | Deliver a legacy DOC | Analyze DOCX-to-DOC, select a compatibility mode, then convert | Native, approximated, rasterized, preserved, blocked, and dropped decisions |
 | Review and approval | Load DOCX or supported DOC content into the normal model | Comments, revisions, comparison, redline, and feature inspection |
@@ -117,6 +119,7 @@ OfficeIMO.Word runs on Windows, Linux, and macOS. It creates and edits modern Wo
 | Guide | Description |
 |-------|-------------|
 | [Word documentation](/docs/word/) | Start with the package overview and document structure. |
+| [DOCX templates](/docs/word/templates/) | Bind models to Word-authored layouts with plain markers, merge fields, or content controls. |
 | [Tables guide](/docs/word/tables/) | Build styled tables, merged cells, and richer layouts. |
 | [Market readiness](/docs/word/market-readiness/) | See the current non-PDF readiness snapshot for templates, review workflows, conversion proof, and showcase work. |
 | [DOC and DOCX compatibility](/compatibility/#word) | Check formats, conversion directions, tracked behaviors, and fidelity states. |

@@ -131,7 +131,7 @@ namespace OfficeIMO.Excel {
             internal bool TryWithTableStyle(
                 string sheetName,
                 string tableOrRange,
-                TableStyle tableStyle,
+                ExcelTableStyle tableStyle,
                 bool? showFirstColumn,
                 bool? showLastColumn,
                 bool? showRowStripes,
@@ -219,7 +219,7 @@ namespace OfficeIMO.Excel {
                 string sheetName,
                 string tableName,
                 bool includeHeaders,
-                TableStyle tableStyle,
+                ExcelTableStyle tableStyle,
                 bool includeAutoFilter,
                 Func<DateTimeOffset, DateTime> dateTimeOffsetWriteStrategy,
                 CancellationToken ct) {
@@ -287,7 +287,7 @@ namespace OfficeIMO.Excel {
             internal static DirectDataSetWorkbookModel Create(
                 DataSet dataSet,
                 bool createTables,
-                TableStyle tableStyle,
+                ExcelTableStyle tableStyle,
                 bool includeHeaders,
                 bool includeAutoFilter,
                 bool autoFit,
@@ -347,7 +347,7 @@ namespace OfficeIMO.Excel {
                 string range,
                 DirectDataSetTableModel tableModel,
                 bool createTable,
-                TableStyle tableStyle,
+                ExcelTableStyle tableStyle,
                 bool includeHeaders,
                 bool includeAutoFilter,
                 bool autoFit,
@@ -450,7 +450,12 @@ namespace OfficeIMO.Excel {
                 }
 
                 string value = _multipleUnderscoresRegex.Replace(builder.ToString().Trim(), "_");
-                return value.Trim('_');
+                value = value.Trim('_');
+                if (string.IsNullOrWhiteSpace(value)) {
+                    return "Sheet1";
+                }
+
+                return value.Length > 31 ? value.Substring(0, 31) : value;
             }
 
             private static string SanitizeTableName(string name) {
@@ -468,7 +473,7 @@ namespace OfficeIMO.Excel {
                     value = "_" + value;
                 }
 
-                return value;
+                return value.Length > 255 ? value.Substring(0, 255) : value;
             }
         }
 
@@ -479,7 +484,7 @@ namespace OfficeIMO.Excel {
                 string? tableName,
                 string range,
                 DirectDataSetTableModel table,
-                TableStyle tableStyle,
+                ExcelTableStyle tableStyle,
                 bool includeHeaders,
                 bool includeAutoFilter,
                 bool hasTable,
@@ -545,7 +550,7 @@ namespace OfficeIMO.Excel {
             }
 
             internal DirectDataSetSheetModel WithTableStyle(
-                TableStyle tableStyle,
+                ExcelTableStyle tableStyle,
                 bool? showFirstColumn,
                 bool? showLastColumn,
                 bool? showRowStripes,
@@ -622,7 +627,7 @@ namespace OfficeIMO.Excel {
 
             internal DirectDataSetTableModel Table { get; }
 
-            internal TableStyle TableStyle { get; }
+            internal ExcelTableStyle TableStyle { get; }
 
             internal bool IncludeHeaders { get; }
 

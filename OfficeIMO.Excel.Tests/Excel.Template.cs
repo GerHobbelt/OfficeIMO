@@ -39,7 +39,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Equal("Invoice INV-001", document["Invoice"].CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Customer: Adatum", document["Invoice"].CellAt(2, 1).GetValue<string>());
                 Assert.Equal("Total: 123.45", document["Summary"].CellAt(1, 1).GetValue<string>());
@@ -72,7 +72,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(outputPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(outputPath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Template"];
                 Assert.Equal("Adatum", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Footer", sheet.CellAt(2, 1).GetValue<string>());
@@ -124,7 +124,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Template"];
                 Assert.Equal("Hello Adatum ", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal(string.Empty, sheet.CellAt(2, 1).GetValue<string>());
@@ -163,7 +163,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Consulting", sheet.CellAt(2, 1).GetValue<string>());
                 Assert.Equal(1200d, sheet.CellAt(2, 2).GetValue<double>());
@@ -443,7 +443,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Header", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Discount", sheet.CellAt(2, 1).GetValue<string>());
@@ -472,7 +472,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Header", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Footer", sheet.CellAt(2, 1).GetValue<string>());
@@ -671,7 +671,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellAt(4, 2).SetValue("Amount");
                 sheet.CellAt(5, 1).SetValue("A");
                 sheet.CellAt(5, 2).SetValue(10);
-                sheet.AddTable("A4:B5", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.TableStyle.TableStyleMedium2);
+                sheet.AddTable("A4:B5", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2);
                 document.SetNamedRange("GlobalSales", "'Invoice'!A4:B5", save: false);
                 sheet.SetNamedRange("LocalSales", "A4:B5", save: false);
                 document.Save();
@@ -692,7 +692,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("'Invoice'!$A$5:$B$6", document.GetNamedRange("GlobalSales"));
                 Assert.Equal("$A$5:$B$6", sheet.GetNamedRange("LocalSales"));
@@ -720,7 +720,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellAt(5, 2).SetValue("Amount");
                 sheet.CellAt(6, 1).SetValue("A");
                 sheet.CellAt(6, 2).SetValue(10);
-                sheet.AddTable("A5:B6", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.TableStyle.TableStyleMedium2);
+                sheet.AddTable("A5:B6", hasHeader: true, name: "SalesTable", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2);
                 document.SetNamedRange("GlobalSales", "'Invoice'!A5:B6", save: false);
                 sheet.SetNamedRange("LocalSales", "A5:B6", save: false);
                 document.Save();
@@ -734,7 +734,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("'Invoice'!$A$3:$B$4", document.GetNamedRange("GlobalSales"));
                 Assert.Equal("$A$3:$B$4", sheet.GetNamedRange("LocalSales"));
@@ -752,7 +752,7 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void Test_ExcelTemplate_RepeatsTemplateSheetForModels() {
             string filePath = Path.Combine(_directoryWithFiles, "ExcelTemplate.RepeatingSheets.xlsx");
-            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
+            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
 
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorksheet("Region Template");
@@ -777,7 +777,7 @@ namespace OfficeIMO.Tests {
                 sheet.CellAt(6, 2).SetValue("Amount");
                 sheet.CellAt(7, 1).SetValue("{{Owner}}");
                 sheet.CellAt(7, 2).SetValue("{{Amount}}");
-                sheet.AddTable("A6:B7", hasHeader: true, name: "RegionTable", OfficeIMO.Excel.TableStyle.TableStyleMedium2);
+                sheet.AddTable("A6:B7", hasHeader: true, name: "RegionTable", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2);
                 sheet.SetHyperlink("A9", "https://example.com/help", "Help");
                 sheet.SetInternalLink(11, 1, "'Region Template'!A1", "Back to top");
                 sheet.SetComment("A10", "Template note", author: "Template");
@@ -809,7 +809,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Contains(document.Sheets, sheet => sheet.Name == "North");
                 Assert.Contains(document.Sheets, sheet => sheet.Name == "South");
 
@@ -996,7 +996,7 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void Test_ExcelTemplate_RepeatsTemplateSheetPreservesChartDrawingParts() {
             string filePath = Path.Combine(_directoryWithFiles, "ExcelTemplate.RepeatingSheets.ChartDrawingPart.xlsx");
-            byte[] imageBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
+            byte[] imageBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
 
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorksheet("Chart Template");
@@ -1070,7 +1070,7 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void Test_ExcelTemplate_RepeatsTemplateSheetPreservesDiagramDrawingParts() {
             string filePath = Path.Combine(_directoryWithFiles, "ExcelTemplate.RepeatingSheets.DiagramDrawingParts.xlsx");
-            byte[] imageBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
+            byte[] imageBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
             string dataXml = "<dgm:dataModel xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dgm:ptLst /><dgm:cxnLst /><dgm:bg /><dgm:whole /></dgm:dataModel>";
             string layoutXml = "<dgm:layoutDef uniqueId=\"urn:officeimo:test:layout\" xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dgm:title val=\"\" /><dgm:desc val=\"\" /><dgm:catLst><dgm:cat type=\"list\" pri=\"400\" /></dgm:catLst><dgm:layoutNode name=\"diagram\" /></dgm:layoutDef>";
             string colorsXml = "<dgm:colorsDef uniqueId=\"urn:officeimo:test:colors\" xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dgm:title val=\"\" /><dgm:desc val=\"\" /><dgm:catLst><dgm:cat type=\"accent1\" pri=\"11200\" /></dgm:catLst></dgm:colorsDef>";
@@ -1164,7 +1164,7 @@ namespace OfficeIMO.Tests {
         [Fact]
         public void Test_ExcelTemplate_ImageMarkersBindBytesAndStreams() {
             string filePath = Path.Combine(_directoryWithFiles, "ExcelTemplate.ImageMarkers.xlsx");
-            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
+            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
 
             using (var document = ExcelDocument.Create(filePath)) {
                 var sheet = document.AddWorksheet("Template");
@@ -1226,7 +1226,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Invoice"];
                 Assert.Equal("Customer: Adatum", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Total: $123.45", sheet.CellAt(2, 1).GetValue<string>());
@@ -1267,7 +1267,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var document = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var sheet = document["Template"];
                 Assert.Equal("Customer ADATUM", sheet.CellAt(1, 1).GetValue<string>());
                 Assert.Equal("Risk High", sheet.CellAt(2, 1).GetValue<string>());

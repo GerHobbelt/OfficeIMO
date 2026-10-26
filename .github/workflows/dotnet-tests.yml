@@ -43,18 +43,18 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -67,16 +67,25 @@ jobs:
       - name: Build solution
         run: dotnet build OfficeIMO.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
 
+      - name: Build public examples
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $project = 'OfficeIMO.Examples/OfficeIMO.Examples.csproj'
+          dotnet restore $project
+          dotnet build $project --configuration $env:BUILD_CONFIGURATION --no-restore
+
   email-package-consumers:
     name: 'OfficeIMO email platform packed consumers'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -92,10 +101,15 @@ jobs:
           $configPath = Join-Path $configDirectory 'nuget.config'
           New-Item -ItemType Directory -Force -Path $feed | Out-Null
           $projects = @(
-            'OfficeIMO.Drawing/OfficeIMO.Drawing.csproj',
+            'OfficeIMO.Core/OfficeIMO.Core.csproj',
+            'OfficeIMO.Markdown/OfficeIMO.Markdown.csproj',
             'OfficeIMO.Rtf/OfficeIMO.Rtf.csproj',
             'OfficeIMO.Email/OfficeIMO.Email.csproj',
+            'OfficeIMO.Html/OfficeIMO.Html.csproj',
+            'OfficeIMO.Markdown.Html/OfficeIMO.Markdown.Html.csproj',
+            'OfficeIMO.Mhtml/OfficeIMO.Mhtml.csproj',
             'OfficeIMO.Reader.Core/OfficeIMO.Reader.Core.csproj',
+            'OfficeIMO.Reader.Html/OfficeIMO.Reader.Html.csproj',
             'OfficeIMO.Reader.Email/OfficeIMO.Reader.Email.csproj',
             'OfficeIMO.Reader.Image/OfficeIMO.Reader.Image.csproj'
           )
@@ -116,8 +130,13 @@ jobs:
           $readerCoreVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Core'
           $readerEmailVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Email'
           $readerImageVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Image'
-          $drawingVersion = Get-PackedPackageVersion 'OfficeIMO.Drawing'
+          $coreVersion = Get-PackedPackageVersion 'OfficeIMO.Core'
+          $markdownVersion = Get-PackedPackageVersion 'OfficeIMO.Markdown'
           $rtfVersion = Get-PackedPackageVersion 'OfficeIMO.Rtf'
+          $htmlVersion = Get-PackedPackageVersion 'OfficeIMO.Html'
+          $markdownHtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Markdown.Html'
+          $mhtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Mhtml'
+          $readerHtmlVersion = Get-PackedPackageVersion 'OfficeIMO.Reader.Html'
           $smokeProperties = @(
             '--property:EnableOfficeIMOEmailPackageSmoke=true',
             "--property:OfficeIMOEmailPackageVersion=$emailVersion",
@@ -143,10 +162,15 @@ jobs:
           $localMapping = $nugetConfig.CreateElement('packageSource')
           $localMapping.SetAttribute('key', 'OfficeIMOLocal')
           foreach ($packageId in @(
-            'OfficeIMO.Drawing',
+            'OfficeIMO.Core',
+            'OfficeIMO.Markdown',
             'OfficeIMO.Rtf',
             'OfficeIMO.Email',
+            'OfficeIMO.Html',
+            'OfficeIMO.Markdown.Html',
+            'OfficeIMO.Mhtml',
             'OfficeIMO.Reader.Core',
+            'OfficeIMO.Reader.Html',
             'OfficeIMO.Reader.Email',
             'OfficeIMO.Reader.Image'
           )) {
@@ -167,8 +191,13 @@ jobs:
             @{ Id = 'officeimo.reader.core'; Version = $readerCoreVersion },
             @{ Id = 'officeimo.reader.email'; Version = $readerEmailVersion },
             @{ Id = 'officeimo.reader.image'; Version = $readerImageVersion },
-            @{ Id = 'officeimo.drawing'; Version = $drawingVersion },
-            @{ Id = 'officeimo.rtf'; Version = $rtfVersion }
+            @{ Id = 'officeimo.core'; Version = $coreVersion },
+            @{ Id = 'officeimo.markdown'; Version = $markdownVersion },
+            @{ Id = 'officeimo.rtf'; Version = $rtfVersion },
+            @{ Id = 'officeimo.html'; Version = $htmlVersion },
+            @{ Id = 'officeimo.markdown.html'; Version = $markdownHtmlVersion },
+            @{ Id = 'officeimo.mhtml'; Version = $mhtmlVersion },
+            @{ Id = 'officeimo.reader.html'; Version = $readerHtmlVersion }
           )) {
             $metadataPath = Join-Path $env:NUGET_PACKAGES "$($package.Id)/$($package.Version)/.nupkg.metadata"
             $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
@@ -187,10 +216,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -204,10 +233,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -223,10 +252,8 @@ jobs:
           $configPath = Join-Path $configDirectory 'nuget.config'
           New-Item -ItemType Directory -Force -Path $feed | Out-Null
           $projects = @(
-            'OfficeIMO.Drawing/OfficeIMO.Drawing.csproj',
+            'OfficeIMO.Core/OfficeIMO.Core.csproj',
             'OfficeIMO.Markdown/OfficeIMO.Markdown.csproj',
-            'OfficeIMO.Rtf/OfficeIMO.Rtf.csproj',
-            'OfficeIMO.Email/OfficeIMO.Email.csproj',
             'OfficeIMO.Html/OfficeIMO.Html.csproj',
             'OfficeIMO.Reader.Core/OfficeIMO.Reader.Core.csproj',
             'OfficeIMO.OneNote/OfficeIMO.OneNote.csproj',
@@ -251,10 +278,8 @@ jobs:
             return $packages[0].BaseName.Substring($id.Length + 1)
           }
           $packageIds = @(
-            'OfficeIMO.Drawing',
+            'OfficeIMO.Core',
             'OfficeIMO.Markdown',
-            'OfficeIMO.Rtf',
-            'OfficeIMO.Email',
             'OfficeIMO.Html',
             'OfficeIMO.Reader.Core',
             'OfficeIMO.OneNote',
@@ -328,10 +353,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -370,10 +395,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -409,10 +434,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -496,15 +521,15 @@ jobs:
             project: OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -571,10 +596,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -754,17 +779,17 @@ jobs:
             collectCoverage: false
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache pinned PDF rasterizer
         id: poppler-cache
         if: matrix.partition == 'pdf-visual-inspector'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/officeimo-poppler-26.05.0
           key: poppler-26.05.0-ubuntu-24.04-${{ runner.arch }}
@@ -834,7 +859,7 @@ jobs:
           echo "OFFICEIMO_PDF_RASTERIZER=${rasterizer}" >> "${GITHUB_ENV}"
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -1233,7 +1258,7 @@ jobs:
             TestResults/visual-baselines/**
       - name: Upload coverage to Codecov
         if: ${{ matrix.collectCoverage }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: '**/coverage.cobertura.xml'
           fail_ci_if_error: false
@@ -1245,15 +1270,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -1280,15 +1305,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -1356,7 +1381,9 @@ jobs:
     # Linux covers the full net8.0/net10.0 solution test contract. Hosted macOS
     # runners are scarce for the organization, so keep this lane to one focused
     # platform smoke that proves macOS restore/build/test execution still works.
-    timeout-minutes: 25
+    # Cold builds can approach 25 minutes; leave enough time for post-job cache
+    # cleanup so a successful test run is not reported as cancelled.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -1364,15 +1391,15 @@ jobs:
           - framework: net8.0
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -1453,18 +1480,20 @@ jobs:
   aot-trim-analyzers:
     name: 'AOT/Trim analyzers'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Analyzer builds plus isolated NativeAOT publishes now exceed the former
+    # 35-minute budget on a cold runner; retain room for evidence upload/cleanup.
+    timeout-minutes: 50
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -1495,18 +1524,19 @@ jobs:
   aot-windows:
     name: 'NativeAOT Windows'
     runs-on: windows-latest
-    timeout-minutes: 35
+    # The production matrix can finish near 35 minutes before cache post-actions.
+    timeout-minutes: 50
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}

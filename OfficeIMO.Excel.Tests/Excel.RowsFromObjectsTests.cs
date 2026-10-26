@@ -6,6 +6,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeIMO.Excel;
 using OfficeIMO.Excel.Fluent;
+using OfficeIMO.Data;
 using Xunit;
 
 namespace OfficeIMO.Tests {
@@ -237,7 +238,7 @@ namespace OfficeIMO.Tests {
                             o.ExpandProperties.Add(nameof(Person.Tags));
                             o.CollectionMode = CollectionMode.ExpandRows;
                         })
-                        .Table("People", t => t.Style(OfficeIMO.Excel.TableStyle.TableStyleMedium9)))
+                        .Table("People", t => t.Style(OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9)))
                     .End()
                     .Save();
             }

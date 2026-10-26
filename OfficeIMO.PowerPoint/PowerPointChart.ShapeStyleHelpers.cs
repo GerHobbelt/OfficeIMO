@@ -16,7 +16,7 @@ namespace OfficeIMO.PowerPoint {
         private static void ApplyTextStyle(A.TextCharacterPropertiesType runProps, double? fontSizePoints, bool? bold,
             bool? italic, string? color, string? fontName) {
             if (fontSizePoints != null) {
-                runProps.FontSize = (int)Math.Round(fontSizePoints.Value * 100);
+                runProps.FontSize = PowerPointTextDefaults.ToDrawingFontSize(fontSizePoints, nameof(fontSizePoints));
             }
             if (bold != null) {
                 runProps.Bold = bold.Value;
@@ -46,9 +46,7 @@ namespace OfficeIMO.PowerPoint {
         }
 
         private static void ValidateTextStyle(double? fontSizePoints, string? color, string? fontName) {
-            if (fontSizePoints != null && fontSizePoints <= 0) {
-                throw new ArgumentOutOfRangeException(nameof(fontSizePoints));
-            }
+            _ = PowerPointTextDefaults.ToDrawingFontSize(fontSizePoints, nameof(fontSizePoints));
             if (color != null && string.IsNullOrWhiteSpace(color)) {
                 throw new ArgumentException("Color cannot be empty.", nameof(color));
             }
@@ -103,7 +101,7 @@ namespace OfficeIMO.PowerPoint {
             }
         }
 
-        private static void ValidateTrendline(C.TrendlineValues type, int? order, int? period,
+        private static void ValidateTrendline(OfficeChartTrendlineType type, int? order, int? period,
             double? forward, double? backward, string? lineColor, double? lineWidthPoints) {
             if (order != null && (order <= 0 || order > byte.MaxValue)) {
                 throw new ArgumentOutOfRangeException(nameof(order));
@@ -124,8 +122,8 @@ namespace OfficeIMO.PowerPoint {
                 throw new ArgumentOutOfRangeException(nameof(lineWidthPoints));
             }
 
-            bool isPolynomial = type.Equals(C.TrendlineValues.Polynomial);
-            bool isMovingAverage = type.Equals(C.TrendlineValues.MovingAverage);
+            bool isPolynomial = type == OfficeChartTrendlineType.Polynomial;
+            bool isMovingAverage = type == OfficeChartTrendlineType.MovingAverage;
             if (isPolynomial && order == null) {
                 throw new ArgumentException("Polynomial trendlines require an order.", nameof(order));
             }
@@ -273,7 +271,7 @@ namespace OfficeIMO.PowerPoint {
             }
         }
 
-        private static void ApplyTrendline(OpenXmlCompositeElement series, C.TrendlineValues type, int? order, int? period,
+        private static void ApplyTrendline(OpenXmlCompositeElement series, OfficeChartTrendlineType type, int? order, int? period,
             double? forward, double? backward, double? intercept, bool displayEquation, bool displayRSquared,
             string? lineColor, double? lineWidthPoints) {
             if (!IsTrendlineSupportedSeries(series)) {
@@ -289,12 +287,12 @@ namespace OfficeIMO.PowerPoint {
                 trendline.Append(props);
             }
 
-            trendline.Append(new C.TrendlineType { Val = type });
+            trendline.Append(new C.TrendlineType { Val = type.ToOpenXml() });
 
-            if (type.Equals(C.TrendlineValues.Polynomial) && order != null) {
+            if (type == OfficeChartTrendlineType.Polynomial && order != null) {
                 trendline.Append(new C.PolynomialOrder { Val = (byte)order.Value });
             }
-            if (type.Equals(C.TrendlineValues.MovingAverage) && period != null) {
+            if (type == OfficeChartTrendlineType.MovingAverage && period != null) {
                 trendline.Append(new C.Period { Val = (uint)period.Value });
             }
             if (forward != null) {
@@ -527,8 +525,8 @@ namespace OfficeIMO.PowerPoint {
             return runProps;
         }
 
-        private static void ApplyMarker(C.Marker marker, C.MarkerStyleValues style, int? size, string? fillColor, string? lineColor, double? lineWidthPoints) {
-            marker.Symbol = new C.Symbol { Val = style };
+        private static void ApplyMarker(C.Marker marker, OfficeChartMarkerShape style, int? size, string? fillColor, string? lineColor, double? lineWidthPoints) {
+            marker.Symbol = new C.Symbol { Val = style.ToOpenXml() };
             if (size != null) {
                 marker.Size = new C.Size { Val = (byte)size.Value };
             }

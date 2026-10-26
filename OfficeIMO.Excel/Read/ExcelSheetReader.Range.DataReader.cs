@@ -17,6 +17,11 @@ namespace OfficeIMO.Excel {
             bool headersInFirstRow = true,
             int schemaSampleRows = 0,
             CancellationToken ct = default) {
+            if (schemaSampleRows == 0
+                && TryCreateIndexedUsedRangeDataReader(headersInFirstRow, ct, out IDataReader? indexedReader)) {
+                return indexedReader!;
+            }
+
             if (TryGetWorksheetCellPresence(out bool hasCells, ct) && !hasCells) {
                 return new ExcelRangeDataReader(
                     Array.Empty<RangeChunk>(),
@@ -27,11 +32,6 @@ namespace OfficeIMO.Excel {
                     schemaSampleRows,
                     _opt,
                     ct);
-            }
-
-            if (schemaSampleRows == 0
-                && TryCreateIndexedUsedRangeDataReader(headersInFirstRow, ct, out IDataReader? indexedReader)) {
-                return indexedReader!;
             }
 
             ValidateDataReaderProjection(ct);
@@ -50,33 +50,11 @@ namespace OfficeIMO.Excel {
             out IDataReader? dataReader) {
             dataReader = null;
             if (!CanUseRangeStreamXmlReader()
-                || !TryGetWorksheetDimensionReferenceFromXml(out string declaredRange, ct)
-                || !A1.TryParseRange(
-                    declaredRange,
-                    out int declaredFirstRow,
-                    out int declaredFirstColumn,
-                    out int declaredLastRow,
-                    out int declaredLastColumn)) {
-                return false;
-            }
-
-            int declaredFieldCount = declaredLastColumn - declaredFirstColumn + 1;
-            long declaredRowCount = (long)declaredLastRow - declaredFirstRow + 1L;
-            long declaredCellCount = declaredRowCount * declaredFieldCount;
-            if (declaredFieldCount <= 0
-                || declaredFieldCount > _opt.MaxDataReaderColumns
-                || declaredCellCount > _opt.MaxDataReaderBufferedCells) {
-                return false;
-            }
-
-            if (!ExcelUtf8RangeRowSource.TryCreate(
+                || !ExcelUtf8RangeRowSource.TryCreateForUsedRange(
                     this,
-                    declaredFirstRow,
-                    declaredLastRow,
-                    declaredFirstColumn,
-                    declaredFieldCount,
                     ct,
-                    out ExcelUtf8RangeRowSource? source)) {
+                    out ExcelUtf8RangeRowSource? source,
+                    out int declaredFirstColumn)) {
                 return false;
             }
 
@@ -133,7 +111,7 @@ namespace OfficeIMO.Excel {
             bool headersInFirstRow = true,
             int chunkRows = 1024,
             int schemaSampleRows = 1024,
-            OfficeIMO.Excel.ExecutionMode? mode = null,
+            OfficeIMO.Excel.ExcelExecutionMode? mode = null,
             CancellationToken ct = default) {
             if (chunkRows <= 0 || chunkRows > _opt.MaxDataReaderChunkRows) {
                 throw new ArgumentOutOfRangeException(nameof(chunkRows),
@@ -167,7 +145,6 @@ namespace OfficeIMO.Excel {
             }
             if (schemaSampleRows == 0
                 && rows > BufferedRangeStreamRowLimit
-                && mode != OfficeIMO.Excel.ExecutionMode.Parallel
                 && CanUseRangeStreamXmlReader()) {
                 if (cols > _opt.MaxDataReaderBufferedCells) {
                     throw new InvalidDataException($"Range data-reader buffering exceeds {nameof(ExcelReadOptions.MaxDataReaderBufferedCells)}.");
@@ -188,7 +165,7 @@ namespace OfficeIMO.Excel {
         private IEnumerable<RangeChunk> ReadRangeStreamForDataReader(
             string a1Range,
             int chunkRows,
-            OfficeIMO.Excel.ExecutionMode? mode,
+            OfficeIMO.Excel.ExcelExecutionMode? mode,
             CancellationToken ct) {
             if (chunkRows <= 0) {
                 throw new ArgumentOutOfRangeException(nameof(chunkRows), "Chunk row count must be greater than zero.");
@@ -203,8 +180,7 @@ namespace OfficeIMO.Excel {
                 ct.ThrowIfCancellationRequested();
             }
 
-            if (mode != OfficeIMO.Excel.ExecutionMode.Parallel
-                && CanUseRangeStreamXmlReader()
+            if (CanUseRangeStreamXmlReader()
                 && RowsAreSortedWithinRangeXmlFast(r1, r2, ct)) {
                 foreach (var chunk in ReadRangeStreamXmlFast(r1, c1, r2, c2, chunkRows, ct)) {
                     yield return chunk;
@@ -218,8 +194,7 @@ namespace OfficeIMO.Excel {
                 yield break;
             }
 
-            if (mode != OfficeIMO.Excel.ExecutionMode.Parallel
-                && RowsAreSortedWithinRange(sheetData, r1, r2, ct)) {
+            if (RowsAreSortedWithinRange(sheetData, r1, r2, ct)) {
                 foreach (var chunk in ReadSortedDomRangeStream(sheetData, r1, c1, r2, c2, chunkRows, ct)) {
                     yield return chunk;
                 }

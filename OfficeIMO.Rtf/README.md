@@ -28,9 +28,13 @@ RtfReadResult read = RtfDocument.Load("input.rtf");
 read.SaveLossless("unchanged-copy.rtf");
 ```
 
+Byte, stream, and file reads retain the exact original bytes. `HasOriginalBytes`, `ToBytesLossless()`, and `TryGetLosslessBytes(...)` make that contract observable. Character-only input can be written as lossless bytes only when every source character has an exact single-byte representation; the API reports or throws instead of silently transcoding it.
+
+RTF field instructions are tokenized by `RtfFieldCodeSyntax`, including quoted arguments, switches, escapes, and unterminated-token state. Hyperlink projection uses this syntax rather than regular-expression extraction.
+
 ## Read untrusted RTF
 
-The compatibility profile is intentionally permissive apart from nesting depth. Uploaded files should use the bounded profile and a cancellation token:
+The default OfficeIMO profile is bounded, does not materialize embedded objects or file-table references, and accepts only web and mail hyperlinks. Uploaded files can state that policy explicitly and provide a cancellation token:
 
 ```csharp
 RtfReadOptions options = RtfReadOptions.CreateUntrustedProfile();
@@ -44,7 +48,7 @@ RtfReadResult read = await RtfDocument.LoadAsync(
 
 The profile caps input bytes and characters, group depth/count, token count, text, binary payloads, images, objects, and semantic block count. A breached limit throws `RtfReadLimitException` with a stable `Code`, `LimitSource`, observed value, configured limit, and source position.
 
-It also disables embedded-object and file-reference materialization and restricts semantic hyperlinks to web and mail schemes. The core never fetches external resources.
+The core never fetches external resources. `RtfReadOptions.CreateCompatibilityProfile()` restores the former unbounded, object-materializing, all-schemes behavior for trusted legacy inputs only.
 
 ## Require no conversion loss
 
@@ -102,7 +106,7 @@ Root nodes can also be inserted, removed, or moved with `InsertRootRtf`, `Remove
 
 The reader supports Unicode escapes, single-byte Windows code pages 874 and 1250-1258, IBM 437/850, Mac Roman, and East Asian Windows code pages 932/936/949/950. Font charset changes can switch the active decoder within a document. Unsupported code pages emit diagnostic `RTF103` and use the documented Windows-1252 fallback while lossless source remains intact.
 
-The producer manifest covers real Microsoft Word 16 and Outlook 16 output, pinned LibreOffice regressions, genuine external Google Docs and macOS TextEdit/RTFD output, a redacted Epic EHI export, distinct CRM and helpdesk workflow artifacts, and a reproducibly generated GemBox.Document fixture. CRM/helpdesk evidence is labeled as workflow output rather than a vendor-native export. Third-party external bytes are not redistributed; `Build/Test-RtfExternalProducerEvidence.ps1` verifies provenance and then exercises bounded read, web-safe HTML, Markdown, and diagnostic-preserving Word conversion for every external artifact.
+Interoperability coverage includes RTF produced by Microsoft Word, Outlook, LibreOffice, Google Docs, macOS TextEdit/RTFD, an Epic EHI export, CRM and helpdesk workflows, and GemBox.Document. Each external sample is exercised through bounded reading, web-safe HTML, Markdown, and diagnostic-preserving Word conversion. See the [RTF support matrix](https://github.com/EvotecIT/OfficeIMO/blob/master/Docs/officeimo.rtf-support-matrix.md) for exact producer classifications and known limits.
 
 ## Related packages
 
@@ -117,6 +121,6 @@ See the [living support matrix](https://github.com/EvotecIT/OfficeIMO/blob/maste
 ## Dependency footprint
 
 - **External:** No third-party RTF engine. `System.Text.Encoding.CodePages` supplies legacy encodings.
-- **OfficeIMO:** `OfficeIMO.Drawing`. Lexing, parsing, semantic binding, editing, and writing are first-party.
+- **OfficeIMO:** `OfficeIMO.Core`. Lexing, parsing, semantic binding, editing, and writing are first-party.
 
 See the [complete OfficeIMO package map](../README.md) for related formats and conversion paths.

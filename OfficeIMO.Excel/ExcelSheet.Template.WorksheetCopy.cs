@@ -8,7 +8,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 namespace OfficeIMO.Excel {
     public partial class ExcelSheet {
         internal ExcelSheet CopyTemplateWorksheet(string sheetName) {
-            ExcelSheet target = _excelDocument.AddWorksheet(sheetName, SheetNameValidationMode.Sanitize);
+            ExcelSheet target = _excelDocument.AddWorksheet(sheetName, ExcelSheetNameValidationMode.Sanitize);
             Worksheet worksheet = (Worksheet)WorksheetRoot.CloneNode(true);
             RemoveRelationshipBackedTemplateCopyElements(worksheet);
             target.WorksheetRoot = worksheet;
@@ -270,15 +270,8 @@ namespace OfficeIMO.Excel {
                 return;
             }
 
-            string updated = text!;
-            foreach (var pair in definedNameMap) {
-                updated = Regex.Replace(
-                    updated,
-                    @"(?<![A-Za-z0-9_\.])" + Regex.Escape(pair.Key) + @"(?![A-Za-z0-9_\.])",
-                    pair.Value,
-                    RegexOptions.IgnoreCase,
-                    TimeSpan.FromMilliseconds(100));
-            }
+            string updated = ExcelFormulaSyntaxTree.Parse(text!).RewriteNames(name =>
+                definedNameMap.TryGetValue(name, out string? replacement) ? replacement : name);
 
             if (!string.Equals(updated, text, StringComparison.Ordinal)) {
                 formula.Text = updated;
@@ -349,7 +342,7 @@ namespace OfficeIMO.Excel {
                 clonedTable.Id = _excelDocument.AllocateTableId();
 
                 string requestedName = clonedTable.Name?.Value ?? clonedTable.DisplayName?.Value ?? "Table";
-                string tableName = EnsureValidUniqueTableName(requestedName, TableNameValidationMode.Sanitize);
+                string tableName = EnsureValidUniqueTableName(requestedName, ExcelTableNameValidationMode.Sanitize);
                 clonedTable.Name = tableName;
                 clonedTable.DisplayName = tableName;
                 _excelDocument.ReserveTableName(tableName);

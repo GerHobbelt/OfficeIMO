@@ -127,11 +127,11 @@ namespace OfficeIMO.Tests {
                 "A1:B3",
                 hasHeader: true,
                 name: "Results",
-                style: OfficeIMO.Excel.TableStyle.TableStyleMedium2,
+                style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2,
                 includeAutoFilter: false);
             if (totalsRow) {
-                sheet.SetTableTotalsByName("Results", new Dictionary<string, TotalsRowFunctionValues> {
-                    ["Value"] = TotalsRowFunctionValues.Sum
+                sheet.SetTableTotalsByName("Results", new Dictionary<string, ExcelTableTotalsFunction> {
+                    ["Value"] = ExcelTableTotalsFunction.Sum
                 });
             }
 

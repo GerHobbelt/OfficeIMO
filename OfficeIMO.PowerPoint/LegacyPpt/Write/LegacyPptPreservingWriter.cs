@@ -1,5 +1,5 @@
 using DocumentFormat.OpenXml.Packaging;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.PowerPoint.LegacyPpt.Internal;
 using OfficeIMO.PowerPoint.LegacyPpt.Model;
 using System.Text;
@@ -422,9 +422,9 @@ namespace OfficeIMO.PowerPoint.LegacyPpt.Write {
             if (kind == LegacyPptShapeKind.Group) return shape is PowerPointGroupShape;
             if (shape is not PowerPointAutoShape autoShape) return false;
             if (kind == LegacyPptShapeKind.AutoShape) return autoShape.ShapeType.HasValue;
-            if (kind == LegacyPptShapeKind.Rectangle) return autoShape.ShapeType == A.ShapeTypeValues.Rectangle;
-            if (kind == LegacyPptShapeKind.Ellipse) return autoShape.ShapeType == A.ShapeTypeValues.Ellipse;
-            return kind == LegacyPptShapeKind.Line && autoShape.ShapeType == A.ShapeTypeValues.Line;
+            if (kind == LegacyPptShapeKind.Rectangle) return autoShape.ShapeType == OfficePresetShapeType.Rectangle;
+            if (kind == LegacyPptShapeKind.Ellipse) return autoShape.ShapeType == OfficePresetShapeType.Ellipse;
+            return kind == LegacyPptShapeKind.Line && autoShape.ShapeType == OfficePresetShapeType.Line;
         }
 
         private static bool HasOnlyPlainProjectedText(PowerPointTextBox textBox) {

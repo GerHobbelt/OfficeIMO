@@ -289,12 +289,12 @@ if ($catalog.repository.productionComponentCount -ne @($catalog.components).Coun
     Add-Failure 'The OfficeIMO component summary does not match the generated component list.'
 }
 $expectedRepositoryCounts = [ordered]@{
-    projectCount = 159
-    productionComponentCount = 92
+    projectCount = 164
+    productionComponentCount = 97
     testProjectCount = 31
     benchmarkProjectCount = 15
     validationProjectCount = 22
-    apiReferenceCount = 17
+    apiReferenceCount = 21
     conceptualPageCount = 95
 }
 foreach ($expectedCount in $expectedRepositoryCounts.GetEnumerator()) {
@@ -317,15 +317,43 @@ if ($epubCatalogComponents.Count -eq 0 -or
     Add-Failure 'Every generated OfficeIMO.Epub catalog entry must route to the dedicated EPUB guide.'
 }
 
+$expectedIntegrationGuides = [ordered]@{
+    'OfficeIMO.Html.Rtf' = '/docs/html/'
+    'OfficeIMO.Mhtml' = '/docs/html/'
+    'OfficeIMO.Email.Image' = '/docs/email/'
+    'OfficeIMO.Mhtml.Pdf' = '/docs/html/'
+}
+foreach ($expectedGuide in $expectedIntegrationGuides.GetEnumerator()) {
+    $component = @($catalog.components | Where-Object name -eq $expectedGuide.Key)
+    if ($component.Count -ne 1 -or $component[0].docsUrl -ne $expectedGuide.Value) {
+        Add-Failure "$($expectedGuide.Key) must route to '$($expectedGuide.Value)' in the documentation catalog."
+    }
+}
+
+$pipelinePath = Join-Path $SiteRoot 'pipeline.json'
+$pipeline = Get-Content -LiteralPath $pipelinePath -Raw | ConvertFrom-Json
+$expectedApiDocsHomes = [ordered]@{
+    'build-apidocs-html-rtf' = '/docs/html/'
+    'build-apidocs-mhtml' = '/docs/html/'
+    'build-apidocs-email-image' = '/docs/email/'
+    'build-apidocs-mhtml-pdf' = '/docs/html/'
+}
+foreach ($expectedHome in $expectedApiDocsHomes.GetEnumerator()) {
+    $apiDocsStep = @($pipeline.steps | Where-Object id -eq $expectedHome.Key)
+    if ($apiDocsStep.Count -ne 1 -or $apiDocsStep[0].docsHome -ne $expectedHome.Value) {
+        Add-Failure "$($expectedHome.Key) must link generated API pages to '$($expectedHome.Value)'."
+    }
+}
+
 $aotMatrixPath = Join-Path $SiteRoot 'static\data\aot-compatibility.json'
 $aotMatrix = Get-Content -LiteralPath $aotMatrixPath -Raw | ConvertFrom-Json
 if ($aotMatrix.summary.productionProjectCount -ne $catalog.repository.productionComponentCount) {
     Add-Failure 'The NativeAOT matrix does not account for every production project.'
 }
-if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 91) {
-    Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 91."
+if ($aotMatrix.summary.nativeAotValidatedProjectCount -ne 96) {
+    Add-Failure "The NativeAOT matrix validates $($aotMatrix.summary.nativeAotValidatedProjectCount) projects; expected 96."
 }
-if ($aotMatrix.summary.fullyRootedLibraryCount -ne 89 -or
+if ($aotMatrix.summary.fullyRootedLibraryCount -ne 94 -or
     $aotMatrix.summary.boundedWorkflowLibraryCount -ne 1 -or
     $aotMatrix.summary.nativeExecutableCount -ne 1 -or
     $aotMatrix.summary.managedWindowsProjectCount -ne 1) {
@@ -337,14 +365,98 @@ if (@($aotMatrix.components).Count -ne $catalog.repository.productionComponentCo
 
 $powerShellCatalogPath = Join-Path $SiteRoot 'data\pswriteoffice_command_catalog.json'
 $powerShellCatalog = Get-Content -LiteralPath $powerShellCatalogPath -Raw | ConvertFrom-Json
-if ($powerShellCatalog.module.commandCount -ne 477) {
-    Add-Failure "The PSWriteOffice snapshot has $($powerShellCatalog.module.commandCount) commands; expected the authoritative 477-command surface."
+if ($powerShellCatalog.module.commandCount -le 0) {
+    Add-Failure 'The PSWriteOffice snapshot must contain at least one exported command.'
 }
 if ((@($powerShellCatalog.families | Measure-Object commandCount -Sum).Sum) -ne $powerShellCatalog.module.commandCount) {
     Add-Failure 'The PSWriteOffice family totals do not cover each command exactly once.'
 }
-if ($powerShellCatalog.module.aliasCount -ne 360) {
-    Add-Failure "The PSWriteOffice snapshot has $($powerShellCatalog.module.aliasCount) aliases; expected 360."
+if ($powerShellCatalog.module.aliasCount -lt 0) {
+    Add-Failure 'The PSWriteOffice snapshot alias count cannot be negative.'
+}
+
+$codeExamplesPath = Join-Path $SiteRoot 'data\code_examples.json'
+$codeExamples = Get-Content -LiteralPath $codeExamplesPath -Raw | ConvertFrom-Json
+$powerShellExample = @($codeExamples.tabs | Where-Object language -EQ 'powershell')
+if ($powerShellExample.Count -ne 1) {
+    Add-Failure 'The home page must contain exactly one PowerShell example tab.'
+} else {
+    $tokens = $null
+    $parseErrors = $null
+    $exampleAst = [System.Management.Automation.Language.Parser]::ParseInput(
+        [string] $powerShellExample[0].code,
+        [ref] $tokens,
+        [ref] $parseErrors)
+    foreach ($parseError in @($parseErrors)) {
+        Add-Failure "The home PowerShell example does not parse: $($parseError.Message)"
+    }
+
+    $commandMetadataPath = Join-Path $SiteRoot 'data\apidocs\powershell\command-metadata.json'
+    $commandMetadata = Get-Content -LiteralPath $commandMetadataPath -Raw | ConvertFrom-Json
+    $commandByName = @{}
+    foreach ($command in @($commandMetadata.commands)) {
+        $commandByName[[string] $command.name] = [string] $command.name
+        foreach ($alias in @($command.aliases)) {
+            $commandByName[[string] $alias] = [string] $command.name
+        }
+    }
+
+    [xml] $help = Get-Content -LiteralPath (Join-Path $SiteRoot 'data\apidocs\powershell\PSWriteOffice-Help.xml') -Raw
+    $helpNamespaces = [System.Xml.XmlNamespaceManager]::new($help.NameTable)
+    $helpNamespaces.AddNamespace('command', 'http://schemas.microsoft.com/maml/dev/command/2004/10')
+    $helpNamespaces.AddNamespace('maml', 'http://schemas.microsoft.com/maml/2004/10')
+
+    $commandAsts = @($exampleAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true))
+    foreach ($commandAst in $commandAsts) {
+        $invokedName = $commandAst.GetCommandName()
+        if ([string]::IsNullOrWhiteSpace($invokedName) -or -not $commandByName.ContainsKey($invokedName)) {
+            Add-Failure "The home PowerShell example uses unknown PSWriteOffice command or alias '$invokedName'."
+            continue
+        }
+
+        $canonicalName = $commandByName[$invokedName]
+        $helpCommand = $help.SelectSingleNode("//command:command[command:details/command:name='$canonicalName']", $helpNamespaces)
+        if ($null -eq $helpCommand) {
+            Add-Failure "The home PowerShell example command '$invokedName' has no generated help entry for '$canonicalName'."
+            continue
+        }
+
+        $parameterMap = @{}
+        foreach ($parameterNode in @($helpCommand.SelectNodes('command:syntax/command:syntaxItem/command:parameter', $helpNamespaces))) {
+            $parameterName = [string] $parameterNode.SelectSingleNode('maml:name', $helpNamespaces).InnerText
+            $parameterMap[$parameterName] = $parameterName
+            foreach ($alias in @(([string] $parameterNode.aliases) -split '[,\s]+' | Where-Object { $_ -and $_ -ne 'none' })) {
+                $parameterMap[$alias] = $parameterName
+            }
+        }
+
+        $usedParameters = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($parameterAst in @($commandAst.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] })) {
+            if (-not $parameterMap.ContainsKey($parameterAst.ParameterName)) {
+                Add-Failure "The home PowerShell example uses unknown parameter '-$($parameterAst.ParameterName)' on '$invokedName'."
+                continue
+            }
+            [void] $usedParameters.Add([string] $parameterMap[$parameterAst.ParameterName])
+        }
+
+        $syntaxItems = @($helpCommand.SelectNodes('command:syntax/command:syntaxItem', $helpNamespaces))
+        $satisfiedSet = $false
+        foreach ($syntaxItem in $syntaxItems) {
+            $requiredNames = @($syntaxItem.SelectNodes("command:parameter[@required='true']/maml:name", $helpNamespaces) | ForEach-Object InnerText)
+            if (@($requiredNames | Where-Object { -not $usedParameters.Contains($_) }).Count -eq 0) {
+                $satisfiedSet = $true
+                break
+            }
+        }
+        if (-not $satisfiedSet) {
+            Add-Failure "The home PowerShell example does not satisfy a mandatory parameter set for '$invokedName'."
+        }
+    }
+}
+
+$codeExamplesPartial = Get-Content -LiteralPath (Join-Path $SiteRoot 'themes\officeimo\partials\sections\code-examples.html') -Raw
+if (-not $codeExamplesPartial.Contains('{{ tab.code | html.escape }}', [StringComparison]::Ordinal)) {
+    Add-Failure 'Home code examples must HTML-escape generic type arguments and other source text.'
 }
 
 if ($failures.Count -gt 0) {

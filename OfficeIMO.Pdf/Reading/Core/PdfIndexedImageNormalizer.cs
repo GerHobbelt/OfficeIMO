@@ -77,12 +77,16 @@ internal static class PdfIndexedImageNormalizer {
             return false;
         }
 
-        if (!TryReadIndexedLookupBytes(colorSpaceArray.Items[3], objects, out var lookupBytes)) {
+        int paletteEntryCount = highValue + 1;
+        int expectedLookupLength = paletteEntryCount * baseComponentCount;
+        if (!TryReadIndexedLookupBytes(
+                colorSpaceArray.Items[3],
+                objects,
+                expectedLookupLength,
+                out var lookupBytes)) {
             return false;
         }
 
-        int paletteEntryCount = highValue + 1;
-        int expectedLookupLength = paletteEntryCount * baseComponentCount;
         if (lookupBytes.Length < expectedLookupLength) {
             return false;
         }
@@ -117,10 +121,13 @@ internal static class PdfIndexedImageNormalizer {
     internal static bool TryReadIndexedLookupBytes(
         PdfObject? lookupObject,
         Dictionary<int, PdfIndirectObject> objects,
+        int maxLookupBytes,
         out byte[] lookupBytes) {
         lookupBytes = Array.Empty<byte>();
+        if (maxLookupBytes <= 0) return false;
         PdfObject? resolvedLookup = ResolveObject(lookupObject, objects);
         if (resolvedLookup is PdfStringObj lookupString) {
+            if (lookupString.RawBytes.Length > maxLookupBytes) return false;
             lookupBytes = lookupString.RawBytes;
             return true;
         }
@@ -130,8 +137,18 @@ internal static class PdfIndexedImageNormalizer {
                 return false;
             }
 
-            lookupBytes = Filters.StreamDecoder.Decode(lookupStream.Dictionary, lookupStream.Data, objects);
-            return lookupBytes.Length > 0;
+            try {
+                lookupBytes = Filters.StreamDecoder.DecodeRequired(
+                    lookupStream.Dictionary,
+                    lookupStream.Data,
+                    objects,
+                    maxLookupBytes);
+                return lookupBytes.Length > 0;
+            } catch (PdfReadLimitException) {
+                throw;
+            } catch (InvalidDataException) {
+                return false;
+            }
         }
 
         return false;
@@ -141,18 +158,7 @@ internal static class PdfIndexedImageNormalizer {
         PdfStream stream,
         Dictionary<int, PdfIndirectObject> objects,
         out byte[] bytes) {
-        bytes = Array.Empty<byte>();
-        if (stream.Dictionary.Items.TryGetValue("Filter", out _)) {
-            if (Filters.StreamDecoder.GetUnsupportedFilters(stream.Dictionary, objects).Count != 0) {
-                return false;
-            }
-
-            bytes = Filters.StreamDecoder.Decode(stream.Dictionary, stream.Data, objects);
-        } else {
-            bytes = stream.Data;
-        }
-
-        return bytes.Length > 0;
+        return PdfImageStreamDecoder.TryDecode(stream, objects, out bytes) && bytes.Length > 0;
     }
 
     private static bool TryBuildPngFileFromIndexedPixels(

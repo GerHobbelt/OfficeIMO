@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -145,6 +146,22 @@ public class CsvStreamingTests
     }
 
     [Fact]
+    public async Task LoadAsync_HonorsCancellationFromLoadOptionsAndRestoresPosition()
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("Id\n1\n"));
+        stream.Position = 2;
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CsvDocument.LoadAsync(
+                stream,
+                new CsvLoadOptions { CancellationToken = cancellation.Token }));
+
+        Assert.Equal(2, stream.Position);
+    }
+
+    [Fact]
     public async Task StreamLoads_EnforceCompleteInputLimitAndRestorePosition()
     {
         byte[] bytes = Encoding.UTF8.GetBytes("Id,Name\n1,Alice\n");
@@ -285,6 +302,52 @@ public class CsvStreamingTests
         Assert.Equal(2, rows.Count);
         Assert.Equal(new[] { string.Empty, string.Empty }, rows[0]);
         Assert.Equal(new[] { "Alpha", "1" }, rows[1]);
+    }
+
+    [Fact]
+    public void ReadRowsReusable_DoesNotTreatCharactersAboveByteRangeAsByteMaxDelimiter()
+    {
+        var rows = new List<string[]>();
+        string value = new string('A', 16) + '\u0100' + new string('B', 16);
+        using var reader = new StringReader("Name\u00FFValue\n" + value + "\u00FF1\n");
+
+        CsvDocument.ReadRowsReusable(
+            reader,
+            (_, values) => rows.Add(values.ToArray()),
+            new CsvLoadOptions { Delimiter = '\u00FF' });
+
+        var row = Assert.Single(rows);
+        Assert.Equal(new[] { value, "1" }, row);
+    }
+
+    [Fact]
+    public void ReadRowsReusable_DoesNotTreatHighUnicodeAsNullDelimiter()
+    {
+        var rows = new List<string[]>();
+        string value = new string('A', 16) + '\u8000' + new string('B', 16);
+        using var reader = new StringReader("Name\0Value\n" + value + '\0' + "1\n");
+
+        CsvDocument.ReadRowsReusable(
+            reader,
+            (_, values) => rows.Add(values.ToArray()),
+            new CsvLoadOptions { Delimiter = '\0' });
+
+        var row = Assert.Single(rows);
+        Assert.Equal(new[] { value, "1" }, row);
+    }
+
+    [Fact]
+    public void OpenTextDataReader_DoesNotTreatCharactersAboveByteRangeAsByteMaxDelimiter()
+    {
+        string value = new string('A', 16) + '\u0100' + new string('B', 16);
+        using DbDataReader reader = CsvDocument.OpenTextDataReader(
+            "Name\u00FFValue\n" + value + "\u00FF1\n",
+            new CsvLoadOptions { Delimiter = '\u00FF' });
+
+        Assert.True(reader.Read());
+        Assert.Equal(value, reader.GetString(0));
+        Assert.Equal("1", reader.GetString(1));
+        Assert.False(reader.Read());
     }
 
     [Fact]
@@ -813,6 +876,137 @@ public class CsvStreamingTests
     }
 
     [Fact]
+    public void ReadFieldSpansFromText_BatchedPathGrowsBeforeFallingBackForWiderRows()
+    {
+        var mediumRow = string.Join(',', Enumerable.Range(0, 17).Select(index => $"medium-{index}"));
+        var wideRow = string.Join(',', Enumerable.Range(0, 65).Select(index => $"wide-{index}"));
+        var events = new List<string>();
+
+        CsvDocument.ReadFieldSpansFromText(
+            $"left,right\n{mediumRow}\n{mediumRow}\n{wideRow}\nafter,value\n",
+            (recordIndex, fieldIndex, value) =>
+            {
+                if (recordIndex is 0 or 4 || fieldIndex is 0 or 16 or 64)
+                {
+                    events.Add($"{recordIndex}:{fieldIndex}:{value.ToString()}");
+                }
+            });
+
+        Assert.Equal(
+            new[] {
+                "0:0:left",
+                "0:1:right",
+                "1:0:medium-0",
+                "1:16:medium-16",
+                "2:0:medium-0",
+                "2:16:medium-16",
+                "3:0:wide-0",
+                "3:16:wide-16",
+                "3:64:wide-64",
+                "4:0:after",
+                "4:1:value"
+            },
+            events);
+    }
+
+    [Fact]
+    public void ReadFieldSpansFromText_BatchedPathPreservesUnicodeWhitespaceTrimming()
+    {
+        var fields = new List<string>();
+
+        CsvDocument.ReadFieldSpansFromText(
+            "\u2003Alpha\u2003,\u00a0\" inside \"\u00a0\n",
+            (recordIndex, fieldIndex, value) => fields.Add(value.ToString()),
+            new CsvLoadOptions {
+                HasHeaderRow = false,
+                TrimWhitespace = true
+            });
+
+        Assert.Equal(new[] { "Alpha", " inside " }, fields);
+    }
+
+    [Fact]
+    public void ReadFieldSpansFromText_BatchedPathUnescapesAdjacentAndEdgeQuotePairs()
+    {
+        var fields = new List<string>();
+
+        CsvDocument.ReadFieldSpansFromText(
+            "\"\"\"\"\"\",\"a\"\"b\"\"c\",\"\"\"start\",\"end\"\"\"\n",
+            (recordIndex, fieldIndex, value) => fields.Add(value.ToString()),
+            new CsvLoadOptions { HasHeaderRow = false });
+
+        Assert.Equal(new[] { "\"\"", "a\"b\"c", "\"start", "end\"" }, fields);
+    }
+
+    [Fact]
+    public void ReadFieldSpansFromText_BatchedPathDoesNotApplyHeaderColumnPolicyToRawRecords()
+    {
+        var fields = new List<string>();
+
+        CsvDocument.ReadFieldSpansFromText(
+            "one,two\nthree,four\n",
+            (recordIndex, fieldIndex, value) => fields.Add(value.ToString()),
+            new CsvLoadOptions {
+                HasHeaderRow = false,
+                ColumnCountMismatchPolicy = CsvColumnCountMismatchPolicy.Strict
+            });
+
+        Assert.Equal(new[] { "one", "two", "three", "four" }, fields);
+    }
+
+    [Fact]
+    public void ReadFieldSpansFromText_BatchedPathChecksCancellationBetweenDispatchedRows()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var fields = new List<string>();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            CsvDocument.ReadFieldSpansFromText(
+                "one,two\nthree,four\nfive,six\n",
+                (recordIndex, fieldIndex, value) =>
+                {
+                    fields.Add(value.ToString());
+                    if (recordIndex == 0 && fieldIndex == 0)
+                    {
+                        cancellation.Cancel();
+                    }
+                },
+                new CsvLoadOptions {
+                    HasHeaderRow = false,
+                    CancellationToken = cancellation.Token
+                }));
+
+        Assert.Equal(new[] { "one", "two" }, fields);
+    }
+
+    [Fact]
+    public void ReadFieldSpansFromText_BatchedPathDoesNotReplayCompletedRowsBeforeStrictError()
+    {
+        var text = new StringBuilder();
+        for (var index = 0; index < 140; index++)
+        {
+            text.Append("row-").Append(index).Append(',').Append(index).Append('\n');
+        }
+        text.Append("broken,\"quoted\"tail\n");
+
+        var visitedFields = new List<string>();
+        Assert.Throws<CsvParseException>(() =>
+            CsvDocument.ReadFieldSpansFromText(
+                text.ToString(),
+                (recordIndex, fieldIndex, value) =>
+                    visitedFields.Add($"{recordIndex}:{fieldIndex}:{value.ToString()}"),
+                new CsvLoadOptions {
+                    HasHeaderRow = false,
+                    QuoteParsingMode = CsvQuoteParsingMode.Strict
+                }));
+
+        Assert.Equal(281, visitedFields.Count);
+        Assert.Equal(visitedFields.Count, visitedFields.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal("139:1:139", visitedFields[^2]);
+        Assert.Equal("140:0:broken", visitedFields[^1]);
+    }
+
+    [Fact]
     public void ReadFieldSpans_FallsBackForQuotedMultilineRecords()
     {
         var fields = new List<string>();
@@ -1072,6 +1266,29 @@ public class CsvStreamingTests
     }
 
     [Fact]
+    public void ReadFieldSpansFromText_TrimmedQuotedPaddingStaysOnSpanParser()
+    {
+        var events = new List<string>();
+        var visitor = new MaterializationTrackingVisitor(events);
+
+        CsvDocument.ReadFieldSpansFromText(
+            "  Alpha  ,  \"  inside  \"  ,\"quote \"\"one\"\"\"\n",
+            ref visitor,
+            new CsvLoadOptions {
+                HasHeaderRow = false,
+                TrimWhitespace = true
+            });
+
+        Assert.Equal(
+            new[] {
+                "span:0:0:Alpha",
+                "span:0:1:  inside  ",
+                "span:0:2:quote \"one\""
+            },
+            events);
+    }
+
+    [Fact]
     public void ReadFieldSpansFromText_ReadsEmptyFieldAfterQuotedField()
     {
         var fields = new List<string>();
@@ -1268,6 +1485,26 @@ public class CsvStreamingTests
         {
             _events.Add($"escaped:{recordIndex}:{fieldIndex}:{escapedValue.ToString()}:{unescapedLength}");
             return true;
+        }
+    }
+
+    private readonly struct MaterializationTrackingVisitor : ICsvFieldSpanVisitor
+    {
+        private readonly List<string> _events;
+
+        public MaterializationTrackingVisitor(List<string> events)
+        {
+            _events = events;
+        }
+
+        public void VisitField(int recordIndex, int fieldIndex, ReadOnlySpan<char> value)
+        {
+            _events.Add($"span:{recordIndex}:{fieldIndex}:{value.ToString()}");
+        }
+
+        public void VisitFieldValue(int recordIndex, int fieldIndex, string value)
+        {
+            _events.Add($"string:{recordIndex}:{fieldIndex}:{value}");
         }
     }
 

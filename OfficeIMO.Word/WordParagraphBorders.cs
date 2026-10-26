@@ -58,8 +58,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the left border width in points.
         /// </summary>
-        public UInt32Value? LeftSize {
-            get => GetParagraphBorders()?.LeftBorder?.Size;
+        public uint? LeftSize {
+            get => GetParagraphBorders()?.LeftBorder?.Size?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var leftBorder = pageBorder.LeftBorder ?? (pageBorder.LeftBorder = new LeftBorder());
@@ -93,25 +93,25 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the left border theme color.
         /// </summary>
-        public ThemeColorValues? LeftThemeColor {
-            get => GetParagraphBorders()?.LeftBorder?.ThemeColor?.Value;
+        public WordThemeColor? LeftThemeColor {
+            get => GetParagraphBorders()?.LeftBorder?.ThemeColor?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var leftBorder = pageBorder.LeftBorder ?? (pageBorder.LeftBorder = new LeftBorder());
-                leftBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value) : null;
+                leftBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value.ToOpenXml()) : null;
             }
         }
 
         /// <summary>
         /// Gets or sets the left border style.
         /// </summary>
-        public BorderValues? LeftStyle {
-            get => GetParagraphBorders()?.LeftBorder?.Val?.Value;
+        public WordBorderStyle? LeftStyle {
+            get => GetParagraphBorders()?.LeftBorder?.Val?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var leftBorder = pageBorder.LeftBorder ?? (pageBorder.LeftBorder = new LeftBorder());
                 if (value.HasValue) {
-                    leftBorder.Val = value.Value;
+                    leftBorder.Val = value.Value.ToOpenXml();
                 } else {
                     leftBorder.Val = null;
                 }
@@ -121,8 +121,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the left border spacing.
         /// </summary>
-        public UInt32Value? LeftSpace {
-            get => GetParagraphBorders()?.LeftBorder?.Space;
+        public uint? LeftSpace {
+            get => GetParagraphBorders()?.LeftBorder?.Space?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var leftBorder = pageBorder.LeftBorder ?? (pageBorder.LeftBorder = new LeftBorder());
@@ -157,8 +157,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the right border width in points.
         /// </summary>
-        public UInt32Value? RightSize {
-            get => GetParagraphBorders()?.RightBorder?.Size;
+        public uint? RightSize {
+            get => GetParagraphBorders()?.RightBorder?.Size?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var rightBorder = pageBorder.RightBorder ?? (pageBorder.RightBorder = new RightBorder());
@@ -192,25 +192,25 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the right border theme color.
         /// </summary>
-        public ThemeColorValues? RightThemeColor {
-            get => GetParagraphBorders()?.RightBorder?.ThemeColor?.Value;
+        public WordThemeColor? RightThemeColor {
+            get => GetParagraphBorders()?.RightBorder?.ThemeColor?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var rightBorder = pageBorder.RightBorder ?? (pageBorder.RightBorder = new RightBorder());
-                rightBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value) : null;
+                rightBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value.ToOpenXml()) : null;
             }
         }
 
         /// <summary>
         /// Gets or sets the right border style.
         /// </summary>
-        public BorderValues? RightStyle {
-            get => GetParagraphBorders()?.RightBorder?.Val?.Value;
+        public WordBorderStyle? RightStyle {
+            get => GetParagraphBorders()?.RightBorder?.Val?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var rightBorder = pageBorder.RightBorder ?? (pageBorder.RightBorder = new RightBorder());
                 if (value.HasValue) {
-                    rightBorder.Val = value.Value;
+                    rightBorder.Val = value.Value.ToOpenXml();
                 } else {
                     rightBorder.Val = null;
                 }
@@ -220,8 +220,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the right border spacing.
         /// </summary>
-        public UInt32Value? RightSpace {
-            get => GetParagraphBorders()?.RightBorder?.Space;
+        public uint? RightSpace {
+            get => GetParagraphBorders()?.RightBorder?.Space?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var rightBorder = pageBorder.RightBorder ?? (pageBorder.RightBorder = new RightBorder());
@@ -256,8 +256,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the top border width in points.
         /// </summary>
-        public UInt32Value? TopSize {
-            get => GetParagraphBorders()?.TopBorder?.Size;
+        public uint? TopSize {
+            get => GetParagraphBorders()?.TopBorder?.Size?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var topBorder = pageBorder.TopBorder ?? (pageBorder.TopBorder = new TopBorder());
@@ -291,25 +291,25 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the top border theme color.
         /// </summary>
-        public ThemeColorValues? TopThemeColor {
-            get => GetParagraphBorders()?.TopBorder?.ThemeColor?.Value;
+        public WordThemeColor? TopThemeColor {
+            get => GetParagraphBorders()?.TopBorder?.ThemeColor?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var topBorder = pageBorder.TopBorder ?? (pageBorder.TopBorder = new TopBorder());
-                topBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value) : null;
+                topBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value.ToOpenXml()) : null;
             }
         }
 
         /// <summary>
         /// Gets or sets the top border style.
         /// </summary>
-        public BorderValues? TopStyle {
-            get => GetParagraphBorders()?.TopBorder?.Val?.Value;
+        public WordBorderStyle? TopStyle {
+            get => GetParagraphBorders()?.TopBorder?.Val?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var topBorder = pageBorder.TopBorder ?? (pageBorder.TopBorder = new TopBorder());
                 if (value.HasValue) {
-                    topBorder.Val = value.Value;
+                    topBorder.Val = value.Value.ToOpenXml();
                 } else {
                     topBorder.Val = null;
                 }
@@ -319,8 +319,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the top border spacing.
         /// </summary>
-        public UInt32Value? TopSpace {
-            get => GetParagraphBorders()?.TopBorder?.Space;
+        public uint? TopSpace {
+            get => GetParagraphBorders()?.TopBorder?.Space?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var topBorder = pageBorder.TopBorder ?? (pageBorder.TopBorder = new TopBorder());
@@ -356,8 +356,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the bottom border width in points.
         /// </summary>
-        public UInt32Value? BottomSize {
-            get => GetParagraphBorders()?.BottomBorder?.Size;
+        public uint? BottomSize {
+            get => GetParagraphBorders()?.BottomBorder?.Size?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var bottomBorder = pageBorder.BottomBorder ?? (pageBorder.BottomBorder = new BottomBorder());
@@ -391,25 +391,25 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the bottom border theme color.
         /// </summary>
-        public ThemeColorValues? BottomThemeColor {
-            get => GetParagraphBorders()?.BottomBorder?.ThemeColor?.Value;
+        public WordThemeColor? BottomThemeColor {
+            get => GetParagraphBorders()?.BottomBorder?.ThemeColor?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var bottomBorder = pageBorder.BottomBorder ?? (pageBorder.BottomBorder = new BottomBorder());
-                bottomBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value) : null;
+                bottomBorder.ThemeColor = value.HasValue ? new EnumValue<ThemeColorValues>(value.Value.ToOpenXml()) : null;
             }
         }
 
         /// <summary>
         /// Gets or sets the bottom border style.
         /// </summary>
-        public BorderValues? BottomStyle {
-            get => GetParagraphBorders()?.BottomBorder?.Val?.Value;
+        public WordBorderStyle? BottomStyle {
+            get => GetParagraphBorders()?.BottomBorder?.Val?.Value.ToOfficeEnum();
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var bottomBorder = pageBorder.BottomBorder ?? (pageBorder.BottomBorder = new BottomBorder());
                 if (value.HasValue) {
-                    bottomBorder.Val = value.Value;
+                    bottomBorder.Val = value.Value.ToOpenXml();
                 } else {
                     bottomBorder.Val = null;
                 }
@@ -419,8 +419,8 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the bottom border spacing.
         /// </summary>
-        public UInt32Value? BottomSpace {
-            get => GetParagraphBorders()?.BottomBorder?.Space;
+        public uint? BottomSpace {
+            get => GetParagraphBorders()?.BottomBorder?.Space?.Value;
             set {
                 var pageBorder = GetOrCreateParagraphBorders();
                 var bottomBorder = pageBorder.BottomBorder ?? (pageBorder.BottomBorder = new BottomBorder());
@@ -575,7 +575,7 @@ namespace OfficeIMO.Word {
         /// <param name="color">Border color.</param>
         /// <param name="size">Border width.</param>
         /// <param name="shadow">Whether the border has a shadow.</param>
-        public void SetBorder(WordParagraphBorderType type, BorderValues style, Color color, UInt32Value size, bool shadow) {
+        public void SetBorder(WordParagraphBorderType type, WordBorderStyle style, Color color, uint size, bool shadow) {
             if (type == WordParagraphBorderType.Left) {
                 LeftStyle = style;
                 LeftColor = color;

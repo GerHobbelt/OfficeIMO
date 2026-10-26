@@ -248,13 +248,13 @@ internal static partial class ExcelLibraryComparisonRunner {
     private static void ApplyOfficeImoReportWorkbookCore(ExcelSheet sheet, int rowCount) {
         int lastRow = rowCount + 1;
         string range = BuildReportWorkbookRange(rowCount);
-        sheet.AddTable(range, hasHeader: true, name: ReportWorkbookTableName, style: OfficeIMO.Excel.TableStyle.TableStyleMedium2, includeAutoFilter: true);
+        sheet.AddTable(range, hasHeader: true, name: ReportWorkbookTableName, style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
         sheet.AutoFitColumns();
         sheet.Freeze(topRows: 1);
-        sheet.AddConditionalRule($"G2:G{lastRow.ToString(CultureInfo.InvariantCulture)}", ConditionalFormattingOperatorValues.GreaterThan, "700");
+        sheet.AddConditionalRule($"G2:G{lastRow.ToString(CultureInfo.InvariantCulture)}", ExcelConditionalFormattingOperator.GreaterThan, "700");
         sheet.AddConditionalDataBar($"G2:G{lastRow.ToString(CultureInfo.InvariantCulture)}", OfficeColor.SteelBlue);
         sheet.AddConditionalColorScale($"I2:I{lastRow.ToString(CultureInfo.InvariantCulture)}", OfficeColor.LightPink, OfficeColor.LightGreen);
-        sheet.AddConditionalIconSet($"I2:I{lastRow.ToString(CultureInfo.InvariantCulture)}", IconSetValues.ThreeTrafficLights1, showValue: true, reverseIconOrder: false);
+        sheet.AddConditionalIconSet($"I2:I{lastRow.ToString(CultureInfo.InvariantCulture)}", ExcelIconSet.ThreeTrafficLights1, showValue: true, reverseIconOrder: false);
         sheet.ValidationList($"D2:D{lastRow.ToString(CultureInfo.InvariantCulture)}", new[] { "NA", "EU", "APAC", "LATAM" });
         sheet.ColumnStyleByHeader("Score").NumberFormat("#,##0.000");
         sheet.ColumnStyleByHeader("Created").DateTime("yyyy-mm-dd hh:mm");
@@ -273,8 +273,8 @@ internal static partial class ExcelLibraryComparisonRunner {
             rowFields: new[] { "Region" },
             columnFields: new[] { "Department" },
             dataFields: new[] {
-                new ExcelPivotDataField("Score", DataConsolidateFunctionValues.Average, "Average Score"),
-                new ExcelPivotDataField("TicketCount", DataConsolidateFunctionValues.Sum, "Sum TicketCount")
+                new ExcelPivotDataField("Score", ExcelPivotDataFunction.Average, "Average Score"),
+                new ExcelPivotDataField("TicketCount", ExcelPivotDataFunction.Sum, "Sum TicketCount")
             },
             pivotStyleName: "PivotStyleMedium9");
     }

@@ -1,21 +1,42 @@
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
+using OfficeIMO.Excel;
 using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Spreadsheet;
-using OfficeIMO.Excel;
 using Xunit;
 
 namespace OfficeIMO.Tests {
     public class ExcelNamedRangesAndLinksTests {
+        [Fact]
+        public void DefinedNameNormalizationReturnsTheNameThatWillBeEmitted() {
+            Assert.Equal("_R1C1", ExcelDocument.NormalizeDefinedName("R1C1"));
+            Assert.Equal("Sales_Total", ExcelDocument.NormalizeDefinedName("Sales Total"));
+            Assert.Equal("\\Rate", ExcelDocument.NormalizeDefinedName("\\Rate"));
+            Assert.Equal("\\Rate", ExcelDocument.NormalizeDefinedName(
+                "\\Rate", ExcelDefinedNameValidationMode.Strict));
+            Assert.Throws<ArgumentException>(() => ExcelDocument.NormalizeDefinedName(
+                "R1C1", ExcelDefinedNameValidationMode.Strict));
+        }
+
+        [Theory]
+        [InlineData("Sales Total")]
+        [InlineData(" SalesTotal")]
+        [InlineData("1Sales")]
+        [InlineData("Sales-Total")]
+        public void DefinedNameStrictValidationRejectsAuthoredInputInsteadOfSanitizingIt(string name) {
+            Assert.Throws<ArgumentException>(() => ExcelDocument.NormalizeDefinedName(
+                name, ExcelDefinedNameValidationMode.Strict));
+        }
+
         [Fact]
         public void NamedRange_SingleCellReferenceDoesNotThrow() {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (var doc = ExcelDocument.Create(path)) {
                 doc.AddWorksheet("Data");
                 var exception = Record.Exception(() =>
-                    doc.SetNamedRange("Single", "A1", save: false, hidden: false, validationMode: NameValidationMode.Sanitize));
+                    doc.SetNamedRange("Single", "A1", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Sanitize));
                 Assert.Null(exception);
                 Assert.Equal("$A$1", doc.GetNamedRange("Single"));
             }
@@ -27,7 +48,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (var doc = ExcelDocument.Create(path)) {
                 var data = doc.AddWorksheet("Data");
-                doc.SetNamedRange("TooBig", "'Data'!A1:B2000000", save: false, hidden: false, validationMode: NameValidationMode.Sanitize);
+                doc.SetNamedRange("TooBig", "'Data'!A1:B2000000", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Sanitize);
                 var value = doc.GetNamedRange("TooBig");
                 Assert.Equal("'Data'!$A$1:$B$1048576", value);
             }
@@ -39,7 +60,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (var doc = ExcelDocument.Create(path)) {
                 var data = doc.AddWorksheet("Data??");
-                doc.SetNamedRange("OnData", "Data??!A1", save: false, hidden: false, validationMode: NameValidationMode.Sanitize);
+                doc.SetNamedRange("OnData", "Data??!A1", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Sanitize);
 
                 var value = doc.GetNamedRange("OnData");
                 Assert.Equal($"'{data.Name}'!$A$1", value);
@@ -52,7 +73,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (var doc = ExcelDocument.Create(path)) {
                 doc.AddWorksheet("Report!2026");
-                doc.SetNamedRange("BangSheet", "'Report!2026'!A1:B2", save: false, hidden: false, validationMode: NameValidationMode.Strict);
+                doc.SetNamedRange("BangSheet", "'Report!2026'!A1:B2", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Strict);
 
                 var value = doc.GetNamedRange("BangSheet");
                 Assert.Equal("'Report!2026'!$A$1:$B$2", value);
@@ -65,7 +86,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (var doc = ExcelDocument.Create(path)) {
                 doc.AddWorksheet("Data");
-                doc.SetNamedRange("AbsoluteRange", "'Data'!$A$1:$B$2", save: false, hidden: false, validationMode: NameValidationMode.Strict);
+                doc.SetNamedRange("AbsoluteRange", "'Data'!$A$1:$B$2", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Strict);
 
                 Assert.Equal("'Data'!$A$1:$B$2", doc.GetNamedRange("AbsoluteRange"));
             }
@@ -77,7 +98,7 @@ namespace OfficeIMO.Tests {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using (var doc = ExcelDocument.Create(path)) {
                 var data = doc.AddWorksheet("Data");
-                data.SetNamedRange("LocalQualified", "'Data'!A1", save: false, hidden: false, validationMode: NameValidationMode.Strict);
+                data.SetNamedRange("LocalQualified", "'Data'!A1", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Strict);
 
                 var definedName = doc._spreadSheetDocument.WorkbookPart!.Workbook.DefinedNames!
                     .Elements<DefinedName>()
@@ -95,7 +116,7 @@ namespace OfficeIMO.Tests {
             using (var doc = ExcelDocument.Create(path)) {
                 var data = doc.AddWorksheet("Data");
                 doc.AddWorksheet("Other");
-                data.SetNamedRange("LocalCrossSheet", "'Other'!A1:B2", save: false, hidden: false, validationMode: NameValidationMode.Strict);
+                data.SetNamedRange("LocalCrossSheet", "'Other'!A1:B2", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Strict);
 
                 var definedName = doc._spreadSheetDocument.WorkbookPart!.Workbook.DefinedNames!
                     .Elements<DefinedName>()
@@ -112,7 +133,7 @@ namespace OfficeIMO.Tests {
             using (var doc = ExcelDocument.Create(path)) {
                 doc.AddWorksheet("Data");
                 Assert.Throws<ArgumentOutOfRangeException>(() =>
-                    doc.SetNamedRange("TooBigS", "'Data'!A1:B2000000", save: false, hidden: false, validationMode: NameValidationMode.Strict));
+                    doc.SetNamedRange("TooBigS", "'Data'!A1:B2000000", save: false, hidden: false, validationMode: ExcelDefinedNameValidationMode.Strict));
             }
             File.Delete(path);
         }
@@ -236,10 +257,10 @@ namespace OfficeIMO.Tests {
                 // Headers and one data row
                 s.CellValue(1, 1, "Col1"); s.CellValue(1, 2, "Col2");
                 s.CellValue(2, 1, 1); s.CellValue(2, 2, 2);
-                s.AddTable("A1:B2", hasHeader: true, name: "T", style: OfficeIMO.Excel.TableStyle.TableStyleMedium2, includeAutoFilter: true);
+                s.AddTable("A1:B2", hasHeader: true, name: "T", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
 
                 // Add a tiny 1x1 PNG as drawing
-                var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==");
+                var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
                 s.AddImageAt(1, 1, png, "image/png", widthPixels: 1, heightPixels: 1);
 
                 // Preflight should not remove valid references
@@ -259,7 +280,7 @@ namespace OfficeIMO.Tests {
                 doc.Save();
             }
 
-            using (var verify = ExcelDocument.Load(path, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (var verify = ExcelDocument.Load(path, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Empty(verify.ValidateOpenXml());
             }
             File.Delete(path);

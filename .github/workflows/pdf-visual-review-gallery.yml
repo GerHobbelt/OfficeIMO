@@ -6,7 +6,7 @@ on:
       - master
     paths:
       - 'OfficeIMO.Pdf/**'
-      - 'OfficeIMO.Drawing/**'
+      - 'OfficeIMO.Core/**'
       - 'OfficeIMO.AsciiDoc/**'
       - 'OfficeIMO.AsciiDoc.Markdown/**'
       - 'OfficeIMO.AsciiDoc.Pdf/**'
@@ -22,6 +22,8 @@ on:
       - 'OfficeIMO.Markdown.Html/**'
       - 'OfficeIMO.Html/**'
       - 'OfficeIMO.Html.Pdf/**'
+      - 'OfficeIMO.Mhtml/**'
+      - 'OfficeIMO.Mhtml.Pdf/**'
       - 'OfficeIMO.Html.Tests/**'
       - 'OfficeIMO.Latex/**'
       - 'OfficeIMO.Latex.Markdown/**'
@@ -61,7 +63,7 @@ on:
       - master
     paths:
       - 'OfficeIMO.Pdf/**'
-      - 'OfficeIMO.Drawing/**'
+      - 'OfficeIMO.Core/**'
       - 'OfficeIMO.AsciiDoc/**'
       - 'OfficeIMO.AsciiDoc.Markdown/**'
       - 'OfficeIMO.AsciiDoc.Pdf/**'
@@ -77,6 +79,8 @@ on:
       - 'OfficeIMO.Markdown.Html/**'
       - 'OfficeIMO.Html/**'
       - 'OfficeIMO.Html.Pdf/**'
+      - 'OfficeIMO.Mhtml/**'
+      - 'OfficeIMO.Mhtml.Pdf/**'
       - 'OfficeIMO.Html.Tests/**'
       - 'OfficeIMO.Latex/**'
       - 'OfficeIMO.Latex.Markdown/**'
@@ -141,19 +145,19 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Verify generated PDF conversion support matrix
         shell: pwsh
         run: ./Build/Export-PdfConversionSupportMatrix.ps1 -Check
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}

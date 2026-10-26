@@ -303,7 +303,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Text text = Assert.Single(document._wordprocessingDocument.MainDocumentPart!.Document!.Body!.Descendants<SimpleField>().Single().Descendants<Text>());
                 Assert.Equal(" padded value ", text.Text);
                 Assert.Equal(SpaceProcessingModeValues.Preserve, text.Space?.Value);
@@ -327,7 +327,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 SimpleField field = Assert.Single(document._wordprocessingDocument.MainDocumentPart!.Document!.Body!.Descendants<SimpleField>());
                 Text text = Assert.Single(field.Descendants<Text>());
                 Assert.Equal("Ada Lovelace", text.Text);
@@ -442,13 +442,13 @@ namespace OfficeIMO.Tests {
                 document.AddPageBreak();
                 document.AddParagraph("First section pages: ").AddField(WordFieldType.SectionPages);
 
-                WordSection secondSection = document.AddSection(SectionMarkValues.NextPage);
+                WordSection secondSection = document.AddSection(WordSectionBreakType.NextPage);
                 secondSection.AddParagraph("Second section: ").AddField(WordFieldType.Section);
                 secondSection.AddParagraph("Second section formatted: ")._paragraph.Append(BuildSimpleField(" SECTION \\* Roman ", "stale-section-roman"));
                 secondSection.AddParagraph()._paragraph.Append(new Run(new Break { Type = BreakValues.Page }));
                 secondSection.AddParagraph("Second section pages: ")._paragraph.Append(BuildSimpleField(" SECTIONPAGES \\# \"000\" ", "stale-section-pages"));
 
-                WordSection thirdSection = document.AddSection(SectionMarkValues.Continuous);
+                WordSection thirdSection = document.AddSection(WordSectionBreakType.Continuous);
                 thirdSection.AddParagraph("Third section: ").AddField(WordFieldType.Section);
                 thirdSection.AddParagraph("Third section pages: ").AddField(WordFieldType.SectionPages);
                 document.Save();
@@ -597,7 +597,7 @@ namespace OfficeIMO.Tests {
             string filePath = Path.Combine(_directoryWithFiles, "FieldUpdate.DocumentStatistics.docx");
 
             using (WordDocument document = WordDocument.Create(filePath)) {
-                document.ApplicationProperties.Words = new DocumentFormat.OpenXml.ExtendedProperties.Words { Text = "42" };
+                document.ApplicationProperties.Words = 42;
                 document.ApplicationProperties.Characters = "1234";
 
                 document.AddParagraph("Words: ").AddField(WordFieldType.NumWords);
@@ -1970,7 +1970,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (WordDocument document = WordDocument.Load(filePath, new WordLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 SimpleField hiddenField = document._wordprocessingDocument.MainDocumentPart!.Document!.Body!.Descendants<SimpleField>()
                     .Single(field => (field.Instruction?.Value ?? string.Empty).Contains("\\h", StringComparison.Ordinal));
                 Assert.Equal(string.Empty, Assert.Single(hiddenField.Descendants<Text>()).Text);

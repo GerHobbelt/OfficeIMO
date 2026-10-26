@@ -13,6 +13,7 @@ using A = DocumentFormat.OpenXml.Drawing;
 using P = DocumentFormat.OpenXml.Presentation;
 
 namespace OfficeIMO.Tests {
+    [Collection(PowerPointNonParallelCollection.Name)]
     public sealed class PowerPointSourceProducerCorpusTests {
         [Fact]
         public void MicrosoftPowerPointCorpusIsCompleteAndSurvivesOpenEditSave() {
@@ -147,6 +148,7 @@ namespace OfficeIMO.Tests {
                             slide.Uri + "|" + table.OuterXml));
                     break;
                 case "charts":
+                case "advanced charts":
                     entries = presentation.SlideParts.SelectMany(slide =>
                             slide.ChartParts.Select(chart =>
                                 "chart|" + chart.Uri + "|" + chart.ChartSpace.OuterXml))
@@ -155,6 +157,32 @@ namespace OfficeIMO.Tests {
                                 chart.GetPartsOfType<EmbeddedPackagePart>())
                             .Select(package => "workbook|" + package.Uri + "|"
                                 + ComputePartSha256(package))));
+                    break;
+                case "smartart topology":
+                    entries = GetAllParts(presentation)
+                        .Where(part => part is DiagramDataPart
+                            || part is DiagramLayoutDefinitionPart
+                            || part is DiagramPersistLayoutPart)
+                        .Select(part => "diagram|" + part.Uri + "|"
+                            + ComputePartSha256(part));
+                    break;
+                case "animation timeline":
+                    entries = presentation.SlideParts
+                        .Where(slide => slide.Slide.Timing != null)
+                        .Select(slide => "timing|" + slide.Uri + "|"
+                            + slide.Slide.Timing!.OuterXml);
+                    break;
+                case "embedded audio":
+                    entries = presentation.SlideParts.SelectMany(slide =>
+                        slide.DataPartReferenceRelationships
+                            .Where(relationship => relationship is
+                                AudioReferenceRelationship)
+                            .Select(relationship => "audio|" + slide.Uri
+                                + "|" + relationship.Id + "|"
+                                + relationship.RelationshipType + "|"
+                                + relationship.DataPart.Uri + "|"
+                                + ComputeDataPartSha256(
+                                    relationship.DataPart)));
                     break;
                 case "pictures":
                     entries = presentation.SlideParts.SelectMany(slide =>
@@ -258,6 +286,12 @@ namespace OfficeIMO.Tests {
             return ToHex(sha256.ComputeHash(stream));
         }
 
+        private static string ComputeDataPartSha256(DataPart part) {
+            using Stream stream = part.GetStream(FileMode.Open, FileAccess.Read);
+            using SHA256 sha256 = SHA256.Create();
+            return ToHex(sha256.ComputeHash(stream));
+        }
+
         private static string ComputeSha256(IEnumerable<string> entries) {
             using SHA256 sha256 = SHA256.Create();
             byte[] bytes = Encoding.UTF8.GetBytes(string.Join("\n", entries));
@@ -268,12 +302,12 @@ namespace OfficeIMO.Tests {
             string.Concat(bytes.Select(value => value.ToString("x2")));
 
         private static string[] GetValidationSignature(
-            IEnumerable<ValidationErrorInfo> errors) {
+            IEnumerable<OfficeOpenXmlValidationError> errors) {
             return errors.Select(error => string.Join("|",
                     error.Id ?? string.Empty,
                     error.ErrorType.ToString(),
-                    error.Part?.Uri.ToString() ?? string.Empty,
-                    error.Path?.XPath ?? string.Empty,
+                    error.PartUri ?? string.Empty,
+                    error.Path ?? string.Empty,
                     error.Description ?? string.Empty))
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToArray();

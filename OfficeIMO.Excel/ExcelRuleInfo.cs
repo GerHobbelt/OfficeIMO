@@ -212,9 +212,13 @@ namespace OfficeIMO.Excel {
         public bool ShowInputMessage { get; set; }
         /// <summary>Gets or sets whether Excel should show the validation error.</summary>
         public bool ShowErrorMessage { get; set; }
-        internal bool PreserveShowMessageFlags { get; set; }
+        /// <summary>
+        /// Gets or sets whether <see cref="ShowInputMessage"/> and <see cref="ShowErrorMessage"/> are applied exactly,
+        /// even when message text is present. The default derives visibility from either the flags or non-empty text.
+        /// </summary>
+        public bool PreserveShowMessageFlags { get; set; }
         /// <summary>Gets or sets the validation error alert style.</summary>
-        public DataValidationErrorStyleValues? ErrorStyle { get; set; }
+        public ExcelDataValidationErrorStyle? ErrorStyle { get; set; }
         /// <summary>Gets or sets whether Excel should hide the in-cell dropdown for list validations. Leave null to preserve the existing value.</summary>
         public bool? SuppressDropDown { get; set; }
     }

@@ -23,21 +23,21 @@ namespace OfficeIMO.Word {
         private List<Run>? _runs;
 
         /// <summary>Initializes an equation backed by an Office Math element.</summary>
-        public WordEquation(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.OfficeMath officeMath) {
+        internal WordEquation(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.OfficeMath officeMath) {
             _document = document;
             _paragraph = paragraph;
             _officeMath = officeMath;
         }
 
         /// <summary>Initializes an equation backed by an Office Math paragraph.</summary>
-        public WordEquation(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.Paragraph mathParagraph) {
+        internal WordEquation(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.Paragraph mathParagraph) {
             _document = document;
             _paragraph = paragraph;
             _mathParagraph = mathParagraph;
         }
 
         /// <summary>Initializes an equation backed by an Office Math element and its paragraph.</summary>
-        public WordEquation(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.OfficeMath officeMath, DocumentFormat.OpenXml.Math.Paragraph mathParagraph) {
+        internal WordEquation(WordDocument document, Paragraph paragraph, DocumentFormat.OpenXml.Math.OfficeMath officeMath, DocumentFormat.OpenXml.Math.Paragraph mathParagraph) {
             _document = document;
             _paragraph = paragraph;
             _officeMath = officeMath;
@@ -81,6 +81,14 @@ namespace OfficeIMO.Word {
             }
         }
 
+        internal string GetText(int maxDepth) => MathElement != null
+            ? WordMath.GetText(MathElement, maxDepth)
+            : FieldParagraph?.Text ?? string.Empty;
+
+        internal string GetText(long maxCharacters, int maxDepth) => MathElement != null
+            ? WordMath.GetText(MathElement, maxCharacters, maxDepth)
+            : FieldParagraph?.Text ?? string.Empty;
+
         /// <summary>Gets raw OMML when the equation is backed by DOCX math markup; otherwise <c>null</c>.</summary>
         public string? Omml => MathElement?.OuterXml;
 
@@ -95,6 +103,10 @@ namespace OfficeIMO.Word {
 
         internal string ToMathMl(long maxCharacters) => MathElement != null
             ? WordMath.ToMathMl(MathElement, maxCharacters)
+            : WordMath.ToMathMlText(Text, maxCharacters);
+
+        internal string ToMathMl(long maxCharacters, int maxDepth) => MathElement != null
+            ? WordMath.ToMathMl(MathElement, maxCharacters, maxDepth)
             : WordMath.ToMathMlText(Text, maxCharacters);
 
         /// <summary>Projects this equation into the reusable OfficeIMO math expression tree.</summary>
@@ -520,13 +532,6 @@ namespace OfficeIMO.Word {
         private WordParagraph? FieldParagraph => _simpleField != null
             ? new WordParagraph(_document, _paragraph, _simpleField)
             : _runs != null ? new WordParagraph(_document, _paragraph, _runs) : null;
-
-        private static string EscapeXml(string value) => value
-            .Replace("&", "&amp;")
-            .Replace("<", "&lt;")
-            .Replace(">", "&gt;")
-            .Replace("\"", "&quot;")
-            .Replace("'", "&apos;");
     }
 
     internal sealed class WordEquationOccurrence {

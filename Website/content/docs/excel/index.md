@@ -102,7 +102,7 @@ Control parallel vs sequential operations for large workbooks:
 
 ```csharp
 var workbook = ExcelDocument.Create("large.xlsx");
-workbook.Execution.Mode = ExecutionMode.Parallel;
+workbook.Execution.Mode = ExcelExecutionMode.Parallel;
 workbook.Execution.MaxDegreeOfParallelism = 4;
 ```
 
@@ -113,6 +113,30 @@ For very large workbooks, you can disable sheet wrapper caching to reduce memory
 ```csharp
 workbook.SheetCachingEnabled = false;
 ```
+
+## CSV interoperability
+
+Install the optional `OfficeIMO.Excel.Csv` adapter when a workflow needs to move data between CSV and Excel. The adapter keeps parsing and writing in `OfficeIMO.CSV`, workbook operations in `OfficeIMO.Excel`, and avoids adding CSV dependencies to Excel-only or Reader workloads.
+
+```powershell
+dotnet add package OfficeIMO.Excel.Csv
+```
+
+```csharp
+using OfficeIMO.Excel;
+using OfficeIMO.Excel.Csv;
+
+using var workbook = ExcelDocument.Create();
+ExcelCsvImportResult imported = workbook.ImportCsvFile("sales.csv");
+workbook[imported.SheetName].SaveAsCsv("sales-roundtrip.csv");
+workbook.Save("sales.xlsx");
+```
+
+`imported.Delimiter` reports the delimiter that was actually used, including
+one selected automatically by delimiter detection. `imported.TableName` reports
+the sanitized, unique table name that was actually created.
+
+Use `OfficeIMO.Reader.Excel` instead when the job is normalized extraction of workbook content for search, indexing, or AI ingestion; it does not own CSV conversion.
 
 ## Further Reading
 

@@ -76,10 +76,10 @@ public sealed class ExcelAllSeverityBatch15SecurityTests {
         sheet.CellValue(1, 2, "Value");
         sheet.CellValue(2, 1, "A");
         sheet.CellValue(2, 2, 1);
-        sheet.AddTable("A1:B2", true, "DataTable", OfficeIMO.Excel.TableStyle.TableStyleMedium2);
-        var totals = new Dictionary<string, TotalsRowFunctionValues>(StringComparer.Ordinal) {
-            ["Name"] = TotalsRowFunctionValues.Count,
-            ["NAME"] = TotalsRowFunctionValues.None
+        sheet.AddTable("A1:B2", true, "DataTable", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2);
+        var totals = new Dictionary<string, ExcelTableTotalsFunction>(StringComparer.Ordinal) {
+            ["Name"] = ExcelTableTotalsFunction.Count,
+            ["NAME"] = ExcelTableTotalsFunction.None
         };
 
         Exception? exception = Record.Exception(() => sheet.SetTableTotals("A1:B2", totals));
@@ -111,6 +111,52 @@ public sealed class ExcelAllSeverityBatch15SecurityTests {
         }
     }
 
+    [Theory]
+    [InlineData(OverflowMode.Shrink)]
+    [InlineData(OverflowMode.Summarize)]
+    public void FixedGridOverflowReducesColumnsBeforeWorksheetBoundaryCheck(OverflowMode overflowMode) {
+        using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+        ExcelSheet sheet = document.AddWorksheet("Data");
+        var composer = new SheetComposer.ColumnComposer(sheet, new SheetTheme(), 1, A1.MaxColumns);
+        composer.SetGridConstraints(3, overflowMode);
+
+        string range = composer.TableFrom(new[] { new WideRow("Alpha", 1, 2) });
+
+        Assert.Equal("XFD1:XFD2", range);
+    }
+
+    [Theory]
+    [InlineData(OverflowMode.Shrink)]
+    [InlineData(OverflowMode.Summarize)]
+    public void FixedGridOverflowChargesCellLimitAgainstRenderedColumns(OverflowMode overflowMode) {
+        using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+        ExcelSheet sheet = document.AddWorksheet("Data");
+        var composer = new SheetComposer.ColumnComposer(sheet, new SheetTheme(), 1, 1);
+        composer.SetGridConstraints(1, overflowMode);
+
+        string range = composer.TableFrom(
+            new[] { new WideRow("Alpha", 1, 2) },
+            configure: options => options.MaxCells = 2);
+
+        Assert.Equal("A1:A2", range);
+    }
+
+    [Fact]
+    public void EmptyObjectTablesUseSingleCellFallbackWithoutChargingInferredHeaders() {
+        using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+        var rootComposer = new SheetComposer(document, "Root", new SheetTheme());
+        ExcelSheet columnSheet = document.AddWorksheet("Column");
+        var columnComposer = new SheetComposer.ColumnComposer(columnSheet, new SheetTheme(), 2, 2);
+
+        string rootRange = rootComposer.TableFrom(
+            Array.Empty<WideRow>(), configure: options => options.MaxCells = 1);
+        string columnRange = columnComposer.TableFrom(
+            Array.Empty<WideRow>(), configure: options => options.MaxCells = 1);
+
+        Assert.Equal("A1:A1", rootRange);
+        Assert.Equal("B2:B2", columnRange);
+    }
+
     [Fact]
     public void ParallelRowAutoFitAndRowMutationsSerializeOpenXmlTraversal() {
         using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
@@ -122,10 +168,10 @@ public sealed class ExcelAllSeverityBatch15SecurityTests {
                 for (int row = 101; row <= 600; row++) sheet.CellValue(row, 1, "row " + row);
             },
             () => {
-                for (int pass = 0; pass < 8; pass++) sheet.AutoFitRows(ExecutionMode.Parallel);
+                for (int pass = 0; pass < 8; pass++) sheet.AutoFitRows(ExcelExecutionMode.Parallel);
             },
             () => {
-                for (int pass = 0; pass < 8; pass++) sheet.AutoFitRows(ExecutionMode.Parallel);
+                for (int pass = 0; pass < 8; pass++) sheet.AutoFitRows(ExcelExecutionMode.Parallel);
             });
 
         Assert.NotNull(sheet.WorksheetPart.Worksheet.GetFirstChild<SheetData>()!.Elements<Row>().First().Height);

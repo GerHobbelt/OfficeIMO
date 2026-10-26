@@ -1,5 +1,5 @@
 using OfficeIMO.Markdown;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -132,7 +132,7 @@ namespace OfficeIMO.Word.Markdown {
                 diagnostics.Add(new WordMarkdownConversionDiagnostic(
                     "WordToMarkdownWarning",
                     message,
-                    WordMarkdownConversionLossKind.Approximation));
+                    OfficeConversionLossKind.Approximation));
                 callerWarning?.Invoke(message);
             };
 
@@ -213,7 +213,7 @@ namespace OfficeIMO.Word.Markdown {
                 diagnostics.Add(new WordMarkdownConversionDiagnostic(
                     "MarkdownToWordWarning",
                     message,
-                    WordMarkdownConversionLossKind.Approximation));
+                    OfficeConversionLossKind.Approximation));
                 callerWarning?.Invoke(message);
             };
 

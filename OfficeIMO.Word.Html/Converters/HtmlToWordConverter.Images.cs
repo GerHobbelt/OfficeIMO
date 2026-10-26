@@ -32,15 +32,15 @@ namespace OfficeIMO.Word.Html {
 
                 return;
             }
-            var decl = _inlineParser.ParseDeclaration(img.GetAttribute("style") ?? string.Empty);
+            var decl = ParseInlineDeclaration(img.GetAttribute("style"));
             var floatVal = decl.GetPropertyValue("float")?.Trim().ToLowerInvariant();
-            var wrap = WrapTextImage.InLineWithText;
+            var wrap = WordImageTextWrapping.InLineWithText;
             string? horizontalAlignment = null;
             if (floatVal == "left") {
-                wrap = WrapTextImage.Square;
+                wrap = WordImageTextWrapping.Square;
                 horizontalAlignment = "left";
             } else if (floatVal == "right") {
-                wrap = WrapTextImage.Square;
+                wrap = WordImageTextWrapping.Square;
                 horizontalAlignment = "right";
             }
 
@@ -194,7 +194,7 @@ namespace OfficeIMO.Word.Html {
             WordParagraph? currentParagraph,
             WordHeaderFooter? headerFooter,
             Func<int?>? resolveContainerWidthTwips) {
-            var decl = _inlineParser.ParseDeclaration(img.GetAttribute("style") ?? string.Empty);
+            var decl = ParseInlineDeclaration(img.GetAttribute("style"));
             double? width = img.DisplayWidth > 0 ? img.DisplayWidth : null;
             double? height = img.DisplayHeight > 0 ? img.DisplayHeight : null;
             width ??= TryResolveImagePercentWidth(decl.GetPropertyValue("width"), doc, resolveContainerWidthTwips);
@@ -335,9 +335,9 @@ namespace OfficeIMO.Word.Html {
                 contentWidthTwips = containerWidthTwips.Value;
             } else {
                 var section = doc.Sections.Count > 0 ? doc.Sections[doc.Sections.Count - 1] : null;
-                var pageWidthTwips = section?.PageSettings.Width?.Value ?? WordPageSizes.A4.Width!.Value;
-                var leftMarginTwips = section?.Margins.Left?.Value ?? 1440U;
-                var rightMarginTwips = section?.Margins.Right?.Value ?? 1440U;
+                var pageWidthTwips = section?.PageSettings.Width ?? WordPageSizes.A4.WidthTwips;
+                var leftMarginTwips = section?.Margins.Left ?? 1440U;
+                var rightMarginTwips = section?.Margins.Right ?? 1440U;
                 contentWidthTwips = Math.Max(0D, pageWidthTwips - leftMarginTwips - rightMarginTwips);
             }
             if (contentWidthTwips <= 0) {
@@ -379,7 +379,7 @@ namespace OfficeIMO.Word.Html {
             return length;
         }
 
-        private bool TryHandleExternalImage(string src, WordDocument doc, ref WordParagraph? paragraph, WordHeaderFooter? headerFooter, double? width, double? height, WrapTextImage wrap, string alt, out WordImage image) {
+        private bool TryHandleExternalImage(string src, WordDocument doc, ref WordParagraph? paragraph, WordHeaderFooter? headerFooter, double? width, double? height, WordImageTextWrapping wrap, string alt, out WordImage image) {
             image = null!;
             if (!width.HasValue || !height.HasValue) {
                 return false;
@@ -407,7 +407,7 @@ namespace OfficeIMO.Word.Html {
             return false;
         }
 
-        private bool TryHandleDataImage(string src, WordDocument doc, HtmlToWordOptions options, ref WordParagraph? paragraph, WordHeaderFooter? headerFooter, double? width, double? height, WrapTextImage wrap, string alt, out WordImage image) {
+        private bool TryHandleDataImage(string src, WordDocument doc, HtmlToWordOptions options, ref WordParagraph? paragraph, WordHeaderFooter? headerFooter, double? width, double? height, WordImageTextWrapping wrap, string alt, out WordImage image) {
             image = null!;
             if (!HtmlImageDataUri.TryParse(src, out var dataUri)) {
                 AddDiagnostic(options, "ImageDataUriInvalid", "Image data URI could not be parsed and was skipped.", src);
@@ -1196,7 +1196,10 @@ namespace OfficeIMO.Word.Html {
                         return false;
                     }
 
-                    string svgText = dataUri.DecodeText();
+                    if (!dataUri.TryDecodeText(out string svgText)) {
+                        detail = "Image data URI text could not be decoded.";
+                        return false;
+                    }
                     if (!IsEmbeddableSvgText(svgText, out detail)) {
                         return false;
                     }
@@ -1410,8 +1413,8 @@ namespace OfficeIMO.Word.Html {
         private bool ProcessSvgElement(AngleSharp.Dom.IElement svg, WordDocument doc, WordSection section, HtmlToWordOptions options, WordParagraph? currentParagraph, WordHeaderFooter? headerFooter) {
             double? width = null;
             double? height = null;
-            if (double.TryParse(svg.GetAttribute("width")?.Replace("px", string.Empty), out var w)) width = w;
-            if (double.TryParse(svg.GetAttribute("height")?.Replace("px", string.Empty), out var h)) height = h;
+            if (double.TryParse(svg.GetAttribute("width")?.Replace("px", string.Empty), NumberStyles.Float, CultureInfo.InvariantCulture, out var w)) width = w;
+            if (double.TryParse(svg.GetAttribute("height")?.Replace("px", string.Empty), NumberStyles.Float, CultureInfo.InvariantCulture, out var h)) height = h;
 
             var paragraph = currentParagraph ?? (headerFooter != null ? headerFooter.AddParagraph() : section.AddParagraph());
             long reservedBytes = 0;

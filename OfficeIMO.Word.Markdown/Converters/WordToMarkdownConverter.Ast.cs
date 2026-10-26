@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using DocumentFormat.OpenXml;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 using M = DocumentFormat.OpenXml.Math;
@@ -49,9 +49,9 @@ namespace OfficeIMO.Word.Markdown {
         private void BuildMarkdownDocument(WordDocument document, MarkdownDoc markdown, WordToMarkdownOptions options, CancellationToken cancellationToken) {
             _visualFallbackResourceIndex = 0;
             _exportedImageFileNames.Clear();
-            var listIndices = DocumentTraversal.BuildListIndices(document);
+            var listIndices = WordDocumentTraversal.BuildListIndices(document);
             int sectionIndex = 0;
-            foreach (var section in DocumentTraversal.EnumerateSections(document)) {
+            foreach (var section in WordDocumentTraversal.EnumerateSections(document)) {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (options.IncludeHeadersAndFootersAsSemanticBlocks) {
                     AppendHeaderFooterSemanticBlocks(markdown, section, options, cancellationToken, sectionIndex);
@@ -162,7 +162,7 @@ namespace OfficeIMO.Word.Markdown {
             Action<IMarkdownBlock> addRootBlock,
             List<PendingListFrame> listStack,
             WordParagraph paragraph,
-            DocumentTraversal.ListInfo listInfo,
+            WordDocumentTraversal.ListInfo listInfo,
             WordToMarkdownOptions options,
             IReadOnlyDictionary<WordParagraph, (int Level, int Index)>? listIndices,
             bool hasCheckbox,
@@ -186,7 +186,7 @@ namespace OfficeIMO.Word.Markdown {
 
         private static int GetListStartForCurrentItem(
             WordParagraph paragraph,
-            DocumentTraversal.ListInfo listInfo,
+            WordDocumentTraversal.ListInfo listInfo,
             IReadOnlyDictionary<WordParagraph, (int Level, int Index)>? listIndices) {
             if (!listInfo.Ordered || listIndices == null) {
                 return listInfo.Start;
@@ -239,7 +239,7 @@ namespace OfficeIMO.Word.Markdown {
             return block is HorizontalRuleBlock;
         }
 
-        private static void EnsureListFrame(Action<IMarkdownBlock> addRootBlock, List<PendingListFrame> listStack, DocumentTraversal.ListInfo listInfo, int start, int maximumDepth) {
+        private static void EnsureListFrame(Action<IMarkdownBlock> addRootBlock, List<PendingListFrame> listStack, WordDocumentTraversal.ListInfo listInfo, int start, int maximumDepth) {
             int boundedLevel = ValidateListLevel(listInfo.Level, maximumDepth);
 
             int targetDepth = boundedLevel + 1;
@@ -366,7 +366,7 @@ namespace OfficeIMO.Word.Markdown {
 
                     ResolveParagraphCheckboxState(paragraph, out bool hasCheckbox, out bool checkboxChecked);
 
-                    var listInfo = DocumentTraversal.GetListInfo(paragraph);
+                    var listInfo = WordDocumentTraversal.GetListInfo(paragraph);
                     if (listInfo != null) {
                         AddListParagraph(addRootBlock, listStack, paragraph, listInfo.Value, options, listIndices, hasCheckbox, checkboxChecked, trimBoundaryWhitespace);
                         continue;
@@ -867,7 +867,7 @@ namespace OfficeIMO.Word.Markdown {
             }
 
             int headingLevel = paragraph.Style.HasValue
-                ? HeadingStyleMapper.GetLevelForHeadingStyle(paragraph.Style.Value)
+                ? WordHeadingStyleMapper.GetLevelForHeadingStyle(paragraph.Style.Value)
                 : 0;
 
             IMarkdownBlock block = headingLevel > 0
@@ -1458,21 +1458,21 @@ namespace OfficeIMO.Word.Markdown {
                 nodes.RemoveAt(nodes.Count - 1);
             }
 
-            if (nodes.Count > 0 && nodes[0] is TextRun leadingText) {
+            if (nodes.Count > 0 && nodes[0] is MarkdownTextRun leadingText) {
                 string trimmed = leadingText.Text.TrimStart();
                 if (trimmed.Length == 0) {
                     nodes.RemoveAt(0);
                 } else if (!string.Equals(trimmed, leadingText.Text, StringComparison.Ordinal)) {
-                    nodes[0] = new TextRun(trimmed);
+                    nodes[0] = new MarkdownTextRun(trimmed);
                 }
             }
 
-            if (nodes.Count > 0 && nodes[nodes.Count - 1] is TextRun trailingText) {
+            if (nodes.Count > 0 && nodes[nodes.Count - 1] is MarkdownTextRun trailingText) {
                 string trimmed = trailingText.Text.TrimEnd();
                 if (trimmed.Length == 0) {
                     nodes.RemoveAt(nodes.Count - 1);
                 } else if (!string.Equals(trimmed, trailingText.Text, StringComparison.Ordinal)) {
-                    nodes[nodes.Count - 1] = new TextRun(trimmed);
+                    nodes[nodes.Count - 1] = new MarkdownTextRun(trimmed);
                 }
             }
 
@@ -1525,10 +1525,10 @@ namespace OfficeIMO.Word.Markdown {
             return run.Bold
                 || run.Italic
                 || run.Strike
-                || run.VerticalTextAlignment == VerticalPositionValues.Superscript
-                || run.VerticalTextAlignment == VerticalPositionValues.Subscript
-                || (options.EnableUnderline && run.Underline.HasValue && run.Underline.Value != UnderlineValues.None)
-                || (options.EnableHighlight && run.Highlight.HasValue && run.Highlight.Value != HighlightColorValues.None)
+                || run.VerticalTextAlignment == WordVerticalTextPosition.Superscript
+                || run.VerticalTextAlignment == WordVerticalTextPosition.Subscript
+                || (options.EnableUnderline && run.Underline.HasValue && run.Underline.Value != WordUnderlineStyle.None)
+                || (options.EnableHighlight && run.Highlight.HasValue && run.Highlight.Value != WordHighlightColor.None)
                 || IsCodeRun(run, preferredCodeFont, implicitCodeFont)
                 || (run.IsHyperLink && run.Hyperlink?.Uri != null);
         }
@@ -1541,15 +1541,15 @@ namespace OfficeIMO.Word.Markdown {
             string? implicitCodeFont) {
             IMarkdownInline node = IsCodeRun(run, preferredCodeFont, implicitCodeFont)
                 ? new CodeSpanInline(text)
-                : new TextRun(text);
+                : new MarkdownTextRun(text);
 
-            if (run.VerticalTextAlignment == VerticalPositionValues.Superscript) {
+            if (run.VerticalTextAlignment == WordVerticalTextPosition.Superscript) {
                 node = WrapInline("sup", node);
-            } else if (run.VerticalTextAlignment == VerticalPositionValues.Subscript) {
+            } else if (run.VerticalTextAlignment == WordVerticalTextPosition.Subscript) {
                 node = WrapInline("sub", node);
             }
 
-            if (options.EnableUnderline && run.Underline.HasValue && run.Underline.Value != UnderlineValues.None) {
+            if (options.EnableUnderline && run.Underline.HasValue && run.Underline.Value != WordUnderlineStyle.None) {
                 node = WrapInline("u", node);
             }
 
@@ -1557,7 +1557,7 @@ namespace OfficeIMO.Word.Markdown {
                 node = new StrikethroughSequenceInline(WrapInlineSequence(node));
             }
 
-            if (options.EnableHighlight && run.Highlight.HasValue && run.Highlight.Value != HighlightColorValues.None) {
+            if (options.EnableHighlight && run.Highlight.HasValue && run.Highlight.Value != WordHighlightColor.None) {
                 node = new HighlightSequenceInline(WrapInlineSequence(node));
             }
 
@@ -1759,15 +1759,15 @@ namespace OfficeIMO.Word.Markdown {
 
         private static ColumnAlignment GetAlignment(WordTableCell cell) {
             var alignment = cell.Paragraphs.FirstOrDefault()?.ParagraphAlignment;
-            if (alignment == JustificationValues.Center) {
+            if (alignment == WordParagraphAlignment.Center) {
                 return ColumnAlignment.Center;
             }
 
-            if (alignment == JustificationValues.Right || alignment == JustificationValues.End) {
+            if (alignment == WordParagraphAlignment.Right || alignment == WordParagraphAlignment.End) {
                 return ColumnAlignment.Right;
             }
 
-            if (alignment == JustificationValues.Left || alignment == JustificationValues.Start) {
+            if (alignment == WordParagraphAlignment.Left || alignment == WordParagraphAlignment.Start) {
                 return ColumnAlignment.Left;
             }
 

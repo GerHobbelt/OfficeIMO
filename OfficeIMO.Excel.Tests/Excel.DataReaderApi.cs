@@ -7,6 +7,7 @@ using System.Threading;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using OfficeIMO.Data;
 using Xunit;
 
 namespace OfficeIMO.Excel.Tests;
@@ -133,6 +134,50 @@ public partial class Excel {
         Assert.True(reader.Read());
         Assert.Equal(42, reader.GetFieldValue<int?>(0));
     }
+
+#if NET6_0_OR_GREATER
+    [Fact]
+    public void OpenDataReader_GetFieldValueSupportsDateOnlyAndTimeOnlyWithoutChangingSchemaTypes() {
+        using var document = ExcelDocument.Create(new MemoryStream());
+        ExcelSheet sheet = document.AddWorksheet("Data");
+        sheet.CellValue(1, 1, "Date");
+        sheet.CellValue(1, 2, "Time");
+        sheet.CellValue(2, 1, new DateOnly(2026, 8, 6));
+        sheet.CellValue(2, 2, new TimeOnly(14, 35, 12));
+
+        using DbDataReader reader = ExcelDocument.OpenDataReader(
+            document.ToBytes(),
+            new ExcelReadOptions { InferSchema = true });
+
+        Assert.True(reader.Read());
+        Assert.Equal(typeof(DateTime), reader.GetFieldType(0));
+        Assert.Equal(typeof(DateTime), reader.GetFieldType(1));
+        Assert.Equal(new DateOnly(2026, 8, 6), reader.GetFieldValue<DateOnly>(0));
+        Assert.Equal(new TimeOnly(14, 35, 12), reader.GetFieldValue<TimeOnly>(1));
+    }
+
+    [Fact]
+    public void OpenDataReader_DateOnlyGetterRedactsSourceValuesWhenRequested() {
+        const string sourceValue = "customer-secret-date";
+        using var document = ExcelDocument.Create(new MemoryStream());
+        ExcelSheet sheet = document.AddWorksheet("Data");
+        sheet.CellValue(1, 1, "Date");
+        sheet.CellValue(2, 1, sourceValue);
+
+        using DbDataReader reader = ExcelDocument.OpenDataReader(
+            document.ToBytes(),
+            new ExcelReadOptions {
+                InferSchema = false,
+                MappingErrorValuePolicy = DataMappingErrorValuePolicy.Redact
+            });
+
+        Assert.True(reader.Read());
+        DataMappingException exception = Assert.Throws<DataMappingException>(() =>
+            reader.GetFieldValue<DateOnly>(0));
+
+        Assert.DoesNotContain(sourceValue, exception.ToString(), StringComparison.Ordinal);
+    }
+#endif
 
     [Fact]
     public void OpenDataReader_RejectsCaseInsensitiveDuplicateOpenXmlWorksheetNames() {
@@ -938,7 +983,7 @@ public partial class Excel {
         Assert.Throws<OperationCanceledException>(() => ExcelDocument.Load(
             GetDataReaderXlsbFixture("basic-values-formula.xlsb"),
             new ExcelLoadOptions {
-                AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly,
+                AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly,
                 XlsbImportOptions = new Xlsb.XlsbImportOptions {
                     CancellationToken = cancellation.Token
                 }

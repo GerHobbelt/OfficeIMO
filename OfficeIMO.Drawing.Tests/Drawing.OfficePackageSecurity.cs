@@ -1,6 +1,6 @@
 using DocumentFormat.OpenXml.Packaging;
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.Excel;
 using OfficeIMO.Word;
 using System.IO.Compression;
@@ -117,6 +117,35 @@ public sealed class DrawingOfficePackageSecurityTests {
         Assert.Contains(report.Findings, finding => finding.Rule == OfficePackageSecurityRule.CompressionRatio);
         Assert.DoesNotContain(report.Findings, finding => finding.Rule == OfficePackageSecurityRule.MalformedRelationship);
         Assert.Equal(0, report.ExternalRelationshipCount);
+    }
+
+    [Theory]
+    [InlineData("[Content_Types].xml", OfficePackageSecurityRule.MalformedPackage)]
+    [InlineData("_rels/.rels", OfficePackageSecurityRule.MalformedRelationship)]
+    public void InspectorBoundsXmlPackageMetadataBeforeDocumentOpen(
+        string entryName,
+        OfficePackageSecurityRule expectedRule) {
+        string xml = entryName == "[Content_Types].xml"
+            ? "<Types><Default Extension=\"" + new string('a', 512) + "\" ContentType=\"application/xml\" /></Types>"
+            : "<Relationships><Relationship Id=\"rId1\" Type=\"urn:test\" Target=\"" + new string('a', 512) + "\" /></Relationships>";
+        byte[] package = CreateZip(archive => AddEntry(archive, entryName, xml));
+        var options = OfficePackageSecurityOptions.SecureDefaults;
+        options.MaxXmlCharactersInPart = 128;
+
+        OfficePackageSecurityReport report = OfficePackageSecurityInspector.Inspect(package, options);
+
+        OfficePackageSecurityFinding finding = Assert.Single(
+            report.Findings,
+            item => item.Rule == expectedRule);
+        Assert.Contains("parsed safely", finding.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void InspectorRejectsInvalidXmlPackageMetadataLimit() {
+        var options = OfficePackageSecurityOptions.SecureDefaults;
+        options.MaxXmlCharactersInPart = 0;
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => OfficePackageSecurityInspector.Inspect([], options));
     }
 
     [Fact]

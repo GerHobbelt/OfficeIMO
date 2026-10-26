@@ -2,7 +2,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.Word.Fluent;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -182,9 +182,18 @@ namespace OfficeIMO.Word {
                 AddStyleDefinitions(styleDefinitionsPart, overrideStyles);
             } else {
                 // Create Styles part if it doesn't exist yet.
-                var styleDefinitionsPart1 = mainPart.AddNewPart<StyleDefinitionsPart>("rId1");
+                var styleDefinitionsPart1 = mainPart.AddNewPart<StyleDefinitionsPart>();
                 GenerateStyleDefinitionsPart1Content(styleDefinitionsPart1);
             }
+        }
+
+        internal void EnsureStyleDefinitionsInitialized() {
+            if (_styleDefinitionsInitialized || FileOpenAccess == FileAccess.Read) {
+                return;
+            }
+
+            InitialiseStyleDefinitions(_wordprocessingDocument, readOnly: false, overrideStyles: false);
+            _styleDefinitionsInitialized = true;
         }
 
         internal WordSection _currentSection => this.Sections.Last();

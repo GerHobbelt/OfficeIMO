@@ -143,6 +143,9 @@ namespace OfficeIMO.Word.Pdf {
             alignment != W.TabStopValues.Bar &&
             alignment != W.TabStopValues.Clear;
 
+        private static bool IsNativeRenderableTextTabStop(WordTabAlignment alignment) =>
+            IsNativeRenderableTextTabStop(alignment.ToOpenXml());
+
         private static double ResolveNativeParagraphLineHeight(WordParagraph paragraph, double fontSize) =>
             ResolveNativeParagraphLineHeight(paragraph, fontSize, GetNativeDocumentDefaults(paragraph._document));
 
@@ -193,7 +196,7 @@ namespace OfficeIMO.Word.Pdf {
                 nativeDefaults,
                 styleDefaults,
                 nativeFontMap: nativeFontMap);
-            if (paragraph.LineSpacing.HasValue && paragraph.LineSpacingRule == W.LineSpacingRuleValues.Auto) {
+            if (paragraph.LineSpacing.HasValue && paragraph.LineSpacingRule == WordLineSpacingRule.Auto) {
                 return Math.Max(0.01D, naturalLineHeight * (paragraph.LineSpacing.Value / 240D));
             }
 
@@ -260,6 +263,9 @@ namespace OfficeIMO.Word.Pdf {
             return requestedLineHeight;
         }
 
+        private static double ResolveNativeLineSpacingHeight(double lineSpacingPoints, WordLineSpacingRule? lineSpacingRule, double fontSize, double naturalLineHeight) =>
+            ResolveNativeLineSpacingHeight(lineSpacingPoints, lineSpacingRule.ToOpenXml(), fontSize, naturalLineHeight);
+
         private static PdfCore.PdfTabLeaderStyle MapNativeTabLeader(W.TabStopLeaderCharValues leader) {
             if (leader == W.TabStopLeaderCharValues.Dot || leader == W.TabStopLeaderCharValues.MiddleDot || leader == W.TabStopLeaderCharValues.Heavy) {
                 return PdfCore.PdfTabLeaderStyle.Dots;
@@ -276,6 +282,9 @@ namespace OfficeIMO.Word.Pdf {
             return PdfCore.PdfTabLeaderStyle.None;
         }
 
+        private static PdfCore.PdfTabLeaderStyle MapNativeTabLeader(WordTabLeader leader) =>
+            MapNativeTabLeader(leader.ToOpenXml());
+
         private static PdfCore.PdfTabAlignment MapNativeTabAlignment(W.TabStopValues alignment) {
             if (alignment == W.TabStopValues.Center) {
                 return PdfCore.PdfTabAlignment.Center;
@@ -291,6 +300,9 @@ namespace OfficeIMO.Word.Pdf {
 
             return PdfCore.PdfTabAlignment.Left;
         }
+
+        private static PdfCore.PdfTabAlignment MapNativeTabAlignment(WordTabAlignment alignment) =>
+            MapNativeTabAlignment(alignment.ToOpenXml());
 
         private static PdfCore.PanelStyle? CreateNativeParagraphPanelStyle(WordParagraph paragraph, PdfCore.PdfParagraphStyle paragraphStyle) {
             NativeParagraphBorders borders = GetNativeEffectiveParagraphBorders(paragraph);
@@ -421,6 +433,9 @@ namespace OfficeIMO.Word.Pdf {
         private static bool HasNativeBorder(W.BorderValues? style) =>
             style != null && style != W.BorderValues.Nil && style != W.BorderValues.None;
 
+        private static bool HasNativeBorder(WordBorderStyle? style) =>
+            HasNativeBorder(style.ToOpenXml());
+
         private static bool HasNativeParagraphBorder(NativeParagraphBorders borders) =>
             HasNativeBorder(borders.Top.Style) ||
             HasNativeBorder(borders.Right.Style) ||
@@ -493,10 +508,10 @@ namespace OfficeIMO.Word.Pdf {
         private static NativeParagraphBorders GetNativeDirectParagraphBorders(WordParagraph paragraph) {
             WordParagraphBorders borders = paragraph.Borders;
             return new NativeParagraphBorders(
-                new NativeParagraphBorderSide(borders.TopStyle, NormalizeNativeBorderColor(borders.TopColorHex), borders.TopSize?.Value, borders.TopSpace?.Value),
-                new NativeParagraphBorderSide(borders.RightStyle, NormalizeNativeBorderColor(borders.RightColorHex), borders.RightSize?.Value, borders.RightSpace?.Value),
-                new NativeParagraphBorderSide(borders.BottomStyle, NormalizeNativeBorderColor(borders.BottomColorHex), borders.BottomSize?.Value, borders.BottomSpace?.Value),
-                new NativeParagraphBorderSide(borders.LeftStyle, NormalizeNativeBorderColor(borders.LeftColorHex), borders.LeftSize?.Value, borders.LeftSpace?.Value));
+                new NativeParagraphBorderSide(borders.TopStyle.ToOpenXml(), NormalizeNativeBorderColor(borders.TopColorHex), borders.TopSize, borders.TopSpace),
+                new NativeParagraphBorderSide(borders.RightStyle.ToOpenXml(), NormalizeNativeBorderColor(borders.RightColorHex), borders.RightSize, borders.RightSpace),
+                new NativeParagraphBorderSide(borders.BottomStyle.ToOpenXml(), NormalizeNativeBorderColor(borders.BottomColorHex), borders.BottomSize, borders.BottomSpace),
+                new NativeParagraphBorderSide(borders.LeftStyle.ToOpenXml(), NormalizeNativeBorderColor(borders.LeftColorHex), borders.LeftSize, borders.LeftSpace));
         }
 
         private static NativeParagraphBorders MergeNativeParagraphBorders(NativeParagraphBorders styleBorders, NativeParagraphBorders directBorders) =>
@@ -530,7 +545,7 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static W.JustificationValues? ResolveNativeParagraphJustification(WordParagraph paragraph) =>
-            paragraph.ParagraphAlignment ?? GetNativeParagraphStyleDefaults(paragraph).Alignment;
+            paragraph.ParagraphAlignment.ToOpenXml() ?? GetNativeParagraphStyleDefaults(paragraph).Alignment;
 
         private static PdfCore.PdfAlign ResolveNativeParagraphAlign(WordParagraph paragraph, bool allowJustify = true) {
             W.JustificationValues? alignment = ResolveNativeParagraphJustification(paragraph);
@@ -579,6 +594,9 @@ namespace OfficeIMO.Word.Pdf {
             return PdfCore.PdfCellVerticalAlign.Top;
         }
 
+        private static PdfCore.PdfCellVerticalAlign? MapNativeNullableCellVerticalAlign(WordTableVerticalAlignment? alignment) =>
+            MapNativeNullableCellVerticalAlign(alignment.ToOpenXml());
+
         private static int GetHeadingLevel(WordParagraph paragraph) {
             if (!paragraph.Style.HasValue) {
                 return 0;
@@ -610,8 +628,10 @@ namespace OfficeIMO.Word.Pdf {
                 if (options.Orientation == null) {
                     return size;
                 }
-            } else if (section.PageSettings.Width?.Value > 0 && section.PageSettings.Height?.Value > 0) {
-                size = new PdfCore.PageSize(section.PageSettings.Width.Value / 20D, section.PageSettings.Height.Value / 20D);
+            } else if (section.PageSettings.Width > 0 && section.PageSettings.Height > 0) {
+                size = new PdfCore.PageSize(
+                    section.PageSettings.Width.GetValueOrDefault() / 20D,
+                    section.PageSettings.Height.GetValueOrDefault() / 20D);
             } else if (section.PageSettings.PageSize.HasValue) {
                 size = MapNativePageSize(section.PageSettings.PageSize.Value);
             } else if (options?.DefaultPageSize.HasValue == true) {
@@ -620,18 +640,18 @@ namespace OfficeIMO.Word.Pdf {
                 size = PdfCore.PageSizes.A4;
             }
 
-            PdfCore.PdfPageOrientation orientation;
+            OfficePageOrientation orientation;
             if (options?.Orientation != null) {
                 orientation = options.Orientation.Value;
-            } else if (section.PageSettings.Orientation == W.PageOrientationValues.Landscape) {
-                orientation = PdfCore.PdfPageOrientation.Landscape;
+            } else if (section.PageSettings.Orientation == OfficePageOrientation.Landscape) {
+                orientation = OfficePageOrientation.Landscape;
             } else if (options?.DefaultOrientation != null) {
-                orientation = options.DefaultOrientation == W.PageOrientationValues.Landscape ? PdfCore.PdfPageOrientation.Landscape : PdfCore.PdfPageOrientation.Portrait;
+                orientation = options.DefaultOrientation == OfficePageOrientation.Landscape ? OfficePageOrientation.Landscape : OfficePageOrientation.Portrait;
             } else {
-                orientation = PdfCore.PdfPageOrientation.Portrait;
+                orientation = OfficePageOrientation.Portrait;
             }
 
-            return orientation == PdfCore.PdfPageOrientation.Landscape ? size.Landscape() : size.Portrait();
+            return orientation == OfficePageOrientation.Landscape ? size.Landscape() : size.Portrait();
         }
 
         private static PdfCore.PageSize MapNativePageSize(WordPageSize pageSize) =>
@@ -658,9 +678,9 @@ namespace OfficeIMO.Word.Pdf {
             }
 
             return new PdfCore.PageMargins(
-                (section.Margins.Left?.Value ?? 0) / 20D,
+                section.Margins.Left / 20D,
                 (section.Margins.Top ?? 0) / 20D + headerFooterMarginExpansion.Header,
-                (section.Margins.Right?.Value ?? 0) / 20D,
+                section.Margins.Right / 20D,
                 (section.Margins.Bottom ?? 0) / 20D + headerFooterMarginExpansion.Footer);
         }
 
@@ -832,7 +852,7 @@ namespace OfficeIMO.Word.Pdf {
             return format!.Replace("{current}", "{page}").Replace("{total}", "{pages}");
         }
 
-        private static string? BuildNativeKeywords(WordPdfSaveOptions? options, BuiltinDocumentProperties properties) {
+        private static string? BuildNativeKeywords(WordPdfSaveOptions? options, WordBuiltinDocumentProperties properties) {
             return options?.Keywords ?? properties.Keywords;
         }
 

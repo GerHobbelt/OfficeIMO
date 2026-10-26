@@ -5,6 +5,7 @@ using System.Linq;
 using OfficeIMO.Excel;
 using OfficeIMO.Excel.Fluent;
 using OfficeIMO.Drawing;
+using OfficeIMO.Data;
 using System.Threading.Tasks;
 
 namespace OfficeIMO.Examples.Excel {
@@ -69,7 +70,7 @@ namespace OfficeIMO.Examples.Excel {
             const string logoUrl = "https://evotec.pl/wp-content/uploads/2015/05/Logo-evotec-012.png";
             overview.HeaderFooter(h => h.Left("Domain Detective — Overview").Right("Page &P of &N"));
             await overview.Sheet.SetHeaderImageFromUrlAsync(
-                HeaderFooterPosition.Right,
+                ExcelHeaderFooterPosition.Right,
                 logoUrl,
                 widthPoints: 96,
                 heightPoints: 32);
@@ -158,7 +159,7 @@ namespace OfficeIMO.Examples.Excel {
             }, visuals: v => {
                 v.NumericColumnDecimals["Value"] = 2;
                 v.IconSets["Value"] = new IconSetOptions {
-                    IconSet = DocumentFormat.OpenXml.Spreadsheet.IconSetValues.ThreeSymbols,
+                    IconSet = ExcelIconSet.ThreeSymbols,
                     ShowValue = true,
                     ReverseOrder = false,
                     PercentThresholds = new double[] { 0, 60, 85 }

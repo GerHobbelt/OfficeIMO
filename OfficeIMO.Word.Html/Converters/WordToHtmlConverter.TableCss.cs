@@ -2,16 +2,33 @@ using AngleSharp.Dom;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
 using System.Globalization;
+using System.Threading;
 
 namespace OfficeIMO.Word.Html {
     internal partial class WordToHtmlConverter {
         private static IEnumerable<WordElement> ExpandTableCellBlockContent(WordTableCell cell) =>
-            ExpandTableCellBlockContent(cell.Document, cell._tableCell);
+            ExpandTableCellBlockContent(
+                cell.Document,
+                cell._tableCell,
+                int.MaxValue,
+                CancellationToken.None);
 
         private static IEnumerable<WordElement> ExpandTableCellBlockContent(
             WordDocument document,
-            OpenXmlCompositeElement container) {
-            foreach (OpenXmlElement child in container.ChildElements) {
+            OpenXmlCompositeElement container,
+            long maxElements,
+            CancellationToken cancellationToken) {
+            if (maxElements <= 0) throw new ArgumentOutOfRangeException(nameof(maxElements));
+            var pending = new Stack<OpenXmlElement>();
+            PushChildrenInDocumentOrder(container, pending);
+            long visited = 0;
+            while (pending.Count > 0) {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++visited > maxElements) {
+                    throw new InvalidDataException(
+                        $"The Word table-cell content exceeds the {maxElements}-element HTML conversion limit.");
+                }
+                OpenXmlElement child = pending.Pop();
                 if (child is Paragraph paragraph) {
                     foreach (WordParagraph converted in WordSection.ConvertParagraphToWordParagraphs(document, paragraph)) {
                         yield return converted;
@@ -19,10 +36,16 @@ namespace OfficeIMO.Word.Html {
                 } else if (child is Table table) {
                     yield return new WordTable(document, table);
                 } else if (child is OpenXmlCompositeElement blockWrapper && child is not TableCellProperties) {
-                    foreach (WordElement nested in ExpandTableCellBlockContent(document, blockWrapper)) {
-                        yield return nested;
-                    }
+                    PushChildrenInDocumentOrder(blockWrapper, pending);
                 }
+            }
+        }
+
+        private static void PushChildrenInDocumentOrder(
+            OpenXmlCompositeElement container,
+            Stack<OpenXmlElement> pending) {
+            for (int index = container.ChildElements.Count - 1; index >= 0; index--) {
+                pending.Push(container.ChildElements[index]);
             }
         }
 
@@ -42,7 +65,7 @@ namespace OfficeIMO.Word.Html {
             int tableIndex) {
             int? precedingNumberId = null;
             for (int index = tableIndex - 1; index >= 0; index--) {
-                if (elements[index] is WordParagraph paragraph && DocumentTraversal.GetListInfo(paragraph) != null) {
+                if (elements[index] is WordParagraph paragraph && WordDocumentTraversal.GetListInfo(paragraph) != null) {
                     precedingNumberId = paragraph._listNumberId;
                     break;
                 }
@@ -51,7 +74,7 @@ namespace OfficeIMO.Word.Html {
 
             for (int index = tableIndex + 1; index < elements.Count; index++) {
                 if (elements[index] is not WordParagraph paragraph || paragraph.IsEmpty) continue;
-                return DocumentTraversal.GetListInfo(paragraph) != null &&
+                return WordDocumentTraversal.GetListInfo(paragraph) != null &&
                        paragraph._listNumberId == precedingNumberId;
             }
             return false;
@@ -112,17 +135,17 @@ namespace OfficeIMO.Word.Html {
                 var firstRow = table.Rows[0];
                 var columns = new List<(TableWidthUnitValues? Type, int Width)>();
                 foreach (var cell in firstRow.Cells) {
-                    if (cell.HorizontalMerge == MergedCellValues.Continue || cell.VerticalMerge == MergedCellValues.Continue) {
+                    if (cell.HorizontalMerge == WordCellMerge.Continue || cell.VerticalMerge == WordCellMerge.Continue) {
                         return gridColumns;
                     }
-                    if (cell.HorizontalMerge == MergedCellValues.Restart || cell.VerticalMerge == MergedCellValues.Restart) {
+                    if (cell.HorizontalMerge == WordCellMerge.Restart || cell.VerticalMerge == WordCellMerge.Restart) {
                         return gridColumns;
                     }
-                    if (cell.WidthType == null || cell.Width == null || GetWidthCss(cell.WidthType, cell.Width) == null) {
+                    if (cell.WidthType == null || cell.Width == null || GetWidthCss(cell.WidthType?.ToOpenXml(), cell.Width) == null) {
                         return gridColumns;
                     }
 
-                    columns.Add((cell.WidthType, cell.Width.Value));
+                    columns.Add((cell.WidthType?.ToOpenXml(), cell.Width.Value));
                 }
 
                 if (columns.Count > 0) {
@@ -174,8 +197,8 @@ namespace OfficeIMO.Word.Html {
                         continue;
                     }
                     if (align == null) {
-                        align = p.ParagraphAlignment;
-                    } else if (align != p.ParagraphAlignment) {
+                        align = p.ParagraphAlignment?.ToOpenXml();
+                    } else if (align != p.ParagraphAlignment?.ToOpenXml()) {
                         return null;
                     }
                 }
@@ -211,10 +234,10 @@ namespace OfficeIMO.Word.Html {
                     return styles;
                 }
 
-                var left = BuildBorderCss(b.LeftStyle, b.LeftColorHex, b.LeftSize);
-                var right = BuildBorderCss(b.RightStyle, b.RightColorHex, b.RightSize);
-                var top = BuildBorderCss(b.TopStyle, b.TopColorHex, b.TopSize);
-                var bottom = BuildBorderCss(b.BottomStyle, b.BottomColorHex, b.BottomSize);
+                var left = BuildBorderCss(b.LeftStyle?.ToOpenXml(), b.LeftColorHex, b.LeftSize);
+                var right = BuildBorderCss(b.RightStyle?.ToOpenXml(), b.RightColorHex, b.RightSize);
+                var top = BuildBorderCss(b.TopStyle?.ToOpenXml(), b.TopColorHex, b.TopSize);
+                var bottom = BuildBorderCss(b.BottomStyle?.ToOpenXml(), b.BottomColorHex, b.BottomSize);
 
                 if (left == null && right == null && top == null && bottom == null) {
                     return styles;
@@ -245,10 +268,10 @@ namespace OfficeIMO.Word.Html {
                 var b = p.Borders;
                 if (b == null) return styles;
 
-                var left = BuildBorderCss(b.LeftStyle, b.LeftColorHex, b.LeftSize);
-                var right = BuildBorderCss(b.RightStyle, b.RightColorHex, b.RightSize);
-                var top = BuildBorderCss(b.TopStyle, b.TopColorHex, b.TopSize);
-                var bottom = BuildBorderCss(b.BottomStyle, b.BottomColorHex, b.BottomSize);
+                var left = BuildBorderCss(b.LeftStyle?.ToOpenXml(), b.LeftColorHex, b.LeftSize);
+                var right = BuildBorderCss(b.RightStyle?.ToOpenXml(), b.RightColorHex, b.RightSize);
+                var top = BuildBorderCss(b.TopStyle?.ToOpenXml(), b.TopColorHex, b.TopSize);
+                var bottom = BuildBorderCss(b.BottomStyle?.ToOpenXml(), b.BottomColorHex, b.BottomSize);
 
                 if (left == null && right == null && top == null && bottom == null) {
                     return styles;

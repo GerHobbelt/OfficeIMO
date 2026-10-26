@@ -635,7 +635,7 @@ internal static partial class ExcelLibraryComparisonRunner {
     }
 
     private static void ApplyOfficeImoVariantTable(ExcelSheet sheet, string range, bool autoFit) {
-        sheet.AddTable(range, hasHeader: true, name: "SalesData", style: OfficeIMO.Excel.TableStyle.TableStyleMedium2, includeAutoFilter: true);
+        sheet.AddTable(range, hasHeader: true, name: "SalesData", style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2, includeAutoFilter: true);
         if (autoFit) {
             sheet.AutoFitColumns();
         }
@@ -666,8 +666,8 @@ internal static partial class ExcelLibraryComparisonRunner {
         string amountRange = BuildColumnRange(amountColumn, 2, lastRow);
         string unitsRange = BuildColumnRange(unitsColumn, 2, lastRow);
 
-        sheet.AddConditionalRule(amountRange, ConditionalFormattingOperatorValues.GreaterThan, "3000");
-        sheet.AddConditionalRule(unitsRange, ConditionalFormattingOperatorValues.LessThan, "5");
+        sheet.AddConditionalRule(amountRange, ExcelConditionalFormattingOperator.GreaterThan, "3000");
+        sheet.AddConditionalRule(unitsRange, ExcelConditionalFormattingOperator.LessThan, "5");
         sheet.AddConditionalColorScale(amountRange, OfficeColor.LightPink, OfficeColor.LightGreen);
         sheet.AddConditionalDataBar(unitsRange, OfficeColor.SteelBlue);
     }
@@ -691,7 +691,7 @@ internal static partial class ExcelLibraryComparisonRunner {
     private static void ApplyOfficeImoVariantDataValidation(ExcelSheet sheet, int rowCount, IReadOnlyList<RealWorldColumnSpec> columns) {
         int unitsColumn = GetColumnIndex(columns, "Units");
         int lastRow = rowCount + 1;
-        sheet.ValidationWholeNumber(BuildColumnRange(unitsColumn, 2, lastRow), DataValidationOperatorValues.Between, 1, 24);
+        sheet.ValidationWholeNumber(BuildColumnRange(unitsColumn, 2, lastRow), ExcelDataValidationOperator.Between, 1, 24);
     }
 
     private static void ApplyEpPlusVariantDataValidation(ExcelWorksheet worksheet, int rowCount, IReadOnlyList<RealWorldColumnSpec> columns) {
@@ -710,7 +710,7 @@ internal static partial class ExcelLibraryComparisonRunner {
             name: "SalesPivot",
             rowFields: new[] { "Region" },
             columnFields: new[] { "Owner" },
-            dataFields: new[] { new ExcelPivotDataField("Amount", DataConsolidateFunctionValues.Sum, "Total Amount") },
+            dataFields: new[] { new ExcelPivotDataField("Amount", ExcelPivotDataFunction.Sum, "Total Amount") },
             pivotStyleName: "PivotStyleMedium9");
     }
 
@@ -801,7 +801,7 @@ internal static partial class ExcelLibraryComparisonRunner {
             BuildSalesRange(rowCount),
             hasHeader: true,
             name: "SalesData",
-            style: OfficeIMO.Excel.TableStyle.TableStyleMedium2,
+            style: OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium2,
             includeAutoFilter: true);
         sheet.AutoFitColumns();
     }
@@ -813,15 +813,15 @@ internal static partial class ExcelLibraryComparisonRunner {
 
     private static void ApplyOfficeImoConditionalFormatting(ExcelSheet sheet, int rowCount) {
         int lastRow = rowCount + 1;
-        sheet.AddConditionalRule($"E2:E{lastRow.ToString(CultureInfo.InvariantCulture)}", ConditionalFormattingOperatorValues.GreaterThan, "3000");
-        sheet.AddConditionalRule($"F2:F{lastRow.ToString(CultureInfo.InvariantCulture)}", ConditionalFormattingOperatorValues.LessThan, "5");
+        sheet.AddConditionalRule($"E2:E{lastRow.ToString(CultureInfo.InvariantCulture)}", ExcelConditionalFormattingOperator.GreaterThan, "3000");
+        sheet.AddConditionalRule($"F2:F{lastRow.ToString(CultureInfo.InvariantCulture)}", ExcelConditionalFormattingOperator.LessThan, "5");
         sheet.AddConditionalColorScale($"E2:E{lastRow.ToString(CultureInfo.InvariantCulture)}", OfficeColor.LightPink, OfficeColor.LightGreen);
         sheet.AddConditionalDataBar($"F2:F{lastRow.ToString(CultureInfo.InvariantCulture)}", OfficeColor.SteelBlue);
     }
 
     private static void ApplyOfficeImoDataValidation(ExcelSheet sheet, int rowCount) {
         int lastRow = rowCount + 1;
-        sheet.ValidationWholeNumber($"F2:F{lastRow.ToString(CultureInfo.InvariantCulture)}", DataValidationOperatorValues.Between, 1, 24);
+        sheet.ValidationWholeNumber($"F2:F{lastRow.ToString(CultureInfo.InvariantCulture)}", ExcelDataValidationOperator.Between, 1, 24);
     }
 
     private static void AddOfficeImoPivotTable(ExcelSheet sheet, int rowCount) {
@@ -831,7 +831,7 @@ internal static partial class ExcelLibraryComparisonRunner {
             name: "SalesPivot",
             rowFields: new[] { "Region" },
             columnFields: new[] { "Owner" },
-            dataFields: new[] { new ExcelPivotDataField("Amount", DataConsolidateFunctionValues.Sum, "Total Amount") },
+            dataFields: new[] { new ExcelPivotDataField("Amount", ExcelPivotDataFunction.Sum, "Total Amount") },
             pivotStyleName: "PivotStyleMedium9");
     }
 

@@ -42,14 +42,14 @@ namespace OfficeIMO.Tests {
                         }
                     }
 
-                    List<ValidationErrorInfo> errors = presentation.ValidateDocument();
+                    List<OfficeOpenXmlValidationError> errors = presentation.ValidateDocument();
                     Assert.True(errors.Count == 0, string.Join(Environment.NewLine,
                         errors.Select(error => error.Description)));
                     presentation.Save();
                 }
 
                 Assert.Contains("Chart kind: ColumnClustered", File.ReadAllText(summaryPath));
-                using (PowerPointPresentation reopened = PowerPointPresentation.Load(output, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                using (PowerPointPresentation reopened = PowerPointPresentation.Load(output, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                     Assert.Equal(kinds.Length, reopened.Slides.Count);
                     for (int index = 0; index < kinds.Length; index++) {
                         PowerPointChart chart = Assert.Single(reopened.Slides[index].Charts);
@@ -94,7 +94,7 @@ namespace OfficeIMO.Tests {
                     Assert.Equal(OfficeChartAxisGroup.Primary, snapshot.Data.Series[0].AxisGroup);
                     Assert.Equal(OfficeChartAxisGroup.Secondary, snapshot.Data.Series[1].AxisGroup);
                     Assert.Contains("Revenue", chart.CreateDataSummary());
-                    List<ValidationErrorInfo> errors = presentation.ValidateDocument();
+                    List<OfficeOpenXmlValidationError> errors = presentation.ValidateDocument();
                     Assert.True(errors.Count == 0, string.Join(Environment.NewLine,
                         errors.Select(error => error.Description)));
                     presentation.Save();
@@ -271,7 +271,7 @@ namespace OfficeIMO.Tests {
             PowerPointChart chart = slide.AddChart(OfficeChartKind.Line, initial)
                 .SetDataLabels(showValue: true)
                 .SetSeriesDataLabels(0, showValue: true, numberFormat: "0.0")
-                .SetSeriesTrendline(0, C.TrendlineValues.Linear, displayRSquared: true);
+                .SetSeriesTrendline(0, OfficeChartTrendlineType.Linear, displayRSquared: true);
 
             chart.UpdateData(updated);
 
@@ -447,7 +447,7 @@ namespace OfficeIMO.Tests {
                     presentation.Save();
                 }
 
-                using PowerPointPresentation reopened = PowerPointPresentation.Load(output, new PowerPointLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using PowerPointPresentation reopened = PowerPointPresentation.Load(output, new PowerPointLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 PowerPointChart chart = Assert.Single(reopened.Slides[0].Charts);
                 Assert.True(chart.TryGetOfficeSnapshot(out OfficeChartSnapshot snapshot));
                 Assert.Equal(OfficeChartAxisGroup.Primary, snapshot.Data.Series[0].AxisGroup);

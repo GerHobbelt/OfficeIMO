@@ -20,7 +20,8 @@ namespace OfficeIMO.Excel {
                     candidate.ColumnTypes,
                     candidate.Rows,
                     candidate.IncludeHeaders,
-                    candidate.Range);
+                    candidate.Range,
+                    includeCellReferences: candidate.IncludeCellReferences);
             } else {
                 _excelDocument.RegisterDirectCellValuesSaveCandidate(
                     this,
@@ -32,7 +33,8 @@ namespace OfficeIMO.Excel {
                     candidate.RowCount,
                     candidate.ValuesMatchColumnTypes,
                     candidate.IncludeHeaders,
-                    candidate.Range);
+                    candidate.Range,
+                    includeCellReferences: candidate.IncludeCellReferences);
             }
         }
 
@@ -49,7 +51,8 @@ namespace OfficeIMO.Excel {
                     candidate.ColumnTypes,
                     candidate.Rows,
                     candidate.IncludeHeaders,
-                    candidate.Range)
+                    candidate.Range,
+                    includeCellReferences: candidate.IncludeCellReferences)
                 : _excelDocument.RegisterDeferredDirectCellValuesSaveCandidate(
                     this,
                     "Cells",
@@ -60,7 +63,8 @@ namespace OfficeIMO.Excel {
                     candidate.RowCount,
                     candidate.ValuesMatchColumnTypes,
                     candidate.IncludeHeaders,
-                    candidate.Range);
+                    candidate.Range,
+                    includeCellReferences: candidate.IncludeCellReferences);
         }
 
         private bool TryCreateDirectCellValuesAppendCandidate(IReadOnlyList<(int Row, int Column, object Value)> cells, out DirectCellValuesSaveCandidate? candidate) {
@@ -219,7 +223,7 @@ namespace OfficeIMO.Excel {
 
         private static bool TryCreateDirectCellValuesSaveCandidate(
             IReadOnlyList<(int Row, int Column, object Value)> cells,
-            ExecutionMode? mode,
+            ExcelExecutionMode? mode,
             out DirectCellValuesSaveCandidate? candidate) {
             candidate = null;
 
@@ -227,13 +231,13 @@ namespace OfficeIMO.Excel {
                 return false;
             }
 
-            if (mode == ExecutionMode.Parallel && (rowCount <= 1 || columnCount <= 1)) {
+            if (mode == ExcelExecutionMode.Parallel && (rowCount <= 1 || columnCount <= 1)) {
                 return false;
             }
 
             bool includeHeaders = CanTreatFirstCellValuesRowAsHeaders(cells, columnCount, rowCount);
             if (!includeHeaders
-                && mode != ExecutionMode.Parallel
+                && mode != ExcelExecutionMode.Parallel
                 && FirstCellValuesRowLooksLikeHeaderText(cells, columnCount)) {
                 return false;
             }
@@ -277,6 +281,7 @@ namespace OfficeIMO.Excel {
                 ColumnCount = columnNames.Length;
                 RowCount = rows.Length;
                 ValuesMatchColumnTypes = false;
+                IncludeCellReferences = ShouldIncludeDirectCellValuesReferences(RowCount, ColumnCount);
                 IncludeHeaders = includeHeaders;
                 Range = range;
             }
@@ -296,6 +301,7 @@ namespace OfficeIMO.Excel {
                 ColumnCount = columnCount;
                 RowCount = rowCount;
                 ValuesMatchColumnTypes = valuesMatchColumnTypes;
+                IncludeCellReferences = ShouldIncludeDirectCellValuesReferences(RowCount, ColumnCount);
                 IncludeHeaders = includeHeaders;
                 Range = range;
             }
@@ -313,6 +319,8 @@ namespace OfficeIMO.Excel {
             internal int RowCount { get; }
 
             internal bool ValuesMatchColumnTypes { get; }
+
+            internal bool IncludeCellReferences { get; }
 
             internal bool IncludeHeaders { get; }
 
@@ -640,6 +648,9 @@ namespace OfficeIMO.Excel {
 
             return true;
         }
+
+        private static bool ShouldIncludeDirectCellValuesReferences(int rowCount, int columnCount)
+            => (long)rowCount * columnCount < DirectCellValuesCompactReferenceCellThreshold;
 
         private static bool IsDirectCellValuesAutomaticFormattingText(string text)
             => text.IndexOf('\r') >= 0 || text.IndexOf('\n') >= 0;

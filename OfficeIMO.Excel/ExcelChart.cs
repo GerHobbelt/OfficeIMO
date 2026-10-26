@@ -301,11 +301,11 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Sets the legend position and visibility.
         /// </summary>
-        public ExcelChart SetLegend(C.LegendPositionValues position, bool overlay = false) {
+        public ExcelChart SetLegend(OfficeChartLegendPosition position, bool overlay = false) {
             C.Chart chart = GetChart();
             C.Legend legend = chart.GetFirstChild<C.Legend>() ?? new C.Legend();
             var legendPosition = legend.GetFirstChild<C.LegendPosition>() ?? new C.LegendPosition();
-            legendPosition.Val = position;
+            legendPosition.Val = position.ToOpenXml();
             if (legendPosition.Parent == null) {
                 legend.Append(legendPosition);
             }
@@ -435,6 +435,13 @@ namespace OfficeIMO.Excel {
                 bool hasWidth = TryGetTwoCellAnchorSizePixels(twoCellAnchor, worksheetPart, effectiveGeometry, horizontal: true, out int widthPixels);
                 bool hasHeight = TryGetTwoCellAnchorSizePixels(twoCellAnchor, worksheetPart, effectiveGeometry, horizontal: false, out int heightPixels);
                 return (hasWidth ? widthPixels : 480, hasHeight ? heightPixels : 320);
+            }
+
+            Xdr.Extent? absoluteExtent = _frame.Ancestors<Xdr.AbsoluteAnchor>().FirstOrDefault()?.Extent;
+            if (absoluteExtent != null) {
+                return (
+                    EmuToPixels(absoluteExtent.Cx?.Value, 480),
+                    EmuToPixels(absoluteExtent.Cy?.Value, 320));
             }
 
             Xdr.Extent? extent = _frame.Ancestors<Xdr.OneCellAnchor>().FirstOrDefault()?.Extent;

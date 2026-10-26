@@ -24,7 +24,7 @@ namespace OfficeIMO.Word {
         /// <param name="wordDocument"></param>
         /// <param name="text"></param>
         /// <param name="wrapTextImage"></param>
-        public WordTextBox(WordDocument wordDocument, string text, WrapTextImage wrapTextImage) {
+        public WordTextBox(WordDocument wordDocument, string text, WordImageTextWrapping wrapTextImage) {
             var paragraph = new WordParagraph(wordDocument, true, true);
             wordDocument.AddParagraph(paragraph);
             AddAlternateContent(wordDocument, paragraph, text, wrapTextImage);
@@ -39,7 +39,7 @@ namespace OfficeIMO.Word {
         /// <param name="wordDocument"></param>
         /// <param name="paragraph"></param>
         /// <param name="run"></param>
-        public WordTextBox(WordDocument wordDocument, Paragraph paragraph, Run run) {
+        internal WordTextBox(WordDocument wordDocument, Paragraph paragraph, Run run) {
             _document = wordDocument;
             _wordParagraph = new WordParagraph(wordDocument, paragraph, run);
             _vmlTextBox = run.Descendants<V.TextBox>().FirstOrDefault();
@@ -52,7 +52,7 @@ namespace OfficeIMO.Word {
         /// <param name="wordHeaderFooter"></param>
         /// <param name="text"></param>
         /// <param name="wrapTextImage"></param>
-        public WordTextBox(WordDocument wordDocument, WordHeaderFooter wordHeaderFooter, string text, WrapTextImage wrapTextImage) {
+        public WordTextBox(WordDocument wordDocument, WordHeaderFooter wordHeaderFooter, string text, WordImageTextWrapping wrapTextImage) {
             _document = wordDocument;
             _headerFooter = wordHeaderFooter;
 
@@ -69,7 +69,7 @@ namespace OfficeIMO.Word {
         /// <param name="paragraph"></param>
         /// <param name="text"></param>
         /// <param name="wrapTextImage"></param>
-        public WordTextBox(WordDocument wordDocument, WordParagraph paragraph, string text, WrapTextImage wrapTextImage) {
+        public WordTextBox(WordDocument wordDocument, WordParagraph paragraph, string text, WordImageTextWrapping wrapTextImage) {
             _document = wordDocument;
 
             AddAlternateContent(wordDocument, paragraph, text, wrapTextImage);
@@ -105,12 +105,12 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets horizontal relative position of the text box
         /// </summary>
-        public HorizontalRelativePositionValues? HorizontalPositionRelativeFrom {
-            get => _anchor?.HorizontalPosition?.RelativeFrom?.Value;
+        public WordHorizontalRelativePosition? HorizontalPositionRelativeFrom {
+            get => _anchor?.HorizontalPosition?.RelativeFrom?.Value.ToOfficeEnum();
             set {
                 var horizontalPosition = _anchor?.HorizontalPosition;
                 if (horizontalPosition != null && value.HasValue) {
-                    horizontalPosition.RelativeFrom = value.Value;
+                    horizontalPosition.RelativeFrom = value.Value.ToOpenXml();
                 }
             }
         }
@@ -118,7 +118,7 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the wrap text of the text box
         /// </summary>
-        public WrapTextImage? WrapText {
+        public WordImageTextWrapping? WrapText {
             get => WordWrapTextImage.GetWrapTextImage(_anchor!, _inline!);
             set => WordWrapTextImage.SetWrapTextImage(_drawing!, _anchor!, _inline!, value);
         }
@@ -126,14 +126,14 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the horizontal alignment of the text box
         /// </summary>
-        public WordHorizontalAlignmentValues HorizontalAlignment {
+        public WordTextBoxHorizontalAlignment HorizontalAlignment {
             get {
                 var alignmentText = _anchor?.HorizontalPosition?.HorizontalAlignment?.Text;
                 if (alignmentText != null) {
-                    return HorizontalAlignmentHelper.FromString(alignmentText);
+                    return WordTextBoxHorizontalAlignmentSerializer.FromString(alignmentText);
                 }
 
-                return WordHorizontalAlignmentValues.Center;
+                return WordTextBoxHorizontalAlignment.Center;
             }
             set {
                 var anchor = _anchor;
@@ -148,10 +148,10 @@ namespace OfficeIMO.Word {
 
                 if (horizontalPosition.HorizontalAlignment == null) {
                     horizontalPosition.HorizontalAlignment = new DrawingHorizontalAlignment() {
-                        Text = HorizontalAlignmentHelper.ToString(value)
+                        Text = WordTextBoxHorizontalAlignmentSerializer.ToString(value)
                     };
                 } else {
-                    horizontalPosition.HorizontalAlignment.Text = HorizontalAlignmentHelper.ToString(value);
+                    horizontalPosition.HorizontalAlignment.Text = WordTextBoxHorizontalAlignmentSerializer.ToString(value);
                 }
             }
         }
@@ -159,12 +159,12 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets or sets the relative4 vertical alignment of the text box
         /// </summary>
-        public VerticalRelativePositionValues VerticalPositionRelativeFrom {
-            get => _anchor?.VerticalPosition?.RelativeFrom?.Value ?? VerticalRelativePositionValues.Page;
+        public WordVerticalRelativePosition VerticalPositionRelativeFrom {
+            get => _anchor?.VerticalPosition?.RelativeFrom?.Value.ToOfficeEnum() ?? WordVerticalRelativePosition.Page;
             set {
                 var verticalPosition = _anchor?.VerticalPosition;
                 if (verticalPosition != null) {
-                    verticalPosition.RelativeFrom = value;
+                    verticalPosition.RelativeFrom = value.ToOpenXml();
                 }
             }
         }
@@ -310,7 +310,7 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Gets text body properties
         /// </summary>
-        public TextBodyProperties TextBodyProperties {
+        internal TextBodyProperties TextBodyProperties {
             get {
                 var wsp = _wordprocessingShape ?? throw new InvalidOperationException("Text box shape is not available.");
                 var tbp = wsp.ChildElements.OfType<TextBodyProperties>().FirstOrDefault();
@@ -367,13 +367,28 @@ namespace OfficeIMO.Word {
         /// <summary>
         /// Sets size relative horizontally
         /// </summary>
-        public DocumentFormat.OpenXml.Office2010.Word.Drawing.SizeRelativeHorizontallyValues? SizeRelativeHorizontally {
+        public WordTextBoxHorizontalSizeReference? SizeRelativeHorizontally {
             get => _anchor?
                 .ChildElements.OfType<DocumentFormat.OpenXml.Office2010.Word.Drawing.RelativeWidth>()
                 .FirstOrDefault()?
-                .ObjectId?.Value;
+                .ObjectId?.Value.ToOfficeEnum();
             set {
-
+                var anchor = _anchor;
+                if (anchor == null) return;
+                var relativeWidth = anchor.ChildElements
+                    .OfType<DocumentFormat.OpenXml.Office2010.Word.Drawing.RelativeWidth>()
+                    .FirstOrDefault();
+                if (!value.HasValue) {
+                    relativeWidth?.Remove();
+                    return;
+                }
+                relativeWidth ??= new DocumentFormat.OpenXml.Office2010.Word.Drawing.RelativeWidth();
+                relativeWidth.ObjectId = value.Value.ToOpenXml();
+                relativeWidth.PercentageWidth ??= new DocumentFormat.OpenXml.Office2010.Word.Drawing.PercentageWidth();
+                if (string.IsNullOrWhiteSpace(relativeWidth.PercentageWidth.Text)) {
+                    relativeWidth.PercentageWidth.Text = "0";
+                }
+                if (relativeWidth.Parent == null) anchor.Append(relativeWidth);
             }
         }
 
@@ -463,7 +478,7 @@ namespace OfficeIMO.Word {
         internal TextBodyProperties? DrawingTextBodyProperties =>
             _wordprocessingShape?.GetFirstChild<TextBodyProperties>();
 
-        internal static Anchor ConvertInlineToAnchor(Inline inline, WrapTextImage wrapTextImage) {
+        internal static Anchor ConvertInlineToAnchor(Inline inline, WordImageTextWrapping wrapTextImage) {
             Anchor anchor1 = new Anchor() { DistanceFromTop = (UInt32Value)91440U, DistanceFromBottom = (UInt32Value)91440U, DistanceFromLeft = (UInt32Value)114300U, DistanceFromRight = (UInt32Value)114300U, SimplePos = false, RelativeHeight = (UInt32Value)251659264U, BehindDoc = false, Locked = false, LayoutInCell = true, AllowOverlap = true, EditId = "39C62DE8", AnchorId = "3E379294" };
             anchor1.AddNamespaceDeclaration("wp14", "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing");
             anchor1.AddNamespaceDeclaration("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
@@ -667,13 +682,14 @@ namespace OfficeIMO.Word {
             return horizontalPosition;
         }
 
-        private void AddAlternateContent(WordDocument wordDocument, WordParagraph wordParagraph, string text, WrapTextImage wrapTextImage) {
+        private void AddAlternateContent(WordDocument wordDocument, WordParagraph wordParagraph, string text, WordImageTextWrapping wrapTextImage) {
 
             AlternateContent alternateContent1 = new AlternateContent();
             AlternateContentChoice alternateContentChoice1 = new AlternateContentChoice() { Requires = "wps" };
+            alternateContentChoice1.AddNamespaceDeclaration("wps", WordAlternateContentResolver.WordprocessingShapeNamespaceUri);
 
             DocumentFormat.OpenXml.Wordprocessing.Drawing drawing1;
-            if (wrapTextImage == WrapTextImage.InLineWithText) {
+            if (wrapTextImage == WordImageTextWrapping.InLineWithText) {
                 // inline
                 drawing1 = new DocumentFormat.OpenXml.Wordprocessing.Drawing {
                     Inline = GenerateInline(wordDocument, text)
@@ -775,7 +791,7 @@ namespace OfficeIMO.Word {
             return nonVisualGraphicFrameDrawingProperties1;
         }
 
-        private Anchor GenerateAnchor(WordDocument wordDocument, string text, WrapTextImage wrapTextImage) {
+        private Anchor GenerateAnchor(WordDocument wordDocument, string text, WordImageTextWrapping wrapTextImage) {
             Anchor anchor1 = new Anchor() { DistanceFromTop = (UInt32Value)91440U, DistanceFromBottom = (UInt32Value)91440U, DistanceFromLeft = (UInt32Value)114300U, DistanceFromRight = (UInt32Value)114300U, SimplePos = false, RelativeHeight = (UInt32Value)251659264U, BehindDoc = false, Locked = false, LayoutInCell = true, AllowOverlap = true, EditId = "39C62DE8", AnchorId = "3E379294" };
             anchor1.AddNamespaceDeclaration("wp14", "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing");
             anchor1.AddNamespaceDeclaration("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
@@ -834,7 +850,7 @@ namespace OfficeIMO.Word {
         /// </summary>
         /// <param name="text"></param>
         /// <returns></returns>
-        public TextBoxContent GenerateTextBoxContent(string text) {
+        internal TextBoxContent GenerateTextBoxContent(string text) {
             TextBoxContent textBoxContent1 = new TextBoxContent();
 
             Paragraph paragraph1 = new Paragraph() { RsidParagraphAddition = "00000000", RsidRunAdditionDefault = "006713BC", ParagraphId = "100FFE99", TextId = "27C5287F" };

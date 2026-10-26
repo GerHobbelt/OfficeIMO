@@ -1,3 +1,6 @@
+using OfficeIMO.Data;
+using OfficeIMO.Spreadsheet;
+
 namespace OfficeIMO.Excel.Fluent {
     /// <summary>
     /// Neutral, Excel-first wrapper for building stacked worksheet content.
@@ -8,7 +11,7 @@ namespace OfficeIMO.Excel.Fluent {
         private ExcelSheet _sheet;
         private int _row;
         private static readonly HashSet<string> HeaderAcronyms = new HashSet<string>(new[] {
-            "ID", "URL", "URI", "DNS", "MX", "SPF", "DKIM", "DMARC", "BIMI", "IP", "TLS", "AAA", "AAAA", "SRV", "TXT", "CNAME", "NS", "CAA", "MTA", "STS", "TLS-RPT"
+            "AD", "ID", "URL", "URI", "DNS", "MX", "SPF", "DKIM", "DMARC", "BIMI", "IP", "TLS", "AAA", "AAAA", "SRV", "TXT", "CNAME", "NS", "CAA", "MTA", "STS", "TLS-RPT"
         }, StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
@@ -22,7 +25,7 @@ namespace OfficeIMO.Excel.Fluent {
             _workbook = workbook ?? throw new ArgumentNullException(nameof(workbook));
             _theme = theme ?? SheetTheme.Default;
             // Use sanitized sheet names to avoid Excel repair prompts for invalid characters/length
-            _sheet = _workbook.AddWorksheet(sheetName, SheetNameValidationMode.Sanitize);
+            _sheet = _workbook.AddWorksheet(sheetName, ExcelSheetNameValidationMode.Sanitize);
             _row = 1;
             // Create a sheet-local top anchor so callers/tests can rely on a defined name at A1.
             // Keep it simple and safe: local to this sheet, absolute A1.
@@ -102,9 +105,17 @@ namespace OfficeIMO.Excel.Fluent {
         /// <param name="configure">Configure sizing options and header categories.</param>
         public SheetComposer ApplyColumnSizing(string? a1Range, Action<ColumnSizingOptions> configure) {
             if (string.IsNullOrWhiteSpace(a1Range)) return this;
-            var (fromCol, fromRow) = OfficeIMO.Excel.A1.ParseCellRef(a1Range!.Split(':')[0]);
-            var (toCol, toRow) = OfficeIMO.Excel.A1.ParseCellRef(a1Range!.Split(':')[1]);
-            if (fromCol <= 0 || fromRow <= 0 || toCol <= 0 || toRow <= 0) return this;
+            if (!SpreadsheetRangeReference.TryParse(a1Range, SpreadsheetAddressDialect.ExcelA1,
+                    out SpreadsheetRangeReference? syntax)
+                || !syntax!.Start.IsCell || !(syntax.End ?? syntax.Start).IsCell) return this;
+            if (syntax.Start.SheetName != null || syntax.End?.SheetName != null) {
+                throw new ArgumentException("Column sizing range must not qualify a different worksheet.", nameof(a1Range));
+            }
+            SpreadsheetCellReference end = syntax.End ?? syntax.Start;
+            int fromCol = syntax.Start.Column!.Value;
+            int fromRow = checked((int)syntax.Start.Row!.Value);
+            int toCol = end.Column!.Value;
+            int toRow = checked((int)end.Row!.Value);
 
             // Read header texts from first row
             var headers = new Dictionary<int, string>(toCol - fromCol + 1);

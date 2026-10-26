@@ -31,7 +31,7 @@ namespace OfficeIMO.Tests {
                     destinationCell: "E2",
                     name: "SalesPivot",
                     rowFields: new[] { "Region" },
-                    dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum) });
+                    dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum) });
 
                 Assert.True(sheet.TryGetCellValueSnapshot(4, 2, out ExcelCellValueSnapshot? blankDate));
                 Assert.Equal(ExcelCellValueKind.Text, blankDate!.Kind);
@@ -60,7 +60,7 @@ namespace OfficeIMO.Tests {
                 document.Save();
             }
 
-            using (ExcelDocument document = ExcelDocument.Load(filePath, new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+            using (ExcelDocument document = ExcelDocument.Load(filePath, new ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 Assert.Equal("Slicer_Region", Assert.Single(document.GetWorkbookSlicerCaches()).Name);
                 Assert.Equal("SalesDateTimeline", Assert.Single(document.GetWorkbookTimelineCaches()).Name);
                 ExcelWorkbookSnapshot snapshot = document.CreateInspectionSnapshot();
@@ -74,12 +74,11 @@ namespace OfficeIMO.Tests {
             }
 
             using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, false)) {
-                var metadataParts = spreadsheet.WorkbookPart!.Parts
-                    .Select(pair => pair.OpenXmlPart)
-                    .Where(part => part.ContentType.IndexOf("Cache-metadata", StringComparison.OrdinalIgnoreCase) >= 0)
-                    .ToList();
-                Assert.Equal(2, metadataParts.Count);
-                Assert.All(metadataParts, part => Assert.StartsWith("application/vnd.officeimo.excel.", part.ContentType));
+                WorkbookPart workbookPart = spreadsheet.WorkbookPart!;
+                CustomXmlPart metadataPart = Assert.Single(workbookPart.CustomXmlParts,
+                    part => ReadPivotInteractionMetadataText(part) != null);
+                Assert.Equal("application/xml", metadataPart.ContentType);
+                Assert.EndsWith("/customXml", metadataPart.RelationshipType, StringComparison.Ordinal);
                 Assert.DoesNotContain(spreadsheet.WorkbookPart.Parts, pair =>
                     pair.OpenXmlPart.RelationshipType.StartsWith("http://schemas.microsoft.com/office/", StringComparison.OrdinalIgnoreCase));
             }
@@ -100,7 +99,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "E2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum) });
+                dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum) });
 
             WorkbookPart workbookPart = document._spreadSheetDocument.WorkbookPart!;
             WriteExtendedPart(
@@ -144,7 +143,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "D2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum) });
+                dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum) });
 
             WorkbookPart workbookPart = document._spreadSheetDocument.WorkbookPart!;
             const int existingCount = 512;
@@ -188,7 +187,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "E2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum) });
+                dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum) });
 
             PivotTablePart pivotPart = original.WorksheetPart.PivotTableParts.Single();
             PivotCacheDefinition cache = pivotPart.PivotTableCacheDefinitionPart!.PivotCacheDefinition!;
@@ -223,7 +222,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "E2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Sales", DataConsolidateFunctionValues.Sum) });
+                dataFields: new[] { new ExcelPivotDataField("Sales", ExcelPivotDataFunction.Sum) });
 
             ExcelSheet replacement = document.AddWorksheet("Replacement");
             replacement.CellValue(1, 1, "OrderDate");
@@ -277,7 +276,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "G2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Amount", DataConsolidateFunctionValues.Sum) });
+                dataFields: new[] { new ExcelPivotDataField("Amount", ExcelPivotDataFunction.Sum) });
 
             document.AddPivotTimelineCache("SalesPivot", "Date_2");
             document.AddPivotTimelineCache("SalesPivot", "Column4");
@@ -312,7 +311,7 @@ namespace OfficeIMO.Tests {
                 destinationCell: "E2",
                 name: "SalesPivot",
                 rowFields: new[] { "Region" },
-                dataFields: new[] { new ExcelPivotDataField("Amount", DataConsolidateFunctionValues.Sum) });
+                dataFields: new[] { new ExcelPivotDataField("Amount", ExcelPivotDataFunction.Sum) });
 
             document.AddPivotTimelineCache("SalesPivot", "OrderDate");
             ExcelPivotInteractionCacheInfo timeline = Assert.Single(document.GetWorkbookTimelineCaches());

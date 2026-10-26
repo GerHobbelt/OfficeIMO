@@ -4,7 +4,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Validation;
 using OfficeIMO.Excel.Utilities;
 using OfficeIMO.Drawing;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using System.IO.Packaging;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,12 +24,12 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Built-in (core) document properties (Title, Creator, etc.).
         /// </summary>
-        public BuiltinDocumentProperties BuiltinDocumentProperties { get; internal set; } = null!;
+        public ExcelBuiltinDocumentProperties BuiltinDocumentProperties { get; internal set; } = null!;
 
         /// <summary>
         /// Extended (application) properties (Company, Manager, etc.).
         /// </summary>
-        public ApplicationProperties ApplicationProperties { get; internal set; } = null!;
+        public ExcelApplicationProperties ApplicationProperties { get; internal set; } = null!;
 
         /// <summary>
         /// Custom workbook properties keyed by property name.
@@ -65,7 +65,7 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Gets the list of validation errors for the document.
         /// </summary>
-        public List<ValidationErrorInfo> DocumentValidationErrors {
+        public List<OfficeOpenXmlValidationError> DocumentValidationErrors {
             get {
                 return ValidateDocument();
             }

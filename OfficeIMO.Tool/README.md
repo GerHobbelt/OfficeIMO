@@ -4,6 +4,7 @@ One command-line entry point for OfficeIMO document workflows. This README descr
 
 ```powershell
 dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- html capabilities
+dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- convert report.docx --output report.pdf
 dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- reader read document.docx --format markdown
 dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- markup validate document.markup --profile document
 dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- agent inspect document.docx
@@ -13,12 +14,27 @@ dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- 
 Commands are grouped by capability so their contracts remain explicit:
 
 - `officeimo html` converts HTML or MHTML to PDF and reports renderer capabilities.
+- `officeimo convert` publishes DOCX, XLSX, or PPTX as PDF through the owning first-party adapter.
 - `officeimo reader` extracts supported documents as Markdown or JSON.
 - `officeimo markup` parses, validates, emits, previews, and exports OfficeIMO Markup.
 - `officeimo agent` returns bounded JSON for inspection, search, selected fetch, conversion, and filtered capability discovery.
 - `officeimo mcp serve --stdio` exposes the same compact agent operations to Codex and other MCP clients.
 
 Run `dotnet run --project OfficeIMO.Tool/OfficeIMO.Tool.csproj --framework net8.0 -- help` or append `<area> --help` for the complete command contract.
+
+## Office documents to PDF
+
+The same `officeimo` binary can publish modern Word, Excel, and PowerPoint files without a second tool installation:
+
+```powershell
+officeimo convert .\report.docx
+officeimo convert .\workbook.xlsx --output .\published\workbook.pdf
+officeimo convert .\deck.pptx --output .\deck.pdf --force
+```
+
+The input extension selects `OfficeIMO.Word.Pdf`, `OfficeIMO.Excel.Pdf`, or `OfficeIMO.PowerPoint.Pdf`. The tool opens the source read-only, applies structural package-bomb checks, bounds Open XML part parsing, writes conversion diagnostics to standard error, and refuses to replace an existing PDF unless `--force` is supplied. The default output is the input path with a `.pdf` extension.
+
+Conversion defaults to a 64 MiB input limit, 10,000,000 characters per Open XML part, and a 256 MiB PDF output limit. Operators processing larger trusted documents can set `--max-input-bytes`, `--max-characters-in-part`, or `--max-output-bytes` explicitly. PDF bytes are streamed to an atomic staging file so a rejected or failed conversion does not replace the destination or require a second full in-memory copy.
 
 ## Compact agent workflow
 

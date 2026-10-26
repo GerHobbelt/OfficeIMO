@@ -16,11 +16,11 @@ internal static partial class PageSettings {
         using (WordDocument document = WordDocument.Create(filePath)) {
             Console.WriteLine("+ Page Orientation (starting): " + document.PageOrientation);
 
-            document.Sections[0].PageOrientation = PageOrientationValues.Landscape;
+            document.Sections[0].PageOrientation = OfficePageOrientation.Landscape;
 
             Console.WriteLine("+ Page Orientation (middle): " + document.PageOrientation);
 
-            document.PageOrientation = PageOrientationValues.Portrait;
+            document.PageOrientation = OfficePageOrientation.Portrait;
 
             Console.WriteLine("+ Page Orientation (ending): " + document.PageOrientation);
 

@@ -1,7 +1,7 @@
 using System.Reflection;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
-using OfficeIMO.Drawing.Internal;
+using OfficeIMO.Core.Internal;
 using OfficeIMO.PowerPoint.LegacyPpt.Internal;
 using OfficeIMO.PowerPoint.LegacyPpt.Model;
 using A = DocumentFormat.OpenXml.Drawing;
@@ -86,7 +86,7 @@ namespace OfficeIMO.PowerPoint.LegacyPpt.Write {
             if (!TryReadPictureCatalog(presentation,
                     CreateFontCatalogForWrite(), pictureBullets,
                     convertUnsupportedTables: options?.LossPolicy
-                        == PowerPointConversionLossPolicy.Allow,
+                        == OfficeConversionLossPolicy.Allow,
                     out LegacyPptWriterPictureCatalog pictureCatalog,
                     out _, out string? pictureReason)) {
                 throw new NotSupportedException(pictureReason);
@@ -434,7 +434,7 @@ namespace OfficeIMO.PowerPoint.LegacyPpt.Write {
             int firstSlideNumber = root.FirstSlideNum?.Value ?? 1;
             WriteUInt16(atom, 40, checked((ushort)Math.Min(
                 Math.Max(firstSlideNumber, 0), 9999)));
-            WriteUInt16(atom, 42, MapSlideSizeType(presentation.SlideSize.Type));
+            WriteUInt16(atom, 42, MapSlideSizeType(presentation.SlideSize.Type.ToOpenXml()));
             atom[44] = root.EmbedTrueTypeFonts?.Value == true ? (byte)1 : (byte)0;
             atom[45] = root.ShowSpecialPlaceholderOnTitleSlide?.Value == false
                 ? (byte)1 : (byte)0;
@@ -607,8 +607,8 @@ namespace OfficeIMO.PowerPoint.LegacyPpt.Write {
                 }
             }
             foreach (PowerPointShape shape in shapes) {
-                AddLayoutPlaceholderType(result, shape.ShapePlaceholderType,
-                    shape.ShapePlaceholderOrientation, shape.ShapePlaceholderIndex,
+                AddLayoutPlaceholderType(result, shape.ShapePlaceholderType.ToOpenXml(),
+                    shape.ShapePlaceholderOrientation.ToOpenXml(), shape.ShapePlaceholderIndex,
                     replaceExisting: true);
             }
             return result;
@@ -687,11 +687,11 @@ namespace OfficeIMO.PowerPoint.LegacyPpt.Write {
                 .ToArray();
             if (placeholders.Length == 0) return LegacyPptSlideLayoutType.Blank;
             if (placeholders.Any(shape =>
-                    shape.ShapePlaceholderType == P.PlaceholderValues.CenteredTitle)) {
+                    shape.ShapePlaceholderType == PowerPointPlaceholderType.CenteredTitle)) {
                 return LegacyPptSlideLayoutType.TitleSlide;
             }
             if (placeholders.Length == 1
-                && placeholders[0].ShapePlaceholderType == P.PlaceholderValues.Title) {
+                && placeholders[0].ShapePlaceholderType == PowerPointPlaceholderType.Title) {
                 return LegacyPptSlideLayoutType.TitleOnly;
             }
             return LegacyPptSlideLayoutType.TitleBody;

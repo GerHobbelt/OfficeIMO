@@ -16,8 +16,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorksheet("Data", SheetNameValidationMode.Strict);
-                    var summary = document.AddWorksheet("Summary", SheetNameValidationMode.Strict);
+                    var data = document.AddWorksheet("Data", ExcelSheetNameValidationMode.Strict);
+                    var summary = document.AddWorksheet("Summary", ExcelSheetNameValidationMode.Strict);
 
                     data.CellValue(1, 1, 42);
                     summary.CellFormula(1, 1, "SUM(Data!A1)");
@@ -50,7 +50,7 @@ namespace OfficeIMO.Tests {
                     .First(h => string.Equals(h.Reference?.Value, "A2", StringComparison.OrdinalIgnoreCase));
                 Assert.Equal("'Renamed'!A1", hyperlink.Location?.Value);
 
-                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -66,7 +66,7 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorksheet("Data", SheetNameValidationMode.Strict);
+                    var data = document.AddWorksheet("Data", ExcelSheetNameValidationMode.Strict);
 
                     data.CellValue(1, 1, "Month");
                     data.CellValue(1, 2, "Sales");
@@ -108,7 +108,7 @@ namespace OfficeIMO.Tests {
                 var pivotCache = workbookPart.GetPartsOfType<PivotTableCacheDefinitionPart>().Single();
                 Assert.Equal("Renamed Data", pivotCache.PivotCacheDefinition!.CacheSource!.WorksheetSource!.Sheet!.Value);
 
-                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -124,14 +124,14 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorksheet("Data", SheetNameValidationMode.Strict);
-                    var summary = document.AddWorksheet("Summary", SheetNameValidationMode.Strict);
+                    var data = document.AddWorksheet("Data", ExcelSheetNameValidationMode.Strict);
+                    var summary = document.AddWorksheet("Summary", ExcelSheetNameValidationMode.Strict);
 
                     data.CellValue(1, 1, 5);
                     data.CellValue(2, 1, 15);
 
                     summary.ValidationCustomFormula("A1:A2", "COUNTIF(Data!$A$1:$A$2,\">0\")>0");
-                    summary.AddConditionalRule("B1:B2", ConditionalFormattingOperatorValues.GreaterThan, "Data!$A$1");
+                    summary.AddConditionalRule("B1:B2", ExcelConditionalFormattingOperator.GreaterThan, "Data!$A$1");
 
                     data.Name = "Renamed Data";
                     document.Save(filePath);
@@ -148,7 +148,7 @@ namespace OfficeIMO.Tests {
                 var rule = summaryPart.Worksheet.Descendants<ConditionalFormattingRule>().Single();
                 Assert.Equal("'Renamed Data'!$A$1", rule.Elements<Formula>().Single().Text);
 
-                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -164,8 +164,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorksheet("Data", SheetNameValidationMode.Strict);
-                    var summary = document.AddWorksheet("Summary", SheetNameValidationMode.Strict);
+                    var data = document.AddWorksheet("Data", ExcelSheetNameValidationMode.Strict);
+                    var summary = document.AddWorksheet("Summary", ExcelSheetNameValidationMode.Strict);
 
                     data.CellValue(1, 1, "Value");
                     summary.CellValue(1, 1, "Other");
@@ -196,7 +196,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("'Index'!A1", backlink.Location?.Value);
                 Assert.Equal("← Index", GetCellText(workbookPart, renamedPart, "A2"));
 
-                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -212,8 +212,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorksheet("Data", SheetNameValidationMode.Strict);
-                    var summary = document.AddWorksheet("Summary", SheetNameValidationMode.Strict);
+                    var data = document.AddWorksheet("Data", ExcelSheetNameValidationMode.Strict);
+                    var summary = document.AddWorksheet("Summary", ExcelSheetNameValidationMode.Strict);
 
                     data.CellValue(1, 1, 10);
                     summary.CellFormula(1, 1, "SUM(Data!A1,'[Other.xlsx]Data'!A1,[Other.xlsx]Data!A1)");
@@ -235,7 +235,7 @@ namespace OfficeIMO.Tests {
                 var validation = summaryPart.Worksheet.Descendants<DataValidation>().Single();
                 Assert.Equal("COUNTIF('Renamed Data'!$A$1:$A$3,\">0\")+COUNTIF('[Other.xlsx]Data'!$A$1:$A$3,\">0\")>0", validation.GetFirstChild<Formula1>()!.Text);
 
-                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {
@@ -251,8 +251,8 @@ namespace OfficeIMO.Tests {
 
             try {
                 using (var document = ExcelDocument.Create(filePath)) {
-                    var data = document.AddWorksheet("Data", SheetNameValidationMode.Strict);
-                    var summary = document.AddWorksheet("Summary", SheetNameValidationMode.Strict);
+                    var data = document.AddWorksheet("Data", ExcelSheetNameValidationMode.Strict);
+                    var summary = document.AddWorksheet("Summary", ExcelSheetNameValidationMode.Strict);
 
                     data.CellValue(1, 1, 10);
                     data.CellValue(2, 1, 20);
@@ -263,7 +263,7 @@ namespace OfficeIMO.Tests {
                     summary.CellValue(2, 2, 1);
                     summary.CellValue(3, 1, "B");
                     summary.CellValue(3, 2, 2);
-                    summary.AddTable("A1:B3", true, "SummaryTable", OfficeIMO.Excel.TableStyle.TableStyleMedium9);
+                    summary.AddTable("A1:B3", true, "SummaryTable", OfficeIMO.Excel.ExcelTableStyle.TableStyleMedium9);
 
                     var workbookPart = document._spreadSheetDocument.WorkbookPart!;
                     var summarySheet = workbookPart.Workbook.Sheets!.Elements<Sheet>().First(s => s.Name == "Summary");
@@ -289,7 +289,7 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("SUM('Renamed Data'!$A$2,1)", valueColumnAfter.CalculatedColumnFormula!.Text);
                 Assert.Equal("SUM('Renamed Data'!$A$2:$A$3)", valueColumnAfter.TotalsRowFormula!.Text);
 
-                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly });
+                using var verify = ExcelDocument.Load(filePath, new OfficeIMO.Excel.ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly });
                 Assert.Empty(verify.ValidateOpenXml());
             }
             finally {

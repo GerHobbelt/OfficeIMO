@@ -10,7 +10,7 @@ namespace OfficeIMO.PowerPoint {
     /// <summary>
     /// Represents a paragraph within a textbox.
     /// </summary>
-    public class PowerPointParagraph {
+    public partial class PowerPointParagraph {
         private readonly SlidePart? _slidePart;
         private readonly OpenXmlPartContainer? _ownerPart;
 
@@ -26,19 +26,22 @@ namespace OfficeIMO.PowerPoint {
         /// Text content of the paragraph.
         /// </summary>
         public string Text {
-            get => Paragraph.InnerText ?? string.Empty;
+            get => string.Concat(InlineNodes.Select(node => node.Text));
             set {
                 string[] discardedSoundIds = PowerPointEmbeddedSound
                     .GetRelationshipIds(Paragraph);
                 A.EndParagraphRunProperties? endProps = Paragraph.GetFirstChild<A.EndParagraphRunProperties>();
                 endProps?.Remove();
                 Paragraph.RemoveAllChildren<A.Run>();
+                Paragraph.RemoveAllChildren<A.Break>();
+                Paragraph.RemoveAllChildren<A.Field>();
                 A.Run run = new(new A.Text(value ?? string.Empty));
                 Paragraph.Append(run);
                 if (endProps != null) {
                     Paragraph.Append(endProps);
                 }
-                PowerPointEmbeddedSound.RemoveIfUnused(_slidePart,
+                PowerPointEmbeddedSound.RemoveIfUnused(
+                    _ownerPart as OpenXmlPart ?? _slidePart,
                     discardedSoundIds);
             }
         }
@@ -57,7 +60,7 @@ namespace OfficeIMO.PowerPoint {
         /// Adds formatted text to the paragraph and returns the paragraph for chaining.
         /// </summary>
         public PowerPointParagraph AddFormattedText(string text, bool bold = false, bool italic = false,
-            A.TextUnderlineValues? underline = null, bool strikethrough = false) {
+            PowerPointUnderlineStyle? underline = null, bool strikethrough = false) {
             A.Run run = InsertRun(text);
             var wrapper = new PowerPointTextRun(run, _slidePart, _ownerPart);
             if (bold) {
@@ -69,7 +72,7 @@ namespace OfficeIMO.PowerPoint {
             if (underline != null) {
                 wrapper.Underline = true;
                 wrapper.Run.RunProperties ??= new A.RunProperties();
-                wrapper.Run.RunProperties.Underline = underline.Value;
+                wrapper.Run.RunProperties.Underline = underline.Value.ToOpenXml();
             }
             if (strikethrough) {
                 wrapper.Strikethrough = true;
@@ -126,18 +129,29 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         /// Gets or sets paragraph alignment.
         /// </summary>
-        public A.TextAlignmentTypeValues? Alignment {
-            get => Paragraph.ParagraphProperties?.Alignment?.Value;
+        public PowerPointTextAlignment? Alignment {
+            get => Paragraph.ParagraphProperties?.Alignment?.Value.ToOfficeEnum();
             set {
                 A.ParagraphProperties props = EnsureParagraphProperties();
-                props.Alignment = value;
+                props.Alignment = value?.ToOpenXml();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the explicit right-to-left paragraph direction.
+        /// </summary>
+        public bool? RightToLeft {
+            get => Paragraph.ParagraphProperties?.RightToLeft?.Value;
+            set {
+                A.ParagraphProperties props = EnsureParagraphProperties();
+                props.RightToLeft = value;
             }
         }
 
         /// <summary>
         /// Sets paragraph alignment and returns the paragraph for chaining.
         /// </summary>
-        public PowerPointParagraph SetAlignment(A.TextAlignmentTypeValues alignment) {
+        public PowerPointParagraph SetAlignment(PowerPointTextAlignment alignment) {
             Alignment = alignment;
             return this;
         }
@@ -174,8 +188,8 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         /// Gets the PowerPoint automatic-numbering scheme assigned to this paragraph, when present.
         /// </summary>
-        public A.TextAutoNumberSchemeValues? NumberingScheme =>
-            Paragraph.ParagraphProperties?.GetFirstChild<A.AutoNumberedBullet>()?.Type?.Value;
+        public PowerPointNumberingScheme? NumberingScheme =>
+            Paragraph.ParagraphProperties?.GetFirstChild<A.AutoNumberedBullet>()?.Type?.Value.ToOfficeEnum();
 
         /// <summary>
         /// Gets the explicit PowerPoint numbering start value, when present.
@@ -529,26 +543,26 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         /// Applies an auto-numbered bullet to the paragraph.
         /// </summary>
-        public void SetNumbered(A.TextAutoNumberSchemeValues style, int startAt = 1) {
+        public void SetNumbered(PowerPointNumberingScheme style, int startAt = 1) {
             A.ParagraphProperties props = EnsureParagraphProperties();
             ClearBulletInternal(props);
-            InsertParagraphPropertyChild(props, new A.AutoNumberedBullet { Type = style, StartAt = startAt });
+            InsertParagraphPropertyChild(props, new A.AutoNumberedBullet { Type = style.ToOpenXml(), StartAt = startAt });
         }
 
         /// <summary>
         /// Applies an auto-numbered bullet to the paragraph without resetting the start value.
         /// </summary>
-        public void SetNumbered(A.TextAutoNumberSchemeValues style) {
+        public void SetNumbered(PowerPointNumberingScheme style) {
             A.ParagraphProperties props = EnsureParagraphProperties();
             ClearBulletInternal(props);
-            InsertParagraphPropertyChild(props, new A.AutoNumberedBullet { Type = style });
+            InsertParagraphPropertyChild(props, new A.AutoNumberedBullet { Type = style.ToOpenXml() });
         }
 
         /// <summary>
         /// Applies a default auto-numbered bullet (Arabic period) to the paragraph.
         /// </summary>
         public void SetNumbered(int startAt = 1) {
-            SetNumbered(A.TextAutoNumberSchemeValues.ArabicPeriod, startAt);
+            SetNumbered(PowerPointNumberingScheme.ArabicPeriod, startAt);
         }
 
         /// <summary>

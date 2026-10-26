@@ -48,12 +48,7 @@ public class MarkPflug65KXlsxBenchmarks {
         }
 
         MarkPflug65KFixture.EnsureAuthentic(MarkPflug65KFixture.XlsxFileName);
-        _expected = OfficeIMO();
-        Validate(nameof(Sylvan), Sylvan());
-        Validate(nameof(ExcelDataReader), ExcelDataReader());
-        Validate(nameof(ClosedXML), ClosedXML());
-        Validate(nameof(EPPlus), EPPlus());
-        Validate(nameof(MiniExcel), MiniExcel());
+        _expected = ExpectedObservation();
     }
 
     [Benchmark]
@@ -64,7 +59,7 @@ public class MarkPflug65KXlsxBenchmarks {
                 NumericAsDecimal = true,
                 SheetName = null
             });
-        return Observe(reader);
+        return Validate(nameof(OfficeIMO), Observe(reader));
     }
 
     [Benchmark]
@@ -74,7 +69,7 @@ public class MarkPflug65KXlsxBenchmarks {
             stream,
             ExcelWorkbookType.ExcelXml,
             new ExcelDataReaderOptions { Schema = ExcelSchema.Default });
-        return Observe(reader);
+        return Validate(nameof(Sylvan), Observe(reader));
     }
 
     [Benchmark]
@@ -83,7 +78,7 @@ public class MarkPflug65KXlsxBenchmarks {
         using global::ExcelDataReader.IExcelDataReader reader =
             global::ExcelDataReader.ExcelReaderFactory.CreateReader(stream);
         if (!reader.Read()) {
-            return default;
+            return Validate(nameof(ExcelDataReader), default);
         }
 
         var observation = new ExcelObservationAccumulator();
@@ -96,7 +91,7 @@ public class MarkPflug65KXlsxBenchmarks {
                 ordinal => Convert.ToDecimal(reader.GetValue(ordinal), CultureInfo.InvariantCulture));
         }
 
-        return observation.Build();
+        return Validate(nameof(ExcelDataReader), observation.Build());
     }
 
     [Benchmark]
@@ -114,7 +109,7 @@ public class MarkPflug65KXlsxBenchmarks {
                 ordinal => worksheet.Cell(row, ordinal + 1).GetValue<decimal>());
         }
 
-        return observation.Build();
+        return Validate(nameof(ClosedXML), observation.Build());
     }
 
     [Benchmark]
@@ -132,7 +127,7 @@ public class MarkPflug65KXlsxBenchmarks {
                 ordinal => Convert.ToDecimal(worksheet.Cells[row, ordinal + 1].Value, CultureInfo.InvariantCulture));
         }
 
-        return observation.Build();
+        return Validate(nameof(EPPlus), observation.Build());
     }
 
     [Benchmark]
@@ -153,21 +148,32 @@ public class MarkPflug65KXlsxBenchmarks {
                 ordinal => Convert.ToDecimal(row[Headers[ordinal]], CultureInfo.InvariantCulture));
         }
 
-        return observation.Build();
+        return Validate(nameof(MiniExcel), observation.Build());
     }
 
     internal static ExcelReadObservation Observe(DbDataReader reader) {
         var observation = new ExcelObservationAccumulator();
         while (reader.Read()) {
-            AddRow(
-                ref observation,
-                reader.GetString,
-                reader.GetDateTime,
-                reader.GetInt32,
-                reader.GetDecimal);
+            AddRow(ref observation, reader);
         }
 
         return observation.Build();
+    }
+
+    private static void AddRow(
+        ref ExcelObservationAccumulator observation,
+        DbDataReader reader) {
+        observation.BeginRow();
+        for (int ordinal = 0; ordinal <= 4; ordinal++) {
+            observation.Add(reader.GetString(ordinal));
+        }
+        observation.Add(reader.GetDateTime(5));
+        observation.Add(reader.GetInt32(6));
+        observation.Add(reader.GetDateTime(7));
+        observation.Add(reader.GetInt32(8));
+        for (int ordinal = 9; ordinal <= 13; ordinal++) {
+            observation.Add(reader.GetDecimal(ordinal));
+        }
     }
 
     internal static void AddRow(
@@ -196,13 +202,20 @@ public class MarkPflug65KXlsxBenchmarks {
             _ => Convert.ToDateTime(value, CultureInfo.InvariantCulture)
         };
 
-    private void Validate(string library, ExcelReadObservation actual) {
+    internal static ExcelReadObservation ExpectedObservation() => new(
+        MarkPflug65KFixture.ExpectedRows,
+        MarkPflug65KFixture.ExpectedRows * MarkPflug65KFixture.ExpectedColumns,
+        MarkPflug65KFixture.ExpectedExcelChecksum);
+
+    private ExcelReadObservation Validate(string library, ExcelReadObservation actual) {
         if (actual != _expected
             || actual.Rows != MarkPflug65KFixture.ExpectedRows
             || actual.Cells != MarkPflug65KFixture.ExpectedRows * MarkPflug65KFixture.ExpectedColumns) {
             throw new InvalidDataException(
                 $"{library} did not perform the same XLSX workload. Expected {_expected}; actual {actual}.");
         }
+
+        return actual;
     }
 }
 
@@ -219,9 +232,7 @@ public class MarkPflug65KXlsbBenchmarks {
     public void Setup() {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         MarkPflug65KFixture.EnsureAuthentic(MarkPflug65KFixture.XlsbFileName);
-        _expected = OfficeIMO();
-        Validate(nameof(Sylvan), Sylvan());
-        Validate(nameof(ExcelDataReader), ExcelDataReader());
+        _expected = MarkPflug65KXlsxBenchmarks.ExpectedObservation();
     }
 
     [Benchmark]
@@ -229,7 +240,7 @@ public class MarkPflug65KXlsbBenchmarks {
         using DbDataReader reader = ExcelDocument.OpenDataReader(
             MarkPflug65KFixture.XlsbPath,
             new ExcelReadOptions { NumericAsDecimal = true });
-        return MarkPflug65KXlsxBenchmarks.Observe(reader);
+        return Validate(nameof(OfficeIMO), MarkPflug65KXlsxBenchmarks.Observe(reader));
     }
 
     [Benchmark]
@@ -239,7 +250,7 @@ public class MarkPflug65KXlsbBenchmarks {
             stream,
             ExcelWorkbookType.ExcelBinary,
             new ExcelDataReaderOptions { Schema = ExcelSchema.Default });
-        return MarkPflug65KXlsxBenchmarks.Observe(reader);
+        return Validate(nameof(Sylvan), MarkPflug65KXlsxBenchmarks.Observe(reader));
     }
 
     [Benchmark]
@@ -248,7 +259,7 @@ public class MarkPflug65KXlsbBenchmarks {
         using global::ExcelDataReader.IExcelDataReader reader =
             global::ExcelDataReader.ExcelReaderFactory.CreateReader(stream);
         if (!reader.Read()) {
-            return default;
+            return Validate(nameof(ExcelDataReader), default);
         }
 
         var observation = new ExcelObservationAccumulator();
@@ -261,16 +272,18 @@ public class MarkPflug65KXlsbBenchmarks {
                 ordinal => Convert.ToDecimal(reader.GetValue(ordinal), CultureInfo.InvariantCulture));
         }
 
-        return observation.Build();
+        return Validate(nameof(ExcelDataReader), observation.Build());
     }
 
-    private void Validate(string library, ExcelReadObservation actual) {
+    private ExcelReadObservation Validate(string library, ExcelReadObservation actual) {
         if (actual != _expected
             || actual.Rows != MarkPflug65KFixture.ExpectedRows
             || actual.Cells != MarkPflug65KFixture.ExpectedRows * MarkPflug65KFixture.ExpectedColumns) {
             throw new InvalidDataException(
                 $"{library} did not perform the same XLSB workload. Expected {_expected}; actual {actual}.");
         }
+
+        return actual;
     }
 }
 
@@ -355,8 +368,10 @@ internal struct ExcelObservationAccumulator {
 
     internal void Add(decimal value) {
         AddTag(4);
-        foreach (int part in decimal.GetBits(value)) {
-            AddUInt64(unchecked((uint)part));
+        Span<int> parts = stackalloc int[4];
+        decimal.GetBits(value, parts);
+        for (int index = 0; index < parts.Length; index++) {
+            AddUInt64(unchecked((uint)parts[index]));
         }
         _cells++;
     }
@@ -369,9 +384,9 @@ internal struct ExcelObservationAccumulator {
     }
 
     private void AddUInt64(ulong value) {
-        for (int shift = 0; shift < 64; shift += 8) {
-            _checksum ^= (byte)(value >> shift);
-            _checksum *= Prime;
-        }
+        // One deterministic FNV-style word mix keeps every observed value in the
+        // timed contract without making validation dominate the reader itself.
+        _checksum ^= value;
+        _checksum *= Prime;
     }
 }

@@ -97,16 +97,16 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         ///     Gets or sets the horizontal alignment of the cell text.
         /// </summary>
-        public A.TextAlignmentTypeValues? HorizontalAlignment {
+        public PowerPointTextAlignment? HorizontalAlignment {
             get {
                 var pPr = Cell.TextBody?.Elements<Paragraph>().FirstOrDefault()?.ParagraphProperties;
-                return pPr?.Alignment?.Value;
+                return pPr?.Alignment?.Value.ToOfficeEnum();
             }
             set {
                 Cell.TextBody ??= new A.TextBody(new A.BodyProperties(), new A.ListStyle(), new A.Paragraph());
                 var paragraph = Cell.TextBody.Elements<A.Paragraph>().First();
                 paragraph.ParagraphProperties ??= new A.ParagraphProperties();
-                paragraph.ParagraphProperties.Alignment = value;
+                paragraph.ParagraphProperties.Alignment = value?.ToOpenXml();
             }
         }
 
@@ -140,11 +140,11 @@ namespace OfficeIMO.PowerPoint {
             }
             set {
                 if (value == null) {
-                    ClearBorders(TableCellBorders.All);
+                    ClearBorders(PowerPointTableCellBorders.All);
                     return;
                 }
 
-                SetBorders(TableCellBorders.All, value);
+                SetBorders(PowerPointTableCellBorders.All, value);
             }
         }
 
@@ -249,7 +249,7 @@ namespace OfficeIMO.PowerPoint {
             }
             set {
                 var props = EnsureRunProperties();
-                props.FontSize = value != null ? value * 100 : null;
+                props.FontSize = PowerPointTextDefaults.ToDrawingFontSize(value, nameof(value));
             }
         }
 
@@ -430,11 +430,11 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         ///     Gets or sets the vertical alignment of the cell text (top/center/bottom).
         /// </summary>
-        public A.TextAnchoringTypeValues? VerticalAlignment {
-            get => Cell.TableCellProperties?.Anchor?.Value;
+        public PowerPointTextVerticalAlignment? VerticalAlignment {
+            get => Cell.TableCellProperties?.Anchor?.Value.ToOfficeEnum();
             set {
                 Cell.TableCellProperties ??= new TableCellProperties();
-                Cell.TableCellProperties.Anchor = value;
+                Cell.TableCellProperties.Anchor = value?.ToOpenXml();
             }
         }
 
@@ -528,34 +528,34 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         ///     Applies border styling to the specified sides.
         /// </summary>
-        public void SetBorders(TableCellBorders borders, string color, double? widthPoints = null) {
+        public void SetBorders(PowerPointTableCellBorders borders, string color, double? widthPoints = null) {
             if (string.IsNullOrWhiteSpace(color)) {
                 throw new ArgumentException("Border color cannot be null or empty.", nameof(color));
             }
 
             TableCellProperties props = EnsureProperties();
 
-            if (borders.HasFlag(TableCellBorders.Left)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Left)) {
                 props.LeftBorderLineProperties ??= new LeftBorderLineProperties();
                 ApplyLine(props.LeftBorderLineProperties, color, widthPoints);
             }
-            if (borders.HasFlag(TableCellBorders.Top)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Top)) {
                 props.TopBorderLineProperties ??= new TopBorderLineProperties();
                 ApplyLine(props.TopBorderLineProperties, color, widthPoints);
             }
-            if (borders.HasFlag(TableCellBorders.Right)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Right)) {
                 props.RightBorderLineProperties ??= new RightBorderLineProperties();
                 ApplyLine(props.RightBorderLineProperties, color, widthPoints);
             }
-            if (borders.HasFlag(TableCellBorders.Bottom)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Bottom)) {
                 props.BottomBorderLineProperties ??= new BottomBorderLineProperties();
                 ApplyLine(props.BottomBorderLineProperties, color, widthPoints);
             }
-            if (borders.HasFlag(TableCellBorders.DiagonalDown)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.DiagonalDown)) {
                 props.TopLeftToBottomRightBorderLineProperties ??= new TopLeftToBottomRightBorderLineProperties();
                 ApplyLine(props.TopLeftToBottomRightBorderLineProperties, color, widthPoints);
             }
-            if (borders.HasFlag(TableCellBorders.DiagonalUp)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.DiagonalUp)) {
                 props.BottomLeftToTopRightBorderLineProperties ??= new BottomLeftToTopRightBorderLineProperties();
                 ApplyLine(props.BottomLeftToTopRightBorderLineProperties, color, widthPoints);
             }
@@ -564,34 +564,34 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         ///     Applies border styling with a dash pattern to the specified sides.
         /// </summary>
-        public void SetBorders(TableCellBorders borders, string color, double? widthPoints, A.PresetLineDashValues dash) {
+        public void SetBorders(PowerPointTableCellBorders borders, string color, double? widthPoints, PowerPointLineDashStyle dash) {
             if (string.IsNullOrWhiteSpace(color)) {
                 throw new ArgumentException("Border color cannot be null or empty.", nameof(color));
             }
 
             TableCellProperties props = EnsureProperties();
 
-            if (borders.HasFlag(TableCellBorders.Left)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Left)) {
                 props.LeftBorderLineProperties ??= new LeftBorderLineProperties();
                 ApplyLine(props.LeftBorderLineProperties, color, widthPoints, dash);
             }
-            if (borders.HasFlag(TableCellBorders.Top)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Top)) {
                 props.TopBorderLineProperties ??= new TopBorderLineProperties();
                 ApplyLine(props.TopBorderLineProperties, color, widthPoints, dash);
             }
-            if (borders.HasFlag(TableCellBorders.Right)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Right)) {
                 props.RightBorderLineProperties ??= new RightBorderLineProperties();
                 ApplyLine(props.RightBorderLineProperties, color, widthPoints, dash);
             }
-            if (borders.HasFlag(TableCellBorders.Bottom)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Bottom)) {
                 props.BottomBorderLineProperties ??= new BottomBorderLineProperties();
                 ApplyLine(props.BottomBorderLineProperties, color, widthPoints, dash);
             }
-            if (borders.HasFlag(TableCellBorders.DiagonalDown)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.DiagonalDown)) {
                 props.TopLeftToBottomRightBorderLineProperties ??= new TopLeftToBottomRightBorderLineProperties();
                 ApplyLine(props.TopLeftToBottomRightBorderLineProperties, color, widthPoints, dash);
             }
-            if (borders.HasFlag(TableCellBorders.DiagonalUp)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.DiagonalUp)) {
                 props.BottomLeftToTopRightBorderLineProperties ??= new BottomLeftToTopRightBorderLineProperties();
                 ApplyLine(props.BottomLeftToTopRightBorderLineProperties, color, widthPoints, dash);
             }
@@ -600,25 +600,25 @@ namespace OfficeIMO.PowerPoint {
         /// <summary>
         ///     Clears borders on the specified sides.
         /// </summary>
-        public void ClearBorders(TableCellBorders borders) {
+        public void ClearBorders(PowerPointTableCellBorders borders) {
             TableCellProperties props = EnsureProperties();
 
-            if (borders.HasFlag(TableCellBorders.Left)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Left)) {
                 props.LeftBorderLineProperties = null;
             }
-            if (borders.HasFlag(TableCellBorders.Top)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Top)) {
                 props.TopBorderLineProperties = null;
             }
-            if (borders.HasFlag(TableCellBorders.Right)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Right)) {
                 props.RightBorderLineProperties = null;
             }
-            if (borders.HasFlag(TableCellBorders.Bottom)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.Bottom)) {
                 props.BottomBorderLineProperties = null;
             }
-            if (borders.HasFlag(TableCellBorders.DiagonalDown)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.DiagonalDown)) {
                 props.TopLeftToBottomRightBorderLineProperties = null;
             }
-            if (borders.HasFlag(TableCellBorders.DiagonalUp)) {
+            if (borders.HasFlag(PowerPointTableCellBorders.DiagonalUp)) {
                 props.BottomLeftToTopRightBorderLineProperties = null;
             }
         }
@@ -631,10 +631,10 @@ namespace OfficeIMO.PowerPoint {
             }
         }
 
-        private static void ApplyLine(LinePropertiesType line, string color, double? widthPoints, A.PresetLineDashValues dash) {
+        private static void ApplyLine(LinePropertiesType line, string color, double? widthPoints, PowerPointLineDashStyle dash) {
             ApplyLine(line, color, widthPoints);
             line.RemoveAllChildren<A.PresetDash>();
-            line.Append(new A.PresetDash { Val = dash });
+            line.Append(new A.PresetDash { Val = dash.ToOpenXml() });
         }
 
         private static string? GetLineColor(LinePropertiesType? line) {

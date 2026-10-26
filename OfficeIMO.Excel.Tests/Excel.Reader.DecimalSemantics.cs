@@ -44,7 +44,7 @@ namespace OfficeIMO.Tests {
 
             using (var document = ExcelDocument.Load(
                 filePath,
-                new ExcelLoadOptions { AccessMode = OfficeIMO.Drawing.DocumentAccessMode.ReadOnly })) {
+                new ExcelLoadOptions { AccessMode = OfficeIMO.DocumentAccessMode.ReadOnly })) {
                 var row = Assert.Single(document.GetSheet("Data").RowsAs<DecimalArtifactRow>("A1:B2"));
                 Assert.Equal(expectedExcelNumber, row.Amount);
                 Assert.Equal(expectedTextNumber, row.TextAmount);
@@ -52,7 +52,7 @@ namespace OfficeIMO.Tests {
 
             var decimalOptions = new ExcelReadOptions { NumericAsDecimal = true };
             using (var reader = ExcelDocumentReader.Open(filePath, decimalOptions)) {
-                object?[,] values = reader.GetSheet("Data").ReadRange("A2:B2", ExecutionMode.Sequential);
+                object?[,] values = reader.GetSheet("Data").ReadRange("A2:B2", ExcelExecutionMode.Sequential);
                 Assert.Equal(expectedExcelNumber, Assert.IsType<decimal>(values[0, 0]));
                 Assert.Equal(storedNumber, Assert.IsType<string>(values[0, 1]));
             }
