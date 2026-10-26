@@ -19,6 +19,7 @@ internal static partial class PdfOptimizer {
             throw new ArgumentOutOfRangeException(nameof(options), "Minimum stream compression size cannot be negative.");
         }
         if (effectiveOptions.MaximumDecodedImageBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options), "Maximum decoded image bytes must be positive.");
+        if (effectiveOptions.MaximumTotalDecodedImageBytes <= 0) throw new ArgumentOutOfRangeException(nameof(options), "Maximum total decoded image bytes must be positive.");
         if (effectiveOptions.XrefFormat != PdfOptimizationXrefFormat.ClassicTable && effectiveOptions.XrefFormat != PdfOptimizationXrefFormat.XrefStream) throw new ArgumentOutOfRangeException(nameof(options), "Unsupported optimization xref format.");
         if (effectiveOptions.UseObjectStreams) effectiveOptions.XrefFormat = PdfOptimizationXrefFormat.XrefStream;
         if (effectiveOptions.Linearize && (effectiveOptions.UseObjectStreams || effectiveOptions.XrefFormat != PdfOptimizationXrefFormat.ClassicTable)) {
@@ -42,7 +43,7 @@ internal static partial class PdfOptimizer {
         var actions = new List<PdfOptimizationAction>();
         var skippedActions = new List<PdfOptimizationSkippedAction>();
         var optimizedObjects = new Dictionary<int, PdfIndirectObject>(objects);
-        PdfMetadata metadata = PdfReadDocument.Open(pdf, readOptions).Metadata;
+        PdfMetadata metadata = PdfReadDocument.Open(pdf, readOptions).UncheckedMetadata;
         if (effectiveOptions.CompressUnfilteredStreams) {
             CompressUnfilteredStreams(optimizedObjects, effectiveOptions, actions, skippedActions);
         }
@@ -407,34 +408,30 @@ internal static partial class PdfOptimizer {
         Dictionary<int, PdfIndirectObject> objects,
         PdfObject? value,
         HashSet<int> reachable) {
-        if (value is PdfReference reference) {
-            if (!PdfObjectLookup.TryGet(objects, reference, out PdfIndirectObject? indirect) ||
-                !reachable.Add(indirect.ObjectNumber)) {
-                return;
+        if (value is null) return;
+        var pending = new Stack<PdfObject>();
+        pending.Push(value);
+        while (pending.Count > 0) {
+            PdfObject current = pending.Pop();
+            if (current is PdfReference reference) {
+                if (PdfObjectLookup.TryGet(objects, reference, out PdfIndirectObject? indirect) &&
+                    reachable.Add(indirect.ObjectNumber)) {
+                    pending.Push(indirect.Value);
+                }
+                continue;
             }
 
-            CollectReachableObjectNumbers(objects, indirect.Value, reachable);
-            return;
-        }
-
-        if (value is PdfArray array) {
-            for (int i = 0; i < array.Items.Count; i++) {
-                CollectReachableObjectNumbers(objects, array.Items[i], reachable);
+            if (current is PdfArray array) {
+                for (int i = array.Items.Count - 1; i >= 0; i--) pending.Push(array.Items[i]);
+                continue;
             }
 
-            return;
-        }
-
-        if (value is PdfDictionary dictionary) {
-            foreach (PdfObject child in dictionary.Items.Values) {
-                CollectReachableObjectNumbers(objects, child, reachable);
+            PdfDictionary? dictionary = current is PdfStream stream
+                ? stream.Dictionary
+                : current as PdfDictionary;
+            if (dictionary != null) {
+                foreach (PdfObject child in dictionary.Items.Values) pending.Push(child);
             }
-
-            return;
-        }
-
-        if (value is PdfStream stream) {
-            CollectReachableObjectNumbers(objects, stream.Dictionary, reachable);
         }
     }
 

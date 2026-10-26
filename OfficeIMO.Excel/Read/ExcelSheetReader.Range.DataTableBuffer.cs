@@ -1,6 +1,7 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -15,16 +16,27 @@ namespace OfficeIMO.Excel {
         /// <summary>
         /// Reads a rectangular range to a DataTable. If headersInFirstRow = true, first row becomes column names.
         /// </summary>
+        [UnconditionalSuppressMessage("Trimming", "IL2062", Justification = "Inferred worksheet column types are normalized to OfficeIMO's closed scalar set and are used only as DataColumn conversion tokens.")]
         public DataTable ReadRangeAsDataTable(string a1Range, bool headersInFirstRow = true, OfficeIMO.Excel.ExecutionMode? mode = null, CancellationToken ct = default) {
             var (r1, c1, r2, c2) = A1.ParseRange(a1Range);
             if (r1 > r2 || c1 > c2) throw new ArgumentException($"Invalid range '{a1Range}'.");
 
-            var dt = new DataTable(_sheetName);
             int rows = r2 - r1 + 1;
             int cols = c2 - c1 + 1;
+            long cellCount = (long)rows * cols;
+            if (_opt.MaxRangeCells <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(_opt.MaxRangeCells), "Maximum dense range cell count must be positive.");
+            }
+
+            if (cellCount > _opt.MaxRangeCells) {
+                throw new InvalidDataException(
+                    $"Range '{a1Range}' contains {cellCount.ToString(CultureInfo.InvariantCulture)} cells, exceeding the configured limit of {_opt.MaxRangeCells.ToString(CultureInfo.InvariantCulture)}.");
+            }
+
+            var dt = new DataTable(_sheetName);
             var policy = _opt.Execution;
             var decided = mode ?? policy.Mode;
-            int workload = rows * cols;
+            int workload = checked((int)cellCount);
             if (decided == OfficeIMO.Excel.ExecutionMode.Automatic) {
                 if (CanUseAutomaticXmlReadFastPath(policy)) {
                     if (TryFillDataTableXmlBufferedSinglePass(dt, r1, c1, r2, c2, rows, cols, headersInFirstRow, workload, ct)) {
@@ -103,6 +115,7 @@ namespace OfficeIMO.Excel {
             return dt;
         }
 
+        [UnconditionalSuppressMessage("Trimming", "IL2062", Justification = "Inferred worksheet column types are normalized to OfficeIMO's closed scalar set and are used only as DataColumn conversion tokens.")]
         private bool TryFillDataTableXmlBufferedSinglePass(
             DataTable dt,
             int r1,

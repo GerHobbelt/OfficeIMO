@@ -26,6 +26,9 @@ namespace OfficeIMO.Tests {
                     Assert.Equal(vbaProject.Length, info.Length);
                     Assert.Equal(64, info.Sha256!.Length);
                     Assert.Equal(new[] { "Module1", "ThisWorkbook" }, info.ModuleNames);
+                    Assert.Throws<InvalidDataException>(() =>
+                        document.InspectVbaProject(includeSha256: false,
+                            maxBytes: info.Length - 1));
                     Assert.Equal(vbaProject, document.ExtractMacros());
                     document.Save();
                 }
@@ -84,6 +87,25 @@ namespace OfficeIMO.Tests {
                 }
             } finally {
                 TryDelete(filePath);
+            }
+        }
+
+        [Fact]
+        public void PackagePayloads_SaveCopyNormalizesAddInWorkbookType() {
+            string sourcePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".xlsx");
+            string addInCopyPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".xlam");
+
+            try {
+                using (ExcelDocument document = ExcelDocument.Create(sourcePath)) {
+                    document.AddWorksheet("AddIn").CellValue(1, 1, "SaveCopy");
+                    document.SaveCopy(addInCopyPath);
+                }
+
+                using SpreadsheetDocument package = SpreadsheetDocument.Open(addInCopyPath, false);
+                Assert.Equal(SpreadsheetDocumentType.AddIn, package.DocumentType);
+            } finally {
+                TryDelete(sourcePath);
+                TryDelete(addInCopyPath);
             }
         }
 

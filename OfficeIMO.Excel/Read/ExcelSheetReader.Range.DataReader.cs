@@ -4,6 +4,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using System.Collections;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Threading;
 
@@ -31,8 +32,20 @@ namespace OfficeIMO.Excel {
             int schemaSampleRows = 1024,
             OfficeIMO.Excel.ExecutionMode? mode = null,
             CancellationToken ct = default) {
+            if (chunkRows <= 0 || chunkRows > _opt.MaxDataReaderChunkRows) {
+                throw new ArgumentOutOfRangeException(nameof(chunkRows),
+                    $"Chunk row count must be between 1 and {_opt.MaxDataReaderChunkRows}.");
+            }
             if (schemaSampleRows < 0) {
                 throw new ArgumentOutOfRangeException(nameof(schemaSampleRows), "Schema sample row count cannot be negative.");
+            }
+            if (schemaSampleRows > _opt.MaxDataReaderSchemaSampleRows) {
+                throw new ArgumentOutOfRangeException(nameof(schemaSampleRows),
+                    $"Schema sample row count exceeds {_opt.MaxDataReaderSchemaSampleRows}.");
+            }
+            if (_opt.MaxDataReaderColumns <= 0 || _opt.MaxDataReaderChunkRows <= 0 ||
+                _opt.MaxDataReaderSchemaSampleRows < 0 || _opt.MaxDataReaderBufferedCells <= 0L) {
+                throw new InvalidOperationException("Excel data-reader safety limits must be positive.");
             }
 
             var (r1, c1, r2, c2) = A1.ParseRange(a1Range);
@@ -42,11 +55,27 @@ namespace OfficeIMO.Excel {
 
             int cols = c2 - c1 + 1;
             int rows = r2 - r1 + 1;
+            if (cols > _opt.MaxDataReaderColumns) {
+                throw new InvalidDataException($"Range data-reader column count exceeds {nameof(ExcelReadOptions.MaxDataReaderColumns)}.");
+            }
+            long sampleCells = (long)Math.Min(Math.Max(0, rows - (headersInFirstRow ? 1 : 0)), schemaSampleRows) * cols;
+            if (sampleCells > _opt.MaxDataReaderBufferedCells) {
+                throw new InvalidDataException($"Range data-reader buffering exceeds {nameof(ExcelReadOptions.MaxDataReaderBufferedCells)}.");
+            }
             if (schemaSampleRows == 0
                 && rows > BufferedRangeStreamRowLimit
                 && mode != OfficeIMO.Excel.ExecutionMode.Parallel
                 && CanUseRangeStreamXmlReader()) {
+                if (cols > _opt.MaxDataReaderBufferedCells) {
+                    throw new InvalidDataException($"Range data-reader buffering exceeds {nameof(ExcelReadOptions.MaxDataReaderBufferedCells)}.");
+                }
+
                 return new ExcelXmlRangeDataReader(this, r1, c1, r2, c2, cols, headersInFirstRow, _opt, ct);
+            }
+
+            long chunkCells = (long)Math.Min(rows, chunkRows) * cols;
+            if (chunkCells > _opt.MaxDataReaderBufferedCells) {
+                throw new InvalidDataException($"Range data-reader buffering exceeds {nameof(ExcelReadOptions.MaxDataReaderBufferedCells)}.");
             }
 
             IEnumerable<RangeChunk> chunks = ReadRangeStreamForDataReader(a1Range, chunkRows, mode, ct);
@@ -354,6 +383,8 @@ namespace OfficeIMO.Excel {
             }
 
             /// <inheritdoc />
+            [UnconditionalSuppressMessage("Trimming", "IL2063", Justification = "Excel reader column types are closed scalar conversion tokens; OfficeIMO never activates or reflects over their public members.")]
+            [return: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)]
             public override Type GetFieldType(int ordinal) => _columnTypes[ordinal];
 
             /// <inheritdoc />
@@ -444,6 +475,7 @@ namespace OfficeIMO.Excel {
             }
 
             /// <inheritdoc />
+            [UnconditionalSuppressMessage("Trimming", "IL2111", Justification = "The schema table stores Type values as data and does not reflect over Type.TypeInitializer or other Type members.")]
             public override DataTable GetSchemaTable() {
                 var schema = new DataTable("SchemaTable");
                 schema.Columns.Add(SchemaTableColumn.ColumnName, typeof(string));

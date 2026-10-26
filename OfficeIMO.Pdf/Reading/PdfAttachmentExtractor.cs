@@ -87,18 +87,89 @@ internal static class PdfAttachmentExtractor {
         }
 
         var attachments = new List<PdfExtractedAttachment>();
+        var budget = new AttachmentExtractionBudget(effectiveLimits);
         if (catalog.Items.TryGetValue("Names", out var namesObject) &&
             ResolveDictionary(objects, namesObject) is PdfDictionary namesDictionary &&
             namesDictionary.Items.TryGetValue("EmbeddedFiles", out var embeddedFilesTreeObject)) {
             var visitedTrees = new HashSet<int>();
-            ReadEmbeddedFilesNameTree(objects, embeddedFilesTreeObject, attachments, visitedTrees, effectiveLimits.MaxDecodedStreamBytes);
+            int traversedNameTreeNodes = 0;
+            ReadEmbeddedFilesNameTree(objects, embeddedFilesTreeObject, attachments, visitedTrees, budget, effectiveLimits, 0, ref traversedNameTreeNodes);
         }
 
         foreach (PdfArray associatedFiles in PdfAssociatedFileGraph.FindAssociatedFileArrays(objects)) {
-            ReadAssociatedFiles(objects, associatedFiles, attachments, effectiveLimits.MaxDecodedStreamBytes);
+            ReadAssociatedFiles(objects, associatedFiles, attachments, budget);
         }
 
+        ReadFileAttachmentAnnotations(objects, attachments, budget);
+
         return attachments.Count == 0 ? Array.Empty<PdfExtractedAttachment>() : attachments.AsReadOnly();
+    }
+
+    private static void ReadFileAttachmentAnnotations(
+        Dictionary<int, PdfIndirectObject> objects,
+        List<PdfExtractedAttachment> attachments,
+        AttachmentExtractionBudget budget) {
+        var visited = new HashSet<PdfObject>();
+        var existingFileSpecs = new HashSet<int>(
+            attachments
+                .Where(attachment => attachment.FileSpecObjectNumber > 0)
+                .Select(attachment => attachment.FileSpecObjectNumber));
+        foreach (PdfIndirectObject indirect in objects.Values) {
+            ReadFileAttachmentAnnotations(objects, indirect.Value, attachments, visited, existingFileSpecs, budget);
+        }
+    }
+
+    private static void ReadFileAttachmentAnnotations(
+        Dictionary<int, PdfIndirectObject> objects,
+        PdfObject value,
+        List<PdfExtractedAttachment> attachments,
+        ISet<PdfObject> visited,
+        ISet<int> existingFileSpecs,
+        AttachmentExtractionBudget budget) {
+        if (!visited.Add(value)) return;
+        if (value is PdfStream stream) {
+            ReadFileAttachmentAnnotations(objects, stream.Dictionary, attachments, visited, existingFileSpecs, budget);
+            return;
+        }
+        if (value is PdfDictionary dictionary) {
+            if (string.Equals(dictionary.Get<PdfName>("Subtype")?.Name, "FileAttachment", StringComparison.Ordinal) &&
+                dictionary.Items.TryGetValue("FS", out PdfObject? fileSpecObject)) {
+                int referencedFileSpecObjectNumber = fileSpecObject is PdfReference fileSpecReference
+                    ? fileSpecReference.ObjectNumber
+                    : 0;
+                bool alreadyDecoded = referencedFileSpecObjectNumber > 0 &&
+                    existingFileSpecs.Contains(referencedFileSpecObjectNumber);
+                if (!alreadyDecoded) {
+                    string name = TryReadFileSpecName(objects, fileSpecObject) ?? "FileAttachment";
+                    PdfExtractedAttachment? attachment = TryBuildAttachment(
+                        objects,
+                        name,
+                        fileSpecObject,
+                        "FileAttachment",
+                        budget);
+                    if (attachment != null) {
+                        attachments.Add(attachment);
+                        if (attachment.FileSpecObjectNumber > 0) {
+                            existingFileSpecs.Add(attachment.FileSpecObjectNumber);
+                        }
+                    }
+                }
+            }
+
+            foreach (PdfObject child in dictionary.Items.Values) {
+                if (child is not PdfReference) {
+                    ReadFileAttachmentAnnotations(objects, child, attachments, visited, existingFileSpecs, budget);
+                }
+            }
+            return;
+        }
+        if (value is PdfArray array) {
+            foreach (PdfObject child in array.Items) {
+                if (child is not PdfReference) {
+                    ReadFileAttachmentAnnotations(objects, child, attachments, visited, existingFileSpecs, budget);
+                }
+            }
+        }
     }
 
     private static void ReadEmbeddedFilesNameTree(
@@ -106,10 +177,23 @@ internal static class PdfAttachmentExtractor {
         PdfObject treeObject,
         List<PdfExtractedAttachment> attachments,
         HashSet<int> visitedTrees,
-        int maximumDecodedStreamBytes) {
-        int treeObjectNumber = treeObject is PdfReference treeReference ? treeReference.ObjectNumber : 0;
-        if (treeObjectNumber > 0 && !visitedTrees.Add(treeObjectNumber)) {
-            return;
+        AttachmentExtractionBudget budget,
+        PdfReadLimits limits,
+        int depth,
+        ref int traversedNodes) {
+        if (treeObject is PdfReference treeReference) {
+            if (!visitedTrees.Add(treeReference.ObjectNumber)) {
+                return;
+            }
+
+            traversedNodes++;
+            if (traversedNodes > limits.MaxNameTreeNodes) {
+                throw PdfReadLimitException.Create(PdfReadLimitKind.NameTreeNodes, limits.MaxNameTreeNodes, traversedNodes);
+            }
+        }
+
+        if (depth > limits.MaxNameTreeDepth) {
+            throw PdfReadLimitException.Create(PdfReadLimitKind.NameTreeDepth, limits.MaxNameTreeDepth, depth);
         }
 
         if (ResolveDictionary(objects, treeObject) is not PdfDictionary tree) {
@@ -123,7 +207,7 @@ internal static class PdfAttachmentExtractor {
                 }
 
                 PdfObject fileSpecObject = names.Items[i + 1];
-                PdfExtractedAttachment? attachment = TryBuildAttachment(objects, name.Value, fileSpecObject, "Names/EmbeddedFiles", maximumDecodedStreamBytes);
+                PdfExtractedAttachment? attachment = TryBuildAttachment(objects, name.Value, fileSpecObject, "Names/EmbeddedFiles", budget);
                 if (attachment != null) {
                     attachments.Add(attachment);
                 }
@@ -132,12 +216,16 @@ internal static class PdfAttachmentExtractor {
 
         if (ResolveObject(objects, tree.Items.TryGetValue("Kids", out var kidsObject) ? kidsObject : null) is PdfArray kids) {
             foreach (PdfObject kid in kids.Items) {
-                ReadEmbeddedFilesNameTree(objects, kid, attachments, visitedTrees, maximumDecodedStreamBytes);
+                ReadEmbeddedFilesNameTree(objects, kid, attachments, visitedTrees, budget, limits, depth + 1, ref traversedNodes);
             }
         }
     }
 
-    private static void ReadAssociatedFiles(Dictionary<int, PdfIndirectObject> objects, PdfArray associatedFiles, List<PdfExtractedAttachment> attachments, int maximumDecodedStreamBytes) {
+    private static void ReadAssociatedFiles(
+        Dictionary<int, PdfIndirectObject> objects,
+        PdfArray associatedFiles,
+        List<PdfExtractedAttachment> attachments,
+        AttachmentExtractionBudget budget) {
         var existingFileSpecs = new HashSet<int>();
         foreach (PdfExtractedAttachment attachment in attachments) {
             if (attachment.FileSpecObjectNumber > 0) {
@@ -153,7 +241,7 @@ internal static class PdfAttachmentExtractor {
             }
 
             string name = TryReadFileSpecName(objects, fileSpecObject) ?? "AF." + i.ToString(CultureInfo.InvariantCulture);
-            PdfExtractedAttachment? attachment = TryBuildAttachment(objects, name, fileSpecObject, "AF", maximumDecodedStreamBytes);
+            PdfExtractedAttachment? attachment = TryBuildAttachment(objects, name, fileSpecObject, "AF", budget);
             if (attachment != null) {
                 attachments.Add(attachment);
                 if (attachment.FileSpecObjectNumber > 0) {
@@ -163,7 +251,12 @@ internal static class PdfAttachmentExtractor {
         }
     }
 
-    private static PdfExtractedAttachment? TryBuildAttachment(Dictionary<int, PdfIndirectObject> objects, string name, PdfObject fileSpecObject, string source, int maximumDecodedStreamBytes) {
+    private static PdfExtractedAttachment? TryBuildAttachment(
+        Dictionary<int, PdfIndirectObject> objects,
+        string name,
+        PdfObject fileSpecObject,
+        string source,
+        AttachmentExtractionBudget budget) {
         int fileSpecObjectNumber = fileSpecObject is PdfReference fileSpecReference ? fileSpecReference.ObjectNumber : 0;
         if (ResolveDictionary(objects, fileSpecObject) is not PdfDictionary fileSpec ||
             ResolveDictionary(objects, fileSpec.Items.TryGetValue("EF", out var embeddedFilesObject) ? embeddedFilesObject : null) is not PdfDictionary embeddedFiles) {
@@ -180,6 +273,7 @@ internal static class PdfAttachmentExtractor {
         if (ResolveObject(objects, embeddedFileObject) is not PdfStream stream) {
             return null;
         }
+        budget.ReserveAttachment();
 
         string fileName = TryReadText(objects, fileSpec, "F") ?? name;
         string? unicodeFileName = TryReadText(objects, fileSpec, "UF");
@@ -187,7 +281,8 @@ internal static class PdfAttachmentExtractor {
         string? mimeType = TryReadStreamSubtype(objects, stream.Dictionary);
         PdfAssociatedFileRelationship relationship = TryReadRelationship(objects, fileSpec);
         string filter = GetFilterName(objects, stream.Dictionary.Items.TryGetValue("Filter", out var filterObject) ? filterObject : null);
-        byte[] bytes = StreamDecoder.Decode(stream.Dictionary, stream.Data, objects, maximumDecodedStreamBytes);
+        byte[] bytes = budget.GetDecodedBytes(stream, objects);
+
         PdfDictionary? parameters = ResolveDictionary(objects, stream.Dictionary.Items.TryGetValue("Params", out PdfObject? parametersObject) ? parametersObject : null);
         DateTimeOffset? creationDate = TryReadPdfDate(objects, parameters, "CreationDate");
         DateTimeOffset? modificationDate = TryReadPdfDate(objects, parameters, "ModDate");
@@ -205,7 +300,59 @@ internal static class PdfAttachmentExtractor {
             bytes,
             source,
             creationDate,
-            modificationDate);
+            modificationDate,
+            copyBytes: false);
+    }
+
+    private sealed class AttachmentExtractionBudget {
+        private readonly PdfReadLimits _limits;
+        private readonly Dictionary<PdfStream, byte[]> _decodedEmbeddedStreams = new();
+        private int _attachmentCount;
+        private long _decodedAttachmentBytes;
+
+        internal AttachmentExtractionBudget(PdfReadLimits limits) {
+            _limits = limits;
+        }
+
+        internal void ReserveAttachment() {
+            int nextCount = _attachmentCount + 1;
+            if (nextCount > _limits.MaxAttachments) {
+                throw PdfReadLimitException.Create(PdfReadLimitKind.Attachments, _limits.MaxAttachments, nextCount);
+            }
+
+            _attachmentCount = nextCount;
+        }
+
+        internal byte[] GetDecodedBytes(PdfStream stream, Dictionary<int, PdfIndirectObject> objects) {
+            if (_decodedEmbeddedStreams.TryGetValue(stream, out byte[]? cachedBytes) && cachedBytes is not null) {
+                return cachedBytes;
+            }
+
+            long remainingBytes = _limits.MaxTotalAttachmentBytes - _decodedAttachmentBytes;
+            if (remainingBytes <= 0L) {
+                throw PdfReadLimitException.Create(
+                    PdfReadLimitKind.AttachmentBytes,
+                    _limits.MaxTotalAttachmentBytes,
+                    _limits.MaxTotalAttachmentBytes + 1L);
+            }
+
+            int decodeLimit = (int)Math.Min(_limits.MaxDecodedStreamBytes, remainingBytes);
+            byte[] bytes;
+            try {
+                bytes = StreamDecoder.Decode(stream.Dictionary, stream.Data, objects, decodeLimit);
+            } catch (PdfReadLimitException exception) when (
+                exception.Kind == PdfReadLimitKind.DecodedStreamBytes &&
+                remainingBytes < _limits.MaxDecodedStreamBytes) {
+                throw PdfReadLimitException.Create(
+                    PdfReadLimitKind.AttachmentBytes,
+                    _limits.MaxTotalAttachmentBytes,
+                    _decodedAttachmentBytes + exception.Actual);
+            }
+
+            _decodedAttachmentBytes += bytes.LongLength;
+            _decodedEmbeddedStreams[stream] = bytes;
+            return bytes;
+        }
     }
 
     private static DateTimeOffset? TryReadPdfDate(Dictionary<int, PdfIndirectObject> objects, PdfDictionary? dictionary, string key) {

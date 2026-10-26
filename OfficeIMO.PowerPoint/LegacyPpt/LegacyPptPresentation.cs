@@ -62,6 +62,8 @@ namespace OfficeIMO.PowerPoint.LegacyPpt {
         private readonly List<LegacyPptImportDiagnostic> _diagnostics = new();
         private LegacyPptRecordTraversalBudget _recordBudget = null!;
         private LegacyPptDecodedStorageBudget _decodedStorageBudget = null!;
+        private int _connectorRuleCount;
+        private int _commentCount;
 
         private LegacyPptPresentation() { }
 
@@ -152,10 +154,7 @@ namespace OfficeIMO.PowerPoint.LegacyPpt {
             CancellationToken cancellationToken) {
             if (bytes == null) throw new ArgumentNullException(nameof(bytes));
             options ??= new LegacyPptImportOptions();
-            if (options.MaxInputBytes < 1) {
-                throw new ArgumentOutOfRangeException(
-                    nameof(options.MaxInputBytes));
-            }
+            options.Validate();
             if (bytes.Length > options.MaxInputBytes) {
                 throw new InvalidDataException(
                     $"The binary PowerPoint input exceeds {options.MaxInputBytes} bytes.");
@@ -241,8 +240,15 @@ namespace OfficeIMO.PowerPoint.LegacyPpt {
             IReadOnlyDictionary<uint, LegacyPptNotesDirectoryEntry> notesDirectory =
                 ReadNotesDirectory(document, options);
 
+            LegacyPptRecord[] slidePersists = slideList.Children.Where(
+                record => record.Type == RecordSlidePersistAtom).ToArray();
+            if (slidePersists.Length > options.MaxSlideCount) {
+                throw new InvalidDataException(
+                    $"The binary PowerPoint slide count {slidePersists.Length} exceeds {options.MaxSlideCount}.");
+            }
+
             int slideIndex = 0;
-            foreach (LegacyPptRecord slidePersist in slideList.Children.Where(record => record.Type == RecordSlidePersistAtom)) {
+            foreach (LegacyPptRecord slidePersist in slidePersists) {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (slidePersist.PayloadLength < 16) {
                     AddDiagnostic("PPT-SLIDE-PERSIST-TRUNCATED", LegacyPptDiagnosticSeverity.Warning,
@@ -303,8 +309,13 @@ namespace OfficeIMO.PowerPoint.LegacyPpt {
                 record.Type == RecordSlideListWithText && record.Instance == 1);
             if (masterList == null) return;
 
-            foreach (LegacyPptRecord masterPersist in masterList.Children.Where(record =>
-                         record.Type == RecordSlidePersistAtom)) {
+            LegacyPptRecord[] masterPersists = masterList.Children.Where(
+                record => record.Type == RecordSlidePersistAtom).ToArray();
+            if (masterPersists.Length > options.MaxMasterCount) {
+                throw new InvalidDataException(
+                    $"The binary PowerPoint master count {masterPersists.Length} exceeds {options.MaxMasterCount}.");
+            }
+            foreach (LegacyPptRecord masterPersist in masterPersists) {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (masterPersist.PayloadLength < 20) {
                     AddDiagnostic("PPT-MASTER-PERSIST-TRUNCATED", LegacyPptDiagnosticSeverity.Warning,
@@ -430,6 +441,11 @@ namespace OfficeIMO.PowerPoint.LegacyPpt {
                          record.Type == OfficeArtSolverContainer)) {
                 foreach (LegacyPptRecord rule in solver.Children.Where(record =>
                              record.Type == OfficeArtFConnectorRule)) {
+                    if (_connectorRuleCount >= options.MaxConnectorRuleCount) {
+                        throw new InvalidDataException(
+                            $"The binary PowerPoint connector-rule count exceeds {options.MaxConnectorRuleCount}.");
+                    }
+                    _connectorRuleCount++;
                     if (rule.PayloadLength < 24) {
                         if (options.ReportUnsupportedContent) {
                             AddDiagnostic("PPT-CONNECTOR-RULE-TRUNCATED",
@@ -491,7 +507,8 @@ namespace OfficeIMO.PowerPoint.LegacyPpt {
             LegacyPptRecord? textStyle9 = ReadShapeStyle9(shapeContainer,
                 options, out bool isTextStyle9Malformed);
             textBody = LegacyPptTextStyle9Reader.Apply(textBody, textStyle9,
-                    _pictureBulletsByIndex, isTextStyle9Malformed);
+                    _pictureBulletsByIndex, isTextStyle9Malformed,
+                    options.MaxTextStyle9EntryCount);
             LegacyPptRecord? textSpecialInfo = textbox?.DescendantsAndSelf()
                 .FirstOrDefault(record =>
                     record.Type == RecordTextSpecialInfoAtom);

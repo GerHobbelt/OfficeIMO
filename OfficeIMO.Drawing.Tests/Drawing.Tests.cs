@@ -3358,6 +3358,18 @@ public partial class DrawingTests {
     }
 
     [Fact]
+    public void ImageExportFontDiagnosticsBoundAttackerControlledFamilyListsBeforeAllocation() {
+        string familyNames = "Missing " + new string('x', 100_000) + ",Arial";
+        var fonts = new OfficeFontFaceCollection();
+
+        OfficeImageExportDiagnostic diagnostic = Assert.IsType<OfficeImageExportDiagnostic>(
+            fonts.CreateSubstitutionDiagnostic("bounded", familyNames));
+
+        Assert.True(diagnostic.Message.Length < 1024);
+        Assert.DoesNotContain(new string('x', 300), diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OfficeDrawingCarriesScopedFontsAcrossNestedDrawings() {
         byte[] fontData = CreateMinimalTrueTypeFont(CreateFormat12Cmap(0x1F600));
         var nested = new OfficeDrawing(20D, 20D).AddFont("Nested Demo", fontData, OfficeFontStyle.Bold);
@@ -3520,6 +3532,23 @@ public partial class DrawingTests {
     }
 
     [Fact]
+    public void OfficeImagePdfCompatibilityRejectsRasterBeforeTranscodeBudgetIsExceeded() {
+        byte[] source = OfficeRasterImageEncoder.Encode(
+            new OfficeRasterImage(2, 2, OfficeColor.Red),
+            OfficeImageExportFormat.Tiff);
+
+        bool valid = OfficeImagePdfCompatibility.TryValidate(
+            source,
+            maximumTranscodePixels: 3,
+            out OfficeImageInfo? imageInfo,
+            out string? unsupportedReason);
+
+        Assert.False(valid);
+        Assert.Equal(OfficeImageFormat.Tiff, imageInfo!.Format);
+        Assert.Contains("exceeding the configured limit", unsupportedReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OfficeImagePdfCompatibilityRejectsDeclaredContentTypeMismatch() {
         bool valid = OfficeImagePdfCompatibility.TryValidateDeclaredContentType(
             OnePixelPng,
@@ -3547,6 +3576,42 @@ public partial class DrawingTests {
     }
 
     [Fact]
+    public void OfficeImagePdfCompatibilityPreservesMalformedPngDiagnostics() {
+        byte[] invalidCrc = OnePixelPng.ToArray();
+        invalidCrc[invalidCrc.Length - 1] ^= 0x01;
+
+        bool valid = OfficeImagePdfCompatibility.TryValidate(
+            invalidCrc,
+            out OfficeImageInfo? imageInfo,
+            out string? unsupportedReason);
+
+        Assert.False(valid);
+        Assert.Null(imageInfo);
+        Assert.Contains("invalid CRC", unsupportedReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfficeImagePdfCompatibilityRejectsLargeNonIhdrFirstChunkBeforeCrc() {
+        const int chunkLength = 1_000_000;
+        var malformed = new byte[8 + 12 + chunkLength];
+        Array.Copy(OnePixelPng, malformed, 8);
+        malformed[8] = 0x00;
+        malformed[9] = 0x0F;
+        malformed[10] = 0x42;
+        malformed[11] = 0x40;
+        Encoding.ASCII.GetBytes("IDAT").CopyTo(malformed, 12);
+
+        bool valid = OfficeImagePdfCompatibility.TryValidate(
+            malformed,
+            out OfficeImageInfo? imageInfo,
+            out string? unsupportedReason);
+
+        Assert.False(valid);
+        Assert.Null(imageInfo);
+        Assert.Equal("PNG bytes must start with an IHDR chunk.", unsupportedReason);
+    }
+
+    [Fact]
     public void OfficeImageReaderIdentifiesPngWithoutDecodingPixels() {
         var image = OfficeImageReader.Identify(OnePixelPng);
 
@@ -3565,6 +3630,28 @@ public partial class DrawingTests {
         malformed[23] = 2;
 
         bool identified = OfficeImageReader.TryIdentify(malformed, fileName: null, out OfficeImageInfo image);
+
+        Assert.False(identified);
+        Assert.Equal(OfficeImageFormat.Unknown, image.Format);
+    }
+
+    [Fact]
+    public void OfficeImageReaderRejectsPngWithoutACompleteContainer() {
+        byte[] truncated = OnePixelPng.Take(33).ToArray();
+
+        bool identified = OfficeImageReader.TryIdentify(truncated, fileName: null, out OfficeImageInfo image);
+
+        Assert.False(identified);
+        Assert.Equal(OfficeImageFormat.Unknown, image.Format);
+    }
+
+    [Fact]
+    public void OfficeImageReaderRejectsPngDimensionsBeyondRasterLimits() {
+        byte[] oversized = OnePixelPng.ToArray();
+        oversized[16] = 0x7F;
+        oversized[20] = 0x7F;
+
+        bool identified = OfficeImageReader.TryIdentify(oversized, fileName: null, out OfficeImageInfo image);
 
         Assert.False(identified);
         Assert.Equal(OfficeImageFormat.Unknown, image.Format);

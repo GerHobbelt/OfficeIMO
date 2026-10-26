@@ -61,7 +61,7 @@ internal static partial class PdfSyntax {
             definitionCounts[definitionKey] = definitionCount + 1;
             int start = matches[i].Index;
             int bodyStart = matches[i].Index + matches[i].Length;
-            int end = FindObjectEnd(text, start, declaredLengthValues);
+            int end = FindObjectEnd(text, start, declaredLengthValues, limits);
             if (end < 0) {
                 HandleStructuralDefect(
                     parsingMode,
@@ -194,9 +194,10 @@ internal static partial class PdfSyntax {
         ValidateActiveCrossReference(text, map, parsedOffsets, parsingMode, repairDiagnostics);
         ResolveIndirectStreamLengths(map, pdf, streamLocations, limits);
         var activeClassicObjectNumbers = new HashSet<int>();
-        bool appliedXrefStreamEntries = ApplyClassicXrefEntries(map, pdf, parsedOffsets, activeClassicObjectNumbers, limits, out bool appliedClassicEntries);
-        appliedXrefStreamEntries = ApplyXrefStreamEntries(map, pdf, parsedOffsets, limits) || appliedXrefStreamEntries;
-        string trailerRaw = GetActiveTrailerRaw(text, map, parsedOffsets);
+        var xrefScanBudget = new XrefObjectScanBudget(limits);
+        bool appliedXrefStreamEntries = ApplyClassicXrefEntries(map, pdf, parsedOffsets, activeClassicObjectNumbers, limits, xrefScanBudget, out bool appliedClassicEntries);
+        appliedXrefStreamEntries = ApplyXrefStreamEntries(map, pdf, parsedOffsets, limits, xrefScanBudget) || appliedXrefStreamEntries;
+        string trailerRaw = GetActiveTrailerRaw(text, map, parsedOffsets, limits.MaxObjectCharacters);
         if (trailerRaw.IndexOf("/Prev", StringComparison.Ordinal) < 0) {
             foreach (KeyValuePair<(int Id, int Generation), int> definition in definitionCounts) {
                 if (definition.Value <= 1) continue;

@@ -93,7 +93,8 @@ public sealed partial class OfficeRasterCanvas {
         double dashLength = 6D,
         double gapLength = 4D,
         bool resetDashPatternForEachSegment = false) {
-        if (color.A == 0 || points == null || points.Count < 2 || thickness <= 0D || dashLength <= 0D || gapLength < 0D) {
+        if (color.A == 0 || points == null || points.Count < 2 || thickness <= 0D || dashLength <= 0D || gapLength < 0D
+            || !IsFinite(dashLength) || !IsFinite(gapLength)) {
             return;
         }
 
@@ -123,7 +124,8 @@ public sealed partial class OfficeRasterCanvas {
         }
 
         if ((pattern.Count & 1) == 1) {
-            pattern.Add(pattern[pattern.Count - 1]);
+            int originalCount = pattern.Count;
+            for (int index = 0; index < originalCount; index++) pattern.Add(pattern[index]);
         }
 
         return pattern;

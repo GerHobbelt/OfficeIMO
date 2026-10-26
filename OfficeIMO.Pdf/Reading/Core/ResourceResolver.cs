@@ -25,12 +25,25 @@ internal static partial class ResourceResolver {
         return fonts;
     }
 
-    public static Dictionary<string, System.Func<byte[], string>> GetFontDecoders(PdfDictionary page, Dictionary<int, PdfIndirectObject> objects) {
+    public static Dictionary<string, System.Func<byte[], string>> GetFontDecoders(
+        PdfDictionary page,
+        Dictionary<int, PdfIndirectObject> objects,
+        int maxDecodedTextCharacters = PdfReadLimits.DefaultMaxDecodedTextCharacters) {
         var map = new Dictionary<string, System.Func<byte[], string>>(System.StringComparer.Ordinal);
         var fonts = GetFontsForPage(page, objects);
         foreach (var kv in fonts) {
-            var dec = BuildDecoderForFont(kv.Value);
+            var dec = BuildDecoderForFont(kv.Value, maxDecodedTextCharacters);
             map[kv.Key] = dec;
+        }
+        return map;
+    }
+
+    public static Dictionary<string, System.Func<byte[], int, string>> GetBudgetedFontDecoders(
+        PdfDictionary page,
+        Dictionary<int, PdfIndirectObject> objects) {
+        var map = new Dictionary<string, System.Func<byte[], int, string>>(System.StringComparer.Ordinal);
+        foreach (var kv in GetFontsForPage(page, objects)) {
+            map[kv.Key] = BuildBudgetedDecoderForFont(kv.Value);
         }
         return map;
     }
@@ -59,7 +72,7 @@ internal static partial class ResourceResolver {
                 var widths = ResolveArray(fontVal.Items.TryGetValue("Widths", out var wobj) ? wobj : null, objects);
                 if (widths is null) {
                     if (PdfWriter.TryGetStandardFontByBaseFontName(fontResource.BaseFont, out var standardFont)) {
-                        var decoder = BuildDecoderForFont(fontResource);
+                        var decoder = BuildDecoderForFont(fontResource, PdfReadLimits.DefaultMaxDecodedTextCharacters);
                         map[kv.Key] = bytes => PdfWriter.EstimateSimpleTextWidth1000(decoder(bytes), standardFont);
                     } else {
                         map[kv.Key] = bytes => (bytes?.Length ?? 0) * 500.0;
@@ -148,13 +161,30 @@ internal static partial class ResourceResolver {
         return sum;
     }
 
-    public static Dictionary<string, System.Func<byte[], string>> GetFontDecodersForForm(PdfDictionary formDict, Dictionary<int, PdfIndirectObject> objects) {
+    public static Dictionary<string, System.Func<byte[], string>> GetFontDecodersForForm(
+        PdfDictionary formDict,
+        Dictionary<int, PdfIndirectObject> objects,
+        int maxDecodedTextCharacters = PdfReadLimits.DefaultMaxDecodedTextCharacters) {
         var map = new Dictionary<string, System.Func<byte[], string>>(System.StringComparer.Ordinal);
         if (!formDict.Items.TryGetValue("Resources", out var resObj)) return map;
         var res = ResolveDict(resObj, objects);
         if (res is null) return map;
         foreach (var kv in GetFontsForResources(res, objects)) {
-            map[kv.Key] = BuildDecoderForFont(kv.Value);
+            map[kv.Key] = BuildDecoderForFont(kv.Value, maxDecodedTextCharacters);
+        }
+
+        return map;
+    }
+
+    public static Dictionary<string, System.Func<byte[], int, string>> GetBudgetedFontDecodersForForm(
+        PdfDictionary formDict,
+        Dictionary<int, PdfIndirectObject> objects) {
+        var map = new Dictionary<string, System.Func<byte[], int, string>>(System.StringComparer.Ordinal);
+        if (!formDict.Items.TryGetValue("Resources", out var resObj)) return map;
+        var res = ResolveDict(resObj, objects);
+        if (res is null) return map;
+        foreach (var kv in GetFontsForResources(res, objects)) {
+            map[kv.Key] = BuildBudgetedDecoderForFont(kv.Value);
         }
 
         return map;
@@ -187,7 +217,7 @@ internal static partial class ResourceResolver {
         return result;
     }
 
-    internal static IReadOnlyList<PdfExtractedImage> GetImageXObjectsForResources(PdfDictionary resources, Dictionary<int, PdfIndirectObject> objects, int pageNumber, IReadOnlyList<PdfImagePlacement>? imagePlacements = null, bool colorizeImageMasks = false) {
+    internal static IReadOnlyList<PdfExtractedImage> GetImageXObjectsForResources(PdfDictionary resources, Dictionary<int, PdfIndirectObject> objects, int pageNumber, IReadOnlyList<PdfImagePlacement>? imagePlacements = null, bool colorizeImageMasks = false, PdfReadLimits? limits = null) {
         var result = new List<PdfExtractedImage>();
         Dictionary<string, List<PdfImagePlacement>>? placedImagesByKey = null;
         Dictionary<string, List<PdfImagePlacement>>? placedImagesByResourceNameWithoutIdentity = null;
@@ -206,16 +236,27 @@ internal static partial class ResourceResolver {
             }
         }
 
-        CollectImageXObjectsFromResources(resources, objects, pageNumber, result, new HashSet<PdfStream>(), new HashSet<string>(System.StringComparer.Ordinal), placedImagesByKey, placedImagesByResourceNameWithoutIdentity, colorizeImageMasks);
+        PdfReadLimits effectiveLimits = limits ?? PdfReadLimits.Default;
+        int traversedObjects = 0;
+        CollectImageXObjectsFromResources(resources, objects, pageNumber, result, new HashSet<(PdfStream Stream, PdfDictionary Resources)>(), new HashSet<string>(System.StringComparer.Ordinal), placedImagesByKey, placedImagesByResourceNameWithoutIdentity, colorizeImageMasks, effectiveLimits, depth: 0, ref traversedObjects);
         return result;
     }
 
-    private static void CollectImageXObjectsFromResources(PdfDictionary resources, Dictionary<int, PdfIndirectObject> objects, int pageNumber, List<PdfExtractedImage> result, HashSet<PdfStream> activeForms, HashSet<string> addedImageKeys, Dictionary<string, List<PdfImagePlacement>>? placedImagesByKey, Dictionary<string, List<PdfImagePlacement>>? placedImagesByResourceNameWithoutIdentity, bool colorizeImageMasks) {
+    private static void CollectImageXObjectsFromResources(PdfDictionary resources, Dictionary<int, PdfIndirectObject> objects, int pageNumber, List<PdfExtractedImage> result, HashSet<(PdfStream Stream, PdfDictionary Resources)> visitedFormContexts, HashSet<string> addedImageKeys, Dictionary<string, List<PdfImagePlacement>>? placedImagesByKey, Dictionary<string, List<PdfImagePlacement>>? placedImagesByResourceNameWithoutIdentity, bool colorizeImageMasks, PdfReadLimits limits, int depth, ref int traversedObjects) {
+        if (depth > limits.MaxContentNestingDepth) {
+            throw PdfReadLimitException.Create(PdfReadLimitKind.ContentNestingDepth, limits.MaxContentNestingDepth, depth);
+        }
+
         if (!resources.Items.TryGetValue("XObject", out var xoObj)) return;
         var xo = ResolveDict(xoObj, objects);
         if (xo is null) return;
 
         foreach (var kv in xo.Items) {
+            traversedObjects++;
+            if (traversedObjects > limits.MaxContentOperands) {
+                throw PdfReadLimitException.Create(PdfReadLimitKind.ContentOperands, limits.MaxContentOperands, traversedObjects);
+            }
+
             int objectNumber = 0;
             PdfStream? stream = null;
             if (kv.Value is PdfReference reference &&
@@ -266,21 +307,17 @@ internal static partial class ResourceResolver {
                 continue;
             }
 
-            if (!activeForms.Add(stream)) {
+            PdfDictionary? formResources = null;
+            if (stream.Dictionary.Items.TryGetValue("Resources", out var formResourcesObj)) {
+                formResources = ResolveDict(formResourcesObj, objects);
+            }
+
+            formResources ??= resources;
+            if (!visitedFormContexts.Add((stream, formResources))) {
                 continue;
             }
 
-            try {
-                PdfDictionary? formResources = null;
-                if (stream.Dictionary.Items.TryGetValue("Resources", out var formResourcesObj)) {
-                    formResources = ResolveDict(formResourcesObj, objects);
-                }
-
-                formResources ??= resources;
-                CollectImageXObjectsFromResources(formResources, objects, pageNumber, result, activeForms, addedImageKeys, placedImagesByKey, placedImagesByResourceNameWithoutIdentity, colorizeImageMasks);
-            } finally {
-                activeForms.Remove(stream);
-            }
+            CollectImageXObjectsFromResources(formResources, objects, pageNumber, result, visitedFormContexts, addedImageKeys, placedImagesByKey, placedImagesByResourceNameWithoutIdentity, colorizeImageMasks, limits, depth + 1, ref traversedObjects);
         }
     }
 
@@ -340,28 +377,57 @@ internal static partial class ResourceResolver {
         "," +
         imageMaskColor.A.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-    private static System.Func<byte[], string> BuildDecoderForFont(PdfFontResource font) {
+    private static System.Func<byte[], string> BuildDecoderForFont(PdfFontResource font, int maxDecodedTextCharacters) {
         // Prefer font-specific ToUnicode map when present
-        if (font.HasToUnicode && font.CMap is not null) return font.CMap.MapBytes;
-        var baseDecoder = BuildBaseEncodingDecoder(font.Encoding);
+        if (font.HasToUnicode && font.CMap is not null) return bytes => font.CMap.MapBytes(bytes, maxDecodedTextCharacters);
+        var baseDecoder = BuildBaseEncodingDecoder(font.Encoding, maxDecodedTextCharacters);
         if (font.Differences is not null && font.Differences.Count > 0) {
             var differences = font.Differences;
-            return bytes => DecodeWithDifferences(bytes, differences, baseDecoder);
+            return bytes => DecodeWithDifferences(bytes, differences, baseDecoder, maxDecodedTextCharacters);
         }
 
         return baseDecoder;
     }
 
-    private static System.Func<byte[], string> BuildBaseEncodingDecoder(string encoding) {
+    private static System.Func<byte[], int, string> BuildBudgetedDecoderForFont(PdfFontResource font) {
+        if (font.HasToUnicode && font.CMap is not null) {
+            return (bytes, maximumCharacters) => font.CMap.MapBytes(bytes, maximumCharacters);
+        }
+
+        if (font.Differences is not null && font.Differences.Count > 0) {
+            var differences = font.Differences;
+            return (bytes, maximumCharacters) => DecodeWithDifferences(
+                bytes,
+                differences,
+                BuildBaseEncodingDecoder(font.Encoding, maximumCharacters),
+                maximumCharacters);
+        }
+
+        return BuildBudgetedBaseEncodingDecoder(font.Encoding);
+    }
+
+    private static System.Func<byte[], int, string> BuildBudgetedBaseEncodingDecoder(string encoding) {
         if (string.Equals(encoding, "StandardEncoding", System.StringComparison.Ordinal)) {
-            return PdfStandardEncoding.Decode;
+            return static (bytes, maximumCharacters) => PdfStandardEncoding.Decode(bytes, maximumCharacters);
         }
 
         if (string.Equals(encoding, "MacRomanEncoding", System.StringComparison.Ordinal)) {
-            return PdfMacRomanEncoding.Decode;
+            return static (bytes, maximumCharacters) => PdfMacRomanEncoding.Decode(bytes, maximumCharacters);
         }
 
-        return PdfWinAnsiEncoding.Decode;
+        return static (bytes, maximumCharacters) => PdfWinAnsiEncoding.Decode(bytes, maximumCharacters);
+    }
+
+    private static System.Func<byte[], string> BuildBaseEncodingDecoder(string encoding, int maxDecodedTextCharacters) {
+        if (string.Equals(encoding, "StandardEncoding", System.StringComparison.Ordinal)) {
+            return bytes => PdfStandardEncoding.Decode(bytes, maxDecodedTextCharacters);
+        }
+
+        if (string.Equals(encoding, "MacRomanEncoding", System.StringComparison.Ordinal)) {
+            return bytes => PdfMacRomanEncoding.Decode(bytes, maxDecodedTextCharacters);
+        }
+
+        return bytes => PdfWinAnsiEncoding.Decode(bytes, maxDecodedTextCharacters);
     }
 
     private static PdfFontResource CreateFontResource(string resourceName, PdfDictionary fontVal, Dictionary<int, PdfIndirectObject> objects) {
@@ -495,16 +561,27 @@ internal static partial class ResourceResolver {
         return map.Count == 0 ? null : map;
     }
 
-    private static string DecodeWithDifferences(byte[] bytes, IReadOnlyDictionary<int, string> differences, System.Func<byte[], string> baseDecoder) {
+    private static string DecodeWithDifferences(
+        byte[] bytes,
+        IReadOnlyDictionary<int, string> differences,
+        System.Func<byte[], string> baseDecoder,
+        int maxDecodedTextCharacters) {
         if (bytes is null || bytes.Length == 0) return string.Empty;
+        if (bytes.LongLength > maxDecodedTextCharacters) {
+            throw PdfReadLimitException.Create(PdfReadLimitKind.DecodedTextCharacters, maxDecodedTextCharacters, bytes.LongLength);
+        }
         var builder = new System.Text.StringBuilder(bytes.Length);
         for (int i = 0; i < bytes.Length; i++) {
             int code = bytes[i];
-            if (differences.TryGetValue(code, out string? value)) {
-                builder.Append(value);
-            } else {
-                builder.Append(baseDecoder(new[] { bytes[i] }));
+            string value = differences.TryGetValue(code, out string? difference)
+                ? difference!
+                : baseDecoder(new[] { bytes[i] });
+            long nextLength = (long)builder.Length + value.Length;
+            if (nextLength > maxDecodedTextCharacters) {
+                throw PdfReadLimitException.Create(PdfReadLimitKind.DecodedTextCharacters, maxDecodedTextCharacters, nextLength);
             }
+
+            builder.Append(value);
         }
 
         return builder.ToString();

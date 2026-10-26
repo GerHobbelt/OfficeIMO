@@ -199,7 +199,9 @@ public class HtmlOfficeAdapters {
 
         Assert.Contains("Cell: 1, 5", html, StringComparison.Ordinal);
         Assert.Contains("Size: 280x180", html, StringComparison.Ordinal);
-        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult();
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(
+            html,
+            HtmlConversionDocumentOptions.CreateTrustedProfile()).ToExcelDocumentResult();
         using ExcelDocument imported = result.Value;
         ExcelSheet importedSheet = imported.Sheets.Single(importedSheet => importedSheet.Name == "Roundtrip");
 
@@ -407,6 +409,25 @@ public class HtmlOfficeAdapters {
     }
 
     [Fact]
+    public void ExcelHtml_ReportsTruncationWhenRetainedWindowContainsNoUsedCells() {
+        using ExcelDocument workbook = ExcelDocument.Create(new MemoryStream());
+        ExcelSheet sheet = workbook.AddWorksheet("Sparse");
+        sheet.CellValue(1, A1.MaxColumns, "Far column");
+        sheet.CellValue(A1.MaxRows, 1, "Far row");
+
+        string html = workbook.ToHtml(new ExcelHtmlSaveOptions {
+            Profile = OfficeHtmlConversionProfile.ExcelSemanticTables,
+            MaxRowsPerSheet = 2,
+            MaxColumnsPerSheet = 2
+        });
+
+        Assert.Contains("No cells within export limits.", html, StringComparison.Ordinal);
+        Assert.Contains("Columns truncated: 2 of 16384 exported.", html, StringComparison.Ordinal);
+        Assert.Contains("Rows truncated: 2 of 1048576 exported.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("No used cells.", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExcelHtml_RoundTripsHiddenWorksheetVisibility() {
         using ExcelDocument workbook = ExcelDocument.Create(new MemoryStream());
         ExcelSheet visible = workbook.AddWorksheet("Visible");
@@ -496,7 +517,9 @@ public class HtmlOfficeAdapters {
             </main>
             """;
 
-        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult();
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(
+            html,
+            HtmlConversionDocumentOptions.CreateTrustedProfile()).ToExcelDocumentResult();
         using ExcelDocument imported = result.Value;
         ExcelSheet importedSheet = Assert.Single(imported.Sheets);
 
@@ -522,7 +545,9 @@ public class HtmlOfficeAdapters {
             </main>
             """;
 
-        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(html).ToExcelDocumentResult();
+        HtmlToExcelResult result = OfficeIMO.Html.HtmlConversionDocument.Parse(
+            html,
+            HtmlConversionDocumentOptions.CreateTrustedProfile()).ToExcelDocumentResult();
         using ExcelDocument imported = result.Value;
         ExcelSheet importedSheet = Assert.Single(imported.Sheets);
 

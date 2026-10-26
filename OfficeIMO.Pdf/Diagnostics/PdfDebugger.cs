@@ -11,6 +11,7 @@ internal static class PdfDebugger {
         effectiveOptions.Validate();
         PdfReadOptions effectiveReadOptions = PdfReadOptions.Resolve(readOptions);
         PdfReadDocument document = PdfReadDocument.Open(pdf, effectiveReadOptions);
+        document.DemandContentExtraction("debug object");
         var (objects, _) = PdfSyntax.ParseObjects(pdf, effectiveReadOptions);
         HashSet<int> reachable = GetReachableObjectNumbers(objects, document.Security);
         var objectReports = objects.Values
@@ -34,7 +35,8 @@ internal static class PdfDebugger {
     /// <summary>Dumps a PDF file into typed debugger records.</summary>
     public static PdfDebuggerReport Dump(string path, PdfDebuggerOptions? options = null, PdfReadOptions? readOptions = null) {
         Guard.NotNullOrWhiteSpace(path, nameof(path));
-        return Dump(File.ReadAllBytes(path), options, readOptions);
+        PdfDocumentSource source = PdfDocumentSource.FromPath(path, readOptions);
+        return Dump(source.Bytes, options, source.Options);
     }
 
     /// <summary>Dumps a readable PDF stream from its current position.</summary>
@@ -44,9 +46,8 @@ internal static class PdfDebugger {
             throw new ArgumentException("Stream must be readable.", nameof(stream));
         }
 
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return Dump(buffer.ToArray(), options, readOptions);
+        PdfDocumentSource source = PdfDocumentSource.FromRemainingStream(stream, readOptions);
+        return Dump(source.Bytes, options, source.Options);
     }
 
     private static PdfDebugObject BuildObject(PdfIndirectObject indirect, Dictionary<int, PdfIndirectObject> objects, HashSet<int> reachable, PdfDebuggerOptions options) {

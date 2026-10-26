@@ -44,6 +44,9 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
         /// <summary>Gets the private source container retained for same-format compound rewriting.</summary>
         internal OfficeCompoundFile? SourceCompoundFile { get; private set; }
 
+        /// <summary>Gets whether the workbook stream was successfully decrypted from password-to-open protection.</summary>
+        public bool WasEncryptedSource { get; internal set; }
+
         internal LegacyXlsWorkbook() {
         }
 
@@ -639,6 +642,7 @@ namespace OfficeIMO.Excel.LegacyXls.Model {
             if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 
             options ??= new LegacyXlsImportOptions();
+            options.Validate();
             if (!OfficeCompoundFileReader.TryRead(bytes, out OfficeCompoundFile? compoundFile, out string? compoundError)) {
                 var workbook = new LegacyXlsWorkbook();
                 if (!string.IsNullOrWhiteSpace(compoundError)) {

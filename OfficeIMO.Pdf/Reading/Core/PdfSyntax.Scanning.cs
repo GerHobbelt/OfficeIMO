@@ -4,11 +4,14 @@ internal static partial class PdfSyntax {
     private static int FindObjectEnd(
         string text,
         int start,
-        IReadOnlyDictionary<(int ObjectNumber, int Generation), int>? declaredLengthValues = null) {
+        IReadOnlyDictionary<(int ObjectNumber, int Generation), int>? declaredLengthValues = null,
+        PdfReadLimits? limits = null,
+        int? maximumIndex = null) {
+        int limit = Math.Min(text.Length, maximumIndex ?? text.Length);
         int searchFrom = start;
-        while (searchFrom >= 0 && searchFrom < text.Length) {
-            int streamIdx = IndexOfKeywordOutsideLiteralString(text, "stream", searchFrom, text.Length);
-            int endObjIdx = IndexOfKeywordOutsideLiteralString(text, "endobj", searchFrom, text.Length);
+        while (searchFrom >= 0 && searchFrom < limit) {
+            int streamIdx = IndexOfKeywordOutsideLiteralString(text, "stream", searchFrom, limit);
+            int endObjIdx = IndexOfKeywordOutsideLiteralString(text, "endobj", searchFrom, limit);
 
             if (streamIdx < 0) {
                 return endObjIdx < 0 ? -1 : endObjIdx + 6;
@@ -18,20 +21,22 @@ internal static partial class PdfSyntax {
                 return endObjIdx + 6;
             }
 
-            int afterStream = SkipEOL(text, streamIdx + 6, text.Length);
+            int afterStream = SkipEOL(text, streamIdx + 6, limit);
             if (TryFindDeclaredStreamObjectEnd(
                     text,
                     start,
                     streamIdx,
                     afterStream,
                     declaredLengthValues,
+                    limits,
+                    limit,
                     out int declaredObjectEnd)) {
                 return declaredObjectEnd;
             }
 
             int endStreamSearchFrom = afterStream;
-            while (endStreamSearchFrom < text.Length) {
-                int endStreamIdx = IndexOfKeyword(text, "endstream", endStreamSearchFrom, text.Length);
+            while (endStreamSearchFrom < limit) {
+                int endStreamIdx = IndexOfKeyword(text, "endstream", endStreamSearchFrom, limit);
                 if (endStreamIdx < 0) {
                     return -1;
                 }
@@ -43,8 +48,8 @@ internal static partial class PdfSyntax {
                     return -1;
                 }
 
-                int nextToken = SkipWhitespaceAndComments(text, endStreamIdx + 9, text.Length);
-                if (IsKeywordAt(text, "endobj", nextToken, text.Length)) {
+                int nextToken = SkipWhitespaceAndComments(text, endStreamIdx + 9, limit);
+                if (IsKeywordAt(text, "endobj", nextToken, limit)) {
                     return nextToken + 6;
                 }
 
@@ -92,6 +97,8 @@ internal static partial class PdfSyntax {
         int streamIndex,
         int dataStart,
         IReadOnlyDictionary<(int ObjectNumber, int Generation), int>? declaredLengthValues,
+        PdfReadLimits? limits,
+        int limit,
         out int objectEnd) {
         objectEnd = -1;
         int dictionaryStart = text.IndexOf("<<", objectStart, streamIndex - objectStart, StringComparison.Ordinal);
@@ -104,9 +111,24 @@ internal static partial class PdfSyntax {
             return false;
         }
 
+        int dictionaryCharacters = dictionaryEnd - dictionaryStart - 2;
+        int maximumDictionaryCharacters = limits?.MaxObjectCharacters ?? 1_000_000;
+        if (dictionaryCharacters > maximumDictionaryCharacters) {
+            if (limits != null) {
+                throw PdfReadLimitException.Create(
+                    PdfReadLimitKind.ObjectCharacters,
+                    maximumDictionaryCharacters,
+                    dictionaryCharacters);
+            }
+            return false;
+        }
+
         PdfDictionary? dictionary;
         try {
-            dictionary = ParseDictionary(text.Substring(dictionaryStart + 2, dictionaryEnd - dictionaryStart - 2));
+            string dictionaryText = text.Substring(dictionaryStart + 2, dictionaryCharacters);
+            dictionary = limits == null
+                ? ParseDictionary(dictionaryText)
+                : ParseDictionary(dictionaryText, limits);
         } catch (Exception exception) when (exception is not OutOfMemoryException) {
             return false;
         }
@@ -115,12 +137,12 @@ internal static partial class PdfSyntax {
             return false;
         }
 
-        if (!TryGetDeclaredEndStreamIndex(text, dataStart, byteLength, text.Length, out int endStream)) {
+        if (!TryGetDeclaredEndStreamIndex(text, dataStart, byteLength, limit, out int endStream)) {
             return false;
         }
 
-        int endObject = SkipWhitespaceAndComments(text, endStream + 9, text.Length);
-        if (!IsKeywordAt(text, "endobj", endObject, text.Length)) {
+        int endObject = SkipWhitespaceAndComments(text, endStream + 9, limit);
+        if (!IsKeywordAt(text, "endobj", endObject, limit)) {
             return false;
         }
 

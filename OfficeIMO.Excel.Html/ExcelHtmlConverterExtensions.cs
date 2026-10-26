@@ -11,22 +11,36 @@ public static partial class ExcelHtmlConverterExtensions {
     /// Converts a workbook to HTML.
     /// </summary>
     public static string ToHtml(this ExcelDocument workbook, ExcelHtmlSaveOptions? options = null) {
+        return workbook.ToHtmlResult(options).Value;
+    }
+
+    /// <summary>Converts a workbook to HTML with the shared structured result contract.</summary>
+    public static HtmlTextConversionResult ToHtmlResult(this ExcelDocument workbook, ExcelHtmlSaveOptions? options = null) {
         if (workbook == null) throw new ArgumentNullException(nameof(workbook));
         options ??= new ExcelHtmlSaveOptions();
-        return options.Profile == OfficeHtmlConversionProfile.ExcelVisualReview
+        options.Validate();
+        string html = options.Profile == OfficeHtmlConversionProfile.ExcelVisualReview
             ? ConvertWorkbookVisual(workbook, options)
             : ConvertWorkbookSemantic(workbook, options);
+        return new HtmlTextConversionResult(html);
     }
 
     /// <summary>
     /// Converts a worksheet to HTML.
     /// </summary>
     public static string ToHtml(this ExcelSheet sheet, ExcelHtmlSaveOptions? options = null) {
+        return sheet.ToHtmlResult(options).Value;
+    }
+
+    /// <summary>Converts a worksheet to HTML with the shared structured result contract.</summary>
+    public static HtmlTextConversionResult ToHtmlResult(this ExcelSheet sheet, ExcelHtmlSaveOptions? options = null) {
         if (sheet == null) throw new ArgumentNullException(nameof(sheet));
         options ??= new ExcelHtmlSaveOptions();
-        return options.Profile == OfficeHtmlConversionProfile.ExcelVisualReview
+        options.Validate();
+        string html = options.Profile == OfficeHtmlConversionProfile.ExcelVisualReview
             ? ConvertSheetVisual(sheet, options)
             : ConvertSheetSemantic(sheet, options);
+        return new HtmlTextConversionResult(html);
     }
 
     /// <summary>
@@ -47,9 +61,9 @@ public static partial class ExcelHtmlConverterExtensions {
 
     private static string ConvertWorkbookSemantic(ExcelDocument workbook, ExcelHtmlSaveOptions options) {
         var body = new StringBuilder();
-        body.Append("<main class=\"officeimo-document\" data-officeimo-source=\"excel\" data-officeimo-profile=\"")
-            .Append(OfficeHtmlText.EscapeAttribute(options.Profile.ToString()))
-            .Append("\">");
+        body.Append("<main class=\"officeimo-document\"");
+        OfficeHtmlSemanticEnvelope.AppendRootAttributes(body, "excel", options.Profile.ToString());
+        body.Append('>');
         body.Append("<h1>").Append(OfficeHtmlText.Escape(GetTitle(options, "Excel Workbook"))).Append("</h1>");
         foreach (ExcelSheet sheet in workbook.Sheets) {
             AppendSheetTable(body, sheet, options);
@@ -61,9 +75,9 @@ public static partial class ExcelHtmlConverterExtensions {
 
     private static string ConvertSheetSemantic(ExcelSheet sheet, ExcelHtmlSaveOptions options) {
         var body = new StringBuilder();
-        body.Append("<main class=\"officeimo-document\" data-officeimo-source=\"excel\" data-officeimo-profile=\"")
-            .Append(OfficeHtmlText.EscapeAttribute(options.Profile.ToString()))
-            .Append("\">");
+        body.Append("<main class=\"officeimo-document\"");
+        OfficeHtmlSemanticEnvelope.AppendRootAttributes(body, "excel", options.Profile.ToString());
+        body.Append('>');
         AppendSheetTable(body, sheet, options);
         body.Append("</main>");
         return Wrap(body.ToString(), options, GetTitle(options, sheet.Name));
@@ -71,9 +85,9 @@ public static partial class ExcelHtmlConverterExtensions {
 
     private static string ConvertWorkbookVisual(ExcelDocument workbook, ExcelHtmlSaveOptions options) {
         var body = new StringBuilder();
-        body.Append("<main class=\"officeimo-document\" data-officeimo-source=\"excel\" data-officeimo-profile=\"")
-            .Append(OfficeHtmlText.EscapeAttribute(options.Profile.ToString()))
-            .Append("\">");
+        body.Append("<main class=\"officeimo-document\"");
+        OfficeHtmlSemanticEnvelope.AppendRootAttributes(body, "excel", options.Profile.ToString());
+        body.Append('>');
         body.Append("<h1>").Append(OfficeHtmlText.Escape(GetTitle(options, "Excel Visual Review"))).Append("</h1>");
         ExcelWorkbookImageExportOptions visualOptions = ResolveWorkbookVisualOptions(options.VisualOptions);
         Dictionary<string, ExcelSheet> sheetsByName = workbook.Sheets.ToDictionary(sheet => sheet.Name, StringComparer.OrdinalIgnoreCase);
@@ -92,9 +106,9 @@ public static partial class ExcelHtmlConverterExtensions {
 
     private static string ConvertSheetVisual(ExcelSheet sheet, ExcelHtmlSaveOptions options) {
         var body = new StringBuilder();
-        body.Append("<main class=\"officeimo-document\" data-officeimo-source=\"excel\" data-officeimo-profile=\"")
-            .Append(OfficeHtmlText.EscapeAttribute(options.Profile.ToString()))
-            .Append("\">");
+        body.Append("<main class=\"officeimo-document\"");
+        OfficeHtmlSemanticEnvelope.AppendRootAttributes(body, "excel", options.Profile.ToString());
+        body.Append('>');
         body.Append("<h1>").Append(OfficeHtmlText.Escape(GetTitle(options, sheet.Name))).Append("</h1>");
         AppendSvgResult(body, sheet.ExportImage(OfficeImageExportFormat.Svg, ToWorksheetOptions(ResolveWorkbookVisualOptions(options.VisualOptions))), "officeimo-sheet-svg-1-");
         AppendVisualCommentInventory(body, sheet.GetComments());
@@ -103,8 +117,21 @@ public static partial class ExcelHtmlConverterExtensions {
     }
 
     private static void AppendSheetTable(StringBuilder body, ExcelSheet sheet, ExcelHtmlSaveOptions options) {
-        IReadOnlyList<ExcelMergedRangeSnapshot> mergedRanges = sheet.GetMergedRanges();
-        string usedRange = ExpandUsedRangeForMerges(sheet, sheet.GetUsedRangeA1(), mergedRanges);
+        int rowLimit = options.MaxRowsPerSheet ?? ExcelHtmlSaveOptions.DefaultMaxRowsPerSheet;
+        int columnLimit = options.MaxColumnsPerSheet ?? ExcelHtmlSaveOptions.DefaultMaxColumnsPerSheet;
+        IReadOnlyList<ExcelMergedRangeSnapshot> mergedRanges = sheet.GetMergedRanges(options.MaxMergedRangesPerSheet);
+        string reportedUsedRange = sheet.GetUsedRangeA1();
+        bool isEmptyDefaultRange = mergedRanges.Count == 0
+            && (string.Equals(reportedUsedRange, "A1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(reportedUsedRange, "A1:A1", StringComparison.OrdinalIgnoreCase))
+            && !sheet.TryGetCellText(1, 1, out _);
+        string usedRange = ExpandUsedRangeForMerges(
+            sheet,
+            reportedUsedRange,
+            mergedRanges,
+            rowLimit,
+            columnLimit,
+            options.MaxCellsPerSheet);
         body.Append("<section class=\"officeimo-sheet\" data-officeimo-sheet=\"")
             .Append(OfficeHtmlText.EscapeAttribute(sheet.Name))
             .Append("\" data-officeimo-range=\"")
@@ -115,12 +142,17 @@ public static partial class ExcelHtmlConverterExtensions {
         body.Append("<h2>").Append(OfficeHtmlText.Escape(sheet.Name)).Append("</h2>");
 
         ParseUsedRange(usedRange, out int firstRow, out int firstColumn, out int rowCount, out int columnCount);
-        int maxRows = options.MaxRowsPerSheet.HasValue
-            ? Math.Min(rowCount, options.MaxRowsPerSheet.Value)
-            : rowCount;
-        ExcelMergeExportMap mergeMap = BuildMergeExportMap(mergedRanges, firstRow, firstColumn, maxRows, columnCount);
-        if (rowCount == 0 || columnCount == 0 || maxRows == 0 || (!SheetHasUsedCells(sheet, firstRow, firstColumn, rowCount, columnCount) && mergeMap.Count == 0)) {
-            body.Append("<p class=\"officeimo-muted\">No used cells.</p>");
+        int maxColumns = Math.Min(Math.Min(columnCount, columnLimit), options.MaxCellsPerSheet);
+        int maxRows = Math.Min(rowCount, rowLimit);
+        if (maxColumns > 0 && (long)maxRows * maxColumns > options.MaxCellsPerSheet) {
+            maxRows = Math.Min(maxRows, Math.Max(1, options.MaxCellsPerSheet / maxColumns));
+        }
+        ExcelMergeExportMap mergeMap = BuildMergeExportMap(mergedRanges, firstRow, firstColumn, maxRows, maxColumns);
+        if (rowCount == 0 || columnCount == 0 || maxRows == 0 || maxColumns == 0 || (!SheetHasUsedCells(sheet, firstRow, firstColumn, maxRows, maxColumns) && mergeMap.Count == 0)) {
+            body.Append(isEmptyDefaultRange
+                ? "<p class=\"officeimo-muted\">No used cells.</p>"
+                : "<p class=\"officeimo-muted\">No cells within export limits.</p>");
+            AppendSheetTruncationDiagnostics(body, maxRows, rowCount, maxColumns, columnCount);
             AppendSheetFeatureInventory(body, sheet, GetFeatureInventoryWindow(firstRow, maxRows, rowCount));
             body.Append("</section>");
             return;
@@ -134,17 +166,19 @@ public static partial class ExcelHtmlConverterExtensions {
             body.Append("<tbody>");
         }
 
+        ExcelMergeExportRowCursor mergeCursor = mergeMap.CreateRowCursor();
         for (int row = 0; row < maxRows; row++) {
             if (row == 1 && firstRowIsHeader) {
                 body.Append("</thead><tbody>");
             }
 
             body.Append("<tr>");
-            for (int column = 0; column < columnCount; column++) {
+            mergeCursor.MoveToRow(firstRow + row);
+            for (int column = 0; column < maxColumns; column++) {
                 string tag = firstRowIsHeader && row == 0 ? "th" : "td";
                 int cellRow = firstRow + row;
                 int cellColumn = firstColumn + column;
-                if (mergeMap.IsCoveredCell(cellRow, cellColumn)) {
+                if (mergeCursor.IsCoveredCell(cellColumn)) {
                     continue;
                 }
 
@@ -154,7 +188,7 @@ public static partial class ExcelHtmlConverterExtensions {
                     .Append(" data-officeimo-cell=\"")
                     .Append(OfficeHtmlText.EscapeAttribute(A1.CellReference(cellRow, cellColumn)))
                     .Append('"');
-                if (mergeMap.TryGetOrigin(cellRow, cellColumn, out ExcelMergeExportRange merge)) {
+                if (mergeCursor.TryGetOrigin(cellColumn, out ExcelMergeExportRange merge)) {
                     AppendMergeAttributes(body, merge);
                 }
 
@@ -182,16 +216,32 @@ public static partial class ExcelHtmlConverterExtensions {
         }
 
         body.Append(firstRowIsHeader && maxRows == 1 ? "</thead></table>" : "</tbody></table>");
-        if (maxRows < rowCount) {
-            body.Append("<p class=\"officeimo-diagnostic\">Rows truncated: ")
-                .Append(maxRows.ToString(CultureInfo.InvariantCulture))
-                .Append(" of ")
-                .Append(rowCount.ToString(CultureInfo.InvariantCulture))
-                .Append(" exported.</p>");
-        }
+        AppendSheetTruncationDiagnostics(body, maxRows, rowCount, maxColumns, columnCount);
 
         AppendSheetFeatureInventory(body, sheet, GetFeatureInventoryWindow(firstRow, maxRows, rowCount));
         body.Append("</section>");
+    }
+
+    private static void AppendSheetTruncationDiagnostics(
+        StringBuilder body,
+        int exportedRows,
+        int totalRows,
+        int exportedColumns,
+        int totalColumns) {
+        if (exportedColumns < totalColumns) {
+            body.Append("<p class=\"officeimo-diagnostic\">Columns truncated: ")
+                .Append(exportedColumns.ToString(CultureInfo.InvariantCulture))
+                .Append(" of ")
+                .Append(totalColumns.ToString(CultureInfo.InvariantCulture))
+                .Append(" exported.</p>");
+        }
+        if (exportedRows < totalRows) {
+            body.Append("<p class=\"officeimo-diagnostic\">Rows truncated: ")
+                .Append(exportedRows.ToString(CultureInfo.InvariantCulture))
+                .Append(" of ")
+                .Append(totalRows.ToString(CultureInfo.InvariantCulture))
+                .Append(" exported.</p>");
+        }
     }
 
     private static bool SheetHasUsedCells(ExcelSheet sheet, int firstRow, int firstColumn, int rowCount, int columnCount) {
@@ -591,7 +641,7 @@ public static partial class ExcelHtmlConverterExtensions {
             return svg;
         }
 
-        var ids = new SortedSet<string>(StringComparer.Ordinal);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(svg, "\\bid=(['\\\"])(?<id>[^'\\\"]+)\\1")) {
             string id = match.Groups["id"].Value;
             if (id.Length > 0 && !id.StartsWith(prefix, StringComparison.Ordinal)) {
@@ -599,20 +649,22 @@ public static partial class ExcelHtmlConverterExtensions {
             }
         }
 
-        string namespaced = svg;
-        foreach (string id in ids.OrderByDescending(item => item.Length)) {
-            string replacement = prefix + id;
-            namespaced = namespaced
-                .Replace("id=\"" + id + "\"", "id=\"" + replacement + "\"")
-                .Replace("id='" + id + "'", "id='" + replacement + "'")
-                .Replace("url(#" + id + ")", "url(#" + replacement + ")")
-                .Replace("href=\"#" + id + "\"", "href=\"#" + replacement + "\"")
-                .Replace("href='#" + id + "'", "href='#" + replacement + "'")
-                .Replace("xlink:href=\"#" + id + "\"", "xlink:href=\"#" + replacement + "\"")
-                .Replace("xlink:href='#" + id + "'", "xlink:href='#" + replacement + "'");
-        }
-
-        return namespaced;
+        if (ids.Count == 0) return svg;
+        const string references = "\\bid=(?<idq>['\"])(?<id>[^'\"]+)\\k<idq>|url\\(#(?<url>[^)]+)\\)|(?<hrefName>(?:xlink:)?href)=(?<hrefq>['\"])#(?<href>[^'\"]+)\\k<hrefq>";
+        return System.Text.RegularExpressions.Regex.Replace(svg, references, match => {
+            if (match.Groups["id"].Success) {
+                string id = match.Groups["id"].Value;
+                return ids.Contains(id) ? "id=" + match.Groups["idq"].Value + prefix + id + match.Groups["idq"].Value : match.Value;
+            }
+            if (match.Groups["url"].Success) {
+                string id = match.Groups["url"].Value;
+                return ids.Contains(id) ? "url(#" + prefix + id + ")" : match.Value;
+            }
+            string href = match.Groups["href"].Value;
+            return ids.Contains(href)
+                ? match.Groups["hrefName"].Value + "=" + match.Groups["hrefq"].Value + "#" + prefix + href + match.Groups["hrefq"].Value
+                : match.Value;
+        });
     }
 
     private static string CreateDiagnosticGroupKey(OfficeImageExportDiagnostic diagnostic) {

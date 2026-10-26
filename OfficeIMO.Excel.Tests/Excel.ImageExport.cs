@@ -267,6 +267,9 @@ namespace OfficeIMO.Tests {
             Assert.Equal("1 1/4", ExcelNumberFormatDisplay.FormatNumericText(1.25D, 12U, null, "1.25"));
             Assert.Equal("-1/2", ExcelNumberFormatDisplay.FormatNumericText(-0.5D, 12U, null, "-0.5"));
             Assert.Equal("1/10", ExcelNumberFormatDisplay.FormatNumericText(0.1D, 13U, null, "0.1"));
+            Assert.Equal("1/2", ExcelNumberFormatDisplay.FormatNumericText(0.5D, 1U, "# ?/2", "0.5"));
+            Assert.Equal("1073741824/2147483647", ExcelNumberFormatDisplay.FormatNumericText(0.5D, 1U, "# ?/2147483647", "0.5"));
+            Assert.Equal("3221225471/2147483647", ExcelNumberFormatDisplay.FormatNumericText(1.5D, 1U, "?/2147483647", "1.5"));
             Assert.Equal("(1/2)", ExcelNumberFormatDisplay.FormatNumericText(-0.5D, 1U, "# ?/?;(# ?/?)", "-0.5"));
             Assert.Equal("1,235", ExcelNumberFormatDisplay.FormatNumericText(1234567D, 1U, "#,##0,", "1234567"));
             Assert.Equal("1 K", ExcelNumberFormatDisplay.FormatNumericText(1234D, 1U, "#,##0, \"K\"", "1234"));
@@ -761,6 +764,203 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportOmitsConditionalRulesBeyondReferenceLimit() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("OversizedConditional");
+            sheet.CellValue(1, 1, 0D);
+            sheet.CellValue(100_001, 1, 1000D);
+            sheet.AddConditionalColorScale("A1:A100001", OfficeColor.Red, OfficeColor.Lime);
+
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("A1:A1").CreateVisualSnapshot();
+
+            Assert.Null(Assert.Single(snapshot.Cells).Style.FillColorArgb);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(
+                snapshot.Diagnostics,
+                item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
+            Assert.Equal(OfficeImageExportLossKind.Omission, diagnostic.LossKind);
+            Assert.Equal("OversizedConditional!A1:A100001", diagnostic.Source);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportBoundsAggregateConditionalRuleReferences() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("AggregateConditional");
+            sheet.CellValue(1, 1, 0D);
+            sheet.AddConditionalColorScale("A1:A60000", OfficeColor.Red, OfficeColor.Lime);
+            sheet.AddConditionalColorScale("A1:A60000", OfficeColor.Blue, OfficeColor.White);
+
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("A1:A1").CreateVisualSnapshot();
+
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(
+                snapshot.Diagnostics,
+                item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded);
+            Assert.Equal(OfficeImageExportDiagnosticSeverity.Warning, diagnostic.Severity);
+            Assert.Equal(OfficeImageExportLossKind.Omission, diagnostic.LossKind);
+            Assert.Equal("AggregateConditional!A1:A60000", diagnostic.Source);
+            Assert.Contains("aggregate", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportBoundsConditionalRuleCount() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("RuleCount");
+            sheet.CellValue(1, 1, 0D);
+            var conditional = new ConditionalFormatting {
+                SequenceOfReferences = new ListValue<StringValue> { InnerText = "A1" }
+            };
+            for (int priority = 1; priority <= 4_097; priority++) {
+                conditional.Append(new ConditionalFormattingRule {
+                    Type = ConditionalFormatValues.ColorScale,
+                    Priority = priority
+                });
+            }
+            Worksheet worksheet = sheet.WorksheetPart.Worksheet!;
+            worksheet.InsertAfter(conditional, worksheet.GetFirstChild<SheetData>());
+
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("A1:A1").CreateVisualSnapshot();
+
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(
+                snapshot.Diagnostics,
+                item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded);
+            Assert.Contains("4096-rule", diagnostic.Message, StringComparison.Ordinal);
+            Assert.Equal("RuleCount!A1:A1", diagnostic.Source);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRetainsHighestPrecedenceRulesWhenBounded() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("RulePriority");
+            var conditional = new ConditionalFormatting {
+                SequenceOfReferences = new ListValue<StringValue> { InnerText = "A1" }
+            };
+            conditional.Append(
+                new ConditionalFormattingRule {
+                    Type = ConditionalFormatValues.Expression,
+                    Priority = 100,
+                    StopIfTrue = false
+                },
+                new ConditionalFormattingRule {
+                    Type = ConditionalFormatValues.Expression,
+                    Priority = 1,
+                    StopIfTrue = true
+                });
+            Worksheet worksheet = sheet.WorksheetPart.Worksheet!;
+            worksheet.InsertAfter(conditional, worksheet.GetFirstChild<SheetData>());
+
+            IReadOnlyList<ExcelConditionalFormattingInfo> retained =
+                sheet.GetConditionalFormattingRules("A1", 1, out bool truncated);
+
+            Assert.True(truncated);
+            ExcelConditionalFormattingInfo rule = Assert.Single(retained);
+            Assert.Equal(1, rule.Priority);
+            Assert.True(rule.StopIfTrue);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportBoundsConditionalRuleCellWork() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("RuleCellWork");
+            sheet.CellValue(1, 1, 0D);
+            var conditional = new ConditionalFormatting {
+                SequenceOfReferences = new ListValue<StringValue> { InnerText = "A1" }
+            };
+            for (int priority = 1; priority <= 1_001; priority++) {
+                conditional.Append(new ConditionalFormattingRule {
+                    Type = ConditionalFormatValues.ColorScale,
+                    Priority = priority
+                });
+            }
+            Worksheet worksheet = sheet.WorksheetPart.Worksheet!;
+            worksheet.InsertAfter(conditional, worksheet.GetFirstChild<SheetData>());
+
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("A1:A1000").CreateVisualSnapshot();
+
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(
+                snapshot.Diagnostics,
+                item => item.Code == ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded);
+            Assert.Contains("200-rule", diagnostic.Message, StringComparison.Ordinal);
+            Assert.Equal("RuleCellWork!A1:A1000", diagnostic.Source);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportOmitsConditionalRulesWhenNoRuleFitsWorkBudget() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("OversizedRuleCellWork");
+            sheet.AddConditionalFormulaRule("A1", "=A1>0", stopIfTrue: true, fillColor: "C6EFCE");
+            var cells = new CountingVisualCellList(1_000_001);
+            var diagnostics = new List<OfficeImageExportDiagnostic>();
+
+            ExcelConditionalVisualState state = ExcelConditionalVisualEvaluator.Evaluate(
+                sheet,
+                cells,
+                "A1:XFD1048576",
+                new DateTime(2026, 1, 1),
+                diagnostics);
+
+            Assert.Same(ExcelConditionalVisualState.Empty, state);
+            Assert.Equal(0, cells.ReadCount);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded, diagnostic.Code);
+            Assert.Contains("1000000 rule-cell", diagnostic.Message, StringComparison.Ordinal);
+            Assert.Equal("OversizedRuleCellWork!A1:XFD1048576", diagnostic.Source);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportSkipsConditionalRuleDiscoveryWhenNoRuleFitsWorkBudget() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("SkippedRuleDiscovery");
+            var conditional = new ConditionalFormatting {
+                SequenceOfReferences = new ListValue<StringValue> { InnerText = "A1" }
+            };
+            var malformedRule = new ConditionalFormattingRule {
+                Type = ConditionalFormatValues.Expression
+            };
+            malformedRule.SetAttribute(new OpenXmlAttribute("priority", null, "not-an-integer"));
+            conditional.Append(malformedRule);
+            Worksheet worksheet = sheet.WorksheetPart.Worksheet!;
+            worksheet.InsertAfter(conditional, worksheet.GetFirstChild<SheetData>());
+            var cells = new CountingVisualCellList(200_001);
+            var diagnostics = new List<OfficeImageExportDiagnostic>();
+
+            ExcelConditionalVisualState state = ExcelConditionalVisualEvaluator.Evaluate(
+                sheet,
+                cells,
+                "A1:XFD1048576",
+                new DateTime(2026, 1, 1),
+                diagnostics);
+
+            Assert.Same(ExcelConditionalVisualState.Empty, state);
+            Assert.Equal(0, cells.ReadCount);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded, diagnostic.Code);
+            Assert.Equal("SkippedRuleDiscovery!A1:XFD1048576", diagnostic.Source);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportReservesEveryConditionalEvaluatorPass() {
+            using ExcelDocument document = ExcelDocument.Create(new MemoryStream());
+            ExcelSheet sheet = document.AddWorksheet("MultiPassRuleCellWork");
+            sheet.AddConditionalFormulaRule("A1", "=A1>0", stopIfTrue: true, fillColor: "C6EFCE");
+            var cells = new CountingVisualCellList(1_000_000);
+            var diagnostics = new List<OfficeImageExportDiagnostic>();
+
+            ExcelConditionalVisualState state = ExcelConditionalVisualEvaluator.Evaluate(
+                sheet,
+                cells,
+                "A1:XFD1048576",
+                new DateTime(2026, 1, 1),
+                diagnostics);
+
+            Assert.Same(ExcelConditionalVisualState.Empty, state);
+            Assert.Equal(0, cells.ReadCount);
+            OfficeImageExportDiagnostic diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(ExcelImageExportDiagnosticCodes.ConditionalReferenceLimitExceeded, diagnostic.Code);
+            Assert.Contains("all evaluator passes", diagnostic.Message, StringComparison.Ordinal);
+            Assert.Equal("MultiPassRuleCellWork!A1:XFD1048576", diagnostic.Source);
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportKeepsStoppedCellsInColorScaleThresholds() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
@@ -813,6 +1013,76 @@ namespace OfficeIMO.Tests {
                 Assert.Equal("FFFFFF00", snapshot.Cells.Single(cell => cell.Row == 2 && cell.Column == 1).Style.FillColorArgb);
                 Assert.Equal("FF00FF00", snapshot.Cells.Single(cell => cell.Row == 3 && cell.Column == 1).Style.FillColorArgb);
             }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportHonorsPercentileColorScaleMiddleStop() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorksheet("PercentileColor");
+                int[] values = { 0, 10, 15, 20, 100 };
+                for (int row = 1; row <= values.Length; row++) {
+                    sheet.CellValue(row, 1, values[row - 1]);
+                }
+
+                sheet.AddConditionalColorScale("A1:A5", OfficeColor.Red, OfficeColor.Green);
+                document.Save();
+            }
+
+            using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                Worksheet worksheet = spreadsheet.WorkbookPart!.WorksheetParts.First().Worksheet;
+                ColorScale colorScale = worksheet.Elements<ConditionalFormatting>().First().Elements<ConditionalFormattingRule>().First().GetFirstChild<ColorScale>()!;
+                colorScale.RemoveAllChildren<ConditionalFormatValueObject>();
+                colorScale.RemoveAllChildren<X.Color>();
+                colorScale.Append(new ConditionalFormatValueObject { Type = ConditionalFormatValueObjectValues.Min });
+                colorScale.Append(new ConditionalFormatValueObject { Type = ConditionalFormatValueObjectValues.Percentile, Val = "50" });
+                colorScale.Append(new ConditionalFormatValueObject { Type = ConditionalFormatValueObjectValues.Max });
+                colorScale.Append(new X.Color { Rgb = "FFFF0000" });
+                colorScale.Append(new X.Color { Rgb = "FFFFFF00" });
+                colorScale.Append(new X.Color { Rgb = "FF00FF00" });
+                worksheet.Save();
+            }
+
+            using (ExcelDocument document = ExcelDocument.Load(filePath)) {
+                ExcelRangeVisualSnapshot snapshot = document.Sheets.Single().Range("A1:A5").CreateVisualSnapshot();
+
+                Assert.Equal("FFFFFF00", snapshot.Cells.Single(cell => cell.Row == 3).Style.FillColorArgb);
+            }
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRejectsMalformedColorScaleStopCounts() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorksheet("MalformedColor");
+                for (int row = 1; row <= 4; row++) {
+                    sheet.CellValue(row, 1, row);
+                }
+
+                sheet.AddConditionalColorScale("A1:A4", OfficeColor.Red, OfficeColor.Green);
+                document.Save();
+            }
+
+            using (SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true)) {
+                Worksheet worksheet = spreadsheet.WorkbookPart!.WorksheetParts.First().Worksheet;
+                ColorScale colorScale = worksheet.Descendants<ColorScale>().Single();
+                colorScale.RemoveAllChildren<ConditionalFormatValueObject>();
+                colorScale.RemoveAllChildren<X.Color>();
+                for (int index = 0; index < 4; index++) {
+                    colorScale.Append(new ConditionalFormatValueObject {
+                        Type = ConditionalFormatValueObjectValues.Number,
+                        Val = index.ToString(CultureInfo.InvariantCulture)
+                    });
+                    colorScale.Append(new X.Color { Rgb = "FF" + index.ToString("X6", CultureInfo.InvariantCulture) });
+                }
+
+                worksheet.Save();
+            }
+
+            using ExcelDocument loaded = ExcelDocument.Load(filePath);
+            ExcelRangeVisualSnapshot snapshot = loaded.Sheets.Single().Range("A1:A4").CreateVisualSnapshot();
+
+            Assert.All(snapshot.Cells, cell => Assert.Null(cell.Style.FillColorArgb));
         }
 
         [Fact]
@@ -1758,6 +2028,63 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportEnforcesAggregateSourceImageBudget() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorksheet("Images");
+            byte[] image = CreateSolidPng(12, 10, OfficeColor.FromRgb(37, 99, 235));
+            sheet.AddImage(1, 1, image, "image/png", widthPixels: 12, heightPixels: 10, name: "First");
+            sheet.AddImage(2, 1, image, "image/png", widthPixels: 12, heightPixels: 10, name: "Second");
+            var options = new ExcelImageExportOptions {
+                MaximumTotalEncodedBytes = 1,
+                MaximumTotalSourceImageBytes = image.LongLength
+            };
+
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("A1:B3").CreateVisualSnapshot(options);
+
+            Assert.Single(snapshot.Images);
+            Assert.Contains(snapshot.Diagnostics, diagnostic =>
+                diagnostic.Code == ExcelImageExportDiagnosticCodes.ImageBytesMissing &&
+                diagnostic.Message.Contains("aggregate source-image budget", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void ExcelImageExportLimitsRejectOversizedSeekableSourceBeforeReading() {
+            using var source = new LengthOnlyImageStream(ExcelImageExportOptions.DefaultMaximumTotalSourceImageBytes + 1L);
+
+            bool success = ExcelImageExportLimits.TryReadSourceImageBytes(source, out byte[] bytes);
+
+            Assert.False(success);
+            Assert.Empty(bytes);
+            Assert.Equal(0, source.ReadCount);
+        }
+
+        [Fact]
+        public void ExcelImageExportLimitsUseTheCallerAggregateBudgetWithoutAHiddenPerImageCap() {
+            const long priorPerImageLimit = 128L * 1024L * 1024L;
+            using var source = new LengthOnlyImageStream(priorPerImageLimit + 1L);
+            using var defaultBudgetSource = new LengthOnlyImageStream(priorPerImageLimit + 1L);
+
+            bool success = ExcelImageExportLimits.TryReadSourceImageBytes(source, priorPerImageLimit, out byte[] bytes);
+
+            Assert.False(success);
+            Assert.Empty(bytes);
+            Assert.Equal(0, source.ReadCount);
+
+            success = ExcelImageExportLimits.TryReadSourceImageBytes(source, priorPerImageLimit + 1L, out bytes);
+
+            Assert.False(success);
+            Assert.Empty(bytes);
+            Assert.Equal(1, source.ReadCount);
+
+            success = ExcelImageExportLimits.TryReadSourceImageBytes(defaultBudgetSource, out bytes);
+
+            Assert.False(success);
+            Assert.Empty(bytes);
+            Assert.Equal(1, defaultBudgetSource.ReadCount);
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportIncludesAndClipsImagesOverlappingSelectedRange() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             using ExcelDocument document = ExcelDocument.Create(filePath);
@@ -1823,6 +2150,41 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void ExcelRange_ImageExportBoundsMergedRangesBeforeExpansion() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorksheet("MergedLimit");
+            sheet.CellValue(1, 1, "Bounded");
+            sheet.Range("A1:XFD1048576").Merge();
+
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("A1:A1").CreateVisualSnapshot();
+
+            ExcelVisualCell cell = Assert.Single(snapshot.Cells);
+            Assert.Equal("Bounded", cell.Text);
+            Assert.True(cell.Width <= snapshot.Width);
+            Assert.True(cell.Height <= snapshot.Height);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportRetainsVisibleMergesAfterLargeOffRangeOrigin() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using ExcelDocument document = ExcelDocument.Create(filePath);
+            ExcelSheet sheet = document.AddWorksheet("MergeBudget");
+            sheet.CellValue(1, 1, "Outside origin");
+            sheet.CellValue(1, 3, "Visible origin");
+            sheet.Range("A1:B50").Merge();
+            sheet.Range("C1:C2").Merge();
+
+            ExcelRangeVisualSnapshot snapshot = sheet.Range("B1:C2").CreateVisualSnapshot(
+                new ExcelImageExportOptions { MaximumRenderedCells = 100 });
+
+            Assert.Contains(snapshot.Cells, cell => cell.Row == 1 && cell.Column == 1 && !cell.CoveredByMerge);
+            ExcelVisualCell covered = snapshot.Cells.Single(cell => cell.Row == 2 && cell.Column == 3);
+            Assert.True(covered.CoveredByMerge);
+            Assert.True(snapshot.Cells.Single(cell => cell.Row == 1 && cell.Column == 3).Height > covered.Height);
+        }
+
+        [Fact]
         public void ExcelRange_ImageExportUsesTwoCellImageAnchorDimensions() {
             string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
             byte[] banner = CreateSolidPng(32, 32, OfficeColor.FromRgb(37, 99, 235));
@@ -1858,6 +2220,29 @@ namespace OfficeIMO.Tests {
             Assert.True(OfficePngReader.TryDecode(png.Bytes, out OfficeRasterImage? rendered));
             Assert.NotNull(rendered);
             AssertPixelNear(rendered!, Math.Min(rendered!.Width - 1, 120), Math.Min(rendered.Height - 1, 40), OfficeColor.FromRgb(37, 99, 235), tolerance: 3);
+        }
+
+        [Fact]
+        public void ExcelRange_ImageExportSaturatesOverflowingTwoCellAnchorOffsets() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            byte[] banner = CreateSolidPng(8, 8, OfficeColor.FromRgb(37, 99, 235));
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorksheet("AnchorOverflow");
+                sheet.CellValue(1, 1, "Anchor");
+                document.Save();
+            }
+
+            AddTwoCellAnchoredImage(
+                filePath,
+                banner,
+                fromColumnOffset: long.MinValue.ToString(CultureInfo.InvariantCulture),
+                toColumnOffset: long.MaxValue.ToString(CultureInfo.InvariantCulture),
+                toColumnId: "0");
+
+            using ExcelDocument loaded = ExcelDocument.Load(filePath);
+            ExcelImage image = Assert.Single(loaded.Sheets.Single().Images);
+
+            Assert.Equal(16384, image.WidthPixels);
         }
 
         [Fact]
@@ -2802,6 +3187,30 @@ namespace OfficeIMO.Tests {
                 Assert.Equal(220D, visualChart.Width);
                 Assert.Equal(120D, visualChart.Height);
             }
+        }
+
+        [Fact]
+        public void ExcelWorksheet_ImageExportRejectsDrawingExpandedRangesBeforeMaterialization() {
+            string filePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xlsx");
+            using (ExcelDocument document = ExcelDocument.Create(filePath)) {
+                ExcelSheet sheet = document.AddWorksheet("BoundedDrawingRange");
+                sheet.CellValue(1, 1, "Category");
+                sheet.CellValue(1, 2, "Value");
+                sheet.CellValue(2, 1, "Item");
+                sheet.CellValue(2, 2, 1);
+                sheet.AddChartFromRange("A1:B2", row: 1, column: 3, widthPixels: 240, heightPixels: 140, type: ExcelChartType.ColumnClustered);
+                document.Save();
+            }
+
+            MoveFirstChartToAbsoluteAnchor(filePath, xPixels: 1_000_000, yPixels: 1_000_000, widthPixels: 1_000_000, heightPixels: 1_000_000);
+
+            using ExcelDocument loaded = ExcelDocument.Load(filePath);
+            InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
+                loaded.Sheets.Single().ExportImage(
+                    OfficeImageExportFormat.Png,
+                    new ExcelWorksheetImageExportOptions { ShowGridlines = false }));
+
+            Assert.Contains("100000 rendered cells", error.Message, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -4346,7 +4755,12 @@ namespace OfficeIMO.Tests {
             sheet.WorksheetPart.Worksheet.Save();
         }
 
-        private static void AddTwoCellAnchoredImage(string filePath, byte[] imageBytes) {
+        private static void AddTwoCellAnchoredImage(
+            string filePath,
+            byte[] imageBytes,
+            string fromColumnOffset = "0",
+            string toColumnOffset = "0",
+            string toColumnId = "3") {
             using SpreadsheetDocument spreadsheet = SpreadsheetDocument.Open(filePath, true);
             WorksheetPart worksheetPart = spreadsheet.WorkbookPart!.WorksheetParts.First();
             DrawingsPart drawingsPart = worksheetPart.DrawingsPart ?? worksheetPart.AddNewPart<DrawingsPart>();
@@ -4365,12 +4779,12 @@ namespace OfficeIMO.Tests {
             drawingsPart.WorksheetDrawing.Append(new Xdr.TwoCellAnchor(
                 new Xdr.FromMarker(
                     new Xdr.ColumnId("0"),
-                    new Xdr.ColumnOffset("0"),
+                    new Xdr.ColumnOffset(fromColumnOffset),
                     new Xdr.RowId("0"),
                     new Xdr.RowOffset("0")),
                 new Xdr.ToMarker(
-                    new Xdr.ColumnId("3"),
-                    new Xdr.ColumnOffset("0"),
+                    new Xdr.ColumnId(toColumnId),
+                    new Xdr.ColumnOffset(toColumnOffset),
                     new Xdr.RowId("2"),
                     new Xdr.RowOffset("0")),
                 new Xdr.Picture(
@@ -4880,6 +5294,58 @@ namespace OfficeIMO.Tests {
                 image = new OfficeRasterImage(2, 2, _color);
                 return true;
             }
+        }
+
+        private sealed class LengthOnlyImageStream : Stream {
+            private long _position;
+
+            internal LengthOnlyImageStream(long length) {
+                Length = length;
+            }
+
+            internal int ReadCount { get; private set; }
+            public override bool CanRead => true;
+            public override bool CanSeek => true;
+            public override bool CanWrite => false;
+            public override long Length { get; }
+            public override long Position { get => _position; set => _position = value; }
+            public override void Flush() { }
+            public override int Read(byte[] buffer, int offset, int count) {
+                ReadCount++;
+                return 0;
+            }
+            public override long Seek(long offset, SeekOrigin origin) {
+                _position = origin == SeekOrigin.Begin
+                    ? offset
+                    : origin == SeekOrigin.Current
+                        ? _position + offset
+                        : Length + offset;
+                return _position;
+            }
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+
+        private sealed class CountingVisualCellList : IReadOnlyList<ExcelVisualCell> {
+            internal CountingVisualCellList(int count) {
+                Count = count;
+            }
+
+            public int Count { get; }
+            internal int ReadCount { get; private set; }
+
+            public ExcelVisualCell this[int index] {
+                get {
+                    ReadCount++;
+                    throw new InvalidOperationException("The oversized conditional-formatting guard must run before cell access.");
+                }
+            }
+
+            public IEnumerator<ExcelVisualCell> GetEnumerator() {
+                for (int index = 0; index < Count; index++) yield return this[index];
+            }
+
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
         }
     }
 }

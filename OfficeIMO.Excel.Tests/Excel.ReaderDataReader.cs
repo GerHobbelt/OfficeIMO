@@ -84,6 +84,59 @@ namespace OfficeIMO.Tests {
         }
 
         [Fact]
+        public void Reader_ReadRangeAsDataReader_RejectsRangesBeyondBufferedCellBudget() {
+            using var memory = new MemoryStream();
+            using (var document = ExcelDocument.Create(memory, new ExcelCreateOptions { PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose })) {
+                document.AddWorksheet("Data").CellValue(1, 1, "Header");
+            }
+            using var reader = ExcelDocumentReader.Open(memory.ToArray(), new ExcelReadOptions {
+                MaxDataReaderBufferedCells = 2
+            });
+
+            InvalidDataException exception = Assert.Throws<InvalidDataException>(() =>
+                reader.GetSheet("Data").ReadRangeAsDataReader("A1:C2"));
+
+            Assert.Contains(nameof(ExcelReadOptions.MaxDataReaderBufferedCells), exception.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Reader_ReadRangeAsDataReader_BoundsUnsortedXmlFallbackBuffer() {
+            using var source = new MemoryStream();
+            using (var document = ExcelDocument.Create(source, new ExcelCreateOptions { PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose })) {
+                ExcelSheet sheet = document.AddWorksheet("Data");
+                for (int row = 1; row <= 4; row++) {
+                    sheet.CellValue(row, 1, row);
+                    sheet.CellValue(row, 2, row * 10);
+                }
+            }
+
+            using var reordered = new MemoryStream();
+            source.Position = 0;
+            source.CopyTo(reordered);
+            reordered.Position = 0;
+            using (SpreadsheetDocument package = SpreadsheetDocument.Open(reordered, true)) {
+                WorksheetPart worksheetPart = Assert.Single(package.WorkbookPart!.WorksheetParts);
+                SheetData sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>()!;
+                Row[] rows = sheetData.Elements<Row>().ToArray();
+                sheetData.RemoveAllChildren<Row>();
+                sheetData.Append(rows[0], rows[3], rows[2], rows[1]);
+                worksheetPart.Worksheet.Save();
+            }
+
+            using var reader = ExcelDocumentReader.Open(reordered.ToArray(), new ExcelReadOptions {
+                MaxDataReaderBufferedCells = 4
+            });
+            using var dataReader = reader.GetSheet("Data").ReadRangeAsDataReader(
+                "A1:B4098",
+                headersInFirstRow: false,
+                schemaSampleRows: 0);
+
+            Assert.True(dataReader.Read());
+            InvalidDataException exception = Assert.Throws<InvalidDataException>(() => dataReader.Read());
+            Assert.Contains(nameof(ExcelReadOptions.MaxDataReaderBufferedCells), exception.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void Reader_ReadRangeAsDataReader_WithoutHeadersPreservesBlankRowsInsideRange() {
             using var memory = new MemoryStream();
 
@@ -200,6 +253,24 @@ namespace OfficeIMO.Tests {
             Assert.Equal("Gamma", lastName);
             Assert.Equal(4097, lastTypedId);
             Assert.False(dataReader.Read());
+        }
+
+        [Fact]
+        public void Reader_ReadRangeAsDataReader_XmlFastPathDoesNotChargeUnusedChunkBuffer() {
+            using var memory = new MemoryStream();
+
+            using (var document = ExcelDocument.Create(memory, new ExcelCreateOptions { PersistenceMode = OfficeIMO.Drawing.DocumentPersistenceMode.SaveOnDispose })) {
+                var sheet = document.AddWorksheet("Data");
+                sheet.CellValue(1, 1, "First");
+                sheet.CellValue(5000, 1000, "Last");
+            }
+
+            using var reader = ExcelDocumentReader.Open(memory.ToArray());
+            using var dataReader = reader.GetSheet("Data").ReadRangeAsDataReader("A1:ALL5000", schemaSampleRows: 0);
+
+            Assert.Equal(1000, dataReader.FieldCount);
+            Assert.True(dataReader.Read());
+            Assert.True(dataReader.IsDBNull(0));
         }
 
         [Fact]

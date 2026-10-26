@@ -6,6 +6,12 @@ using PdfCore = OfficeIMO.Pdf;
 
 namespace OfficeIMO.Word.Pdf {
     public static partial class WordPdfConverterExtensions {
+        private const int MaximumNativeStructuredDocumentTagDepth = 128;
+        private const int MaximumNativeTableNestingDepth = 128;
+
+        [ThreadStatic]
+        private static int _nativeStructuredDocumentTagDepth;
+
         private static void RenderNativeCoverPage(INativePdfFlow pdf, WordCoverPage coverPage, WordSection activeSection, Func<WordParagraph, (int Level, string Marker)?> getMarker, Dictionary<long, int> footnoteNumbersById, PdfSaveOptions? options, IReadOnlyList<NativeTableOfContentsEntry> tableOfContentsEntries, IReadOnlyDictionary<W.Paragraph, string> headingDestinations, double? contentWidth, NativeDocumentDefaults nativeDefaults, NativeFontMap nativeFontMap) {
             bool renderedCanvas = TryRenderNativeCoverPageCanvas(pdf, coverPage.Document, coverPage.SdtBlock, activeSection, options);
             RenderNativeStructuredBlockContent(pdf, coverPage.Document, coverPage.SdtBlock, activeSection, getMarker, footnoteNumbersById, options, tableOfContentsEntries, headingDestinations, contentWidth, skipCanvasOnlyVmlParagraphs: renderedCanvas, nativeDefaults, nativeFontMap);
@@ -16,7 +22,17 @@ namespace OfficeIMO.Word.Pdf {
         }
 
         private static void RenderNativeStructuredDocumentTag(INativePdfFlow pdf, WordStructuredDocumentTag structuredDocumentTag, WordSection activeSection, Func<WordParagraph, (int Level, string Marker)?> getMarker, Dictionary<long, int> footnoteNumbersById, PdfSaveOptions? options, IReadOnlyList<NativeTableOfContentsEntry> tableOfContentsEntries, IReadOnlyDictionary<W.Paragraph, string> headingDestinations, double? contentWidth, NativeDocumentDefaults nativeDefaults, NativeFontMap nativeFontMap) {
-            RenderNativeStructuredBlockContent(pdf, structuredDocumentTag.Document, structuredDocumentTag.SdtBlock, activeSection, getMarker, footnoteNumbersById, options, tableOfContentsEntries, headingDestinations, contentWidth, skipCanvasOnlyVmlParagraphs: false, nativeDefaults, nativeFontMap);
+            if (_nativeStructuredDocumentTagDepth >= MaximumNativeStructuredDocumentTagDepth) {
+                throw new InvalidDataException(
+                    $"Structured document tag nesting exceeds the supported limit of {MaximumNativeStructuredDocumentTagDepth} levels.");
+            }
+
+            _nativeStructuredDocumentTagDepth++;
+            try {
+                RenderNativeStructuredBlockContent(pdf, structuredDocumentTag.Document, structuredDocumentTag.SdtBlock, activeSection, getMarker, footnoteNumbersById, options, tableOfContentsEntries, headingDestinations, contentWidth, skipCanvasOnlyVmlParagraphs: false, nativeDefaults, nativeFontMap);
+            } finally {
+                _nativeStructuredDocumentTagDepth--;
+            }
         }
 
         private static void RenderNativeStructuredBlockContent(INativePdfFlow pdf, WordDocument document, W.SdtBlock? sdtBlock, WordSection activeSection, Func<WordParagraph, (int Level, string Marker)?> getMarker, Dictionary<long, int> footnoteNumbersById, PdfSaveOptions? options, IReadOnlyList<NativeTableOfContentsEntry> tableOfContentsEntries, IReadOnlyDictionary<W.Paragraph, string> headingDestinations, double? contentWidth, bool skipCanvasOnlyVmlParagraphs, NativeDocumentDefaults nativeDefaults, NativeFontMap nativeFontMap) {
@@ -71,6 +87,34 @@ namespace OfficeIMO.Word.Pdf {
             }
 
             return elements;
+        }
+
+        private static IEnumerable<WordTable> EnumerateNativeTableTree(WordTable root) {
+            var pending = new Stack<(WordTable Table, int Depth)>();
+            pending.Push((root, 0));
+            while (pending.Count > 0) {
+                (WordTable table, int depth) = pending.Pop();
+                EnsureNativeTableDepth(depth);
+                yield return table;
+
+                List<WordTableRow> rows = table.Rows;
+                for (int rowIndex = rows.Count - 1; rowIndex >= 0; rowIndex--) {
+                    List<WordTableCell> cells = rows[rowIndex].Cells;
+                    for (int cellIndex = cells.Count - 1; cellIndex >= 0; cellIndex--) {
+                        List<WordTable> nestedTables = cells[cellIndex].DirectNestedTables;
+                        for (int nestedIndex = nestedTables.Count - 1; nestedIndex >= 0; nestedIndex--) {
+                            pending.Push((nestedTables[nestedIndex], depth + 1));
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void EnsureNativeTableDepth(int depth) {
+            if (depth >= MaximumNativeTableNestingDepth) {
+                throw new InvalidDataException(
+                    $"Table nesting exceeds the supported limit of {MaximumNativeTableNestingDepth} levels.");
+            }
         }
 
         private static IReadOnlyList<int> GetNativeStructuredBlockFootnoteNumbersForElement(IReadOnlyList<WordElement> elements, int index, Dictionary<long, int> footnoteNumbersById) {

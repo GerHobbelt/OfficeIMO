@@ -380,21 +380,57 @@ jobs:
           OFFICEIMO_LEGACY_PPT_INTEROP_INPUT: ${{ runner.temp }}/officeimo-binary-powerpoint-libreoffice/roundtrip
         run: dotnet test OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-build --filter Category=LegacyPptLibreOfficeReopen
 
+  office-corpus-libreoffice:
+    name: 'Office binary corpus and LibreOffice'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install LibreOffice Writer, Calc, and Impress
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
+
+      - name: Open, convert, and render declared corpus artifacts
+        shell: pwsh
+        run: ./Build/Test-OfficeCorpusLibreOffice.ps1 -OutputDirectory '${{ runner.temp }}/officeimo-corpus-libreoffice'
+
+      - name: Upload LibreOffice oracle report and artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: officeimo-corpus-libreoffice
+          path: ${{ runner.temp }}/officeimo-corpus-libreoffice
+          if-no-files-found: error
+
   test-windows:
     name: '.NET Framework 4.7.2 / ${{ matrix.name }}'
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      OFFICEIMO_VISUAL_BASELINE_ARTIFACTS_DIRECTORY: ${{ github.workspace }}/TestResults/visual-baselines
     strategy:
       fail-fast: false
       max-parallel: 6
       matrix:
         include:
+          - name: Adf
+            project: OfficeIMO.Adf.Tests/OfficeIMO.Adf.Tests.csproj
           - name: AsciiDoc
             project: OfficeIMO.AsciiDoc.Tests/OfficeIMO.AsciiDoc.Tests.csproj
           - name: AsciiDoc-Markdown
             project: OfficeIMO.AsciiDoc.Markdown.Tests/OfficeIMO.AsciiDoc.Markdown.Tests.csproj
           - name: CSV
             project: OfficeIMO.CSV.Tests/OfficeIMO.CSV.Tests.csproj
+          - name: Confluence
+            project: OfficeIMO.Confluence.Tests/OfficeIMO.Confluence.Tests.csproj
           - name: Drawing
             project: OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj
           - name: Drawing-CodeGlyphX
@@ -502,12 +538,16 @@ jobs:
         if: always()
         with:
           name: test-results-net472-${{ matrix.name }}
-          path: '**/*.trx'
+          path: |
+            **/*.trx
+            TestResults/visual-baselines/**
 
   test-ubuntu-matrix:
     name: 'Ubuntu ${{ matrix.framework }} / ${{ matrix.partition }}'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      OFFICEIMO_VISUAL_BASELINE_ARTIFACTS_DIRECTORY: ${{ github.workspace }}/TestResults/visual-baselines
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -690,6 +730,8 @@ jobs:
             fi
           fi
           if [ "${{ matrix.partition }}" = "other-projects" ]; then
+            dotnet restore OfficeIMO.Adf.Tests/OfficeIMO.Adf.Tests.csproj
+            dotnet restore OfficeIMO.Confluence.Tests/OfficeIMO.Confluence.Tests.csproj
             dotnet restore OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj
             dotnet restore OfficeIMO.Drawing.CodeGlyphX.Tests/OfficeIMO.Drawing.CodeGlyphX.Tests.csproj
             dotnet restore OfficeIMO.GoogleWorkspace.Tests/OfficeIMO.GoogleWorkspace.Tests.csproj
@@ -737,6 +779,8 @@ jobs:
             fi
           fi
           if [ "${{ matrix.partition }}" = "other-projects" ]; then
+            dotnet build OfficeIMO.Adf.Tests/OfficeIMO.Adf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
+            dotnet build OfficeIMO.Confluence.Tests/OfficeIMO.Confluence.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.Drawing.CodeGlyphX.Tests/OfficeIMO.Drawing.CodeGlyphX.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
             dotnet build OfficeIMO.GoogleWorkspace.Tests/OfficeIMO.GoogleWorkspace.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework ${{ matrix.framework }} --no-restore
@@ -975,6 +1019,8 @@ jobs:
               ;;
             other-projects)
               audit_retired_aggregate_tests
+              dotnet test OfficeIMO.Adf.Tests/OfficeIMO.Adf.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
+              dotnet test OfficeIMO.Confluence.Tests/OfficeIMO.Confluence.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               run_drawing_tests
               dotnet test OfficeIMO.Drawing.CodeGlyphX.Tests/OfficeIMO.Drawing.CodeGlyphX.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity ${{ env.TEST_VERBOSITY }} --framework ${{ matrix.framework }} -m:1 --logger "console;verbosity=${{ env.TEST_VERBOSITY }}" --logger trx
               run_googleworkspace_tests
@@ -1039,7 +1085,9 @@ jobs:
         if: always()
         with:
           name: test-results-ubuntu-${{ matrix.framework }}-${{ matrix.partition }}
-          path: '**/*.trx'
+          path: |
+            **/*.trx
+            TestResults/visual-baselines/**
       - name: Upload coverage to Codecov
         if: ${{ matrix.collectCoverage }}
         uses: codecov/codecov-action@v5
@@ -1084,7 +1132,7 @@ jobs:
         run: ./Build/Test-ExcelImageVisualGate.ps1 -Configuration ${{ env.BUILD_CONFIGURATION }} -Framework net8.0 -Suite Smoke -NoRestore -NoBuild
 
   office-interoperability-gate:
-    name: 'Word and Excel interoperability gate'
+    name: 'Office interoperability gate'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -1106,17 +1154,21 @@ jobs:
 
       - name: Restore interoperability test dependencies
         run: |
+          dotnet restore Build/CompatibilityCatalog/OfficeIMO.CompatibilityCatalog.Tool.csproj
           dotnet restore OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj
           dotnet restore OfficeIMO.Excel.Tests/OfficeIMO.Excel.Tests.csproj
+          dotnet restore OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj
           dotnet restore OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj
 
       - name: Build interoperability test projects
         run: |
+          dotnet build Build/CompatibilityCatalog/OfficeIMO.CompatibilityCatalog.Tool.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
           dotnet build OfficeIMO.Drawing.Tests/OfficeIMO.Drawing.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
           dotnet build OfficeIMO.Excel.Tests/OfficeIMO.Excel.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
+          dotnet build OfficeIMO.PowerPoint.Tests/OfficeIMO.PowerPoint.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
           dotnet build OfficeIMO.Word.Tests/OfficeIMO.Word.Tests.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --framework net8.0 --no-restore
 
-      - name: Run Word and Excel interoperability gate
+      - name: Run Office interoperability gate
         shell: pwsh
         run: ./Build/Test-OfficeInteroperabilityGate.ps1 -Configuration ${{ env.BUILD_CONFIGURATION }} -Framework net8.0 -Suite Full -NoRestore -NoBuild
 
@@ -1128,6 +1180,7 @@ jobs:
       - excel-image-visual-gate
       - office-interoperability-gate
       - binary-powerpoint-libreoffice
+      - office-corpus-libreoffice
     if: always()
     steps:
       - name: Check Ubuntu test matrix
@@ -1141,11 +1194,15 @@ jobs:
             exit 1
           fi
           if [ "${{ needs.office-interoperability-gate.result }}" != "success" ]; then
-            echo "Word and Excel interoperability gate result: ${{ needs.office-interoperability-gate.result }}"
+            echo "Office interoperability gate result: ${{ needs.office-interoperability-gate.result }}"
             exit 1
           fi
           if [ "${{ needs.binary-powerpoint-libreoffice.result }}" != "success" ]; then
             echo "Binary PowerPoint LibreOffice gate result: ${{ needs.binary-powerpoint-libreoffice.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.office-corpus-libreoffice.result }}" != "success" ]; then
+            echo "Office corpus LibreOffice gate result: ${{ needs.office-corpus-libreoffice.result }}"
             exit 1
           fi
           echo "Ubuntu test matrix passed."
@@ -1252,7 +1309,7 @@ jobs:
   aot-trim-analyzers:
     name: 'AOT/Trim analyzers'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -1273,17 +1330,53 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore OfficeIMO.sln
 
-      - name: Restore HTML NativeAOT smoke
-        run: dotnet restore OfficeIMO.Html.AotSmoke/OfficeIMO.Html.AotSmoke.csproj --runtime linux-x64
-
       - name: Run AOT/Trim analyzers (net8.0)
         run: dotnet build OfficeIMO.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true -p:TargetFramework=net8.0
 
       - name: Run AOT/Trim analyzers (net10.0)
         run: dotnet build OfficeIMO.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true -p:TargetFramework=net10.0
 
-      - name: Publish HTML/PDF/image NativeAOT smoke
-        run: dotnet publish OfficeIMO.Html.AotSmoke/OfficeIMO.Html.AotSmoke.csproj --configuration ${{ env.BUILD_CONFIGURATION }} --runtime linux-x64 --no-restore --output artifacts/html-aot-smoke
+      - name: Publish and run supported NativeAOT scenarios
+        shell: pwsh
+        run: |
+          ./Build/Test-AotProjectCoverage.ps1 -JsonOutputPath ./artifacts/aot/project-matrix.json
+          ./Build/Test-AotScenarios.ps1 -RuntimeIdentifier linux-x64 -Configuration ${{ env.BUILD_CONFIGURATION }} -JsonOutputPath ./artifacts/aot/linux-x64.json
 
-      - name: Run HTML/PDF/image NativeAOT smoke
-        run: ./artifacts/html-aot-smoke/OfficeIMO.Html.AotSmoke
+      - name: Upload Linux NativeAOT evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nativeaot-linux-x64
+          path: artifacts/aot/*.json
+
+  aot-windows:
+    name: 'NativeAOT Windows'
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Publish and run the production NativeAOT matrix
+        shell: pwsh
+        run: |
+          ./Build/Test-AotProjectCoverage.ps1 -JsonOutputPath ./artifacts/aot/project-matrix.json
+          ./Build/Test-AotScenarios.ps1 -RuntimeIdentifier win-x64 -Configuration ${{ env.BUILD_CONFIGURATION }} -JsonOutputPath ./artifacts/aot/win-x64.json
+
+      - name: Upload Windows NativeAOT evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nativeaot-win-x64
+          path: artifacts/aot/*.json

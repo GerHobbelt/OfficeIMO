@@ -21,9 +21,12 @@ public class PdfAttachmentExtractorTests {
 
         IReadOnlyList<PdfExtractedAttachment> attachments = PdfAttachmentExtractor.ExtractAttachments(pdf);
         IReadOnlyList<PdfExtractedAttachment> documentAttachments = PdfReadDocument.Open(pdf).ExtractAttachments();
+        IReadOnlyList<PdfAttachmentInfo> documentAttachmentInfos = PdfReadDocument.Open(pdf).Attachments;
 
         Assert.Equal(2, attachments.Count);
         Assert.Equal(2, documentAttachments.Count);
+        Assert.Equal(invoiceXml.Length, documentAttachmentInfos[0].SizeBytes);
+        Assert.Equal(sourceBytes.Length, documentAttachmentInfos[1].SizeBytes);
 
         PdfExtractedAttachment invoice = attachments[0];
         Assert.Equal("invoice.xml", invoice.Name);
@@ -108,6 +111,90 @@ public class PdfAttachmentExtractorTests {
     }
 
     [Fact]
+    public void ExtractAttachments_CachesSharedPayloadWithoutDroppingAliases() {
+        byte[] pdf = BuildRepeatedFileAttachmentAnnotationPdf(annotationCount: 1_000);
+
+        IReadOnlyList<PdfExtractedAttachment> attachments = PdfAttachmentExtractor.ExtractAttachments(pdf);
+
+        Assert.Equal(1_000, attachments.Count);
+        Assert.Equal("alias-0.txt", attachments[0].FileName);
+        Assert.Equal("alias-999.txt", attachments[999].FileName);
+        Assert.All(attachments, attachment => Assert.Equal("payload", Encoding.ASCII.GetString(attachment.Bytes)));
+        Assert.Single(PdfAttachmentExtractor.ExtractAttachmentsByFileName(pdf, "alias-999.txt"));
+    }
+
+    [Fact]
+    public void PdfReadDocument_BoundsAttachmentAliasCount() {
+        byte[] pdf = BuildRepeatedFileAttachmentAnnotationPdf(annotationCount: 3);
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() =>
+            PdfReadDocument.Open(pdf, new PdfReadOptions {
+                Limits = new PdfReadLimits { MaxAttachments = 2 }
+            }));
+
+        Assert.Equal(PdfReadLimitKind.Attachments, exception.Kind);
+        Assert.Equal(2, exception.Limit);
+        Assert.Equal(3, exception.Actual);
+    }
+
+    [Fact]
+    public void PdfReadDocument_BoundsAggregateUniqueAttachmentBytes() {
+        byte[] pdf = PdfDocument.Create()
+            .AttachFile("first.bin", new byte[] { 1, 2, 3 })
+            .AttachFile("second.bin", new byte[] { 4, 5, 6 })
+            .Paragraph(p => p.Text("Aggregate attachment budget."))
+            .ToBytes();
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() =>
+            PdfReadDocument.Open(pdf, new PdfReadOptions {
+                Limits = new PdfReadLimits { MaxTotalAttachmentBytes = 5 }
+            }));
+
+        Assert.Equal(PdfReadLimitKind.AttachmentBytes, exception.Kind);
+        Assert.Equal(5, exception.Limit);
+        Assert.True(exception.Actual > exception.Limit);
+    }
+
+    [Fact]
+    public void PdfReadDocument_BoundsMalformedPredictorFallbackAttachmentBytes() {
+        var payload = new byte[64];
+        for (int index = 0; index < payload.Length; index++) {
+            payload[index] = (byte)index;
+        }
+        byte[] pdf = BuildFlateEmbeddedFilePdf(payload, malformedPredictor: true);
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() =>
+            PdfReadDocument.Open(pdf, new PdfReadOptions {
+                Limits = new PdfReadLimits { MaxTotalAttachmentBytes = 64 }
+            }));
+
+        Assert.Equal(PdfReadLimitKind.AttachmentBytes, exception.Kind);
+        Assert.Equal(64, exception.Limit);
+        Assert.True(exception.Actual > exception.Limit);
+    }
+
+    [Fact]
+    public void PdfReadDocument_RejectsAttachmentCountBeforeDecodingNextPayload() {
+        byte[] pdf = PdfDocument.Create()
+            .AttachFile("first.bin", new byte[] { 1, 2, 3 })
+            .AttachFile("second.bin", new byte[] { 4, 5, 6 })
+            .Paragraph(p => p.Text("Attachment count ordering."))
+            .ToBytes();
+
+        PdfReadLimitException exception = Assert.Throws<PdfReadLimitException>(() =>
+            PdfReadDocument.Open(pdf, new PdfReadOptions {
+                Limits = new PdfReadLimits {
+                    MaxAttachments = 1,
+                    MaxTotalAttachmentBytes = 3
+                }
+            }));
+
+        Assert.Equal(PdfReadLimitKind.Attachments, exception.Kind);
+        Assert.Equal(1, exception.Limit);
+        Assert.Equal(2, exception.Actual);
+    }
+
+    [Fact]
     public void ExtractAttachments_SupportsPathStreamAndDirectoryOutputs() {
         byte[] payload = Encoding.UTF8.GetBytes("directory payload");
         byte[] pdf = PdfDocument.Create()
@@ -186,7 +273,7 @@ public class PdfAttachmentExtractorTests {
         return Encoding.ASCII.GetBytes(pdf);
     }
 
-    private static byte[] BuildFlateEmbeddedFilePdf(byte[] payload) {
+    private static byte[] BuildFlateEmbeddedFilePdf(byte[] payload, bool malformedPredictor = false) {
         byte[] compressed = DeflateZlib(payload);
         string header = string.Join("\n", new[] {
             "%PDF-1.4",
@@ -209,7 +296,8 @@ public class PdfAttachmentExtractorTests {
             "<< /Type /Filespec /F (data.bin) /UF (data.bin) /Desc (Payload) /AFRelationship /Data /EF << /F 6 0 R /UF 6 0 R >> >>",
             "endobj",
             "6 0 obj",
-            "<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Length " + compressed.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + " /Filter /FlateDecode >>",
+            "<< /Type /EmbeddedFile /Subtype /application#2Foctet-stream /Length " + compressed.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + " /Filter /FlateDecode" +
+                (malformedPredictor ? " /DecodeParms << /Predictor 12 /Columns 4 >>" : string.Empty) + " >>",
             "stream"
         });
         string footer = string.Join("\n", new[] {
@@ -261,6 +349,33 @@ public class PdfAttachmentExtractorTests {
             "%%EOF"
         });
 
+        return Encoding.ASCII.GetBytes(pdf);
+    }
+
+    private static byte[] BuildRepeatedFileAttachmentAnnotationPdf(int annotationCount) {
+        var annotationReferences = new StringBuilder();
+        var annotationObjects = new StringBuilder();
+        var nameEntries = new StringBuilder();
+        for (int index = 0; index < annotationCount; index++) {
+            int fileSpecObjectNumber = 6 + (index * 2);
+            int annotationObjectNumber = fileSpecObjectNumber + 1;
+            nameEntries.Append("(alias-").Append(index).Append(".txt) ").Append(fileSpecObjectNumber).Append(" 0 R ");
+            annotationReferences.Append(annotationObjectNumber).Append(" 0 R ");
+            annotationObjects
+                .Append(fileSpecObjectNumber).Append(" 0 obj\n<< /Type /Filespec /F (alias-")
+                .Append(index).Append(".txt) /EF << /F 5 0 R >> >>\nendobj\n")
+                .Append(annotationObjectNumber).Append(" 0 obj\n<< /Type /Annot /Subtype /FileAttachment /FS ")
+                .Append(fileSpecObjectNumber).Append(" 0 R >>\nendobj\n");
+        }
+
+        string pdf = "%PDF-1.4\n" +
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [" + nameEntries + "] >> >> >>\nendobj\n" +
+            "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n" +
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Annots [" + annotationReferences + "] >>\nendobj\n" +
+            "4 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n" +
+            "5 0 obj\n<< /Type /EmbeddedFile /Length 7 >>\nstream\npayload\nendstream\nendobj\n" +
+            annotationObjects +
+            "trailer\n<< /Root 1 0 R /Size " + (6 + (annotationCount * 2)).ToString(System.Globalization.CultureInfo.InvariantCulture) + " >>\n%%EOF";
         return Encoding.ASCII.GetBytes(pdf);
     }
 

@@ -282,6 +282,10 @@ namespace OfficeIMO.PowerPoint {
         private byte[] CreateBytesForPath(string filePath, PowerPointSaveOptions? options) {
             PowerPointFileFormat format = PowerPointPresentationLoadRouting.GetFormat(filePath);
             if (IsLegacyBinaryFormat(format)) {
+                if (string.Equals(Path.GetExtension(filePath), ".ppa", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(SourceFormatDescriptor.Extension, ".ppa", StringComparison.Ordinal)) {
+                    throw new NotSupportedException("Native .ppa add-in authoring requires an imported binary PowerPoint add-in carrier. Save a new presentation as .ppt, .pot, or .pps instead.");
+                }
                 return CreateLegacyPptBytesForSave(options);
             }
             PresentationDocumentType destinationType =
@@ -354,7 +358,8 @@ namespace OfficeIMO.PowerPoint {
                 ? _legacyPptPackage.EncryptedDocumentProperties ?? true
                 : options.LegacyPptEncryptDocumentProperties;
             return LegacyPptRc4CryptoApi.EncryptPackage(plainBytes,
-                password, keySizeBits, encryptDocumentProperties);
+                password, keySizeBits, encryptDocumentProperties,
+                options?.LegacyPptAllowUnencryptedCompoundStreams == true);
         }
 
         private byte[] CreatePlainLegacyPptBytesForSave(
@@ -506,7 +511,8 @@ namespace OfficeIMO.PowerPoint {
             byte[] plainBytes = CreatePlainLegacyPptBytesForSave(options);
             return LegacyPptRc4CryptoApi.EncryptPackage(plainBytes, password,
                 options?.LegacyPptEncryptionKeySizeBits ?? 128,
-                options?.LegacyPptEncryptDocumentProperties ?? true);
+                options?.LegacyPptEncryptDocumentProperties ?? true,
+                options?.LegacyPptAllowUnencryptedCompoundStreams == true);
         }
 
         private static void EnsureDestinationFileWritable(string filePath) {

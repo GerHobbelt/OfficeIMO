@@ -3,6 +3,7 @@
 using System.Collections;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -28,6 +29,7 @@ namespace OfficeIMO.Excel {
             private readonly int _firstColumn;
             private readonly int _lastColumn;
             private readonly int _fieldCount;
+            private readonly long _maximumBufferedCells;
             private readonly CancellationToken _ct;
             private readonly string[] _columnNames;
             private readonly Type[] _columnTypes;
@@ -70,6 +72,7 @@ namespace OfficeIMO.Excel {
                 _firstColumn = firstColumn;
                 _lastColumn = lastColumn;
                 _fieldCount = fieldCount;
+                _maximumBufferedCells = options.MaxDataReaderBufferedCells;
                 _ct = ct;
                 _nextLogicalRow = firstRow;
                 _currentValues = new object?[fieldCount];
@@ -198,6 +201,8 @@ namespace OfficeIMO.Excel {
             }
 
             /// <inheritdoc />
+            [UnconditionalSuppressMessage("Trimming", "IL2063", Justification = "Excel reader column types are closed scalar conversion tokens; OfficeIMO never activates or reflects over their public members.")]
+            [return: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)]
             public override Type GetFieldType(int ordinal) => _columnTypes[ordinal];
 
             /// <inheritdoc />
@@ -296,6 +301,7 @@ namespace OfficeIMO.Excel {
             }
 
             /// <inheritdoc />
+            [UnconditionalSuppressMessage("Trimming", "IL2111", Justification = "The schema table stores Type values as data and does not reflect over Type.TypeInitializer or other Type members.")]
             public override DataTable GetSchemaTable() {
                 var schema = new DataTable("SchemaTable");
                 schema.Columns.Add(SchemaTableColumn.ColumnName, typeof(string));
@@ -713,6 +719,11 @@ namespace OfficeIMO.Excel {
             private void StoreBufferedRow(int rowIndex, object?[] values) {
                 if (rowIndex < _nextLogicalRow || rowIndex > _lastRow) {
                     return;
+                }
+
+                if (!_bufferedRows!.ContainsKey(rowIndex) &&
+                    (long)_bufferedRows.Count + 1L > _maximumBufferedCells / _fieldCount) {
+                    throw new InvalidDataException($"Range data-reader buffering exceeds {nameof(ExcelReadOptions.MaxDataReaderBufferedCells)}.");
                 }
 
                 var copy = new object?[_fieldCount];

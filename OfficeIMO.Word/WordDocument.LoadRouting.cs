@@ -18,11 +18,13 @@ namespace OfficeIMO.Word {
         }
 
         internal static bool HasLegacyDocExtension(string? filePath) {
-            return !string.IsNullOrWhiteSpace(filePath)
-                && string.Equals(Path.GetExtension(filePath), ".doc", StringComparison.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(filePath)) return false;
+            string extension = Path.GetExtension(filePath);
+            return string.Equals(extension, ".doc", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".dot", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool HasZipSignature(byte[] bytes) {
+        internal static bool HasZipSignature(byte[] bytes) {
             return bytes.Length >= ZipSignature.Length
                 && bytes[0] == ZipSignature[0]
                 && bytes[1] == ZipSignature[1];

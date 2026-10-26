@@ -77,6 +77,47 @@ public class CsvStreamingTests
     }
 
     [Fact]
+    public async Task PlainPathLoads_EnforceMaxInputBytes()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "OfficeIMO.CSV.PathBounded." + Guid.NewGuid().ToString("N") + ".csv");
+        try
+        {
+            File.WriteAllText(path, "Id,Name\n1,Alice\n", Encoding.UTF8);
+            var options = new CsvLoadOptions { MaxInputBytes = 8 };
+
+            Assert.Throws<InvalidOperationException>(() => CsvDocument.Load(path, options));
+            Assert.Throws<InvalidOperationException>(() =>
+                CsvDocument.ReadRows(path, (_, _) => { }, options));
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                using var reader = CsvDocument.CreateDataReader(
+                    path,
+                    options,
+                    new CsvDataReaderOptions { InferSchema = true });
+                reader.Read();
+            });
+#if NET8_0_OR_GREATER
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                var visitor = new CapturingRowFieldSpanVisitor(new List<string>());
+                CsvDocument.ReadRowFieldSpans(path, ref visitor, options);
+            });
+#endif
+            await Assert.ThrowsAsync<InvalidOperationException>(() => CsvDocument.LoadAsync(path, options));
+
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                CsvDocument.CreateDataReader(
+                    path,
+                    new CsvLoadOptions { Mode = CsvLoadMode.Stream, MaxInputBytes = 0 },
+                    new CsvDataReaderOptions { InferSchema = true }));
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task LoadAsync_SnapshotsCompleteCallerStreamAndRestoresPosition()
     {
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes("Id,Name\n1,Alice\n"));
@@ -101,6 +142,23 @@ public class CsvStreamingTests
             CsvDocument.LoadAsync(stream, cancellationToken: cancellation.Token));
 
         Assert.Equal(2, stream.Position);
+    }
+
+    [Fact]
+    public async Task StreamLoads_EnforceCompleteInputLimitAndRestorePosition()
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes("Id,Name\n1,Alice\n");
+        using var syncStream = new MemoryStream(bytes);
+        syncStream.Position = 3;
+        Assert.Throws<InvalidDataException>(() =>
+            CsvDocument.Load(syncStream, new CsvLoadOptions { MaxInputBytes = 8 }));
+        Assert.Equal(3, syncStream.Position);
+
+        using var asyncStream = new MemoryStream(bytes);
+        asyncStream.Position = 4;
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CsvDocument.LoadAsync(asyncStream, new CsvLoadOptions { MaxInputBytes = 8 }));
+        Assert.Equal(4, asyncStream.Position);
     }
 
     [Fact]

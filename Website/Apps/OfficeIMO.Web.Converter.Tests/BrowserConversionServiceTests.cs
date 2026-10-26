@@ -2,6 +2,7 @@ using System.IO.Compression;
 using OfficeIMO.Drawing;
 using OfficeIMO.Web.Converter.Models;
 using OfficeIMO.Web.Converter.Services;
+using OfficeIMO.Word;
 using Xunit;
 
 namespace OfficeIMO.Web.Converter.Tests;
@@ -70,7 +71,25 @@ public sealed class BrowserConversionServiceTests {
         byte[] bytes = CreateHighlyCompressedPackage();
         var document = new SelectedDocument("unsafe.docx", ".docx", "DOCX", bytes.LongLength, bytes);
 
-        Assert.Throws<OfficePackageSecurityException>(() => _service.ConvertFile(route, document, fastPreview: false));
+        Assert.Throws<OfficePackageSecurityException>(() => _service.ConvertFile(route, document, limitExcelRows: false));
+    }
+
+    [Fact]
+    public void WordConversion_PreservesWarningsAddedDuringPdfSerialization() {
+        using WordDocument source = WordDocument.Create();
+        source.AddParagraph("مرحبا");
+        byte[] bytes = source.ToBytes();
+        var document = new SelectedDocument("complex-script.docx", ".docx", "DOCX", bytes.LongLength, bytes);
+
+        ConversionResult result = _service.ConvertFile(
+            ConversionRouteCatalog.Find("docx-pdf"),
+            document,
+            limitExcelRows: false);
+
+        Assert.Contains(result.Warnings, warning =>
+            warning.Contains("unsupported-bidirectional-text-layout", StringComparison.Ordinal));
+        Assert.Contains(result.Warnings, warning =>
+            warning.Contains("unsupported-complex-script-shaping", StringComparison.Ordinal));
     }
 
     private static byte[] CreateHighlyCompressedPackage() {
